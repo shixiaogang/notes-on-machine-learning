@@ -27,8 +27,9 @@
 块引用 `quote` / `quotation` 也使用文楷与 STIX Two Text。
 数学字体采用 `stix2` 的 Type 1 实现，以兼容记号规范中的 `\bm`，不引入 `unicode-math`。
 字体缺失时明确报错，不自动降级为另一种视觉风格。
-`build.sh` 从常见的系统字体目录解析上述中文字体，并在 `build/fonts/` 中建立构建期链接；
-字体文件不纳入 Git，也不依赖操作系统字体注册缓存。
+中西文字体从仓库 `fonts/` 直接加载，STIX2 Type 1 字体、度量和编码由 `.latexmkrc` 配置本地搜索路径。
+字体文件及其许可证纳入 Git，不依赖系统字体安装或旧的 `build/fonts/` 链接。
+增补或更新字体时同步维护 `fonts/README.md`、许可证和校验清单；数学宏包仍由 TeX Live 提供。
 
 全局颜色：`BookInk` 墨蓝（233342）、`BookTeal` 青（267D82）、`BookBlue` 蓝（42658A）、
 `BookAmber` 赭（A66A25）、`BookMuted` 灰（64717B）、`BookPaper` 浅灰（F3F5F5）、`BookRule` 分隔线（DCE3E5）。

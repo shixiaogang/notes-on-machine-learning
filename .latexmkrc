@@ -7,7 +7,12 @@ $out_dir = 'build';
 my $book_compression = $ENV{'BOOK_PDF_COMPRESSION'} // '1';
 die "BOOK_PDF_COMPRESSION must be an integer from 0 to 9\n"
     unless $book_compression =~ /\A[0-9]\z/;
-$xdvipdfmx = "xdvipdfmx -E -z $book_compression %O -o %D %S";
+$xdvipdfmx = "xdvipdfmx -f fonts/stix2-type1/map/stix2.map -E -z $book_compression %O -o %D %S";
 
 # 始终优先使用 tex/styles/ 中固定版本的 Tufte-LaTeX。
 $ENV{'TEXINPUTS'} = './tex//:' . ($ENV{'TEXINPUTS'} // '');
+
+# STIX2 Type 1 字体、度量与编码固定在仓库；保留末尾默认搜索路径供其他宏包使用。
+$ENV{'T1FONTS'} = './fonts/stix2-type1/type1//:' . ($ENV{'T1FONTS'} // '');
+$ENV{'TFMFONTS'} = './fonts/stix2-type1/tfm//:' . ($ENV{'TFMFONTS'} // '');
+$ENV{'ENCFONTS'} = './fonts/stix2-type1/enc//:' . ($ENV{'ENCFONTS'} // '');

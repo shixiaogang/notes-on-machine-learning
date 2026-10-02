@@ -6,8 +6,7 @@
 
 - TeX Live，包含 XeLaTeX、`latexmk` 与 Biber
 - `ctex`、`stix2`、`amsmath`、`bm`、TikZ、PGFPlots、`tcolorbox`、`listings`、`algpseudocode`、`biblatex`、`needspace` 等宏包
-- 系统中文字体：Source Han Serif CN（常规、粗体）、Source Han Sans SC（常规、粗体）、LXGW WenKai（常规、Medium）、LXGW WenKai Mono
-- TeX Live 中的英文字体：STIX Two Text、Source Sans 3、Source Code Pro
+- 项目字体已收录在 `fonts/`，无需另行安装中西文字体；字体清单、来源和许可证见 [字体说明](fonts/README.md)
 - Bash
 - GNU Make（可选）
 
@@ -30,8 +29,7 @@
 脚本使用 XeLaTeX，并将结果写入 `build/`。最终 PDF 位于 `build/main.pdf`。
 `latexmk` 会自动调用 Biber 处理边注文献，然后重复编译，直至交叉引用稳定。
 日常构建使用等级 1 的无损压缩，加快含大量图片和嵌入字体的 PDF 输出；不会降低图片分辨率或画质。
-构建会复用字体链接、文献和交叉引用缓存。没有源文件变化时，重复运行会直接复用结果。
-macOS 下构建进程需要能访问系统字体服务；不要把字体识别失败误判为字体未安装。
+构建直接读取 `fonts/` 中的字体，并复用文献和交叉引用缓存。没有源文件变化时，重复运行会直接复用结果。
 
 目前内置编辑器的单文件编译不支持本项目的多个 `\input` 文件；请以 `./build.sh` 生成的 PDF 为准。
 
@@ -74,6 +72,7 @@ macOS 下构建进程需要能访问系统字体服务；不要把字体识别�
 - `plans/book-structure.md`：五卷结构、内容边界与目录设计约定。
 - `plans/learning-theory-outline.md`：机器学习理论部分的六章大纲。
 - `figures/`：书中图像与可编辑绘图源文件。
+- `fonts/`：固定版本的中西文与数学字体，以及上游许可证。
 - `specs/`：开发与写作规范。
 
 ## 样式用法

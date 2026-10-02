@@ -20,69 +20,38 @@ require_latexmk() {
   fi
 }
 
-font_link_names=(
-  SourceHanSerifCN-Regular.otf
-  SourceHanSerifCN-Bold.otf
-  SourceHanSansSC-Regular.otf
-  SourceHanSansSC-Bold.otf
-  LXGWWenKai-Regular.ttf
-  LXGWWenKai-Medium.ttf
-  LXGWWenKaiMono-Regular.ttf
-)
-
-font_search_roots=(
-  "${HOME}/Library/Fonts"
-  /Library/Fonts
-  /System/Library/Fonts
-  "${HOME}/.local/share/fonts"
-  "${HOME}/.fonts"
-  /usr/local/share/fonts
-  /usr/share/fonts
-)
-
-find_font_file() {
-  local pattern="$1"
-  local font_root
+# 字体随仓库分发；不搜索系统字体，也不复用旧的构建期链接。
+prepare_fonts() {
   local font_file
-
-  for font_root in "${font_search_roots[@]}"; do
-    [[ -d "$font_root" ]] || continue
-    font_file="$(find "$font_root" -maxdepth 4 -type f -iname "$pattern" -print -quit)"
-    if [[ -n "$font_file" ]]; then
-      printf '%s\n' "$font_file"
-      return 0
+  local required_fonts=(
+    LXGWWenKai-Medium.ttf
+    LXGWWenKai-Regular.ttf
+    LXGWWenKaiMono-Regular.ttf
+    STIXTwoText-Bold.otf
+    STIXTwoText-BoldItalic.otf
+    STIXTwoText-Italic.otf
+    STIXTwoText-Regular.otf
+    SourceCodePro-Regular.otf
+    SourceCodePro-RegularIt.otf
+    SourceCodePro-Semibold.otf
+    SourceCodePro-SemiboldIt.otf
+    SourceHanSansSC-Bold.otf
+    SourceHanSansSC-Regular.otf
+    SourceHanSerifCN-Bold.otf
+    SourceHanSerifCN-Regular.otf
+    SourceSans3-Regular.otf
+    SourceSans3-RegularIt.otf
+    SourceSans3-Semibold.otf
+    SourceSans3-SemiboldIt.otf
+    stix2-type1/type1/STIX2Math.pfb
+    stix2-type1/map/stix2.map
+  )
+  for font_file in "${required_fonts[@]}"; do
+    if [[ ! -f "fonts/$font_file" ]]; then
+      printf '错误：缺少仓库字体 fonts/%s，请恢复完整的 fonts/ 目录。\n' "$font_file" >&2
+      return 1
     fi
   done
-  return 1
-}
-
-link_required_font() {
-  local display_name="$1"
-  local pattern="$2"
-  local link_name="$3"
-  local font_file
-
-  # 复用有效链接；仅首次构建、清理后或原字体被移走时重新搜索。
-  if [[ -f "build/fonts/$link_name" ]]; then
-    return 0
-  fi
-
-  if ! font_file="$(find_font_file "$pattern")"; then
-    printf '错误：未找到字体 %s（文件模式：%s）。\n' "$display_name" "$pattern" >&2
-    exit 1
-  fi
-  ln -sfn "$font_file" "build/fonts/$link_name"
-}
-
-prepare_fonts() {
-  mkdir -p build/fonts
-  link_required_font 'Source Han Serif CN Regular' 'SourceHanSerifCN-Regular*.otf' 'SourceHanSerifCN-Regular.otf'
-  link_required_font 'Source Han Serif CN Bold' 'SourceHanSerifCN-Bold*.otf' 'SourceHanSerifCN-Bold.otf'
-  link_required_font 'Source Han Sans SC Regular' 'SourceHanSansSC-Regular*.otf' 'SourceHanSansSC-Regular.otf'
-  link_required_font 'Source Han Sans SC Bold' 'SourceHanSansSC-Bold*.otf' 'SourceHanSansSC-Bold.otf'
-  link_required_font 'LXGW WenKai Regular' 'LXGWWenKai-Regular.*' 'LXGWWenKai-Regular.ttf'
-  link_required_font 'LXGW WenKai Medium' 'LXGWWenKai-Medium.*' 'LXGWWenKai-Medium.ttf'
-  link_required_font 'LXGW WenKai Mono Regular' 'LXGWWenKaiMono-Regular.*' 'LXGWWenKaiMono-Regular.ttf'
 }
 
 build_project() {
@@ -113,11 +82,11 @@ clean_project() {
   require_latexmk
   latexmk -C tex/main.tex
   rm -f build/.pdf-compression
-  local font_link
-  for font_link in "${font_link_names[@]}"; do
-    rm -f "build/fonts/$font_link"
-  done
-  rmdir build/fonts 2>/dev/null || true
+  # 兼容清理旧版本生成的字体链接；fonts/ 中的源文件不会被清除。
+  if [[ -d build/fonts ]]; then
+    find build/fonts -maxdepth 1 -type l -delete
+    rmdir build/fonts 2>/dev/null || true
+  fi
   rmdir build 2>/dev/null || true
 }
 
