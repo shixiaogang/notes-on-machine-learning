@@ -71,6 +71,7 @@
 - 每卷使用 `volume.tex`，各部分使用子目录中的 `part.tex`；部分与章节全书连续编号。
 - `plans/book-structure.md`：五卷结构、内容边界与目录设计约定。
 - `plans/learning-theory-outline.md`：机器学习理论部分的六章大纲。
+- [神经网络模型大纲](plans/neural-network-models-outline.md)：九章安排、各节内容与模型、训练、泛化的内容边界。
 - `figures/`：书中图像与可编辑绘图源文件。
 - `fonts/`：固定版本的中西文与数学字体，以及上游许可证。
 - `specs/`：开发与写作规范。
