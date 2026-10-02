@@ -1,0 +1,1998 @@
+\chapter{一般学习的可学习性}
+\label{chap:convex-learning-and-stability}
+
+前两章用零一损失讨论分类：预测正确记0，预测错误记1。回归、聚类和降维需要更细的
+损失刻画，但仍然面临相同的困难：算法根据有限样本选择的结果，应当在新数据上也有
+较低的期望损失。分类中的选择结果是一个假设；聚类中的选择结果则是一组中心。
+本章将这些结果统称为决策，讨论哪些条件能够使经验风险的降低带来期望风险的降低。
+
+前两章主要从假设空间出发。二分类的VC维约束不同预测的数目，多分类的图维则约束
+假设在带标签样本上能够形成的不同正误组合。在相应维度有限时，可以由此证明
+所有假设的经验风险以高概率同时接近各自的期望风险。一般学习问题还允许
+另一种情况：每份样本上都存在经验风险与期望风险相差很大的决策，但算法能够避开它们。
+这时，分析算法怎样根据样本选择决策，比要求整个决策空间满足一致收敛更有针对性。
+
+算法稳定性考察这种选择对单个观测的依赖：删除或替换一个观测以后，输出的损失会
+改变多少。适当的稳定性条件可以控制经验风险与期望风险之间的差别，再结合经验风险
+接近最优的条件，得到可学习性保证。本章先建立这些一般条件，再讨论怎样通过正则化
+和随机梯度下降验证它们。凸性、参数约束和优化过程的性质各自承担不同作用，不能
+仅凭假设空间“具有某种结构”就断定学习成功。
+
+\section{一般学习问题}
+\label{sec:general-learning-problem}
+
+\subsection{观测、决策与损失}
+
+分类用“是否答错”评价一次预测，回归却需要区分错得多与错得少。例如，真实温度是$20$，预测$18$与预测$10$都不完全正确，但平方损失分别为$4$和$100$。聚类甚至没有预先给定的正确标签；它可以用数据点到最近聚类中心的距离评价一组中心。要讨论这些任务的学习能力，需要保留“用样本选择决策”的结构，同时允许损失采用不同的形式。
+
+一般学习问题由观测空间$Z$、决策集合$\mathcal W$和损失函数$\ell$组成。观测$z$是评价一次决策所需的信息；决策$w$可以是一个预测函数、一组聚类中心或一个投影矩阵。损失$\ell(w,z)$为决策$w$在观测$z$上的表现赋予一个数值，数值越小表示在这一评价标准下表现越好。
+
+期望风险衡量决策面对新观测时的平均损失，经验风险则用已有样本上的平均损失近似它。
+二者针对同一个决策和同一个损失函数，区别在于平均所依据的是总体分布还是有限样本。
+
+\begin{definition}[一般学习问题的期望风险]
+\label{def:general-population-risk}
+设$\mathcal P$是$Z$上的分布，且$\ell(w,\cdot)$可积。决策$w\in\mathcal W$的期望风险为
+\[
+ R_{\mathcal P}(w)=\mathbb E_{z\sim\mathcal P}\ell(w,z).
+\]
+\end{definition}
+
+\begin{definition}[一般学习问题的经验风险]
+\label{def:general-empirical-risk}
+给定样本$S=(z_1,\ldots,z_n)\in Z^n$，决策$w\in\mathcal W$的经验风险为
+\begin{equation}
+ \hat R_S(w)=\frac1n\sum_{i=1}^n\ell(w,z_i).
+ \label{eq:general-risk}
+\end{equation}
+\end{definition}
+
+学习算法根据$S$选择$A(S)$，目标是让它的期望风险接近决策空间中的最低期望风险$\inf_{w\in\mathcal W}R_{\mathcal P}(w)$。二分类取$z=(x,y)$，用预测函数作为决策，再取零一损失，就恢复了前面的定义。回归也观察$(x,y)$，但可改用平方损失$(w(x)-y)^2$。
+
+聚类中，观测只包含输入$x$，决策则是一组中心$w=(c_1,\ldots,c_K)$。$K$均值的损失为$\min_j\|x-c_j\|_2^2$。例如，一维数据点$x=2$面对中心0和5时，到两个中心的平方距离分别为4和9，因而损失是4。训练过程寻找平均距离较小的中心；期望风险考察新数据到这些中心的平均距离。PCA也可作类似表述：决策是秩为$r$的正交投影$P$，损失$\|x-Px\|_2^2$衡量投影后无法重构的部分。
+
+这些任务都能写成期望风险最小化，但这一统一形式不保证它们都是凸问题，也不保证较低的期望风险必然恢复某个唯一的“真实聚类”或“真实子空间”。例如，$K$均值对所有中心的联合优化一般并不凸。后面的定理只适用于满足其损失与决策空间条件的问题，不能仅凭形式相同就直接套用。
+
+
+\subsection{可学习性的目标}
+
+这里沿用不可知PAC的比较方式：不假定某个决策的期望风险为零，而是与决策空间所能
+达到的最低期望风险比较。一般学习问题没有必须恢复的标签函数；学习目标完全由
+观测分布、决策空间和损失函数共同确定。
+
+\begin{definition}[一般学习问题的PAC可学习性]
+\label{def:general-pac-learnability}
+若存在算法$A$，对任意$\varepsilon,\delta\in(0,1)$存在整数$n_0(\varepsilon,\delta)$，
+使任意允许分布$\mathcal P$和$n\geq n_0(\varepsilon,\delta)$均满足
+\[
+ \mathbb P\!\left\{R_{\mathcal P}(A(S))\leq
+ \inf_{w\in\mathcal W}R_{\mathcal P}(w)+\varepsilon\right\}\geq1-\delta,
+\]
+其中$S\sim\mathcal P^n$且$A(S)\in\mathcal W$，则称该问题分布无关PAC可学习。
+算法随机化时，概率同时对样本和独立的内部随机数计算。
+\end{definition}
+
+这里的可学习性是对整个学习问题的判断，需要同时明确决策空间、损失函数和允许的
+数据分布。例如，同一组预测函数在有界输入和平方损失下的学习保证，未必适用于
+允许任意重尾输入的情形。限制参数范围会改变决策空间，改用替代损失会改变评价目标，
+限制数据分布则会缩小保证所覆盖的数据来源；讨论这些改变时，需要保留各自的条件。
+
+在讨论维度刻画与必要条件时，本章明确采用有界损失；正则化与SGD的具体定理则分别
+列出凸性、Lipschitz性和可积性等条件。不能将平方损失在有界区域内的结论直接推广到
+无约束、重尾的回归问题。
+
+\section{一致收敛}
+\label{sec:real-valued-classes}
+
+前两章的零一损失只有两个取值，平方损失则可以取连续多个数值。
+但我们要控制的对象没有改变：同一份样本上，每个决策的经验风险与对应的期望风险
+相差多少。这里应分析的是损失函数空间
+\[
+ \mathcal F_\ell=\{z\mapsto\ell(w,z):w\in\mathcal W\},
+\]
+而不是不经说明就把预测函数空间的维度代入。相同预测函数配上不同损失，得到的损失函数
+空间也可能具有不同的有界性和复杂度。
+
+\begin{definition}[一般学习问题的一致收敛]
+\label{def:general-uniform-convergence}
+若对任意$\eta,\delta\in(0,1)$，存在整数$n_{\mathrm{uc}}(\eta,\delta)$，使任意
+允许分布$\mathcal P$及任意$n\geq n_{\mathrm{uc}}(\eta,\delta)$均满足
+\[
+ \mathbb P_{S\sim\mathcal P^n}\!\left\{
+ \sup_{w\in\mathcal W}|\hat R_S(w)-R_{\mathcal P}(w)|\leq\eta
+ \right\}\geq1-\delta,
+\]
+则称损失函数空间满足分布无关的一致收敛。
+\end{definition}
+
+样本量可以依赖决策空间、损失函数、精度和置信度，但不能随着未知的分布改变。
+这个定义仍然要求所有决策同时满足估计精度。为判断实值损失能否满足它，需要把前章的
+打散推广到带阈值的数值比较。
+
+\subsection{伪维与胖打散维}
+
+二分类的打散固定一组输入，要求假设能够实现全部$2^m$种0、1预测。
+多分类中，Natarajan打散在每个输入处固定两个不同标签，再要求实现两者的全部选择组合。
+这两种定义都在检查同一件事：不同输入上的两种答案能否独立选择。
+
+实值输出需要改变“两种答案”的含义。例如温度预测可能输出19.8、20.1或23，
+要求它精确等于两个指定数值，会忽略与这些数值接近的预测。实数还具有大小关系，
+因此可以固定一个阈值，把两种答案改为“高于阈值”和“低于阈值”。
+这既保留了独立二元选择的结构，又不要求函数恰好输出预先指定的两个数值。
+
+具体地，在第一天$x_1$指定20度，在第二天$x_2$指定25度。
+若函数空间能分别给出“都低于”“第一天高于、第二天低于”“第一天低于、第二天高于”
+和“都高于”这四种预测，就能相对于这两个阈值打散两个输入。
+这称为伪打散（pseudo-shattering），能够伪打散的最大输入数目称为伪维
+（pseudo-dimension）。每个输入的阈值可以不同，但必须在检验全部组合之前固定，
+不能为不同组合重新选择阈值。
+
+\begin{definition}[伪打散]
+\label{def:pseudo-shattering}
+设$\mathcal F\subseteq\mathbb R^X$。若有限集$C=\{x_1,\ldots,x_m\}$存在
+$r_1,\ldots,r_m\in\mathbb R$，使任意$b\in\{0,1\}^m$均对应某个$f_b\in\mathcal F$满足
+\[
+ b_i=1\Rightarrow f_b(x_i)>r_i,\qquad
+ b_i=0\Rightarrow f_b(x_i)<r_i\quad(1\leq i\leq m),
+\]
+则称$C$被$\mathcal F$伪打散。
+\end{definition}
+
+\begin{definition}[伪维]
+\label{def:pseudo-dimension}
+函数空间$\mathcal F$的伪维定义为
+\[
+ \operatorname{Pdim}(\mathcal F)
+ =\sup\{|C|:C\subseteq X\text{为被}\mathcal F\text{伪打散的有限集}\}.
+\]
+\end{definition}
+
+当函数只取0和1时，只要一个输入能实现阈值两侧的选择，该阈值就必须位于0与1之间。
+反过来，取阈值$1/2$便把0、1预测转成低、高选择。因此，对二值函数空间有
+$\operatorname{Pdim}(\mathcal F)=\operatorname{VC}(\mathcal F)$。
+伪维是VC维向实值函数的推广。它与Natarajan维的区别在于，前者使用数值的大小关系，
+后者只要求两个类别标签不同；给类别随意编号后计算伪维，通常不能代替多分类维度。
+实值函数却有新的问题：以20为阈值，$20.001$与$19.999$已经处于两侧，但在精度为1的
+风险估计中，这样小的差异不应与相差数度的预测同等看待。
+胖打散在阈值两侧各留出宽度$\gamma$，只计算能够跨过这段间隔的独立变化。
+
+\begin{definition}[胖打散]
+\label{def:fat-shattering}
+给定$\gamma>0$。若有限集$C=\{x_1,\ldots,x_m\}$存在实数$r_1,\ldots,r_m$，
+使任意$b\in\{0,1\}^m$均对应某个$f_b\in\mathcal F$满足
+\begin{equation}
+ b_i=1\Rightarrow f_b(x_i)\geq r_i+\gamma,\qquad
+ b_i=0\Rightarrow f_b(x_i)\leq r_i-\gamma,
+ \label{eq:fat-shattering}
+\end{equation}
+则称$C$在尺度$\gamma$下被$\mathcal F$胖打散。
+\end{definition}
+
+\begin{definition}[胖打散维]
+\label{def:fat-shattering-dimension}
+函数空间$\mathcal F$在尺度$\gamma>0$下的胖打散维定义为
+\[
+ \operatorname{fat}_{\gamma}(\mathcal F)
+ =\sup\{|C|:C\subseteq X\text{为在尺度}\gamma\text{下被}\mathcal F
+ \text{胖打散的有限集}\}.
+\]
+\end{definition}
+
+图~\ref{fig:fat-shattering-example}使用一个只有两个输入、四个函数的空间。
+每个函数在$x_1,x_2$处分别输出$1/4$或$3/4$，四种组合全部存在。
+取$r_1=r_2=1/2$和$\gamma=1/4$，每个点都能独立落在阈值下方或上方，且距离恰为
+$1/4$，所以这两个点被胖打散。输入空间只有两个点，故该尺度的胖打散维恰为2。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/learning-theory-fat-shattering}
+ \caption{四个函数共同实现两个输入的全部高低组合。虚线是阈值$1/2$，阴影带上下边界
+ 为$1/4$和$3/4$，圆点表示函数值。每幅小图对应一个函数，而不是一个函数同时给出四种答案。}
+ \label{fig:fat-shattering-example}
+\end{figure}
+\FloatBarrier
+
+若把$\gamma$增大到$0.3$，同一输入处要实现两侧选择，两个函数值之间至少需相差
+$0.6$；但此处最大差值只有$0.5$。无论怎样移动阈值，都不能打散一个点，因此胖打散维
+变成0。这个例子说明，尺度越大，打散要求越严格；伪维只记录是否能分开，胖打散维
+还记录能分开多远。
+
+尺度也能使无限伪维变得可控。令$X=\mathbb N$，允许每个$f(i)$独立取0或$1/i$。
+任意有限输入集都能用阈值$1/(2i)$伪打散，故伪维无限。
+但在尺度$\gamma$下，只有满足$1/i\geq2\gamma$的输入能实现两侧选择。因此
+\[
+ \operatorname{fat}_{\gamma}(\mathcal F)=\left\lfloor\frac1{2\gamma}\right\rfloor<\infty.
+\]
+越靠后的输入允许变化的幅度越小；固定一个正精度以后，需要区分的输入数目就有限了。
+
+\subsection{一致收敛与期望风险}
+
+对有界实值函数，所有正尺度下的胖打散维决定是否一致收敛。
+以下使用取值范围$[0,1]$；一般有界区间可先平移缩放。损失无界时还需要尾部条件，
+不能只检查维度。这里及下文均假定涉及的上确界、算法和期望满足所需可测性条件。
+
+\begin{theorem}[胖打散维与一致收敛]
+\label{thm:fat-uniform-convergence}
+设$(X,\mathcal A)$为可测空间，$\mathcal F$为非空的$[0,1]$值可测函数空间。
+假定存在可数子空间$\mathcal F_0\subseteq\mathcal F$，使每个$f\in\mathcal F$都是
+$\mathcal F_0$中某个函数序列的逐点极限。则以下两个命题等价：
+\begin{enumerate}
+ \item 对每个$\gamma>0$，$\operatorname{fat}_{\gamma}(\mathcal F)<\infty$。
+ \item 对任意$\eta,\delta\in(0,1)$，存在整数$n_0=n_0(\mathcal F,\eta,\delta)$，
+ 使任意$X$上的概率分布$\mathcal P$和任意$n\geq n_0$均满足
+ \[
+ \mathbb P_{(x_1,\ldots,x_n)\sim\mathcal P^n}\!\left\{
+ \sup_{f\in\mathcal F}
+ \left|\frac1n\sum_{i=1}^n f(x_i)-\mathbb E_{x\sim\mathcal P}f(x)\right|
+ >\eta\right\}\leq\delta.
+ \]
+\end{enumerate}
+\end{theorem}
+
+第二条明确要求同一个$n_0$适用于所有分布，而不是先固定分布再选择样本量。
+第一条要求每个正尺度的维度分别有限，并不要求它们具有共同的有限上界。
+定理中的可数逼近条件用于保证上确界的可测性；当$\mathcal F$本身可数时，直接取
+$\mathcal F_0=\mathcal F$即可。在有界条件下，逐点逼近也保证期望收敛，因此可以通过
+可数子空间处理第二条的概率事件。把$X$换成观测空间$Z$，并令$\mathcal F=\mathcal F_\ell$，
+就得到损失函数空间的一致收敛结论；使用前须检查同样的有界性与可测性条件。
+
+这是实值函数的尺度敏感维度定理，完整证明需要实值函数覆盖数的组合估计
+\scite{colomboni2023fat}其充分性沿用前章的副样本方法，但不再精确计数不同预测向量：
+在固定的有限样本上，将数值足够接近的损失向量放在同一组，用一个代表近似一组函数。
+有限胖打散维保证在给定精度下只需要受控数目的代表；再对代表应用集中不等式，并加入
+近似误差，就能同时控制全部函数。必要性则利用某个固定正尺度上任意大的打散集，
+构造经验平均与总体平均不能同时接近的分布。本章引用这一组合定理，不将上述思路
+作为覆盖数估计的完整证明。
+
+有限伪维是一个方便的充分条件，因为胖打散必然也是伪打散；但前面的$0$或$1/i$例子
+说明，伪维无限并不排除一致收敛。实际估计时，也可以使用第~\ref{chap:binary-learnability}章的Rademacher复杂度，
+直接根据样本上的函数取值给出期望风险上界。
+
+\begin{theorem}[一致收敛推出一般学习保证]
+\label{thm:general-uniform-pac}
+若一份样本及算法输出满足
+\[
+ \sup_w|\hat R_S(w)-R_{\mathcal P}(w)|\leq\eta,\qquad
+ \hat R_S(A(S))\leq\inf_w\hat R_S(w)+\alpha,
+\]
+则
+\[
+ R_{\mathcal P}(A(S))\leq\inf_w R_{\mathcal P}(w)+2\eta+\alpha.
+\]
+若损失函数空间满足分布无关的一致收敛，且算法对每份样本都满足上述经验优化条件，
+其中$\alpha=\alpha_n$以不依赖数据分布的速率趋于零，则该算法分布无关PAC学习此问题。
+\end{theorem}
+\begin{proof}
+对任意固定比较决策$w$，依次比较期望风险、经验风险和经验最优值，得到
+\begin{align*}
+ R_{\mathcal P}(A(S))&\leq\hat R_S(A(S))+\eta\\
+ &\leq\hat R_S(w)+\alpha+\eta\\
+ &\leq R_{\mathcal P}(w)+\alpha+2\eta.
+\end{align*}
+对$w$取下确界即可。取$\eta\leq\varepsilon/4$、$\alpha\leq\varepsilon/2$，
+并让一致收敛事件的概率至少为$1-\delta$，便得到PAC保证。
+\end{proof}
+
+这个推导不依赖凸性，只使用一致收敛和经验风险接近最优这两个条件。
+与多分类的讨论一样，得到充分条件以后，还需判断一致收敛是否也是可学习性的必要条件。
+
+\subsection{一致收敛不是必要条件}
+
+前一定理给出了一致收敛的充分作用，但它可能同时约束了算法根本不会选择的决策。
+以下一般学习问题把这种差别直接展示出来。
+令观测空间为$Z=[0,1]$，决策空间包含一个特殊决策$w_0$以及所有有限集合$C\subset[0,1]$，并令
+\[
+ \ell(w_0,z)=0,\qquad \ell(C,z)=\mathbb I\{z\notin C\}.
+\]
+$w_0$在任何观测上都不产生损失；有限集合决策只在观测属于该集合时不产生损失。
+
+\begin{theorem}[可学习性不推出一致收敛]
+\label{thm:general-learning-without-uniform}
+上述一般学习问题PAC可学习，但损失函数空间不满足分布无关的一致收敛。
+\end{theorem}
+\begin{proof}
+始终输出$w_0$的算法在每个分布下都具有零期望风险，因此达到最优。
+另一方面，令$\mathcal P$为$[0,1]$上的均匀分布。对任何有限样本$S$，
+记其出现过的观测构成的集合为$C_S$，则
+\[
+ \hat R_S(C_S)=0,\qquad R_{\mathcal P}(C_S)=1.
+\]
+前者因为每个样本点都属于$C_S$，后者因为有限点集在连续均匀分布下的概率为零。
+因此全体决策的最大经验风险与期望风险之差恒为1，不可能一致收敛。
+\end{proof}
+
+在这个固定的决策空间中，可以比较两个算法：一个始终输出$w_0$，另一个输出样本点
+组成的集合$C_S$。两者的经验风险都为零，因而都属于ERM；但在均匀分布下，前者的
+期望风险为零，后者的期望风险为1。差别来自算法怎样在多个经验最优决策之间作出选择。
+要保证前一个算法能够学习，并不需要从决策空间中删除所有$C_S$，只需要算法始终
+选择已有的最优决策$w_0$。
+
+这个人为构造的例子用于区分可学习性与一致收敛，不与二分类基本定理冲突。
+此处损失已经固定，允许分布作用于观测$z$；二分类的分布无关保证则允许任意输入与
+标签的联合分布。既然一般学习问题中的成功可能依赖具体的选择方式，接下来就需要
+考察算法本身的性质。
+
+\section{算法稳定性与可学习性}
+\label{sec:algorithmic-stability}
+
+上一节的两个ERM使用同一个决策空间，却有不同的期望风险。这说明，只描述哪些决策
+可以被选择，还不足以解释一个具体算法的泛化行为。算法稳定性进一步考察样本与
+输出之间的关系：删除或替换一个观测后，最终输出的损失会改变多少。
+它是算法相对于给定损失函数的性质；即使决策空间不变，改变优化方法，或者改变
+多个决策具有相同经验风险时的选择方式，也可能改变稳定性。
+
+留一法删除一个观测；替换分析则保持样本量不变，既可以要求所有相邻样本上的损失变化都小，
+也可以只控制随机抽样下的平均变化。若算法输出的是参数，还可以先研究参数的变化，
+再借助损失函数的性质得到损失变化的上界。信息论还允许直接研究输出与样本之间的依赖。
+这些稳定性条件都需要与经验最优性结合，
+才能推出可学习性；本节的基本论证不要求损失凸。
+
+这里需要区分两种误差。\term{期望泛化差}对训练样本取期望，衡量经验风险平均低估了
+多少期望风险，其表达式为
+\[
+ \mathbb E_S[R_{\mathcal P}(A(S))-\hat R_S(A(S))].
+\]
+\term{超额期望风险}衡量输出距离决策空间中的最优表现还有多远，其表达式为
+\[
+ R_{\mathcal P}(A(S))-\inf_{w\in\mathcal W}R_{\mathcal P}(w).
+\]
+前者的绝对值小，只说明经验评价与总体评价在平均意义下接近；后者小，才说明算法学到了好的决策。
+下面对每一种稳定性分别说明它如何联系这两个量，以及在什么条件下得到PAC保证。
+
+\subsection{留一法稳定性}
+
+经验风险在训练时已经用过的观测上评价算法，期望风险则面对独立的新观测。
+连接两者的一种办法是暂时删去一个观测，用剩余样本训练，再在被删去的观测上评价。
+记$A_n$为使用$n$个观测的学习算法，$S^{\setminus i}$为从$S$中删除第$i$项后得到的样本。
+这样，$z_i$独立于$S^{\setminus i}$，对于$A_{n-1}(S^{\setminus i})$就是新观测。
+
+\begin{definition}[留一法风险估计]
+\label{def:loo-risk}
+对确定性学习算法序列$(A_n)_{n\geq1}$，$n\geq2$时的留一法风险估计定义为
+\[
+ \hat R_S^{\mathrm{loo}}(A)
+ =\frac1n\sum_{i=1}^n\ell(A_{n-1}(S^{\setminus i}),z_i).
+\]
+\end{definition}
+
+留一法需要在不同的删减样本上重新训练。它与经验风险的区别在于：评价$z_i$时，
+前者使用没见过$z_i$的决策，后者使用见过全部样本的决策。
+留一法稳定性（leave-one-out stability）衡量这两个决策在被删观测上的损失相差多少。
+
+\begin{definition}[平均留一法稳定性]
+\label{def:loo-stability}
+若对每个允许分布$\mathcal P$都有
+\[
+ \frac1n\sum_{i=1}^n\mathbb E_{S\sim\mathcal P^n}
+ \left|\ell(A_n(S),z_i)-\ell(A_{n-1}(S^{\setminus i}),z_i)\right|
+ \leq\beta_n^{\mathrm{loo}},
+\]
+则称算法序列具有速率$\beta_n^{\mathrm{loo}}$的分布无关平均留一法稳定性。
+\end{definition}
+
+这里平均的是样本和被删除的位置，只评价被删观测；并未要求每份样本、每个测试点都满足
+同一个损失差上界。文献中还有在概率或二阶矩意义下的留一法稳定性，本节明确采用上述
+平均绝对差版本\scite{bousquetelisseeff2002}
+
+例如，对$z_i\in[0,1]$输出样本均值，并使用绝对损失。删除第$i$项后的均值为
+$\bar z_{-i}$，有$\bar z-\bar z_{-i}=(z_i-\bar z_{-i})/n$，故两次输出的距离不超过$1/n$。
+绝对损失的三角不等式随即给出$\beta_n^{\mathrm{loo}}\leq1/n$。
+这个例子检验的是稳定性，并不声称样本均值最小化绝对损失。
+
+\begin{theorem}[留一法稳定性与期望风险]
+\label{thm:loo-risk}
+设相关损失可积，算法序列具有速率$\beta_n^{\mathrm{loo}}$的平均留一法稳定性。
+对$S\sim\mathcal P^n$及$T\sim\mathcal P^{n-1}$，有
+\[
+ \left|\mathbb E_T R_{\mathcal P}(A_{n-1}(T))
+       -\mathbb E_S\hat R_S(A_n(S))\right|\leq\beta_n^{\mathrm{loo}}.
+\]
+\end{theorem}
+\begin{proof}
+被删去的$z_i$独立于$S^{\setminus i}$，所以
+\[
+ \mathbb E_S\hat R_S^{\mathrm{loo}}(A)
+ =\mathbb E_{T\sim\mathcal P^{n-1}}R_{\mathcal P}(A_{n-1}(T)).
+\]
+两侧减去$\mathbb E_S\hat R_S(A_n(S))$，再对左侧取绝对值。
+三角不等式将它控制为各项删除前后损失绝对差的平均，至多为$\beta_n^{\mathrm{loo}}$。
+\end{proof}
+
+这条结论把$n$个观测上的经验风险联系到使用$n-1$个观测训练后的期望风险。
+样本量相差1，是因为独立评价需要留出一个观测；它不是同一个$A_n$的期望泛化差上界。
+即使这个差很小，经验风险本身仍可能很大。要说明算法能够学习，还须保证它在样本上的
+表现接近决策空间中可达到的最优表现。
+
+\begin{theorem}[留一法稳定性与可学习性]
+\label{thm:loo-learning}
+设$A_n(S)\in\mathcal W$，相关损失可积，算法序列具有分布无关平均留一法稳定性
+$\beta_n^{\mathrm{loo}}$，且对所有允许分布都有
+\[
+ \mathbb E_S\left[\hat R_S(A_n(S))-\inf_{w\in\mathcal W}\hat R_S(w)\right]
+ \leq\rho_n.
+\]
+则对$T\sim\mathcal P^{n-1}$，
+\[
+ \mathbb E_T R_{\mathcal P}(A_{n-1}(T))-
+ \inf_{w\in\mathcal W}R_{\mathcal P}(w)
+ \leq\beta_n^{\mathrm{loo}}+\rho_n.
+\]
+若$\beta_n^{\mathrm{loo}}\to0$且$\rho_n\to0$，则该算法序列PAC学习此问题。
+使用$m$个观测达到精度$\varepsilon$与置信度$1-\delta$的一个充分条件是
+$\beta_{m+1}^{\mathrm{loo}}+\rho_{m+1}\leq\varepsilon\delta$。
+\end{theorem}
+\begin{proof}
+对任意不依赖样本的$w\in\mathcal W$，经验优化误差条件给出
+\[
+ \mathbb E_S\hat R_S(A_n(S))
+ \leq\mathbb E_S\hat R_S(w)+\rho_n=R_{\mathcal P}(w)+\rho_n.
+\]
+代入定理~\ref{thm:loo-risk}，再对$w$取下确界，得到超额期望风险的期望上界。
+对非负的超额期望风险应用Markov不等式，失败概率至多为
+$(\beta_n^{\mathrm{loo}}+\rho_n)/\varepsilon$。令$m=n-1$即得所述样本量条件。
+\end{proof}
+
+留一法稳定性控制独立评价与经验评价之间的差，$\rho_n$控制经验拟合是否足够好。
+两者以不依赖分布的速率趋于零，共同给出可学习性的充分条件。
+后面的必要性刻画采用保持样本量不变的替换型稳定性，不能直接套用到这里的删除型定义上。
+
+\subsection{均匀稳定性}
+\label{sec:stability-characterization}
+
+留一法在被删除的观测处作平均比较。若希望对每份样本和每个测试观测都控制损失变化，
+就需要均匀稳定性（uniform stability）。下面采用替换一个观测的定义。
+
+称$S$和$S^{(i)}$相邻，如果它们只有第$i$个观测不同。稳定性比较在两个相邻样本上运行
+同一算法所得的预测损失。
+
+图~\ref{fig:learning-stability}展示了稳定性所做的思想实验。我们不比较两批完全独立的
+样本，而只替换一个观测，并让算法的其他设置保持不变。如果这一个局部改动就能使任意
+测试点上的损失大幅变化，训练结果就会对某个样本的偶然出现敏感；反之，若每个单点影响都很
+小，训练样本中的自我影响便能被逐项换成独立样本，从而导出泛化结论。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/learning-theory-stability}
+  \caption{算法稳定性的相邻样本实验。两批样本只替换一个观测，在相同算法下产生两个
+  输出；均匀稳定性要求它们在任意测试点上的损失差都不超过$\beta_n$。}
+  \label{fig:learning-stability}
+\end{figure*}
+
+均匀稳定性要求所有相邻样本、所有测试观测上的损失变化都满足同一个上界。
+
+\begin{definition}[均匀稳定性]
+\label{def:uniform-stability}
+若对任意相邻$S,S'$和任意$z\in Z$都有
+\begin{equation}
+ |\ell(A(S),z)-\ell(A(S'),z)|\leq\beta_n,
+ \label{eq:uniform-stability}
+\end{equation}
+则称算法$A$具有$\beta_n$均匀稳定性。
+\end{definition}
+
+这里$A$表示固定样本量$n$时的算法$A_n$。均匀稳定性与一致收敛约束的对象不同：
+前者比较相邻样本产生的两个输出，后者同时比较整个决策空间的经验风险与期望风险。
+
+删除与替换也不能直接互换。若一个算法只按样本量奇偶输出两个不同常量，则同一$n$下
+替换任何观测都不改变输出，但删除一个观测会使输出跳变。因此替换型均匀稳定性本身
+不保证留一法稳定性。若另有对所有测试观测成立的均匀删除稳定性，则可从两份相邻样本中
+各删去被替换的位置，得到同一份$n-1$项样本，再用三角不等式得到至多两倍的替换稳定性上界。
+
+例如，观测$z_i\in[0,1]$，算法输出样本均值$A(S)=\bar z$，用绝对误差$\ell(w,z)=|w-z|$评价输出。替换一条观测最多使均值改变$1/n$。对同一个测试观测$z$，三角不等式给出
+\[
+ \bigl||\bar z-z|-|\bar z'-z|\bigr|\leq|\bar z-\bar z'|\leq\frac1n.
+\]
+因此这个算法具有$1/n$均匀稳定性。这里仅用均值说明如何检查稳定性，并没有声称均值最小化绝对误差；经验拟合好坏还需要另行分析。
+
+\begin{theorem}[均匀稳定性与期望风险]
+\label{thm:stability-expected-generalization}
+设$S\sim\mathcal P^n$，相关损失可积。若$A$具有$\beta_n$均匀稳定性，则
+\begin{equation}
+ \left|\mathbb E_S\left[R_{\mathcal P}(A(S))-\hat R_S(A(S))\right]\right|
+ \leq\beta_n.
+ \label{eq:stability-expectation-bound}
+\end{equation}
+若进一步有$A(S)\in\mathcal W$，且
+\[
+ \mathbb E_S[\hat R_S(A(S))-\inf_{w\in\mathcal W}\hat R_S(w)]\leq\rho_n,
+\]
+则
+\[
+ \mathbb E_S R_{\mathcal P}(A(S))-\inf_{w\in\mathcal W}R_{\mathcal P}(w)
+ \leq\beta_n+\rho_n.
+\]
+\end{theorem}
+
+\begin{proof}
+取与$S$独立的$z_i'\sim\mathcal P$，令$S^{(i)}$把$z_i$替换为$z_i'$。交换$z_i$与$z_i'$不改变
+全部独立观测的联合分布，因而$(S,z_i)$与$(S^{(i)},z_i')$同分布。
+这使经验风险项可写成$\mathbb E\ell(A(S^{(i)}),z_i')$，而期望风险项为
+$\mathbb E\ell(A(S),z_i')$。因此
+\begin{align*}
+ &\mathbb E_S[R_{\mathcal P}(A(S))-\hat R_S(A(S))]\\
+ &=\frac1n\sum_i\mathbb E
+   [\ell(A(S),z_i')-\ell(A(S^{(i)}),z_i')]
+ \leq\beta_n.
+\end{align*}
+交换$S$与$S^{(i)}$得到反向界。
+
+对第二项结论，固定任意$w\in\mathcal W$。经验优化误差条件给出
+$\mathbb E_S\hat R_S(A(S))\leq\mathbb E_S\hat R_S(w)+\rho_n=R_{\mathcal P}(w)+\rho_n$。
+加上第一项结论给出的期望泛化差上界，再对$w$取下确界即可。
+\end{proof}
+
+替换前，$z_i'$是独立测试点；替换后，它是$S^{(i)}$中的训练点。
+可交换性保证后一个损失的期望正好等于原来的训练损失，稳定性则控制两个算法在同一个
+$z_i'$上的差异。证明不需要对整个决策空间取上确界，这正是它与一致收敛论证的区别。
+这里假定涉及的损失可积，以使期望与求和都有定义。
+
+这里控制的是先取平均、再取绝对值的泛化差，不是泛化差绝对值的平均，也不是每份样本上的保证。
+对随机算法$A(S,U)$，本章使用内部随机性平均后的均匀稳定性：
+\[
+ \sup_{S,S'\text{相邻},\,z\in Z}
+ \left|\mathbb E_U\ell(A(S,U),z)-\mathbb E_U\ell(A(S',U),z)\right|\leq\beta_n.
+\]
+其中$U$独立于样本。对前面的替换样本证明再取$U$的期望，便得到对$S,U$共同平均的
+泛化差上界。它不意味着每次随机运行都满足相同的损失差界。
+留一法也可用相同约定：先对损失取内部随机性的期望，再计算删除前后的平均绝对差。
+留一法风险恒等式及其学习保证仍然成立。
+
+均匀稳定性与可学习性的联系还需要$\rho_n$：如果$\beta_n\to0$，而算法的经验风险
+始终远高于最优值，就不能保证学到好的决策。当$\beta_n$和$\rho_n$都以不依赖分布的
+速率趋于零时，非负超额期望风险的期望不超过$\beta_n+\rho_n$，因此
+\[
+ \mathbb P\!\left\{R_{\mathcal P}(A(S))-
+ \inf_{w\in\mathcal W}R_{\mathcal P}(w)>\varepsilon\right\}
+ \leq\frac{\beta_n+\rho_n}{\varepsilon}.
+\]
+取$n$使$\beta_n+\rho_n\leq\varepsilon\delta$，便得到PAC保证。
+这证明均匀稳定性与经验最优性共同构成充分条件；它没有要求一个学习问题中每个成功算法
+都必须均匀稳定。
+
+上面的PAC保证还依赖经验优化误差。如果只希望用经验风险给期望风险加上一个
+高概率成立的上界，可以继续利用均匀稳定性控制泛化差的波动。
+在有界损失下，替换一个观测对整个泛化差的影响也有统一上界，从而能应用集中不等式。
+为区分算法随机性与样本随机性，下面先讨论确定性算法。
+
+\begin{theorem}[均匀稳定性的高概率泛化界]
+\label{thm:stability-high-probability}
+设$0\leq\ell\leq1$，确定性算法$A$具有替换型$\beta_n$均匀稳定性。
+则任意$\delta\in(0,1)$下，以至少$1-\delta$的样本概率，有
+\[
+ |R_{\mathcal P}(A(S))-\hat R_S(A(S))|
+ \leq\beta_n+(2n\beta_n+1)\sqrt{\frac{\log(2/\delta)}{2n}}.
+\]
+\end{theorem}
+\begin{proof}
+记$g(S)=R_{\mathcal P}(A(S))-\hat R_S(A(S))$。
+替换一个观测后，期望风险变化至多$\beta_n$；经验风险的$n-1$个共同观测各变化至多
+$\beta_n$，被替换项变化至多1。因此
+$|g(S)-g(S')|\leq2\beta_n+1/n$。
+对$n$个独立观测应用有界差分不等式，$g(S)$偏离其期望的绝对值以至少$1-\delta$的概率
+不超过$(2n\beta_n+1)\sqrt{\log(2/\delta)/(2n)}$。
+再使用$|\mathbb E g(S)|\leq\beta_n$即得结论。
+\end{proof}
+
+这条直接推导的界在$\beta_n=O(1/n)$时已有用，但当稳定性下降较慢时，
+$n\beta_n$因子会显得过大。更精细的集中分析将其改进为
+\[
+ |R_{\mathcal P}(A(S))-\hat R_S(A(S))|
+ \leq C\!\left(\beta_n\log(2n)\log\frac2\delta
+          +\sqrt{\frac{\log(2/\delta)}n}\right)
+\]
+的高概率界，其中$C$是通用常数。此处引用Bousquet、Klochkov与Zhivotovskiy的结果，
+不展开其高阶矩证明\scite{bousquet2020sharper}
+对随机算法，上述集中结论可应用于内部随机性平均后的损失；要控制单次随机输出，
+还需另行控制算法随机性，不能直接照搬。
+
+稳定性的充分条件回答了怎样验证一个算法；还可以进一步讨论：一个问题只要可学习，
+是否总能找到均匀稳定的算法。为此，需要把“经验风险接近最优”写成对每份样本成立的条件。
+
+\begin{definition}[始终渐近经验风险最小化]
+\label{def:aerm}
+设随机算法$A(S,U)$的输出属于$\mathcal W$，$U$独立于样本。
+若存在$\rho_n\to0$，使任意$S\in Z^n$均满足
+\[
+ \mathbb E_U\hat R_S(A(S,U))-\inf_{w\in\mathcal W}\hat R_S(w)\leq\rho_n,
+\]
+则称$A$为始终渐近经验风险最小化算法（always AERM）。
+\end{definition}
+
+“始终”要求每份样本都满足同一个经验优化误差上界，只对算法内部随机性取平均。
+若只要求对每个允许分布下的样本取期望后满足同一速率，则称分布无关AERM。
+下面的基本定理采用更强的始终AERM条件，给出均匀稳定性与可学习性的存在性关系
+\scite{shalevshwartz2010learnability}
+
+\begin{theorem}[一般学习基本定理：均匀稳定性与可学习性]
+\label{thm:general-stability-characterization}
+设$0\leq\ell(w,z)\leq1$，允许$Z$上的所有分布以及输出属于$\mathcal W$的随机算法，
+并假定所需可测性条件成立。则以下两个命题等价：
+\begin{enumerate}
+ \item 该问题分布无关PAC可学习；
+ \item 存在始终AERM算法，具有对内部随机性平均后的替换型均匀稳定性，
+ 且$\rho_n\to0$、$\beta_n\to0$。
+\end{enumerate}
+\end{theorem}
+\begin{proof}
+命题2蕴含命题1：由定理~\ref{thm:stability-expected-generalization}，
+超额期望风险的期望至多为$\beta_n+\rho_n$。它非负，故学习失败的概率至多为
+$(\beta_n+\rho_n)/\varepsilon$。两个速率均不依赖分布，得到PAC保证。
+
+为证明命题1蕴含命题2，设已有学习算法$B$。有界损失下，PAC保证蕴含某个分布无关的
+平均超额期望风险上界$a_k\to0$：把超额期望风险按成功和失败事件分开，其期望至多为
+$\varepsilon+\delta$，再令二者随样本量趋于零即可。
+
+构造一个新算法。给定$S$，从其$n$个位置中独立、有放回地抽取
+$k=\lfloor\sqrt n\rfloor$个位置，把抽出的序列$T$交给$B$，输出$B(T)$。
+固定$S$后，$T$是从经验分布$\mathcal P_S=n^{-1}\sum_i\delta_{z_i}$抽取的独立样本。
+这里$\delta_{z_i}$表示在$z_i$处取值的点质量分布，且
+$R_{\mathcal P_S}(w)=\hat R_S(w)$。将$B$的学习保证应用于$\mathcal P_S$，得到
+\[
+ \mathbb E_U\hat R_S(B(T))-\inf_w\hat R_S(w)\leq a_k.
+\]
+这对每份$S$都成立，因此新算法始终AERM，$\rho_n=a_k\to0$。
+
+再在两个相邻样本上使用相同抽样索引及$B$的相同内部随机数。
+如果$k$次抽样都没有选中被替换的位置，两次输入$T$完全相同，输出也相同。
+选中该位置的概率至多为$k/n$，而损失差至多为1，所以$\beta_n\leq k/n\to0$。
+新算法同时满足两项条件，必要性得证。
+\end{proof}
+
+必要性通过重新构造算法成立，不能据此断言原来的每个成功算法都均匀稳定。
+证明中的子样本算法用于建立存在性，并不保证最佳样本效率或计算效率。
+
+\subsection{平均稳定性}
+\label{sec:on-average-stability}
+
+均匀稳定性要求一个损失差上界适用于所有相邻样本和所有测试观测。
+但在定理~\ref{thm:stability-expected-generalization}的期望泛化差证明中，
+最终使用的是随机样本下的平均损失差。
+如果某些变化较大的样本很少出现，逐份样本取最坏情形就可能高估它们对期望泛化差的影响。
+因此，我们可以直接研究随机替换一个观测后，损失平均增加多少。
+
+仍令$S=(z_1,\ldots,z_n)\sim\mathcal P^n$，取独立新观测$z_i'\sim\mathcal P$，
+用它替换$z_i$得到$S^{(i)}$。这次把评价点固定为被替换出去的$z_i$：
+$A(S)$训练时使用了它，$A(S^{(i)})$训练时没有使用它。
+比较两者在$z_i$上的损失，就能衡量使用这个观测训练后，算法在该观测上获得了多少优势。
+对样本、新观测和替换位置取平均，得到\term{平均稳定性}（on-average stability）。
+下面采用平均替换稳定性的一侧定义，与《Understanding Machine Learning》第13章中的
+约定一致\scite{shalevshwartz2014}
+
+\begin{definition}[平均稳定性]
+\label{def:on-average-stability}
+设$U$为独立于所有观测的算法内部随机数，且相关损失可积。定义
+\begin{equation}
+ \gamma_n(A,\mathcal P)
+ =\frac1n\sum_{i=1}^n\mathbb E_{S,z_i',U}
+ \left[\ell(A(S^{(i)},U),z_i)-\ell(A(S,U),z_i)\right].
+ \label{eq:on-average-stability}
+\end{equation}
+给定$\bar\beta_n(\mathcal P)\geq0$，若
+$\gamma_n(A,\mathcal P)\leq\bar\beta_n(\mathcal P)$，则称算法在分布$\mathcal P$下具有
+速率$\bar\beta_n(\mathcal P)$的平均稳定性。
+若对所有允许分布均有$\gamma_n(A,\mathcal P)\leq\bar\beta_n$，且$\bar\beta_n$不依赖
+$\mathcal P$，则称算法具有速率$\bar\beta_n$的分布无关平均稳定性。
+\end{definition}
+
+确定性算法可以省略$U$。这里平均的是带正负号的损失差，允许不同样本上的增减相互抵消；
+定义只限制其平均增加量，没有要求每一次替换都几乎不影响损失。
+若改为对每个损失差取绝对值后再平均，就得到更强的条件。
+均匀稳定性可以推出本定义中的平均稳定性，反向推论一般不成立。
+它与平均留一法稳定性的区别也不只是名称：这里两次训练都使用$n$个观测，
+前面的留一法则比较$n$个与$n-1$个观测的训练结果。
+
+\begin{theorem}[平均稳定性与期望风险]
+\label{thm:on-average-generalization}
+在定义~\ref{def:on-average-stability}的条件下，
+\begin{equation}
+ \mathbb E_{S,U}\left[R_{\mathcal P}(A(S,U))-\hat R_S(A(S,U))\right]
+ =\gamma_n(A,\mathcal P).
+ \label{eq:on-average-generalization-identity}
+\end{equation}
+因此，速率为$\bar\beta_n(\mathcal P)$的平均稳定性保证
+\[
+ \mathbb E_{S,U}R_{\mathcal P}(A(S,U))
+ \leq\mathbb E_{S,U}\hat R_S(A(S,U))+\bar\beta_n(\mathcal P).
+\]
+\end{theorem}
+\begin{proof}
+替换后，$S^{(i)}$仍由$n$个独立同分布的观测组成，而且独立于被替换出去的$z_i$。
+在给定$S^{(i)}$和$U$时，对$z_i$取期望得到
+\[
+ \mathbb E_{z_i}\ell(A(S^{(i)},U),z_i)
+ =R_{\mathcal P}(A(S^{(i)},U)).
+\]
+再利用$S^{(i)}$与$S$同分布，得到
+$\mathbb E\ell(A(S^{(i)},U),z_i)=\mathbb E_{S,U}R_{\mathcal P}(A(S,U))$。
+另一方面，$n$个原观测上的损失平均恰好是经验风险，故
+\[
+ \frac1n\sum_{i=1}^n\mathbb E_{S,U}\ell(A(S,U),z_i)
+ =\mathbb E_{S,U}\hat R_S(A(S,U)).
+\]
+两式相减即得恒等式，再代入平均稳定性上界，得到期望风险的上界。
+\end{proof}
+
+这个恒等式说明，平均替换损失差恰好等于经验风险对期望风险的平均低估量。
+它提供的是对多次抽样和训练取平均后的关系。对于某一次训练结果，期望风险与经验风险
+之差仍可能超过这个上界；仅有这一关系，也不能推出泛化差绝对值的平均很小。
+对于某个固定分布得到的稳定性速率，还需要进一步取得不依赖分布的上界，才能用于
+分布无关的可学习性结论。
+
+平均稳定性给出了期望泛化差上界。与均匀稳定性一样，它还需要经验优化误差的控制，
+才能说明输出接近决策空间中的最优表现。
+
+\begin{theorem}[平均稳定性与可学习性]
+\label{thm:stable-approximate-erm}
+设相关损失可积，$A(S,U)\in\mathcal W$具有速率$\bar\beta_n$的分布无关平均稳定性，
+且对所有允许分布都有
+\[
+ \mathbb E_{S,U}[\hat R_S(A(S,U))-\inf_w\hat R_S(w)]\leq\rho_n.
+\]
+则
+\begin{equation}
+ \mathbb E_{S,U}R_{\mathcal P}(A(S,U))-
+ \inf_{w\in\mathcal W}R_{\mathcal P}(w)\leq\bar\beta_n+\rho_n.
+ \label{eq:stability-excess-risk}
+\end{equation}
+若$\bar\beta_n\to0$且$\rho_n\to0$，则算法PAC学习此问题。
+条件$\bar\beta_n+\rho_n\leq\varepsilon\delta$保证学习失败的概率不超过$\delta$。
+\end{theorem}
+\begin{proof}
+固定一个不依赖样本的$w$，将期望风险差分解为
+\begin{align*}
+ \mathbb E[R_{\mathcal P}(A(S,U))-R_{\mathcal P}(w)]
+ ={}&\mathbb E[R_{\mathcal P}(A(S,U))-\hat R_S(A(S,U))]\\
+ &+\mathbb E[\hat R_S(A(S,U))-\hat R_S(w)]\\
+ &+\mathbb E[\hat R_S(w)-R_{\mathcal P}(w)].
+\end{align*}
+三项分别不超过$\bar\beta_n$、$\rho_n$和0。第三项恰为零，因为固定决策的经验风险无偏。
+对$w$取下确界，再对非负的超额期望风险应用Markov不等式，得到两项结论。
+\end{proof}
+
+证明使用的是非负的超额期望风险，而不是直接对可能为负的泛化差应用Markov不等式。
+若只在某个固定分布下有相应上界，同样的推导给出该分布下的学习保证；
+要得到分布无关PAC结论，则须使两个速率都不依赖分布。
+
+均值估计可以具体展示这种分布依赖。令$z\in[0,1]$，算法输出$\bar z$，
+这次使用平方损失$\ell(w,z)=(w-z)^2$。记总体均值为$\mu$、方差为$\sigma^2$。
+对独立新观测，平方损失的期望为
+$R_{\mathcal P}(\bar z)=\sigma^2+(\bar z-\mu)^2$，因此
+\[
+ \mathbb E_S R_{\mathcal P}(\bar z)=\sigma^2+\frac{\sigma^2}{n}.
+\]
+样本内的恒等式
+$\sum_i(z_i-\bar z)^2=\sum_i(z_i-\mu)^2-n(\bar z-\mu)^2$
+则给出
+\[
+ \mathbb E_S\hat R_S(\bar z)=\sigma^2-\frac{\sigma^2}{n},
+ \qquad \gamma_n(A,\mathcal P)=\frac{2\sigma^2}{n}.
+\]
+数据越集中，替换观测所造成的平均损失变化就越小。
+若所有观测都等于同一个数，则$\sigma^2=0$，平均稳定性上界为零。
+若只利用$z\in[0,1]$这一范围条件，则$\sigma^2\leq1/4$给出分布无关上界$1/(2n)$。
+对$w,w',z\in[0,1]$，平方损失之差满足
+$|(w-z)^2-(w'-z)^2|=|w-w'||w+w'-2z|\leq2|w-w'|$。
+替换一个观测使均值变化至多$1/n$，所以同一算法的均匀稳定性可以用$2/n$控制。
+平均分析在这里保留了最坏情形分析忽略的方差信息。
+样本均值恰好最小化平方损失的经验风险，所以$\rho_n=0$。
+平均稳定性因此给出超额期望风险的期望上界$2\sigma^2/n$；直接计算的精确值为
+$\mathbb E(\bar z-\mu)^2=\sigma^2/n$。稳定性界在这个例子中给出了正确的收敛阶，
+但常数不一定最优。由$\sigma^2\leq1/4$，$n\geq1/(2\varepsilon\delta)$就是
+上述平均稳定性分析给出的PAC充分样本量。
+
+均匀稳定性比平均稳定性要求更强，但在“是否存在某个能够学习的算法”这个问题上，
+两者给出相同的答案。
+
+\begin{theorem}[一般学习基本定理的平均稳定性形式]
+\label{thm:average-stability-characterization}
+在定理~\ref{thm:general-stability-characterization}的条件下，该问题分布无关PAC可学习，
+当且仅当存在始终AERM算法，具有分布无关平均稳定性，且
+$\rho_n\to0$、$\bar\beta_n\to0$。
+\end{theorem}
+\begin{proof}
+充分性由定理~\ref{thm:stable-approximate-erm}给出。
+对于必要性，前面的基本定理保证可学习问题存在均匀稳定的始终AERM算法；
+均匀稳定性又蕴含平均稳定性，因此同一个算法满足这里的条件。
+\end{proof}
+
+这里比较的是算法的存在性。对于一个已经给定的算法，平均稳定性并不自动加强为
+均匀稳定性；上述等价关系也不把一侧期望保证变成逐样本保证。
+
+\subsection{参数稳定性}
+\label{sec:parameter-stability}
+
+前面的稳定性都比较损失。分析正则化或梯度下降时，我们往往先得到两次训练输出的参数
+相差多少，再判断这个距离会让损失改变多少。
+\term{参数稳定性}（argument stability，也称model stability）直接衡量前一个距离。
+它需要在决策空间上指定距离；本小节取$\mathcal W\subseteq\mathbb R^d$，
+用欧氏范数比较参数向量。平均参数稳定性在优化算法的精细泛化分析中尤为有用
+\scite{lei2020finegrained}
+
+\begin{definition}[均匀参数稳定性]
+\label{def:uniform-parameter-stability}
+设算法$A(S,U)\in\mathcal W\subseteq\mathbb R^d$。若对任意相邻样本$S,S'$都有
+\[
+ \mathbb E_U\|A(S,U)-A(S',U)\|_2\leq\alpha_n,
+\]
+则称算法具有速率$\alpha_n$的均匀参数稳定性。两次运行使用相同的内部随机数$U$。
+\end{definition}
+
+\begin{definition}[平均参数稳定性]
+\label{def:average-parameter-stability}
+沿用定义~\ref{def:on-average-stability}中的$S,S^{(i)}$和$U$。
+若
+\begin{equation}
+ \frac1n\sum_{i=1}^n\mathbb E_{S,z_i',U}
+ \|A(S,U)-A(S^{(i)},U)\|_2\leq\bar\alpha_n(\mathcal P),
+ \label{eq:average-parameter-stability}
+\end{equation}
+则称算法在分布$\mathcal P$下具有速率$\bar\alpha_n(\mathcal P)$的平均参数稳定性。
+若同一个上界适用于所有允许分布，则称其为分布无关平均参数稳定性。
+\end{definition}
+
+相同的$U$使比较只反映样本替换的影响。例如，在两份相邻样本上运行SGD时，使用相同
+的初始化和抽样索引序列。若改用两组独立随机数，即使样本完全相同，两次输出也可能不同，
+这种距离还混入了算法自身的随机波动。均匀参数稳定性要求每一对相邻样本都满足上界，
+平均参数稳定性则允许上界依赖这些样本在$\mathcal P$下的出现概率。
+
+沿用均值估计的例子，替换第$i$项得到
+$A(S^{(i)})-A(S)=(z_i'-z_i)/n$。当观测位于$[0,1]$时，均匀参数稳定性上界为$1/n$；
+平均参数稳定性却可以写成更具体的$\mathbb E|z-z'|/n$。
+若$z$以概率$p$取1、以概率$1-p$取0，独立的$z,z'$只有取值不同时才产生距离1，
+其概率为$2p(1-p)$，所以平均参数稳定性上界为$2p(1-p)/n$。
+这也解释了当数据几乎总取同一个值时，平均变化会远小于最坏情形变化。
+
+要把参数距离转为损失差，需要控制损失对参数变化的敏感程度。
+损失关于参数是$L$-Lipschitz，指对所有$\bm u,\bm v\in\mathcal W$和$z\in Z$都有
+\begin{equation}
+ |\ell(\bm u,z)-\ell(\bm v,z)|\leq L\|\bm u-\bm v\|_2.
+ \label{eq:parameter-loss-lipschitz}
+\end{equation}
+它保证参数移动距离$r$时，任何一个观测上的损失变化都不超过$Lr$。
+因此，参数距离可以先转换为损失差，再用于比较经验风险与期望风险。
+
+\begin{theorem}[参数稳定性与损失稳定性]
+\label{thm:parameter-to-loss-stability}
+设相关损失可积，且式~\eqref{eq:parameter-loss-lipschitz}成立。
+若算法具有$\alpha_n$均匀参数稳定性，则它具有对内部随机性平均后的
+$L\alpha_n$均匀稳定性。
+若算法在$\mathcal P$下具有$\bar\alpha_n(\mathcal P)$平均参数稳定性，则
+它具有速率$L\bar\alpha_n(\mathcal P)$的平均稳定性。
+\end{theorem}
+\begin{proof}
+对任意相邻样本和任意观测，Lipschitz条件给出
+\[
+ \left|\mathbb E_U\ell(A(S,U),z)-\mathbb E_U\ell(A(S',U),z)\right|
+ \leq L\mathbb E_U\|A(S,U)-A(S',U)\|_2.
+\]
+代入均匀参数稳定性上界得到第一项结论。
+对于平均稳定性，对定义~\ref{def:on-average-stability}中的损失差逐项取绝对值，
+再使用Lipschitz条件，得到
+\[
+ |\gamma_n(A,\mathcal P)|
+ \leq\frac Ln\sum_{i=1}^n\mathbb E_{S,z_i',U}
+       \|A(S^{(i)},U)-A(S,U)\|_2
+ \leq L\bar\alpha_n(\mathcal P).
+\]
+这也给出了平均稳定性所需的一侧上界。
+\end{proof}
+
+这个转换使前面的损失稳定性结论可以用于参数化算法。具体到期望风险与经验风险的偏差，需要区分
+一次训练后的泛化差$R_{\mathcal P}(A(S,U))-\hat R_S(A(S,U))$，以及对样本和算法随机性
+取平均得到的期望泛化差。平均参数稳定性直接控制后一个量，从而说明经验风险平均
+低估或高估期望风险的程度。
+
+\begin{theorem}[参数稳定性与期望泛化差]
+\label{thm:parameter-expected-generalization}
+设$S\sim\mathcal P^n$，$U$独立于样本，相关损失可积，且损失关于参数满足
+式~\eqref{eq:parameter-loss-lipschitz}。若算法在$\mathcal P$下具有速率
+$\bar\alpha_n(\mathcal P)$的平均参数稳定性，则
+\begin{equation}
+ \left|\mathbb E_{S,U}
+ [R_{\mathcal P}(A(S,U))-\hat R_S(A(S,U))]\right|
+ \leq L\bar\alpha_n(\mathcal P).
+ \label{eq:parameter-generalization}
+\end{equation}
+特别地，期望风险满足
+\[
+ \mathbb E_{S,U}R_{\mathcal P}(A(S,U))
+ \leq\mathbb E_{S,U}\hat R_S(A(S,U))+L\bar\alpha_n(\mathcal P).
+\]
+若已知均匀参数稳定性上界$\alpha_n$，则可将两式中的
+$\bar\alpha_n(\mathcal P)$替换为$\alpha_n$。
+\end{theorem}
+\begin{proof}
+替换样本恒等式~\eqref{eq:on-average-generalization-identity}给出
+\[
+ \mathbb E_{S,U}[R_{\mathcal P}(A(S,U))-\hat R_S(A(S,U))]
+ =\gamma_n(A,\mathcal P).
+\]
+前一定理的证明已经得到$|\gamma_n(A,\mathcal P)|\leq L\bar\alpha_n(\mathcal P)$，
+故第一式成立。取其上侧不等式，并把平均经验风险移到右侧，即得第二式。
+均匀参数稳定性对每对相邻样本都成立，对这些样本取平均后仍成立，故可取
+$\bar\alpha_n(\mathcal P)\leq\alpha_n$。
+\end{proof}
+
+这里先对泛化差取期望，再取绝对值，不同训练结果的正负偏差仍可能相互抵消。
+因此，$L\bar\alpha_n(\mathcal P)$不能直接作为某一次训练的泛化差绝对值上界。
+如果希望在观察一份样本之后，用它的经验风险给期望风险加上高概率成立的上界，
+则可以使用更强的均匀参数稳定性，并对损失的取值范围作出限制。
+
+\begin{theorem}[均匀参数稳定性的高概率泛化界]
+\label{thm:parameter-high-probability}
+设$S\sim\mathcal P^n$，$0\leq\ell\leq1$，损失关于参数满足式~\eqref{eq:parameter-loss-lipschitz}，
+且确定性算法$A$具有速率$\alpha_n$的均匀参数稳定性。
+对任意$\delta\in(0,1)$，以至少$1-\delta$的样本概率，有
+\begin{align*}
+ |R_{\mathcal P}(A(S))-\hat R_S(A(S))|
+ \leq{}&L\alpha_n\\
+ &+(2nL\alpha_n+1)\sqrt{\frac{\log(2/\delta)}{2n}}.
+\end{align*}
+\end{theorem}
+\begin{proof}
+由定理~\ref{thm:parameter-to-loss-stability}，该算法具有$L\alpha_n$均匀稳定性。
+将$\beta_n=L\alpha_n$代入定理~\ref{thm:stability-high-probability}即得结论。
+\end{proof}
+
+当$L$固定且$\alpha_n=O(1/n)$时，这个高概率上界随样本量增加而趋于零。
+较慢的稳定性速率可能需要前文介绍的精细集中分析，不能仅凭$\alpha_n\to0$
+就断定上述公式右侧趋于零。对于随机算法，定义~\ref{def:uniform-parameter-stability}
+只控制内部随机性平均后的参数距离；它可用于分析对内部随机性平均后的损失，
+但不能直接给出单次随机输出的上述高概率保证。
+
+泛化差小表示经验评价接近期望风险，却没有说明这个共同的数值是否足够低。
+例如，在$[0,1]$上使用平方损失并始终输出0，参数稳定性上界为零。
+若观测恒为1，其经验风险和期望风险都等于1，泛化差为零；决策1的期望风险却为零。
+这个算法没有学习成功，因为它没有降低经验风险。要得到可学习性，还需要保证算法
+输出的经验风险接近决策空间内的最优经验风险。
+
+\begin{theorem}[参数稳定性与可学习性]
+\label{thm:parameter-stability-learning}
+设$A(S,U)\in\mathcal W$，相关损失可积，损失关于参数满足
+式~\eqref{eq:parameter-loss-lipschitz}，其中$L$不依赖分布或样本量。
+若对所有允许分布，算法均具有平均参数稳定性上界$\bar\alpha_n$，且满足
+\[
+ \mathbb E_{S,U}\!\left[\hat R_S(A(S,U))-
+ \inf_{\bm w\in\mathcal W}\hat R_S(\bm w)\right]\leq\rho_n,
+\]
+其中$\bar\alpha_n,\rho_n$均不依赖分布，则
+\[
+ \mathbb E_{S,U}R_{\mathcal P}(A(S,U))-
+ \inf_{\bm w\in\mathcal W}R_{\mathcal P}(\bm w)
+ \leq L\bar\alpha_n+\rho_n.
+\]
+若$\bar\alpha_n\to0$且$\rho_n\to0$，则算法分布无关PAC学习此问题。
+具体地，$L\bar\alpha_n+\rho_n\leq\varepsilon\delta$是达到精度$\varepsilon$与
+置信度$1-\delta$的充分样本量条件。均匀参数稳定性下可用$\alpha_n$替换$\bar\alpha_n$。
+\end{theorem}
+\begin{proof}
+对任意不依赖样本的$\bm w\in\mathcal W$，经验优化误差条件给出
+\[
+ \mathbb E_{S,U}\hat R_S(A(S,U))
+ \leq\mathbb E_S\hat R_S(\bm w)+\rho_n
+ =R_{\mathcal P}(\bm w)+\rho_n.
+\]
+将它代入定理~\ref{thm:parameter-expected-generalization}的期望风险上界，再对
+$\bm w$取下确界，得到第一项结论。输出属于$\mathcal W$，所以超额期望风险非负；
+Markov不等式给出
+\[
+ \mathbb P_{S,U}\!\left\{R_{\mathcal P}(A(S,U))-
+ \inf_{\bm w\in\mathcal W}R_{\mathcal P}(\bm w)>\varepsilon\right\}
+ \leq\frac{L\bar\alpha_n+\rho_n}{\varepsilon}.
+\]
+令右侧不超过$\delta$，即得充分样本量条件。两个速率均不依赖分布并趋于零，
+因此对每个$\varepsilon,\delta$都能找到适用于所有允许分布的样本量。
+\end{proof}
+
+此处的PAC保证通过非负的超额期望风险得到，与前一个定理控制泛化差绝对值的方法不同。
+因此，推出可学习性不需要先证明那个高概率泛化界趋于零。
+若参数稳定性和经验优化误差的上界只在某个固定分布下成立，相同证明给出该分布下的
+学习保证；分布无关PAC结论则需要定理中的统一上界。
+
+这些关系可以在前面的均值例子中同时算出。令$z$以概率$p$取1、以概率$1-p$取0，
+$\mathcal W=[0,1]$，算法输出样本均值，并采用平方损失。
+在这个区域上可取$L=2$，而前面已得到$\bar\alpha_n(\mathcal P)=2p(1-p)/n$。
+样本均值最小化平方损失的经验风险，所以$\rho_n=0$。
+定理~\ref{thm:parameter-expected-generalization}与定理~\ref{thm:parameter-stability-learning}
+分别给出
+\begin{align*}
+ \left|\mathbb E[R_{\mathcal P}(\bar z)-\hat R_S(\bar z)]\right|
+ &\leq\frac{4p(1-p)}n,\\
+ \mathbb E R_{\mathcal P}(\bar z)-\inf_{w\in[0,1]}R_{\mathcal P}(w)
+ &\leq\frac{4p(1-p)}n.
+\end{align*}
+虽然两个上界相同，左侧衡量的对象不同：第一式比较经验评价与总体评价，第二式比较
+输出与最优决策。由$p(1-p)\leq1/4$，$n\geq1/(\varepsilon\delta)$是这条参数稳定性
+分析给出的分布无关PAC充分样本量。前面直接计算平均损失变化得到了更小的常数；
+先用统一的Lipschitz常数转换参数距离，可能使上界更宽松。
+
+Lipschitz条件在这里承担了必要的连接作用。例如，分类器
+$h_w(x)=\mathbf1\{x\geq w\}$的参数从$-a$变为$a$时，距离只有$2a$；
+但在$x=0,y=1$处，零一损失从0变为1，无论$a>0$多小都如此。
+因此，参数接近本身不能保证零一损失接近。
+反过来，损失稳定也不要求所有参数坐标都稳定：若
+$\ell((a,b),z)=(a-z)^2$完全不使用$b$，改变$b$不会改变任何损失。
+参数稳定性依赖参数表示和所选距离；不能要求每个成功的学习算法都满足它。
+
+平方损失在无界参数空间上没有统一的Lipschitz常数。为处理这类问题，可以改为控制
+参数距离的平方平均，并利用损失的光滑性。记
+\[
+ b_n^2(\mathcal P)
+ =\frac1n\sum_{i=1}^n\mathbb E_{S,z_i',U}
+       \|A(S^{(i)},U)-A(S,U)\|_2^2.
+\]
+$b_n(\mathcal P)$是参数距离的均方根。Cauchy--Schwarz不等式保证
+式~\eqref{eq:average-parameter-stability}左侧不超过$b_n(\mathcal P)$，
+因此控制均方根比只控制平均距离更强。下面的结果说明这种额外控制能带来什么。
+
+\begin{theorem}[光滑损失下参数稳定性与期望泛化差]
+\label{thm:smooth-parameter-generalization}
+设$\mathcal W=\mathbb R^d$，算法$A$输出其中的参数。对任意$z$，$\ell(\cdot,z)$在$\mathbb R^d$上
+非负、可微且$M$-光滑，其中$M>0$，即
+\[
+ \|\nabla\ell(\bm u,z)-\nabla\ell(\bm v,z)\|_2
+ \leq M\|\bm u-\bm v\|_2.
+\]
+设相关损失可积，$b_n(\mathcal P)<\infty$，并记
+$r_n=\mathbb E_{S,U}\hat R_S(A(S,U))<\infty$。则
+\begin{equation}
+ \mathbb E_{S,U}[R_{\mathcal P}(A(S,U))-\hat R_S(A(S,U))]
+ \leq b_n(\mathcal P)\sqrt{2Mr_n}+\frac M2 b_n^2(\mathcal P).
+ \label{eq:smooth-parameter-generalization}
+\end{equation}
+\end{theorem}
+\begin{proof}
+光滑性意味着对任意$\bm u,\bm v$都有
+\[
+ \ell(\bm v,z)\leq\ell(\bm u,z)
+ +\langle\nabla\ell(\bm u,z),\bm v-\bm u\rangle
+ +\frac M2\|\bm v-\bm u\|_2^2.
+\]
+令$\bm v=\bm u-\nabla\ell(\bm u,z)/M$，并利用左侧非负，得到
+$\|\nabla\ell(\bm u,z)\|_2^2\leq2M\ell(\bm u,z)$。
+再令$\bm u=A(S,U)$、$\bm v=A(S^{(i)},U)$，对$z_i$使用同一个光滑性不等式。
+对样本、替换观测、内部随机数和位置取平均，内积项至多为
+\[
+ \left(\frac1n\sum_i\mathbb E\|\nabla\ell(A(S,U),z_i)\|_2^2\right)^{1/2}
+ b_n(\mathcal P)
+ \leq\sqrt{2Mr_n}\,b_n(\mathcal P).
+\]
+二次项平均为$Mb_n^2(\mathcal P)/2$。代入期望泛化差恒等式即得结论。
+\end{proof}
+
+这个界用实际输出的平均经验风险$r_n$代替了全局梯度范数上界，且不要求损失凸。
+在参数扰动相同的情况下，较小的$r_n$可以进一步减小上界；若参数扰动随训练增大，
+则仍要同时检查$b_n(\mathcal P)$。平均参数稳定性因而能表达数据和优化过程的影响，
+但不能仅凭经验风险下降就断言泛化改善。
+这里控制的是期望泛化差的一侧上界；将它与平均经验风险相加，就得到
+$\mathbb E_{S,U}R_{\mathcal P}(A(S,U))$的上界。
+要进一步得到分布无关的学习保证，需要同时控制参数距离的均方根、平均经验风险
+和经验优化误差。
+
+\begin{theorem}[光滑损失下参数稳定性与可学习性]
+\label{thm:smooth-parameter-learning}
+在定理~\ref{thm:smooth-parameter-generalization}的条件下，若存在不依赖分布的非负序列
+$b_n,c_n,\rho_n$，使所有允许分布均满足
+\begin{gather*}
+ b_n(\mathcal P)\leq b_n,\qquad r_n\leq c_n,\\
+ \mathbb E_{S,U}[\hat R_S(A(S,U))-\inf_{\bm w}\hat R_S(\bm w)]\leq\rho_n,
+\end{gather*}
+则
+\begin{align*}
+ &\mathbb E_{S,U}R_{\mathcal P}(A(S,U))-\inf_{\bm w}R_{\mathcal P}(\bm w)\\
+ &\quad\leq b_n\sqrt{2Mc_n}+\frac M2b_n^2+\rho_n=:q_n.
+\end{align*}
+若$q_n\to0$，则算法分布无关PAC学习此问题；$q_n\leq\varepsilon\delta$
+是达到精度$\varepsilon$与置信度$1-\delta$的充分样本量条件。
+\end{theorem}
+\begin{proof}
+前一定理将期望泛化差控制为$b_n\sqrt{2Mc_n}+Mb_n^2/2$。
+对任意固定比较参数，经验优化误差条件又给出
+$\mathbb E\hat R_S(A(S,U))\leq R_{\mathcal P}(\bm w)+\rho_n$。
+两式相加，再对$\bm w$取下确界，即得超额期望风险的期望上界$q_n$。
+对非负的超额期望风险应用Markov不等式，学习失败的概率至多为$q_n/\varepsilon$。
+\end{proof}
+
+例如，若$M$固定、$c_n\leq C<\infty$，则$b_n\to0$与$\rho_n\to0$足以使$q_n\to0$。
+如果平均经验风险的上界$c_n$随样本量增大，则还须检查$b_n\sqrt{c_n}$是否趋于零。
+这说明光滑性可以替代全局Lipschitz条件，但需要保留损失大小对泛化分析的影响。
+后面正则化与SGD的证明将先控制参数距离，再使用本小节的结论分析期望风险与可学习性。
+
+\subsection{互信息稳定性}
+\label{sec:information-stability}
+
+损失稳定性比较相邻样本上的损失，参数稳定性比较相邻样本上的参数距离。
+另一种分析从算法输出与训练样本之间的依赖出发：输出究竟保留了多少关于这份样本的信息。
+例如，一个算法始终输出同一个决策，其输出不包含样本信息；另一个算法把每个观测逐字
+保存下来，输出则保留了整份样本。信息论可以量化这两种情况之间的差别，而不必先为
+决策空间指定参数距离。
+
+这条路线与“看过数据以后再选择”的偏差有关。Russo与Zou用信息量控制自适应数据分析
+中的选择偏差\scite{russo2016bias}Xu与Raginsky将输入样本与算法输出的互信息直接
+联系到期望泛化差\scite{xu2017information}为说明这些结论，需要先明确所比较的概率分布。
+
+\term{相对熵}（relative entropy），也称KL散度，衡量一个概率分布相对于另一个分布的差异。
+它使用对数概率比：某种结果在两个分布下出现的概率相差越大，就越能区分这两个分布。
+
+\begin{definition}[相对熵]
+\label{def:stability-relative-entropy}
+设$P,Q$为同一可测空间上的概率分布。若$P$关于$Q$绝对连续，则定义
+\[
+ D_{\mathrm{KL}}(P\|Q)=\int\log\frac{\mathrm dP}{\mathrm dQ}\,\mathrm dP;
+\]
+否则定义$D_{\mathrm{KL}}(P\|Q)=+\infty$。本节的对数均为自然对数。
+\end{definition}
+
+绝对连续要求$Q$认为不可能发生的事件在$P$下也不发生；$\mathrm dP/\mathrm dQ$是密度比。
+在离散情形，公式就是$\sum_x P(x)\log(P(x)/Q(x))$。
+相对熵非负，且仅在两个分布相同时为零，但通常不对称，所以不是距离。
+
+记随机输出为$W=A(S,U)$。如果先抽取样本再训练，得到联合分布$P_{S,W}$；
+如果分别按各自的边缘分布独立抽取$S$和$W$，得到乘积分布$P_S\otimes P_W$。
+后者保留样本和输出各自的分布，却去掉两者的依赖。比较这两个分布，便得到
+\term{互信息}（mutual information, MI）。
+
+\begin{definition}[互信息]
+\label{def:stability-mutual-information}
+随机元素$S,W$的互信息定义为
+\[
+ I(W;S)=D_{\mathrm{KL}}(P_{S,W}\|P_S\otimes P_W).
+\]
+\end{definition}
+
+$I(W;S)=0$当且仅当输出与样本独立。对学习算法而言，我们通常并不要求它完全忽略样本，
+而是要求保留的信息量相对于样本量增长得足够慢。本节采用如下输入—输出互信息的约定。
+
+\begin{definition}[互信息稳定性]
+\label{def:mutual-information-stability}
+设$S\sim\mathcal P^n$，$W=A_n(S,U)$，$U$独立于$S$。
+若存在不依赖$\mathcal P$的非负序列$\iota_n$，满足
+\[
+ I(W;S)\leq\iota_n\quad\text{对所有允许分布成立},
+ \qquad \frac{\iota_n}{n}\longrightarrow0,
+\]
+则称算法序列具有分布无关的互信息稳定性。
+\end{definition}
+
+这里要求的是每个观测平均对应的信息量趋于零，而不是总互信息必须趋于零。
+例如，$\iota_n$按$\log n$增长仍满足定义。下面给出有界损失下的期望风险结论；
+更一般的次高斯损失版本可用相应的指数矩上界得到。
+
+\begin{theorem}[互信息与期望风险]
+\label{thm:mutual-information-risk}
+设$S\sim\mathcal P^n$，$W=A(S,U)$，$U$独立于$S$，且$0\leq\ell\leq1$。
+则
+\begin{equation}
+ \left|\mathbb E[R_{\mathcal P}(W)-\hat R_S(W)]\right|
+ \leq\sqrt{\frac{I(W;S)}{2n}}.
+ \label{eq:mutual-information-generalization}
+\end{equation}
+因此，$\mathbb E R_{\mathcal P}(W)$不超过
+$\mathbb E\hat R_S(W)+\sqrt{I(W;S)/(2n)}$。
+\end{theorem}
+\begin{proof}
+令$P=P_{S,W}$、$Q=P_S\otimes P_W$，并记
+$g(S,W)=R_{\mathcal P}(W)-\hat R_S(W)$。
+在$Q$下，给定$W$后，样本仍然独立同分布，所以$\mathbb E_Qg=0$。
+损失位于$[0,1]$，Hoeffding引理给出
+\[
+ \log\mathbb E_Q e^{\lambda g}\leq\frac{\lambda^2}{8n},
+ \qquad \lambda\in\mathbb R.
+\]
+对任意$\lambda>0$，改变分布的代价可由相对熵控制：
+\begin{equation}
+ \lambda\mathbb E_Pg
+ \leq D_{\mathrm{KL}}(P\|Q)+\log\mathbb E_Q e^{\lambda g}.
+ \label{eq:information-change-measure}
+\end{equation}
+具体地，定义$\mathrm dQ_\lambda/\mathrm dQ=e^{\lambda g}/\mathbb E_Qe^{\lambda g}$，
+展开$D_{\mathrm{KL}}(P\|Q_\lambda)\geq0$便得到此式。
+因此$\mathbb E_Pg\leq I(W;S)/\lambda+\lambda/(8n)$。
+对$-g$作相同推导，再对$\lambda$取最优值得到结论。
+互信息为零时取极限；互信息无穷时上界不提供有效保证。
+\end{proof}
+
+证明把真实训练过程与一个输出独立于样本的参照过程比较。
+参照过程的经验风险无偏，互信息则控制引入样本依赖后，平均偏差最多增加多少。
+这仍然是期望泛化差的界，不能直接当作某一次训练的高概率误差上界。
+
+\begin{theorem}[互信息稳定性与可学习性]
+\label{thm:mutual-information-learning}
+在定理~\ref{thm:mutual-information-risk}的条件下，设$W\in\mathcal W$，且对所有允许分布有
+\[
+ I(W;S)\leq\iota_n,\qquad
+ \mathbb E[\hat R_S(W)-\inf_w\hat R_S(w)]\leq\rho_n.
+\]
+则
+\[
+ \mathbb E R_{\mathcal P}(W)-\inf_wR_{\mathcal P}(w)
+ \leq\sqrt{\frac{\iota_n}{2n}}+\rho_n.
+\]
+若$\iota_n/n\to0$且$\rho_n\to0$，算法分布无关PAC学习此问题。
+条件$\sqrt{\iota_n/(2n)}+\rho_n\leq\varepsilon\delta$足以保证PAC目标。
+\end{theorem}
+\begin{proof}
+对任意固定$w$，经验优化误差条件给出
+$\mathbb E\hat R_S(W)\leq R_{\mathcal P}(w)+\rho_n$。
+结合前一定理并取下确界，得到超额期望风险的期望上界。
+再对该非负随机变量应用Markov不等式即可。
+\end{proof}
+
+若算法只可能输出预先给定的$K$个决策，互信息至多为输出的熵
+$H(W)=-\sum_w\mathbb P(W=w)\log\mathbb P(W=w)$，而这个熵至多为$\log K$。
+因此可以取$\iota_n=\log K$。这从信息量的角度解释了有限候选范围为何有助于泛化。
+不过，一个恒定输出的算法也有$I(W;S)=0$；若它没有取得较小的经验优化误差，
+互信息为零同样不能保证学到好的决策。
+
+只看整份样本的信息量，有时仍然过于粗略。Bu、Zou与Veeravalli改为逐个考察
+输出与每个观测之间的互信息，得到另一种期望风险上界\scite{bu2020information}
+
+\begin{theorem}[逐观测互信息的期望风险界]
+\label{thm:individual-information-risk}
+在定理~\ref{thm:mutual-information-risk}的条件下，
+\[
+ \left|\mathbb E[R_{\mathcal P}(W)-\hat R_S(W)]\right|
+ \leq\frac1n\sum_{i=1}^n\sqrt{\frac{I(W;z_i)}2}.
+\]
+\end{theorem}
+\begin{proof}
+对每个$i$，比较$(W,z_i)$的联合分布与$P_W\otimes\mathcal P$。
+在乘积分布下，$R_{\mathcal P}(W)-\ell(W,z_i)$的条件均值为零。
+沿用定理~\ref{thm:mutual-information-risk}中样本量为1的指数矩论证，得到
+\[
+ \left|\mathbb E[R_{\mathcal P}(W)-\ell(W,z_i)]\right|
+ \leq\sqrt{I(W;z_i)/2}.
+\]
+对$n$项求和，再用三角不等式即可。
+\end{proof}
+
+这个版本分别计算每个观测对输出的信息贡献。将右侧记为$q_n(\mathcal P)$，
+加上经验优化误差就得到超额期望风险的期望上界$q_n(\mathcal P)+\rho_n(\mathcal P)$。
+若两项存在分布无关且趋于零的上界，也能推出PAC可学习性。
+
+普通互信息还有一个重要局限：确定性算法精确输出连续数值时，$I(W;S)$可能无穷。
+例如，在$[0,1]$上均匀抽样并输出样本均值，平方损失下的期望泛化差为$2\sigma^2/n$，
+但输出的连续均值由$S$精确确定。联合分布集中在$W=\bar z$上，而独立乘积分布在这个
+集合上的概率为零，所以互信息无穷。普通互信息界在这里失效，并不意味着算法不能泛化。
+
+Steinke与Zakynthinou提出的条件互信息方法改变了信息比较的对象
+\scite{steinke2020conditional}预先独立抽取$n$对观测，每对中随机选一个用于训练。
+如果已经知道这$2n$个观测，输出额外揭示了哪些观测被选中，才是需要衡量的信息。
+这样，每一对的选择只有一个二元结果，不会因观测包含连续实数就自动产生无限信息量。
+
+\begin{definition}[条件互信息]
+\label{def:stability-conditional-information}
+设所需条件分布存在。随机元素$W,B$在给定$V$时的条件互信息定义为
+\[
+ I(W;B\mid V)
+ =\mathbb E_V D_{\mathrm{KL}}\!\left(
+ P_{W,B\mid V}\,\middle\|\,P_{W\mid V}\otimes P_{B\mid V}\right).
+\]
+\end{definition}
+
+在上述抽样构造中，记全部备选观测为
+$\tilde S=((z_{i,0},z_{i,1}))_{i=1}^n\sim\mathcal P^{2n}$。
+选择变量$\bm B=(B_1,\ldots,B_n)$独立均匀取自$\{0,1\}^n$，
+训练样本是$S_{\bm B}=(z_{1,B_1},\ldots,z_{n,B_n})$。
+算法只接收这$n$个观测，输出$W=A(S_{\bm B},U)$，其中$U$独立于$\tilde S,\bm B$。
+图~\ref{fig:conditional-information}展示了三个观测对的选择过程。
+
+\begin{figure*}[htbp]
+ \centering
+ \input{figures/learning-theory-conditional-information}
+ \caption{条件互信息的抽样构造。每列有两个独立观测，选择变量决定哪一个进入训练样本。
+ 图中$\bm B=(1,0,1)$，选中的观测用底色和箭头同时标出。
+ 算法只接收选中的三个观测；条件互信息衡量已知全部六个观测时，输出对选择变量揭示了多少信息。}
+ \label{fig:conditional-information}
+\end{figure*}
+
+\begin{definition}[算法的条件互信息量]
+\label{def:algorithm-cmi}
+在上述构造下，算法在分布$\mathcal P$下的条件互信息量定义为
+\[
+ \kappa_n(A,\mathcal P)=I(W;\bm B\mid\tilde S).
+\]
+若存在不依赖分布的$\kappa_n$，使所有允许分布满足
+$\kappa_n(A,\mathcal P)\leq\kappa_n$且$\kappa_n/n\to0$，
+则称算法序列具有分布无关的条件互信息稳定性。
+\end{definition}
+
+选择变量只有$2^n$种可能，因此$0\leq\kappa_n(A,\mathcal P)\leq n\log2$。
+这个有限上界避免了连续输出导致的无穷大，但仍然与$n$成正比，单凭它不足以保证泛化差趋于零。
+有用的结论需要进一步控制算法实际揭示了多少选择信息。
+
+\begin{theorem}[条件互信息与期望风险]
+\label{thm:conditional-information-risk}
+设$0\leq\ell\leq1$，沿用定义~\ref{def:algorithm-cmi}的构造。则
+\[
+ \left|\mathbb E[R_{\mathcal P}(W)-\hat R_{S_{\bm B}}(W)]\right|
+ \leq\sqrt{\frac{2\kappa_n(A,\mathcal P)}n}.
+\]
+若算法的平均经验优化误差不超过$\rho_n(\mathcal P)$，则
+\[
+ \mathbb E R_{\mathcal P}(W)-\inf_wR_{\mathcal P}(w)
+ \leq\sqrt{\frac{2\kappa_n(A,\mathcal P)}n}+\rho_n(\mathcal P).
+\]
+\end{theorem}
+\begin{proof}
+用每对中未被选中的观测评价输出，并减去经验风险，记
+\[
+ g(\tilde S,\bm B,W)=\frac1n\sum_{i=1}^n
+ [\ell(W,z_{i,1-B_i})-\ell(W,z_{i,B_i})].
+\]
+在真实联合分布$P$下，未选观测独立于训练样本和算法内部随机数，所以
+$\mathbb E_Pg=\mathbb E[R_{\mathcal P}(W)-\hat R_{S_{\bm B}}(W)]$。
+构造参照分布$Q$：保留$(\tilde S,W)$的联合分布，但在给定$\tilde S$后独立、均匀地
+重新抽取$\bm B$。于是$D_{\mathrm{KL}}(P\|Q)=\kappa_n(A,\mathcal P)$。
+
+在$Q$下，给定$\tilde S,W$，每一对的损失差随$B_i$以相同概率取正负两个值，
+且绝对值不超过1。各项独立，因此
+$\log\mathbb E_Q e^{\lambda g}\leq\lambda^2/(2n)$。
+将此式用于式~\eqref{eq:information-change-measure}，对正负两个方向分别取最优$\lambda$，
+得到第一项结论。再加上经验优化误差并对固定比较决策取下确界，得到第二项结论。
+\end{proof}
+
+因此，分布无关的$\kappa_n/n\to0$与$\rho_n\to0$共同给出PAC可学习性，
+充分条件为$\sqrt{2\kappa_n/n}+\rho_n\leq\varepsilon\delta$。
+条件互信息能够容纳连续参数，但它与普通互信息使用不同的参照过程；
+不能只把前一个界中的$I(W;S)$换成$\kappa_n$而保留常数和所有结论。
+条件互信息还可以与始终AERM结合，给出一个与前面基本定理对应的存在性刻画。
+
+\begin{theorem}[条件互信息稳定性与可学习性]
+\label{thm:conditional-information-learning}
+在定理~\ref{thm:general-stability-characterization}的条件下，该问题分布无关PAC可学习，
+当且仅当存在始终AERM算法，具有分布无关的条件互信息稳定性。
+\end{theorem}
+\begin{proof}
+充分性由定理~\ref{thm:conditional-information-risk}及Markov不等式给出。
+为证必要性，使用一般学习基本定理证明中的构造：从$n$个位置中有放回地随机抽取
+$k=\lfloor\sqrt n\rfloor$个位置，再调用已有学习算法。该构造已经保证始终AERM。
+
+记抽样索引为$J=(J_1,\ldots,J_k)$，原学习算法的内部随机数为$U_0$。
+在给定$\tilde S,J,U_0$时，新算法的输出仅由被访问位置的选择变量
+$(B_{J_1},\ldots,B_{J_k})$决定。每个选择变量至多包含$\log2$的信息量，故
+\begin{align*}
+ I(W;\bm B\mid\tilde S)
+ &\leq I(W,J,U_0;\bm B\mid\tilde S)\\
+ &=I(W;\bm B\mid\tilde S,J,U_0)
+ \leq k\log2.
+\end{align*}
+等式使用$J,U_0$与$\tilde S,\bm B$独立；最后一步使用互信息不超过决定输出的
+离散选择变量的熵。因此可取$\kappa_n=k\log2$，并有$\kappa_n/n\to0$。
+\end{proof}
+
+必要性同样允许重新构造算法；它没有要求原来的每个成功算法都具有较小条件互信息。
+这一刻画也不能换成普通互信息，因为后者仍可能记录连续观测的无限精度。
+
+\subsection{稳定性的比较}
+\label{sec:stability-comparison}
+
+这些稳定性都服务于同一个学习目标，但比较对象和平均方式不同。
+表~\ref{tab:stability-comparison}列出各自进入期望风险分析的量；只有在相应定理的条件下，
+这些量才能与经验优化误差相加，得到超额期望风险的期望上界。
+
+\begin{table*}[htbp]
+ \centering\small
+ \begin{tabularx}{\linewidth}{@{}p{29mm}X p{46mm}@{}}
+ \toprule
+ 稳定性 & 直接控制的对象 & 学习分析中的代价项 \\
+ \midrule
+ 平均留一法稳定性 & 删除前后，在被删观测上的损失绝对差的平均 & $\beta_n^{\mathrm{loo}}$；比较$n$与$n-1$个观测的算法 \\
+ 均匀稳定性 & 所有相邻样本、任意测试观测上的损失差 & $\beta_n$；有界损失下还可控制波动 \\
+ 平均稳定性 & 随机替换后，在被替换观测上的带符号损失差的平均 & $\bar\beta_n$ \\
+ 平均参数稳定性 & 共享随机数时，相邻样本输出的参数距离 & Lipschitz损失下为$L\bar\alpha_n$ \\
+ 互信息稳定性 & 输出与整份样本的统计依赖 & $\sqrt{\iota_n/(2n)}$ \\
+ 条件互信息稳定性 & 已知备选观测后，输出揭示的选择信息 & $\sqrt{2\kappa_n/n}$ \\
+ \bottomrule
+ \end{tabularx}
+ \caption{稳定性条件的比较。互信息两行采用$[0,1]$有界损失；参数稳定性一行采用统一的
+ Lipschitz常数。表中代价项控制期望意义下的风险关系，不自动成为逐次训练的误差上界。}
+ \label{tab:stability-comparison}
+\end{table*}
+
+在同一种替换操作下，均匀损失控制可以推出平均损失控制；统一的Lipschitz条件又使
+均匀参数稳定性推出均匀稳定性，使平均参数稳定性推出平均稳定性。
+留一法改变样本量，不能仅因也使用“稳定性”一词就与替换型条件互换。
+若只知道参数距离接近，也不能省略把参数距离转换成损失差的条件。
+
+互信息与损失稳定性之间没有这样的直接强弱排序。前面的连续均值算法具有趋于零的
+均匀稳定性，普通互信息却无穷。反过来，令$z_i\in\{0,1\}$，算法仅在所有观测均为1时
+输出$W=1$，否则输出0，并用损失$\ell(w,z)=w$评价。
+输出只有两种可能，所以$I(W;S)\leq\log2$；但把全1样本中的一项改为0，损失会从1
+变为0，均匀稳定性常数始终为1。信息量小并不意味着每一对相邻样本的损失都接近。
+
+更关键的区分是“能够估计期望风险”与“能够学习”。上例在观测恒为1的分布下始终输出1，
+而决策0的期望风险为零，因而虽然互信息很小，仍不能学习这个问题。
+它缺少的是经验最优性。类似地，一个固定输出的算法可以同时满足多种稳定性条件，
+却始终选择较差的决策。
+
+对于学习问题是否可学习，定理~\ref{thm:general-stability-characterization}、
+定理~\ref{thm:average-stability-characterization}与
+定理~\ref{thm:conditional-information-learning}分别给出了均匀稳定、平均稳定和条件互信息
+稳定的始终AERM算法的存在性刻画。留一法、参数稳定性和普通互信息条件提供其他验证途径。
+这些存在性结论与充分条件，都不能改写为对每个成功算法的必要要求。
+图~\ref{fig:learning-risk-routes}把共同的证明目标与一致收敛方法放在一起比较。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/learning-theory-risk-routes}
+ \caption{期望风险的两条分析路线。上方同时控制整个决策空间，下方控制算法输出的期望
+ 泛化差；两条路线都要结合经验最优性。下方用$\beta_n$泛指所选稳定性定理提供的代价项。}
+ \label{fig:learning-risk-routes}
+\end{figure}
+
+\FloatBarrier
+\section{凸学习问题}
+\label{sec:regularized-learning}
+\label{sec:convex-learning-problem}
+
+前面的学习保证没有使用凸性。为了构造既稳定又能降低经验风险的具体算法，
+本节对决策空间和损失函数增加凸性条件。正则化通过目标的曲率控制最优解变化，
+随机梯度下降则通过逐步比较两条迭代轨迹控制变化，再分别加入经验优化误差。
+这也说明，学习理论不仅能判断已有算法，还能帮助设计算法。在凸损失下，适当的
+强凸惩罚项可以使最优解对样本变化更不敏感，而无须缩小原有决策空间。
+惩罚项同时可能使训练结果偏离原有经验风险的最小解，因此需要一起计算稳定性收益
+与正则化代价。
+
+\subsection{凸性与损失函数}
+
+训练分类器时，不仅需要知道预测是否正确，还需要知道怎样调整参数才能改善预测。设真实标签为$+1$，分类分数从$-2$提高到$-0.1$，模型虽然更接近正负分界点，却仍被零一损失记作同一次错误。分数没有跨过零点时，零一损失不能通过梯度反映这一变化；作为分数的函数，它既不连续也不凸。将标签编码为$y\in\{-1,1\}$后，
+线性分类常以合页损失
+$\max\{0,1-y\bm w^\top\bm x\}$或逻辑损失$\log(1+e^{-y\bm w^\top\bm x})$替代它。在上述例子中，合页损失从3降至1.1，因而能反映分数的改善。分数达到1时，合页损失才降为零，它还要求正确预测留出一定间隔。对线性参数而言，这些替代损失是凸的，便于使用凸优化方法，
+但优化的是另一个总体目标；只有在适当的\term{分类校准}条件下，替代损失下的期望风险
+趋近最优才能推出零一损失下的期望风险趋近最优。
+
+分类校准可以从固定输入下的条件替代风险理解：这里的条件替代风险，是在给定输入$x$时，
+按标签的条件分布计算的替代损失期望。记$\eta(x)=\mathbb P(y=1\mid x)$，分别计算
+预测正分数和负分数时的条件替代风险。如果$\eta(x)>1/2$，条件替代风险的最优分数应为正；
+若$\eta(x)<1/2$，最优分数应为负。例如，在某个输入上正标签概率为0.7，预测正类的条件错误率为0.3，预测负类则为0.7；校准的替代损失应当使其最优分数也选择正号。校准要求替代目标在每个$x$上都偏好贝叶斯分类器的
+符号。凸性帮助求解替代目标，校准性则联系不受限的替代损失下的最优期望风险与贝叶斯风险。
+若只在受限的线性类内优化，类内替代损失下期望风险的最小解不必也是类内零一损失下期望风险的最小解；
+此时还需要分析函数空间的近似能力，不能把校准性当作两个受限优化问题等价的保证。
+
+凸学习允许在两个可行决策之间作插值，并要求插值的损失不超过两端损失的加权平均。
+
+\begin{definition}[凸学习问题]
+\label{def:convex-learning-problem}
+若$\mathcal W$是凸集，并且对每个$z\in Z$，函数$w\mapsto\ell(w,z)$为凸函数，则称
+$(\mathcal W,Z,\ell)$为凸学习问题。也就是说，对任意$u,v\in\mathcal W$、$t\in[0,1]$和$z\in Z$，有
+\[
+ \ell(tu+(1-t)v,z)\leq t\ell(u,z)+(1-t)\ell(v,z).
+\]
+\end{definition}
+
+凸性约束损失曲面的形状，却不限制它变化得有多快。要从两个决策接近推断它们的损失接近，还需要控制损失的变化率。
+
+Lipschitz条件用一个固定常数限制变化率。例如，决策移动0.01而$L=2$时，
+同一观测上的损失变化最多为0.02。
+
+\begin{definition}[Lipschitz损失]
+\label{def:lipschitz-loss}
+若对任意$w,w'$与$z$都满足
+\begin{equation}
+ |\ell(w,z)-\ell(w',z)|\leq L\|w-w'\|,
+ \label{eq:lipschitz-loss}
+\end{equation}
+则称损失关于该范数是$L$-Lipschitz的。
+\end{definition}
+
+损失对预测值凸不必然意味着对网络参数凸；这里的凸性明确针对决策变量$w$。对Hilbert空间
+中的线性预测，若$\|\bm w\|\leq B$、$\|\bm x\|\leq r$且标量预测对应的损失为$L$-Lipschitz，式
+\eqref{eq:linear-rademacher-bound}给出$LBr/\sqrt n$量级的维数无关泛化项。关键是范数
+约束和损失结构，而非“参数空间无限维”本身。
+
+\subsection{凸学习问题的正则化}
+
+强凸正则化通过限制解对单条数据的敏感度，提供稳定性与经验拟合之间的明确权衡。取$\lambda>0$，
+考虑正则化ERM
+\begin{equation}
+ A(S)=\argmin_{w\in\mathcal W}
+ \left\{\hat R_S(w)+\lambda\Omega(w)\right\}.
+ \label{eq:regularized-erm}
+\end{equation}
+强凸性要求目标曲面比普通凸函数多出一定的弯曲程度，不能在一整段不同决策之间保持平坦。具体地，若目标函数满足对所有$u,v$和$t\in[0,1]$，
+\begin{equation}
+ F(tu+(1-t)v)\leq tF(u)+(1-t)F(v)
+ -\frac\mu2t(1-t)\|u-v\|^2,
+ \label{eq:strong-convexity}
+\end{equation}
+则称其为$\mu$-强凸。曲率把目标值的微小变化转成解距离的上界。
+
+普通凸函数可以有一整段平坦的最小值。替换一个样本后，算法可能从平坦区域的一端跳到另一
+端，经验目标几乎不变，预测却变化很大。强凸性排除了这种平坦方向：离最小点距离为$r$时，
+目标至少付出与$\mu r^2$同阶的代价。正则项因而不只表达“偏好小参数”，还给最优解提供了
+抵抗数据扰动的曲率。
+
+一个可直接求解的例子是正则化均值估计。对$z_i\in[0,1]$，最小化
+\[
+ \frac1{2n}\sum_{i=1}^n(w-z_i)^2+\frac\lambda2w^2
+\]
+得到$\hat w=\bar z/(1+\lambda)$。替换一条观测最多使解改变$1/[n(1+\lambda)]$。增大$\lambda$确实减小了数据替换的影响，但也把估计值向零拉近；若总体均值远离零，这种收缩会产生偏差。一般的稳定性证明将用强凸性和Lipschitz条件表达同样的权衡，而不依赖解能否显式写出。
+
+\begin{theorem}[强凸正则化的稳定性]
+\label{thm:regularized-erm-stability}
+设$\mathcal W$为凸集，每个$\ell(\cdot,z)$凸且$L$-Lipschitz，$\Omega$为$1$-强凸，式
+\eqref{eq:regularized-erm}的最小解存在。则$A$具有
+\begin{equation}
+ \beta_n\leq\frac{2L^2}{\lambda n}
+ \label{eq:regularized-stability-bound}
+\end{equation}
+的均匀稳定性。
+\end{theorem}
+
+\begin{proof}
+记相邻样本的解为$w,w'$，相应正则目标为$F_S,F_{S'}$。最优性和$\lambda$-强凸性给出
+\begin{equation*}
+ F_S(w')-F_S(w)\geq\frac\lambda2\|w-w'\|^2,
+ \quad
+ F_{S'}(w)-F_{S'}(w')\geq\frac\lambda2\|w-w'\|^2.
+\end{equation*}
+相加后共同的$n-1$个损失与正则项抵消，剩余两项由Lipschitz性至多为
+$2L\|w-w'\|/n$。故$\|w-w'\|\leq2L/(\lambda n)$，这给出均匀参数稳定性。
+再由定理~\ref{thm:parameter-to-loss-stability}乘以$L$，得到均匀稳定性上界。
+\end{proof}
+
+较大的$\lambda$增强稳定性，却也加大正则化偏差。岭回归取
+$\Omega(w)=\|w\|_2^2/2$。平方损失并非全局Lipschitz；只有在$\|x\|$、$|y|$及
+$\|w\|$受控时，残差有界，才能为所处区域给出有限的$L$。省略这些条件会把局部有效的
+结论误写成全局保证。
+
+稳定性只完成了期望风险估计的一步，还要比较经验目标。正则化算法最小化的是
+经验风险与正则项之和，所以它的经验风险可能高于未经正则化的最小值。
+下面保留这一差额，明确正则化提高稳定性所付出的代价。
+
+\begin{theorem}[正则化学习的期望风险保证]
+\label{thm:regularized-learning-risk}
+在定理~\ref{thm:regularized-erm-stability}的条件下，进一步设$\Omega\geq0$且相关损失可积。
+则对任意固定$w\in\mathcal W$，
+\begin{equation}
+ \mathbb E_S R_{\mathcal P}(A(S))-R_{\mathcal P}(w)
+ \leq\frac{2L^2}{\lambda n}+\lambda\Omega(w).
+ \label{eq:regularization-excess-risk}
+\end{equation}
+若$\mathcal W$为Hilbert空间中半径为$B>0$的闭球，$\Omega(w)=\|w\|^2/2$，
+且$L>0$，取$\lambda=2L/(B\sqrt n)$可得
+\[
+ \mathbb E_S R_{\mathcal P}(A(S))-\inf_{w\in\mathcal W}R_{\mathcal P}(w)
+ \leq\frac{2LB}{\sqrt n}.
+\]
+\end{theorem}
+\begin{proof}
+正则化目标的最优性给出
+\[
+ \hat R_S(A(S))+\lambda\Omega(A(S))
+ \leq\hat R_S(w)+\lambda\Omega(w).
+\]
+去掉左侧非负的正则项，对样本取期望，再加上稳定性控制的期望泛化差，得到第一式。
+在半径$B$的闭球上，$\Omega(w)\leq B^2/2$。代入所给$\lambda$后，
+稳定性项与正则化比较项均不超过$LB/\sqrt n$。对$w$取下确界得到第二式。
+\end{proof}
+
+增大$\lambda$减小稳定性项，却增大正则化比较项。后一项是这一分析对正则化偏差的
+上界，并不是精确的偏差值。两个上界的平衡给出$1/\sqrt n$的平均超额期望风险速率。
+由于算法输出仍在比较空间内，Markov不等式进一步给出：
+$n\geq(2LB/(\varepsilon\delta))^2$足以保证PAC目标。
+这个充分样本量并未优化置信度依赖。
+
+上述保证不显含空间维度，但依赖有限的范数半径和Lipschitz常数。
+它讨论的是受这些条件约束的实值损失学习，不能据此推断无限VC维的无约束零一分类
+问题也可学习。对平方损失，必须先检查数据与决策的范围是否使这些条件成立。
+
+\subsection{凸学习问题的随机梯度下降}
+\label{sec:sgd-stability}
+
+随机梯度下降（stochastic gradient descent, SGD）把每一步优化限制为一个样本的梯度。
+例如，用单个观测的平方损失$\ell(w,z)=(w-z)^2/2$估计均值，梯度为$w-z$。从$w=0.5$出发、步长取0.1，抽到$z=0$会把参数更新为0.45，抽到$z=1$则更新为0.55。每一步根据当前抽到的观测移动，完整训练结果因而依赖抽样顺序。这个数值例子说明更新机制；下面的稳定性界还需要额外的凸性、光滑性与Lipschitz条件。
+
+在固定样本上令$i_t$独立均匀取自$\{1,\ldots,n\}$，从相同的确定初值出发，更新为
+\begin{equation}
+ \bm w^{(t+1)}=\bm w^{(t)}-\eta_t\nabla\ell(\bm w^{(t)},z_{i_t}),
+ \qquad t=0,\ldots,T-1.
+ \label{eq:sgd-update}
+\end{equation}
+这里每个损失在欧氏空间上凸、$L$-Lipschitz，并且$M$-光滑，即其梯度满足
+$\|\nabla\ell(\bm u,z)-\nabla\ell(\bm v,z)\|_2\leq M\|\bm u-\bm v\|_2$。
+若每步使用从总体新抽出的观测，分析的是另一个随机逼近问题；本节关心反复访问固定样本
+时产生的数据依赖。
+
+\begin{theorem}[凸光滑SGD的稳定性]
+\label{thm:convex-sgd-stability}
+设每个损失在欧氏空间上凸、$L$-Lipschitz且$M$-光滑，$M>0$。
+使用式~\eqref{eq:sgd-update}、相同的确定初值及$0\leq\eta_t\leq2/M$，则最后一步
+输出对算法内部随机性平均后的均匀稳定性满足
+\[
+ \beta_n\leq\frac{2L^2}{n}\sum_{t=0}^{T-1}\eta_t.
+\]
+\end{theorem}
+\begin{proof}
+在相邻样本上使用同一索引序列，可以逐步比较两条轨迹。凸光滑函数的梯度满足
+\[
+ \langle\nabla\ell(\bm u,z)-\nabla\ell(\bm v,z),\bm u-\bm v\rangle
+ \geq\frac1M\|\nabla\ell(\bm u,z)-\nabla\ell(\bm v,z)\|_2^2.
+\]
+将一次梯度更新后的距离平方展开可知，当$0\leq\eta_t\leq2/M$时，同一损失的梯度映射
+不扩大距离。因此，未抽中替换位置时，两条轨迹不会产生新的距离；抽中时，梯度范数
+至多$L$，可用三角不等式把新增距离上界为$2\eta_tL$。
+
+记$d_t=\mathbb E\|\bm w^{(t)}-\bm w'^{(t)}\|_2$，期望对共同索引序列取。
+抽中替换位置的概率为$1/n$，所以
+$d_{t+1}\leq d_t+2\eta_tL/n$，且$d_0=0$。递推和Lipschitz条件给出
+\begin{equation}
+ d_T\leq\frac{2L}{n}\sum_{t=0}^{T-1}\eta_t,
+ \qquad
+ \beta_n\leq\frac{2L^2}{n}\sum_{t=0}^{T-1}\eta_t.
+ \label{eq:convex-sgd-stability}
+\end{equation}
+\end{proof}
+
+这里的$d_T$是对每一对相邻样本成立的参数距离上界，因而先给出均匀参数稳定性。
+再由损失的Lipschitz条件得到均匀稳定性，便可使用
+第~\ref{sec:algorithmic-stability}节的期望泛化差结论。
+
+迭代次数和步长同时影响优化误差与泛化差。较早停止会减小式
+~\eqref{eq:convex-sgd-stability}的上界，却可能留下较大的经验优化误差；较晚停止则相反。
+因此早停是需要平衡两项误差的选解机制，不能仅从稳定性界断定训练越短越好。
+凸与非凸SGD的代表性稳定性分析由Hardt、Recht与Singer给出\scite{hardt2016sgd}
+
+
+一般凸损失的梯度更新不放大已有扰动，但每次访问被替换的观测仍可能增加新扰动。
+强凸损失还会缩小已有距离，使过去产生的影响逐渐衰减，因此能得到不随训练轮数增长的
+稳定性上界。下面在有界的可行区域上陈述，避免将全局强凸性与全局有界梯度混为一谈。
+
+\begin{theorem}[强凸投影SGD的稳定性]
+\label{thm:strongly-convex-sgd-stability}
+设$\mathcal W$是非空闭凸集。每个损失在其邻域内二阶连续可微，且在$\mathcal W$上满足
+\[
+ \mu\bm I\preceq\nabla^2\ell(\bm w,z)\preceq M\bm I,
+ \qquad \|\nabla\ell(\bm w,z)\|_2\leq L,
+\]
+其中$0<\mu\leq M$。投影SGD从相同的确定初值出发，以固定步长$0<\eta\leq1/M$
+独立均匀访问样本。则$T$步输出的随机性平均后的均匀稳定性满足
+\[
+ \beta_{n,T}\leq\frac{2L^2}{\mu n}
+           \bigl(1-(1-\mu\eta)^T\bigr)
+ \leq\frac{2L^2}{\mu n}.
+\]
+\end{theorem}
+\begin{proof}
+沿两参数之间的线段对Hessian积分，梯度更新的差等于
+$(\bm I-\eta\bm H)(\bm u-\bm v)$，其中$\bm H$的特征值位于$[\mu,M]$。
+所以同一观测的更新将距离至多乘以$1-\mu\eta$。投影不扩大距离。
+抽中替换位置时，再增加至多$2L\eta$的扰动，故
+\[
+ D_{t+1}\leq(1-\mu\eta)D_t+\frac{2L\eta}{n},\qquad D_0=0.
+\]
+求和该几何级数，再乘损失的Lipschitz常数$L$，即得结论。
+\end{proof}
+
+这里每个单样本损失都满足曲率下界；仅知道平均经验风险强凸，不能直接得到每一步的
+收缩。加入二次正则项也可以提供曲率，但梯度范数、光滑常数和比较目标都必须相应更新。
+这个结果解释了强凸性为何可以允许更长时间训练，同时仍需单独检查经验优化误差。
+
+仅有稳定性界不能确定何时停止训练，还需要经验优化误差的上界。
+为了给出完整结论，下面采用投影SGD，并输出迭代点的平均值。
+投影把每步结果限制在指定的参数球内，平均则利用凸性把各步的损失保证转给最终输出。
+这与直接输出最后一次迭代是两种不同的算法约定。
+
+\begin{theorem}[平均投影SGD的期望风险保证]
+\label{thm:averaged-sgd-learning}
+设损失满足定理~\ref{thm:convex-sgd-stability}的条件且相关损失可积。
+令$\mathcal W=\{\bm w:\|\bm w\|_2\leq B\}$，初值$\bm w^{(0)}=0$，并使用固定步长
+$0<\eta\leq2/M$及更新
+\[
+ \bm w^{(t+1)}=\Pi_{\mathcal W}
+   \bigl(\bm w^{(t)}-\eta\nabla\ell(\bm w^{(t)},z_{i_t})\bigr),
+ \qquad
+ \bar{\bm w}=\frac1T\sum_{t=0}^{T-1}\bm w^{(t)}.
+\]
+其中$\Pi_{\mathcal W}$为欧氏投影，$i_t$独立均匀取自样本索引。则
+\[
+ \mathbb E_{S,U}R_{\mathcal P}(\bar{\bm w})-\inf_{\bm w\in\mathcal W}R_{\mathcal P}(\bm w)
+ \leq\frac{2L^2\eta T}{n}+\frac{B^2}{2\eta T}+\frac{\eta L^2}{2}.
+\]
+若$B,L>0$，取$T=n$和$\eta=B/(L\sqrt n)\leq2/M$，右侧不超过$3LB/\sqrt n$。
+\end{theorem}
+\begin{proof}
+投影不扩大距离，因此定理~\ref{thm:convex-sgd-stability}的轨迹比较仍成立。
+平均迭代点间的距离不超过各步距离的平均值，再用Lipschitz条件，得到平均输出的
+稳定性上界$2L^2\eta T/n$。
+
+为比较经验风险，固定样本$S$及比较参数$\bm w\in\mathcal W$，记随机梯度为$\bm g_t$。
+展开更新距离的平方，并用投影不扩大到可行点的距离，得到
+\[
+ 2\eta\langle\bm g_t,\bm w^{(t)}-\bm w\rangle
+ \leq\|\bm w^{(t)}-\bm w\|_2^2
+ -\|\bm w^{(t+1)}-\bm w\|_2^2+\eta^2L^2.
+\]
+给定此前迭代结果，$\mathbb E[\bm g_t]=\nabla\hat R_S(\bm w^{(t)})$。
+凸性使内积的条件期望不小于
+$\hat R_S(\bm w^{(t)})-\hat R_S(\bm w)$。
+对$t$求和后，中间的距离平方相消；初始距离至多$B$，所以
+\[
+ \frac1T\sum_{t=0}^{T-1}\mathbb E_U\hat R_S(\bm w^{(t)})-\hat R_S(\bm w)
+ \leq\frac{B^2}{2\eta T}+\frac{\eta L^2}{2}.
+\]
+由凸性，平均参数的经验风险不超过左侧各次经验风险的平均。
+再结合稳定性给出的期望泛化差，并对固定比较参数取下确界，即得结论。
+\end{proof}
+
+这个定理把三项代价放在同一个式子中：第一项来自样本扰动对算法的影响，第二项反映
+迭代尚未充分降低经验风险，第三项来自固定步长的随机梯度误差。
+在所给参数选择下，三项均为$1/\sqrt n$量级，因此得到分布无关的学习保证。
+最后一步输出与平均输出、固定样本反复访问与每步抽取新观测，分别需要对应的分析，
+不能在没有说明时交换使用。
+
+\section{非凸学习问题}
+\label{sec:nonconvex-learning}
+
+\subsection{非凸性带来的变化}
+
+非凸学习仍然使用相同的期望风险目标，只是不再要求每个$\ell(\cdot,z)$关于参数凸。
+例如，预测函数为$h_w(x)=w^2x$、观测为$(x,y)=(1,1)$时，平方损失为
+$(w^2-1)^2$。它有两个最小点$w=\pm1$，而$w=0$处的梯度也为零，损失却为1。
+所以“梯度很小”和“经验风险接近最优”已经不是同一个条件。
+这个多项式例子用于说明非凸形状；它在整个实数轴上不满足后面定理所需的全局Lipschitz条件。
+
+凸SGD的证明还使用了另一条性质：同一梯度更新不会放大两组参数之间的距离。
+一般非凸函数只满足较弱的上界。若梯度为$M$-Lipschitz，定义
+$G_{z,\eta}(\bm w)=\bm w-\eta\nabla\ell(\bm w,z)$，则三角不等式给出
+\[
+ \|G_{z,\eta}(\bm u)-G_{z,\eta}(\bm v)\|_2
+ \leq(1+M\eta)\|\bm u-\bm v\|_2.
+\]
+一次样本替换造成的差异，可能被后续更新继续放大。
+图~\ref{fig:stability-curvature}比较了凸、强凸与一般光滑非凸情形。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/learning-theory-curvature-stability}
+ \caption{同一观测上的一次梯度更新如何影响参数距离。每行左边两点的距离均为$D$，右边
+ 线段表示更新后的距离上界。凸与强凸行需要相应的步长条件；非凸行只使用光滑性。}
+ \label{fig:stability-curvature}
+\end{figure}
+\FloatBarrier
+
+稳定性的替换样本恒等式不依赖凸性，因此仍能从轨迹距离推出期望泛化差。
+失去的是自动得到较小轨迹距离和较小经验优化误差的保证，下面分别处理这两个问题。
+
+\subsection{非凸学习问题的正则化}
+
+非凸情形下，二次正则项能够抵消一部分负曲率，但正则化强度必须与负曲率的大小比较。
+称$F$为$\kappa$-弱凸的，是指加上$\kappa\|\bm w\|_2^2/2$以后变为凸函数。
+例如，$-\kappa w^2/2$恰好需要这么大的二次项才能变平；小于这个强度的正则项仍然
+留下负曲率。二阶可微时，弱凸条件等价于Hessian的特征值不小于$-\kappa$。
+
+\begin{definition}[弱凸函数]
+\label{def:weakly-convex}
+设$\mathcal W$是欧氏空间中的凸集，$\kappa\geq0$。
+若$\bm w\mapsto F(\bm w)+\kappa\|\bm w\|_2^2/2$在$\mathcal W$上为凸函数，
+则称$F$在$\mathcal W$上为$\kappa$-弱凸函数。
+\end{definition}
+
+\begin{theorem}[弱凸损失的正则化稳定性]
+\label{thm:weakly-convex-regularization}
+设$\mathcal W$为半径$B$的闭球，每个损失在其中为$\kappa$-弱凸且$L$-Lipschitz。
+取$\lambda>\kappa$，假设正则化目标的最小解存在，令
+\[
+ A_\lambda(S)=\argmin_{\bm w\in\mathcal W}
+ \left\{\hat R_S(\bm w)+\frac\lambda2\|\bm w\|_2^2\right\}.
+\]
+则$A_\lambda$具有均匀稳定性$\beta_n\leq2L^2/((\lambda-\kappa)n)$。
+相关损失可积时，对任意固定$\bm w\in\mathcal W$还有
+\[
+ \mathbb E_S R_{\mathcal P}(A_\lambda(S))-R_{\mathcal P}(\bm w)
+ \leq\frac{2L^2}{(\lambda-\kappa)n}+\frac\lambda2\|\bm w\|_2^2.
+\]
+\end{theorem}
+\begin{proof}
+正则化目标可以写成一个凸函数与
+$(\lambda-\kappa)\|\bm w\|_2^2/2$之和，因而为$(\lambda-\kappa)$-强凸。
+对相邻样本的两个最优解，重复定理~\ref{thm:regularized-erm-stability}的相加抵消论证，
+即得稳定性界。由正则化目标的最优性，经验风险相对于固定比较参数的差不超过
+$\lambda\|\bm w\|_2^2/2$。再加上期望泛化差就得到第二式。
+\end{proof}
+
+当$\kappa=0$时，这恢复凸正则化的结论。但若$\kappa>0$固定，条件$\lambda>\kappa$
+阻止正则化系数趋于零，第二项也就不能在整个比较空间上自动趋于零。
+因此，该定理证明了足够强的正则化能提高稳定性，尚未证明原非凸问题的PAC可学习性。
+若只求某个局部极小值，前面的全局最优性比较也不能直接使用。
+
+\subsection{非凸学习问题的随机梯度下降}
+
+正则化通过改变目标函数的曲率获得稳定性；对于仍然保持非凸的目标，也可以直接比较
+SGD在相邻样本上的两条迭代轨迹。与凸情形不同，同一个观测对应的梯度更新可能放大
+已经产生的参数差距。因此，每一步引入的扰动以及它在后续迭代中被放大的程度，都需要
+计入稳定性上界。这使学习率和训练轮数成为控制期望泛化差的关键因素。
+
+\begin{theorem}[非凸SGD的扰动传播]
+\label{thm:nonconvex-sgd-product}
+设每个损失在欧氏空间上可微、$L$-Lipschitz且$M$-光滑，$M>0$。
+采用式~\eqref{eq:sgd-update}，从相同的确定初值出发，索引独立均匀抽取，步长$\eta_t\geq0$。
+则最后一步输出对内部随机性平均后的均匀稳定性满足
+\[
+ \beta_{n,T}\leq\frac{2L^2}{n}
+ \sum_{t=0}^{T-1}\eta_t\prod_{j=t+1}^{T-1}(1+M\eta_j).
+\]
+其中空乘积取1。相关损失可积时，右侧也控制期望泛化差的绝对值。
+\end{theorem}
+\begin{proof}
+在相邻样本上使用相同随机索引，记两次迭代参数的平均距离为$D_t$。
+未抽中替换位置时，光滑性给出放大因子$1+M\eta_t$。
+抽中时，在同一观测的更新之外，再加入两个观测的梯度差；梯度范数均不超过$L$，
+所以新增距离至多$2L\eta_t$。由抽中概率$1/n$，
+\[
+ D_{t+1}\leq(1+M\eta_t)D_t+\frac{2L\eta_t}{n},\qquad D_0=0.
+\]
+逐步展开递推式，每一步产生的扰动都乘以后续更新的放大因子。
+最后用Lipschitz性将$D_T$乘以$L$，即得损失差上界。
+\end{proof}
+
+固定步长$\eta>0$时，这个几何级数给出
+\[
+ \beta_{n,T}\leq\frac{2L^2}{Mn}\bigl((1+M\eta)^T-1\bigr).
+\]
+它是最坏情形上界，不能据此断定每个非凸算法的实际泛化差都指数增长。
+但它说明只知道光滑性还不足以支持任意长时间训练；减小步长、限制训练轮数，或利用
+轨迹经过区域的更好曲率条件，都会影响能证明的保证。
+
+SGD还有一项可以利用的性质：在第一次抽中被替换的观测之前，两次运行完全相同。
+若此时步长已经减小，后续扰动的放大就弱于从第一步开始估计。
+下面给出Hardt、Recht与Singer分析思路的一种常数较宽松的形式
+\scite{hardt2016sgd}
+
+\begin{theorem}[递减步长的非凸SGD泛化界]
+\label{thm:nonconvex-sgd-decay}
+在定理~\ref{thm:nonconvex-sgd-product}的条件下，进一步设$0\leq\ell\leq1$，且
+$\eta_t\leq c/(t+1)$，其中$c>0$。记$a=Mc$。对任意整数$1\leq t_0\leq T$，有
+\[
+ \beta_{n,T}\leq\frac{t_0}{n}
+       +\frac{2L^2}{Mn}\left(\frac{T}{t_0}\right)^a.
+\]
+特别地，取$t_0=\lceil T^{a/(a+1)}\rceil$，可得
+\[
+ \beta_{n,T}\leq
+ \frac{1+(1+2L^2/M)T^{a/(a+1)}}{n}.
+\]
+\end{theorem}
+\begin{proof}
+前$t_0$次抽样中至少一次选中替换位置的概率不超过$t_0/n$。
+在这一事件上用损失差至多1估计。在其补事件上，两条轨迹在时刻$t_0$完全相同，
+后续索引仍独立均匀，因而可从$D_{t_0}=0$开始使用前一定理的递推式。
+利用$1+u\leq e^u$及调和和的积分上界，有
+\[
+ \prod_{j=t+1}^{T-1}\left(1+\frac a{j+1}\right)
+ \leq\left(\frac T{t+1}\right)^a.
+\]
+所以后续的条件期望损失差至多为
+\[
+ \frac{2cL^2T^a}{n}\sum_{t=t_0}^{T-1}(t+1)^{-a-1}
+ \leq\frac{2cL^2T^a}{an}\,t_0^{-a}.
+\]
+这里使用$\sum_{t=t_0}^{T-1}(t+1)^{-a-1}\leq\int_{t_0}^{T}x^{-a-1}\,dx\leq t_0^{-a}/a$。
+合并两种事件，并代入$a=Mc$得到第一式。再代入所给$t_0$，利用
+$T^{a/(a+1)}\leq t_0\leq T^{a/(a+1)}+1$即得第二式。
+\end{proof}
+
+固定$L,M,c$，取$T=n$时，该界按$n^{-1/(a+1)}$的量级趋于零。
+更一般地，若$T$按$n^p$增长，只要$p<(a+1)/a$，稳定性上界仍趋于零。
+这允许一定程度的重复访问样本，但结论控制的是期望泛化差。
+要得到相对于最优期望风险的学习保证，还必须有相应的经验优化误差$\rho_{n,T}\to0$。
+仅仅满足步长与轮数条件，不能保证算法已找到好的经验解。
+
+非凸问题要从“小泛化差”走到“接近最优期望风险”，必须加入能够控制经验优化误差的
+结构。一个有用条件是Polyak--\L{}ojasiewicz条件，简称PL条件：经验风险尚高于最优值时，
+梯度范数也必须足够大。它排除了损失仍很高却梯度已经为零的点，但不要求函数凸。
+
+\begin{definition}[PL条件]
+\label{def:pl-condition}
+设$F$可微且$F_* =\inf_{\bm w\in\mathcal W}F(\bm w)>-\infty$。
+给定$\mu>0$，若对指定区域内的所有$\bm w$都有
+\[
+ \frac12\|\nabla F(\bm w)\|_2^2\geq\mu(F(\bm w)-F_*),
+\]
+则称$F$在该区域内相对于$F_*$满足参数为$\mu$的PL条件。
+\end{definition}
+
+对$F(w)=w^2/2$，两侧在$\mu=1$时相等；而前面的$(w^2-1)^2$在$w=0$处不满足PL条件，
+因为左侧为零，右侧却为正。PL条件也允许非凸函数，例如文献中的
+$w^2+3\sin^2w$满足某个正参数的全局PL条件，但其二阶导数在部分位置为负
+\scite{karimi2016pl}因此PL条件控制的是梯度与最优值差距的关系，而非所有方向的曲率。
+
+对于随机梯度下降，即使经验梯度满足PL条件，单次使用的随机梯度仍可能偏离经验梯度。
+因此，学习保证还要保留随机梯度的方差项。下面将这一项与稳定性和初始优化误差一起列出。
+
+\begin{theorem}[PL条件下非凸SGD的学习保证]
+\label{thm:pl-stability-learning}
+对每份样本运行SGD，初值固定，索引$i_t$独立均匀取自$\{1,\ldots,n\}$，步长
+$0<\eta\leq1/M$。假设所有样本和索引序列的迭代点均留在同一凸区域$\mathcal W$内；
+各单样本损失在该区域的邻域内可微、$M$-光滑，且区域内梯度范数不超过$L$。
+每个经验风险在迭代点满足参数$0<\mu\leq M$的PL条件，比较值为
+$\inf_{\bm w\in\mathcal W}\hat R_S(\bm w)$，初始经验优化误差至多为$D$。
+进一步设对所有$S$和$\bm w\in\mathcal W$有
+\[
+ \frac1n\sum_{i=1}^n
+ \|\nabla\ell(\bm w,z_i)-\nabla\hat R_S(\bm w)\|_2^2\leq\nu^2.
+\]
+若相关损失可积，则
+\begin{align*}
+ &\mathbb E_{S,U}R_{\mathcal P}(\bm w^{(T)})-
+   \inf_{\bm w\in\mathcal W}R_{\mathcal P}(\bm w)\\
+ &\quad\leq\frac{2L^2}{Mn}\bigl((1+M\eta)^T-1\bigr)
+                  +D(1-\mu\eta)^T+\frac{M\eta\nu^2}{2\mu}.
+\end{align*}
+\end{theorem}
+\begin{proof}
+定理~\ref{thm:nonconvex-sgd-product}的轨迹比较给出第一项均匀稳定性上界。
+为分析经验优化误差，固定样本及此前的迭代结果，记
+$\bm g_t=\nabla\ell(\bm w^{(t)},z_{i_t})$。
+条件均值满足$\mathbb E\bm g_t=\nabla\hat R_S(\bm w^{(t)})$，条件二阶矩满足
+\[
+ \mathbb E\|\bm g_t\|_2^2
+ \leq\|\nabla\hat R_S(\bm w^{(t)})\|_2^2+\nu^2.
+\]
+将更新代入光滑性不等式，并对当前索引取期望，得到
+\begin{align*}
+ \mathbb E\hat R_S(\bm w^{(t+1)})
+ &\leq\hat R_S(\bm w^{(t)})
+ -\frac\eta2\|\nabla\hat R_S(\bm w^{(t)})\|_2^2
+ +\frac{M\eta^2\nu^2}{2}.
+\end{align*}
+这里使用$\eta\leq1/M$。由PL条件，平均经验优化误差$e_t$满足
+\[
+ e_{t+1}\leq(1-\mu\eta)e_t+\frac{M\eta^2\nu^2}{2},
+ \qquad e_0\leq D.
+\]
+求和几何级数，得到
+$e_T\leq D(1-\mu\eta)^T+M\eta\nu^2/(2\mu)$。
+再加上稳定性控制的期望泛化差，即得结论。
+\end{proof}
+
+三项分别来自样本替换、初始优化误差以及随机梯度波动。
+固定非零步长时，最后一项不随训练轮数消失；延长训练也可能增大稳定性项。
+若用全梯度替代随机梯度，方差项为零，并恢复全梯度下降的相应学习保证。
+
+当$L,M,\mu,D,\nu$都不随分布和样本量改变时，可以让步长随样本量减小，同时缓慢增加
+总步长。具体取$\eta_n=n^{-r}$，其中$r>0$，并令
+$T_n=\lfloor c_0\log n/\eta_n\rfloor$，其中$0<c_0<1/M$；充分大的$n$满足步长约束。
+此时三项分别不超过$O(n^{Mc_0-1})$、$O(n^{-\mu c_0})$和$O(n^{-r})$，
+因而都趋于零，得到分布无关PAC保证。
+这说明非凸性并不自动排除可学习，但统一PL条件、迭代区域和梯度条件都须针对问题证明，
+不能仅凭训练曲线下降就视为成立。
+
+\section{本章小结}
+\label{sec:general-learning-summary}
+
+一般学习问题由观测、决策和损失函数共同确定。把分类正确与否扩展为实数损失后，
+有限输入上的预测数目不再足以描述复杂度，还需区分函数值相差的尺度。
+伪维延续了阈值比较的思想，胖打散维进一步要求预测与阈值之间保留指定间隔。
+在本章列明的有界性与可测性条件下，各正尺度上的有限胖打散维刻画一致收敛，
+从而为经验风险最小化提供学习保证。
+
+一致收敛约束整个损失函数空间，稳定性则分析算法实际输出对训练样本变化的反应。
+本章的一般学习基本定理把可学习性与存在适当的稳定、渐近经验风险最小化算法联系起来，
+其中“存在”与经验优化要求都不能省略。一个始终输出同一决策的算法可以完全稳定，
+却不一定学到期望风险较低的决策；也不能要求任意成功算法都满足每一种稳定性定义。
+
+不同稳定性给出的信息各有范围。留一法稳定性比较删去一个观测前后的损失；平均稳定性
+直接联系期望泛化差；均匀稳定性还可借助集中不等式给出高概率保证。参数稳定性需经过
+损失的Lipschitz条件才能转成损失稳定性，互信息与条件互信息则从算法输出保留了多少
+样本信息出发控制期望泛化差。由平均保证得到PAC结论时，还需经验优化误差一同趋于零，
+且速率不能依赖具体分布。
+
+正则化、步长和停止时刻使这些抽象条件成为可以分析的算法选择。凸性与曲率能够限制
+样本扰动的传播；非凸问题也能得到有条件的保证，但必须核对光滑性、迭代区域以及
+相应的优化条件。下一章将这些分析用于神经网络，讨论参数大小、梯度特征、更新轨迹和
+参数分布怎样进入期望风险上界，而不是把参数数量直接等同于算法的实际泛化能力。
+
+\paragraph{延伸阅读}
+Shalev-Shwartz等关于可学习性、稳定性与一致收敛的论文，是理解本章一般学习基本定理的
+主要入口。阅读时应特别区分不同的渐近经验最优性要求，以及定理陈述的是某类算法的
+充分性，还是存在某个算法的必要性\scite{shalevshwartz2010learnability}
+
+Bousquet与Elisseeff系统研究了稳定性如何产生期望风险保证；Hardt、Recht与Singer则把
+这一思路用于随机梯度下降。前者适合补充不同稳定性定义与集中分析，后者适合对照凸与
+非凸情况下样本扰动递推为何不同\scite{bousquetelisseeff2002,hardt2016sgd}
+
+若希望从算法对样本的依赖继续延伸，可阅读Steinke与Zakynthinou的条件互信息分析。
+它把学习、压缩与信息量放进同一个框架；阅读时可对照本章的双样本构造，明确互信息究竟
+比较哪些随机变量，以及为何普通互信息与条件互信息不能直接互换\scite{steinke2020conditional}
