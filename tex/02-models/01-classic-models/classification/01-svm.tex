@@ -1,0 +1,671 @@
+\subsection{支持向量机（SVM）}
+\label{sec:classification-svm}
+
+感知机回答了一个基本问题：如果训练样本能够被某个超平面分开，怎样通过错误驱动的更新找到一个分离器？但分开训练样本并不意味着分界的位置已经合适。同一批可分数据往往允许许多分离超平面，即使从零参数开始，感知机的结果仍会受样本顺序和更新规则影响。一个紧贴训练样本的边界虽然没有训练错误，却可能在输入受到很小扰动时改变预测。要在这些分离器之间作出选择，还需要说明什么样的边界更值得保留。
+
+\term{支持向量机}（support vector machine，SVM）用训练样本到决策边界的距离回答这一问题：在正确分离样本的前提下，尽量增大最近样本到边界的距离。这个选择准则称为最大间隔。它不是对所有噪声和所有分布都最优的保证，而是在给定特征表示与距离度量后，用一个明确的几何量约束分类器。允许部分样本违反间隔要求，可以处理不可分数据；改变计算距离所依赖的特征表示，又可以得到非线性边界。这两个扩展分别改变约束与表示，不应混为同一种改进。
+
+最优分离超平面的早期研究可以追溯到20世纪60年代。现代支持向量分类器的一项关键进展，是Boser、Guyon与Vapnik在1992年把最优间隔训练和核表示结合起来\scite{boser1992margin}这篇论文从分类器容量与泛化之间的关系出发，用最靠近边界的支持样本表示解，并研究了多项式和径向基等非线性分类函数。在高阶多项式情形中，显式列出全部交互特征可能难以承受，而只计算样本间的核函数可以避开这一展开。论文中的字符识别实验也让这种表示方式与具体分类任务联系起来。
+
+1995年Cortes与Vapnik进一步系统发展了容许训练样本违反间隔约束的支持向量网络\scite{cortes1995}这样，无法严格分开的数据也能进入带有惩罚的优化问题，间隔不再以训练样本全部正确为前提。沿着这条路线，模型表达、误差容忍与实际求解逐渐形成分工：核函数决定怎样比较输入，松弛惩罚决定怎样对待间隔违反，后面介绍的分解算法则降低每次优化所需处理的问题规模。几何建模、凸优化和统计分析因此相互联系，但仍分别回答选择什么模型、如何求解以及怎样控制新样本误差。
+
+主线阅读只需抓住“硬间隔选择边界—软间隔容许违反—核方法改变表示—多分类组织类别竞争”这条路径，并理解训练目标与预测得分。对偶、SMO、风险界、再生核Hilbert空间构造和Mercer谱展开属于进阶证明与计算细节，跳过这些证明不影响后续把握模型选择。推导所需的凸优化背景可回顾第\ref{chap:convex-learning-and-stability}章；本节还会在首次使用处说明拉格朗日对偶、Slater条件、KKT条件和互补松弛，避免把这些名称当作无需解释的前提。
+
+下面从严格线性可分的情形建立模型，推导对偶与求解过程，再分别讨论优化保证和统计保证。有了这一基础，软间隔与核方法就可以理解为对原有问题的局部修改。多分类进一步改变类别之间的比较方式，可以组合二分类器，也可以直接学习多个类别的相对得分。
+
+\subsubsection{模型结构}
+\label{sec:classification-svm-model}
+
+沿用二分类标签约定，设训练集为$D_n=\{(\bm{x}_i,y_i)\}_{i=1}^n$，其中$\bm{x}_i\in\mathbb{R}^d$、$y_i\in\{-1,+1\}$，并假设两类均非空。令实值得分为$g(\bm{x})=\bm{w}^{\top}\bm{x}+b$，其中$\bm{w}\in\mathbb{R}^d$、$b\in\mathbb{R}$且$\bm{w}\ne\bm{0}$。决策超平面是$g(\bm{x})=0$，预测规则为$\hat y(\bm{x})=\operatorname{sign}(g(\bm{x}))$；若得分恰为零，约定预测为$+1$。后文会将零得分保守地计入间隔错误，因此这个平局约定不影响风险上界。
+
+仅比较$y_i g(\bm{x}_i)$还不能比较不同超平面。把$(\bm{w},b)$同时乘以任意正数，分类结果不变，这个数值却会随之放大。为区分参数尺度与真实距离，定义样本的\term{函数间隔}（functional margin）为$m_i=y_i g(\bm{x}_i)$，定义其\term{几何间隔}（geometric margin）为
+\begin{equation}
+  \gamma_i
+  =\frac{y_i(\bm{w}^{\top}\bm{x}_i+b)}
+         {\lVert\bm{w}\rVert_2},
+  \qquad
+  \gamma=\min_{1\le i\le n}\gamma_i.
+  \label{eq:classification-svm-margin}
+\end{equation}
+函数间隔保留了得分的尺度；几何间隔除以法向量长度，得到沿法向方向测量的有符号距离。样本分类正确时，这个距离为正。若输入改变为$\bm{x}_i+\bm{\Delta}$，由Cauchy--Schwarz不等式可得
+\[
+  y_i g(\bm{x}_i+\bm{\Delta})
+  \ge y_i g(\bm{x}_i)
+      -\lVert\bm{w}\rVert_2\lVert\bm{\Delta}\rVert_2.
+\]
+因此，$\lVert\bm{\Delta}\rVert_2<\gamma_i$时预测不会翻转。这说明间隔刻画的是当前特征空间中对输入扰动的容忍程度，而不是对任意分布变化的鲁棒性。
+
+严格线性可分意味着存在$(\bm{w},b)$使所有$m_i>0$。由于样本数有限，可以将这组参数除以$\min_i m_i$，得到$\min_i m_i=1$的规范化表示。在该表示下，最近样本到决策超平面的单侧距离为$1/\lVert\bm{w}\rVert_2$；两个平行超平面$g(\bm{x})=+1$与$g(\bm{x})=-1$之间的总宽度则是$2/\lVert\bm{w}\rVert_2$。本节将前者记为$\gamma$，不把单侧间隔与两侧带宽混用。
+
+最大化$\gamma$于是等价于最小化$\lVert\bm{w}\rVert_2$。平方与正比例因子不改变最优解，却使求导更方便，得到\term{硬间隔}（hard margin）SVM的原始问题：
+\begin{equation}
+  \begin{aligned}
+    \min_{\bm{w},b}\quad&
+      \frac12\lVert\bm{w}\rVert_2^2\\
+    \text{s.t.}\quad&
+      y_i(\bm{w}^{\top}\bm{x}_i+b)\ge1,
+      \quad i=1,\ldots,n.
+  \end{aligned}
+  \label{eq:classification-svm-hard-primal}
+\end{equation}
+这里的“硬”表示每个样本都必须满足间隔约束，不能用其他样本的改善来补偿某个样本的违反。约束写为大于等于$1$并没有放弃规范化：若一个可行解的最小函数间隔严格大于$1$，将参数一起缩小就能降低目标，所以最优解必有紧约束。
+
+\begin{theorem}[硬间隔解的存在性与唯一性]
+  \label{thm:classification-svm-hard-unique}
+  若有限训练集严格线性可分且两类均非空，则问题\eqref{eq:classification-svm-hard-primal}存在唯一的规范化最优参数$(\bm{w}^{\ast},b^{\ast})$。目标函数只对$\bm{w}$严格凸，偏置的唯一性还需要两类约束共同确定。
+\end{theorem}
+\begin{proof}
+取一个可行解，并把目标限制在不超过该解目标值的水平集上，则$\bm{w}$有界。固定一个正类样本与一个负类样本，它们的约束分别给出$b$的下界与上界；因为$\bm{w}$有界，$b$也有界。该水平集闭且非空，因此连续目标能在其中取得最小值。
+
+若两个最优解的权重不同，其平均仍可行，但平方范数的严格凸性会使平均解的目标更小，产生矛盾。因此所有最优解共享同一个$\bm{w}^{\ast}$。为研究$b$，对给定$\bm{w}$定义两类样本的投影端点
+\[
+  a_+(\bm{w})=\min_{i:y_i=+1}\bm{w}^{\top}\bm{x}_i,
+  \qquad
+  a_-(\bm{w})=\max_{i:y_i=-1}\bm{w}^{\top}\bm{x}_i.
+\]
+可行偏置恰好满足
+\[
+  1-a_+(\bm{w})\le b\le-1-a_-(\bm{w}),
+\]
+所以投影间距$a_+(\bm{w})-a_-(\bm{w})$至少为$2$。若在最优$\bm{w}^{\ast}$处它严格大于$2$，令$\theta=2/(a_+-a_-)<1$，取新权重$\theta\bm{w}^{\ast}$和新偏置$-\theta(a_++a_-)/2$，则两类最近样本的函数间隔都为$1$，其余样本仍满足约束，而非零权重的范数严格减小。这与最优性矛盾。故最优投影间距只能等于$2$，可行偏置区间收缩为单点，$b^{\ast}$也唯一。
+\end{proof}
+
+这个证明还表明，最优解的两个支持超平面都至少接触一个训练样本。唯一性属于固定数据与固定特征表示下的规范化硬间隔问题，不意味着更换特征、加入噪声或放松约束以后仍有同样的结论。
+
+\begin{example}[单侧间隔与带宽]
+  \label{ex:classification-svm-one-dimensional}
+  考虑一维教学数据$(x_1,y_1)=(-1,-1)$、$(x_2,y_2)=(1,+1)$、$(x_3,y_3)=(-2,-1)$和$(x_4,y_4)=(2,+1)$。任意落在$-1$与$1$之间的阈值都能正确分类，但只有阈值$0$使两侧最近距离的较小者达到最大。规范化最优解为$w^{\ast}=1$、$b^{\ast}=0$；最近样本的单侧距离为$1$，两条支持超平面在此退化为两个点$-1$与$1$，其间距离为$2$。更远的两个样本不限制这一最优间隔。
+\end{example}
+
+\subsubsection{参数学习}
+\label{sec:classification-svm-learning}
+
+原始问题可以交给凸二次规划求解器，但直接优化$\bm{w}$不是唯一途径。每个约束究竟在多大程度上限制了最优边界，可以通过与它对应的拉格朗日乘子表示。转到\term{对偶问题}（dual problem），就是改为优化这些约束权重；它既能揭示哪些样本真正参与决策，也能把训练样本的使用方式压缩为样本间内积。这是后面引入核方法的关键，而不是说对偶在所有$n$、$d$组合下都比原始问题便宜。
+
+将约束写为$1-y_i(\bm{w}^{\top}\bm{x}_i+b)\le0$，引入$\alpha_i\ge0$，记$\bm{\alpha}=(\alpha_1,\ldots,\alpha_n)^{\top}$。拉格朗日函数为
+\begin{equation}
+  \begin{aligned}
+    L(\bm{w},b,\bm{\alpha})
+    ={}&\frac12\lVert\bm{w}\rVert_2^2\\
+      &+\sum_{i=1}^n\alpha_i
+        \bigl[1-y_i(\bm{w}^{\top}\bm{x}_i+b)\bigr].
+  \end{aligned}
+  \label{eq:classification-svm-hard-lagrangian}
+\end{equation}
+对一个可行$(\bm{w},b)$，$\sup_{\bm{\alpha}\ge\bm{0}}L$等于原始目标；若有约束违反，对应乘子趋于无穷会使上确界为正无穷。因此原始最优值可写为$\inf_{\bm{w},b}\sup_{\bm{\alpha}\ge\bm{0}}L$。反过来，先对$(\bm{w},b)$取下确界再最大化，得到原始最优值的下界。两种次序能否给出相同的值，需要强对偶条件，不能只根据形式交换极值。
+
+这里可以直接核验\term{Slater条件}（Slater's condition）：它要求存在严格满足不等式约束的点。取一个严格分离器，并把参数放大到所有函数间隔都严格大于$1$，就得到所需点。结合目标凸、约束仿射以及上一小节的最优值可达性，可得强对偶与最优乘子的存在性。
+
+现在计算$q(\bm{\alpha})=\inf_{\bm{w},b}L(\bm{w},b,\bm{\alpha})$。由于$b$没有二次项，若$\sum_i\alpha_i y_i\ne0$，沿$b$的某个方向就有$L\to-\infty$。要使$q$有限，必须满足等式约束；关于$\bm{w}$的极小值则由驻点给出：
+\begin{equation}
+  \bm{w}=\sum_{i=1}^n\alpha_i y_i\bm{x}_i,
+  \qquad
+  \sum_{i=1}^n\alpha_i y_i=0.
+  \label{eq:classification-svm-stationarity}
+\end{equation}
+令$\bm{v}=\sum_i\alpha_i y_i\bm{x}_i$，代入后涉及权重的两项变为$\frac12\lVert\bm{v}\rVert_2^2-\lVert\bm{v}\rVert_2^2$，而$b$项为零。展开$\lVert\bm{v}\rVert_2^2$，便得到
+\begin{equation}
+  \begin{aligned}
+    \max_{\bm{\alpha}}\quad&
+      q(\bm{\alpha})
+      =\sum_{i=1}^n\alpha_i
+       -\frac12\sum_{i,j=1}^n
+          \alpha_i\alpha_j y_i y_j
+          \bm{x}_i^{\top}\bm{x}_j\\
+    \text{s.t.}\quad&
+      \sum_{i=1}^n\alpha_i y_i=0,\qquad
+      \alpha_i\ge0,\quad i=1,\ldots,n.
+  \end{aligned}
+  \label{eq:classification-svm-hard-dual}
+\end{equation}
+二次项矩阵的元素为$\bm{Q}_{i,j}=y_i y_j\bm{x}_i^{\top}\bm{x}_j$。对任意$\bm{a}\in\mathbb{R}^n$，有$\bm{a}^{\top}\bm{Q}\bm{a}=\lVert\sum_i a_i y_i\bm{x}_i\rVert_2^2\ge0$，所以$q$是凹函数；它未必严格凹，因而对偶乘子未必唯一。
+
+原始解与对偶解的联系可以用\term{Karush--Kuhn--Tucker条件}（Karush--Kuhn--Tucker conditions，KKT条件）完整表达。它们同时检查解是否满足约束、是否达到驻点，以及一个约束是否真的限制了目标的继续改善。在当前凸问题与Slater条件下，这组条件对最优性既必要又充分：
+\begin{equation}
+  \begin{aligned}
+    &m_i^{\ast}=y_i g^{\ast}(\bm{x}_i)\ge1,
+      \qquad \alpha_i^{\ast}\ge0,\\
+    &\alpha_i^{\ast}(m_i^{\ast}-1)=0,
+      \qquad i=1,\ldots,n,\\
+    &\bm{w}^{\ast}
+      =\sum_{i=1}^n\alpha_i^{\ast}y_i\bm{x}_i,
+      \qquad \sum_{i=1}^n\alpha_i^{\ast}y_i=0.
+  \end{aligned}
+  \label{eq:classification-svm-hard-kkt}
+\end{equation}
+其中第三个关系是\term{互补松弛}（complementary slackness）：乘子与约束的剩余量不能同时为正。最后一行是关于权重与偏置的驻点条件。
+
+把$\alpha_i^{\ast}>0$的样本称为\term{支持向量}（support vector），并记其索引集为$S=\{i:\alpha_i^{\ast}>0\}$。互补松弛说明，支持向量一定满足$m_i^{\ast}=1$，而$m_i^{\ast}>1$必有$\alpha_i^{\ast}=0$。反向推断却不成立：落在边界上的样本也可能具有零乘子。例如把示例\ref{ex:classification-svm-one-dimensional}中的$x_2=1$重复一次，正类边界点的乘子总和仍可为$1/2$，但这个总量可以全部分配给其中一个副本。超平面没有改变，对偶表示与支持向量索引集却可能改变。
+
+求得$\bm{\alpha}^{\ast}$后，恢复模型只需
+\begin{equation}
+  \begin{aligned}
+    \bm{w}^{\ast}
+      &=\sum_{i\in S}\alpha_i^{\ast}y_i\bm{x}_i,\\
+    b^{\ast}
+      &=y_k-(\bm{w}^{\ast})^{\top}\bm{x}_k,
+        \qquad k\in S.
+  \end{aligned}
+  \label{eq:classification-svm-recover}
+\end{equation}
+精确最优解下，任意支持向量都会给出同一偏置；数值计算中可以平均多个合适样本给出的估计。只有非零乘子进入预测，这就是SVM的稀疏表示。但稀疏不等于支持向量一定很少，某些数据集可以让大部分甚至全部训练点成为支持向量。
+
+\paragraph{SMO 算法}
+\label{sec:classification-svm-smo}
+
+对偶把未知量换成了$n$个乘子，也带来了新的计算负担。若存储完整内积矩阵，需要$O(n^2)$空间；通用稠密求解中的一次矩阵分解就可能需要$O(n^3)$运算，具体总成本还取决于求解器与迭代次数。为了避开每轮求解大规模二次规划，Platt提出了\term{序列最小优化}（sequential minimal optimization，SMO）：每次只优化一个最小的可动变量组，把整个问题分解为可解析处理的二维子问题\scite{platt1998smo}
+
+为什么不能每次只动一个乘子？因为$\sum_i\alpha_i y_i=0$且$y_i\ne0$，单独改变一个$\alpha_i$会破坏等式约束。选择两个不同索引$i,j$，固定其余乘子，记更新前数值为$\alpha_i^{(t)},\alpha_j^{(t)}$，并令$s=y_i y_j\in\{-1,+1\}$。如果把新的$\alpha_j$写为$u$，等式约束要求
+\begin{equation}
+  \alpha_i(u)
+  =\alpha_i^{(t)}
+    +s\bigl(\alpha_j^{(t)}-u\bigr).
+  \label{eq:classification-svm-smo-coupling}
+\end{equation}
+这样二维问题实际上只剩一个自由变量。对硬间隔，要求$u\ge0$且$\alpha_i(u)\ge0$，可行区间$[L,H]$为
+\begin{equation}
+  \begin{aligned}
+    s=+1:\quad&
+      L=0,\qquad H=\alpha_i^{(t)}+\alpha_j^{(t)},\\
+    s=-1:\quad&
+      L=\max\{0,\alpha_j^{(t)}-\alpha_i^{(t)}\},
+      \qquad H=+\infty.
+  \end{aligned}
+  \label{eq:classification-svm-smo-hard-interval}
+\end{equation}
+同号时两乘子之和固定，因而有有限上界；异号时差固定，二者可以同时增大。这两种区间的差别来自标签符号对等式约束的影响。
+
+为求沿这个区间的最优点，定义$\bm{K}_{i,j}=\bm{x}_i^{\top}\bm{x}_j$，并使用当前实值得分计算误差缓存
+\[
+  E_k=g^{(t)}(\bm{x}_k)-y_k,\qquad
+  g^{(t)}(\bm{x})
+  =\sum_{\ell=1}^n\alpha_\ell^{(t)}
+     y_\ell\bm{x}_\ell^{\top}\bm{x}+b^{(t)}.
+\]
+$E_k$保留实值得分相对于标签的偏差，因而包含更新所需的距离信息；经过$\operatorname{sign}$得到的离散预测标签不再包含这部分信息。令$\Delta=u-\alpha_j^{(t)}$。由于$\Delta\alpha_i=-s\Delta$，权重变化为$y_j\Delta(\bm{x}_j-\bm{x}_i)$，代入$q$可以逐项得到
+\begin{equation}
+  \begin{aligned}
+    q(u)-q(\alpha_j^{(t)})
+      &=y_j(E_i-E_j)\Delta-\frac12\eta\Delta^2,\\
+    \eta
+      &=\bm{K}_{i,i}+\bm{K}_{j,j}-2\bm{K}_{i,j}\\
+      &=\lVert\bm{x}_i-\bm{x}_j\rVert_2^2\ge0.
+  \end{aligned}
+  \label{eq:classification-svm-smo-gain}
+\end{equation}
+这里$q(u)$表示其余乘子固定、$\alpha_i$按式\eqref{eq:classification-svm-smo-coupling}联动后的目标。偏置不出现在对偶目标中；误差差$E_i-E_j$中的$b^{(t)}$也恰好相消。
+
+当$\eta>0$时，一元凹二次函数的无约束最优点与区间最优点分别为
+\begin{equation}
+  \begin{aligned}
+    u_{\mathrm{unc}}
+      &=\alpha_j^{(t)}+\frac{y_j(E_i-E_j)}{\eta},\\
+    \alpha_j^{(t+1)}
+      &=\min\{H,\max\{L,u_{\mathrm{unc}}\}\},\\
+    \alpha_i^{(t+1)}
+      &=\alpha_i^{(t)}
+        +s\bigl(\alpha_j^{(t)}-\alpha_j^{(t+1)}\bigr).
+  \end{aligned}
+  \label{eq:classification-svm-smo-update}
+\end{equation}
+剪裁只对一个自由变量进行，再由等式回代另一个；独立剪裁两个乘子会破坏耦合约束。若$L=H$，该变量对没有可行移动，应另选工作集。
+
+$\eta=0$时，式\eqref{eq:classification-svm-smo-gain}变为线性函数，在有限区间上比较两个端点的目标即可；若目标恒定，保留旧值避免无效移动。严格可分的线性硬间隔问题中，$\eta=0$意味着两输入重合，它们不可能异号；同号重复点的目标沿可行线恒定。若出现零曲率、无穷上界且目标沿该方向无限增加，则应检查可分性假设、核矩阵与数值误差，并停止该次更新。
+
+乘子更新以后还要调整偏置。记$\Delta\alpha_i=\alpha_i^{(t+1)}-\alpha_i^{(t)}$，$\Delta\alpha_j$同理。分别要求更新后的第$i$或第$j$个样本具有函数间隔$1$，解得
+\begin{equation}
+  \begin{aligned}
+    b_i={}&b^{(t)}-E_i
+       -y_i\Delta\alpha_i\bm{K}_{i,i}
+       -y_j\Delta\alpha_j\bm{K}_{i,j},\\
+    b_j={}&b^{(t)}-E_j
+       -y_i\Delta\alpha_i\bm{K}_{i,j}
+       -y_j\Delta\alpha_j\bm{K}_{j,j}.
+  \end{aligned}
+  \label{eq:classification-svm-smo-bias}
+\end{equation}
+硬间隔中，若更新后的$\alpha_i>0$，使用$b_i$；否则若$\alpha_j>0$，使用$b_j$。二者都为正且子问题精确求解时，这两个值一致；若都不能用于确定偏置，可暂取$(b_i+b_j)/2$。这一步利用当前工作集的条件更新偏置，其他样本是否满足KKT仍由后续全局扫描检查。
+
+令$\Delta b=b^{(t+1)}-b^{(t)}$，其他样本的缓存可由
+\[
+  E_k^{(t+1)}
+  =E_k^{(t)}
+   +y_i\Delta\alpha_i\bm{K}_{i,k}
+   +y_j\Delta\alpha_j\bm{K}_{j,k}
+   +\Delta b
+\]
+更新，不必重新计算整个预测和。在示例\ref{ex:classification-svm-one-dimensional}中，从$\bm{\alpha}^{(0)}=\bm{0}$、$b^{(0)}=0$开始，选择$x_1=-1$与$x_2=1$，有$E_1=1$、$E_2=-1$、$\eta=4$，于是得到$\alpha_1=\alpha_2=1/2$和$b=0$。此时$w=1$，其余两个样本已经在间隔外；这一例子恰好一步达到最优，不能据此推断一般数据的迭代次数。
+
+\begin{algorithm}[硬间隔SMO的训练框架]
+  \label{alg:classification-svm-smo}
+  \begin{algorithmic}[1]
+    \Require 两类非空且严格可分的$D_n$，容差$\varepsilon_{\mathrm{opt}}>0$，迭代上限$t_{\max}$
+    \Ensure 可行乘子、偏置及停止状态
+    \State 初始化$\bm{\alpha}^{(0)}=\bm{0}$、$b^{(0)}=0$、$E_k=-y_k$
+    \For{$t=0,\ldots,t_{\max}-1$}
+      \State 扫描KKT残差；若全部低于容差，返回“容差满足”
+      \State 选取违反KKT的索引$i$，再选有可行改进的$j$
+      \State 按式\eqref{eq:classification-svm-smo-hard-interval}计算$L,H$
+      \State 求解一元子问题；退化时比较端点或更换变量对
+      \State 联动更新两个乘子，更新$b$与误差缓存
+    \EndFor
+    \State 返回当前参数及“达到迭代上限，尚未认证收敛”
+  \end{algorithmic}
+\end{algorithm}
+
+对于硬间隔，$\alpha_i=0$时应检查$m_i\ge1$，$\alpha_i>0$时应检查$m_i=1$，实际实现还要给“零乘子”设置数值容差。第二个变量可以优先选择误差差较大或预测目标增益较大的样本，但必须有回退扫描，不能永远忽略某些违反条件的变量。算法\ref{alg:classification-svm-smo}给出的是共同框架，具体选点规则的收敛条件留在下一小节讨论。
+
+SMO及其变种无需存放并分解整个稠密二次规划矩阵，不过核缓存仍可能占用可观空间。LIBSVM采用的是带工作集选择策略的SMO类分解方法，而非原始Platt算法的逐行实现；scikit-learn的\code{SVC}使用LIBSVM作为后端\scite{chang2011libsvm}
+
+在线性问题中，也可以直接维护$\bm{w}$，采用原始问题的次梯度方法或合适的坐标下降算法。LIBLINEAR面向大规模稀疏线性分类提供了专门求解路线，避免把所有训练问题都转成稠密核矩阵运算\scite{fan2008liblinear}
+
+\subsubsection{理论分析}
+\label{sec:classification-svm-analysis}
+
+一个训练程序给出低目标值，并不能直接说明它找到了最优解；即便已经找到最优解，也不能据此断言测试误差很低。这两个缺口分别需要优化分析与统计分析来弥补。硬间隔的几何结构让两种分析可以共享范数与间隔，但它们的量词、假设和结论仍须分开。
+
+\paragraph{收敛性分析}
+\label{sec:classification-svm-convergence}
+
+凸性消除了非全局的局部极小值：一个满足全部KKT条件的可行解就是全局最优解。这是对解的判别，不是对任意迭代过程的保证。算法仍可能反复选择没有有效移动的变量对，或者一直忽略另一组违反KKT的变量；只知道目标不下降，也无法排除它收敛到一个非最优值。
+
+对SMO而言，式\eqref{eq:classification-svm-smo-gain}说明，精确最大化当前子问题不会降低对偶目标。如果$\eta>0$、无约束最优点可行且更新非零，那么增益为$\eta\Delta^2/2>0$。但这些正增益可以越来越小，单调且有上界只足以推出目标值序列有极限，不能推出有限次更新恰好命中最优解。乘子本身不唯一时，目标值收敛与参数序列收敛还可能是不同问题。
+
+Osuna等对SVM分解求解提出了早期训练方法与分析，关键是怎样通过较小的工作集持续修复违反最优性条件的变量，而不是对任意坐标选择作出无条件保证\scite{osuna1997training}
+
+广义SMO的收敛研究进一步明确了算法规则与收敛结论之间的关系；工作集选择、退化情形处理和子问题求解方式都属于定理的条件\scite{keerthi2002convergence}
+
+实际求解器通常报告“在指定容差内满足KKT”，而不是“有限步得到精确实数最优解”。例如Fan等利用二阶信息选择工作集，并对所给算法建立收敛性质，这类结果应与对应选点规则一起使用\scite{fan2005working}若迭代上限先于容差条件触发，则只能报告当前近似解。对于硬间隔，还必须先有可分性使原始问题可行；软间隔通过松弛变量消除这一可行性障碍，但不会自动替任意求解器建立收敛证明。
+
+\paragraph{泛化分析}
+\label{sec:classification-svm-generalization}
+
+统计分析需要把训练中获得的间隔与独立测试样本的风险联系起来。以下分别从函数类的复杂度和删除训练样本后的解变化入手，再与感知机的错误更新界比较。
+
+\label{sec:classification-svm-margin-generalization}
+
+\textbf{基于间隔的泛化界。}最大间隔为什么可能有利于新样本？可以预先限制得分函数的范数，再研究其中具有较大训练间隔的函数。线性分类器的几何边界由符号决定；若不固定得分尺度，单靠$\lVert\bm{w}\rVert_2$小还不足以限制分类能力，因为任意非零参数都可以同比缩小而保持分类不变。范数与函数间隔必须共同出现。
+
+第\ref{sec:rademacher-complexity}节已经介绍用Rademacher复杂度控制这类得分函数，式\eqref{eq:rademacher-margin-risk}给出了无偏置线性模型的间隔风险界。这里补入SVM常用的偏置项，并明确所有上界都在抽样前固定。设独立同分布样本满足$\lVert\bm{x}\rVert_2\le R$几乎处处，给定$B>0$与$B_b\ge0$，考虑
+\[
+  \mathcal{F}_{B,B_b}
+  =\left\{
+    \bm{x}\mapsto\bm{w}^{\top}\bm{x}+b:
+    \lVert\bm{w}\rVert_2\le B,\ |b|\le B_b
+   \right\}.
+\]
+这里的输入界约束整个数据分布，而不只是已经看到的训练点。偏置也必须得到处理：若直接让$b$任意大，下面对实值得分函数的复杂度估计便不成立。
+
+为了把得分转换成误差，固定$\rho>0$并使用\term{截断间隔损失}（ramp loss）
+\begin{equation}
+  \ell_\rho(z)=
+  \begin{cases}
+    1, & z\le0,\\
+    1-z/\rho, & 0<z<\rho,\\
+    0, & z\ge\rho.
+  \end{cases}
+  \label{eq:classification-svm-ramp}
+\end{equation}
+它把错误分类和零得分记为$1$，把达到函数间隔$\rho$的样本记为$0$，中间线性过渡；其Lipschitz常数是$1/\rho$。它用于风险分析，不是把硬间隔训练目标改成这个非凸损失。
+
+\begin{theorem}[含偏置的间隔风险界]
+  \label{thm:classification-svm-margin-bound}
+  在上述输入有界假设下，固定$B,B_b,\rho$与$\delta\in(0,1)$。以至少$1-\delta$的概率，对所有$g\in\mathcal{F}_{B,B_b}$同时有
+  \begin{equation}
+    \begin{aligned}
+      R_{01}(g)
+      &\le \widehat R_\rho(g)
+       +\frac{2(BR+B_b)}{\rho\sqrt n}
+       +\sqrt{\frac{\log(1/\delta)}{2n}},\\
+      \widehat R_\rho(g)
+      &=\frac1n\sum_{i=1}^n\ell_\rho(y_i g(\bm{x}_i)),
+    \end{aligned}
+    \label{eq:classification-svm-margin-bound}
+  \end{equation}
+  其中$R_{01}(g)=\mathbb{P}(\hat y(\bm{x})\ne y)$是零一风险。
+\end{theorem}
+\begin{proof}
+因为$\mathbb{1}\{\hat y(\bm{x})\ne y\}\le\ell_\rho(y g(\bm{x}))$，只需控制右侧损失的期望。令$\sigma_1,\ldots,\sigma_n$为独立等概率取$\pm1$的Rademacher变量。固定样本后，有符号得分类的经验复杂度满足
+\[
+  \begin{aligned}
+    &\frac1n\mathbb{E}_{\bm{\sigma}}
+      \sup_{\lVert\bm{w}\rVert_2\le B,\ |b|\le B_b}
+      \sum_{i=1}^n\sigma_i y_i
+       (\bm{w}^{\top}\bm{x}_i+b)\\
+    &\quad\le
+      \frac{B}{n}\mathbb{E}_{\bm{\sigma}}
+        \left\lVert\sum_i\sigma_i y_i\bm{x}_i\right\rVert_2
+      +\frac{B_b}{n}\mathbb{E}_{\bm{\sigma}}
+        \left|\sum_i\sigma_i y_i\right|\\
+    &\quad\le
+      \frac{B}{n}\sqrt{\sum_i\lVert\bm{x}_i\rVert_2^2}
+      +\frac{B_b}{\sqrt n}
+      \le\frac{BR+B_b}{\sqrt n}.
+  \end{aligned}
+\]
+第二步先用Jensen不等式，再展开平方；独立随机符号使交叉项的期望为零。这个上界对所有样本成立，取样本期望后也约束期望Rademacher复杂度。由收缩引理，复合损失类的复杂度至多为该值的$1/\rho$倍；需要零点条件时，可以先减去常数$\ell_\rho(0)$，不改变复杂度。对取值在$[0,1]$内的固定损失类，期望Rademacher风险界给出两倍复杂度项与$\sqrt{\log(1/\delta)/(2n)}$的置信项，即得结论。
+\end{proof}
+
+这一推导沿用基于Rademacher复杂度的一致风险分析，关键在于它同时覆盖一个预先给定函数类中的所有候选者，因而也覆盖训练后从中选出的模型\scite{bartlettmendelson2002}
+
+硬间隔规范化解的训练函数间隔至少为$1$，取$\rho=1$时经验间隔损失为零；在该解属于预设函数类的前提下，较小的范数会带来较小的复杂度上界。无偏置时，$\rho/\lVert\bm{w}\rVert_2$正是对应的几何间隔，主要复杂度因子可以理解为“输入半径除以间隔”，而不必直接依赖$d$。
+
+SVM通常不正则化$b$，因此式\eqref{eq:classification-svm-margin-bound}需要单独控制偏置。在两类非空的可分数据上，若已有$\lVert\bm{w}^{\ast}\rVert_2\le B$和输入界$R$，前面的偏置区间证明可给出一个确定的有限偏置界，例如$|b^{\ast}|\le BR+1$。另一种处理是把常数特征增广进输入并同时约束其系数，得到一个不同的范数约束模型。
+
+增广表示也便于说明半径与间隔怎样限制容量。令$\widetilde{\bm{x}}=(\bm{x}^{\top},1)^{\top}\in\mathbb{R}^{d+1}$，在所考察输入域上有$\lVert\widetilde{\bm{x}}\rVert_2\le\widetilde R$，并预先固定$\widetilde\gamma>0$。如果$m$个点的每一种$\pm1$标记都能由某个单位增广参数$\bm{u}\in\mathbb{R}^{d+1}$实现，且每个点均满足$y_i\bm{u}^{\top}\widetilde{\bm{x}}_i\ge\widetilde\gamma$，就称这些点能被以$\widetilde\gamma$的\term{间隔打散}（margin shattering）。记这种可打散点数的最大值为$h_{\widetilde\gamma}$，则
+\begin{equation}
+  h_{\widetilde\gamma}
+  \le\min\left\{
+      d+1,\left\lfloor
+        \frac{\widetilde R^2}{\widetilde\gamma^2}
+      \right\rfloor
+    \right\}.
+  \label{eq:classification-svm-radius-margin-capacity}
+\end{equation}
+半径项可以用随机符号证明。对每一组独立随机符号$\sigma_1,\ldots,\sigma_m$，按间隔打散的定义选择对应的单位参数$\bm{u}_{\bm{\sigma}}$，则
+\[
+  m\widetilde\gamma
+  \le\bm{u}_{\bm{\sigma}}^{\top}
+       \sum_{i=1}^m\sigma_i\widetilde{\bm{x}}_i
+  \le\left\lVert
+       \sum_{i=1}^m\sigma_i\widetilde{\bm{x}}_i
+     \right\rVert_2.
+\]
+两边平方并对随机符号取期望，交叉项消失，得到$m^2\widetilde\gamma^2\le\sum_i\lVert\widetilde{\bm{x}}_i\rVert_2^2\le m\widetilde R^2$，所以$m\le\lfloor\widetilde R^2/\widetilde\gamma^2\rfloor$。维数项来自线性相关性：若$m>d+1$，存在非零系数满足$\sum_i a_i\widetilde{\bm{x}}_i=\bm{0}$；按非零$a_i$的符号指定标签，间隔条件却会推出$\bm{u}^{\top}\sum_i a_i\widetilde{\bm{x}}_i\ge\widetilde\gamma\sum_i|a_i|>0$，矛盾。
+
+这里控制的是每一种标签都要保留规定距离的打散能力；普通VC维只要求标签可实现，不要求固定的正间隔。因此，观察到某一份已标记数据具有大间隔，并不会改变整个半空间族的VC维。增广表示中的归一化间隔为$y_i(\bm{w}^{\top}\bm{x}_i+b)/\sqrt{\lVert\bm{w}\rVert_2^2+b^2}$，也不同于标准SVM只用$\lVert\bm{w}\rVert_2$归一化的间隔。式\eqref{eq:classification-svm-radius-margin-capacity}揭示了半径与间隔共同限制容量的原因，具体风险保证仍可使用前面的Rademacher界并明确偏置约定。
+
+如果看过数据后才把$B$设为拟合范数、把$\rho$设为观察到的最小间隔，再直接套用固定参数的概率结论，就遗漏了选择这些量的代价。可以预设一列嵌套范数类并分配失败概率，通过并集界实施\term{结构风险最小化}（structural risk minimization，SRM），也可以用独立验证选择超参数。大间隔理论支持的是这样带有容量约束与选择控制的结论，不是单个训练集上的间隔数值本身就构成泛化保证。
+
+\label{sec:classification-svm-loo}
+
+\textbf{基于支持向量数的留一法界。}间隔界从函数类出发；另一种分析直接考察删除一个样本会不会改变最优解。记$A$为精确求解硬间隔问题的学习器：两类非空且可分时返回唯一超平面，训练集只含一类时返回该类的常值分类器。对$n\ge2$，定义\term{留一法}（leave-one-out，LOO）误差为
+\begin{equation}
+  \widehat R_{\mathrm{LOO}}(D_n)
+  =\frac1n\sum_{i=1}^n
+    \mathbb{1}\bigl\{
+       A(D_n\setminus\{(\bm{x}_i,y_i)\})(\bm{x}_i)
+       \ne y_i
+     \bigr\}.
+  \label{eq:classification-svm-loo-definition}
+\end{equation}
+这里删除的是第$i$个观测，即使两个输入相同，也把它们视为不同训练观测。对固定训练集，选定一组最优乘子，仍记$S=\{i:\alpha_i^{\ast}>0\}$。
+
+\begin{theorem}[硬间隔的支持向量计数界]
+  \label{thm:classification-svm-loo-bound}
+  若$D_n$严格线性可分且两类均非空，则上述学习器满足
+  \[
+    \widehat R_{\mathrm{LOO}}(D_n)\le\frac{|S|}{n}.
+  \]
+\end{theorem}
+\begin{proof}
+考虑一个$\alpha_i^{\ast}=0$的观测。删除它后，原始解仍满足剩余约束；同时删除零乘子，不改变$\bm{w}^{\ast}$的表示和$\sum_j\alpha_j^{\ast}y_j=0$，剩余的互补松弛条件也全部保留。所以原始解与剩余乘子仍满足缩小问题的KKT条件，仍然最优。
+
+删除零乘子观测不会恰好删去某一类的唯一成员：若一类仅有一个观测且其乘子为零，等式约束将迫使另一类的所有非负乘子也为零，从而$\bm{w}^{\ast}=\bm{0}$，与两类硬间隔可行性矛盾。因此缩小后的数据仍有两类，由定理\ref{thm:classification-svm-hard-unique}，其最优超平面与原来完全一致，被删观测仍被正确预测。
+
+留一错误于是只能发生在$S$内，每个这样的观测至多贡献一次错误，求和并除以$n$即得结论。支持向量被删除也未必引起错误，因此这里是上界而非等式。
+\end{proof}
+
+这个证明使用了精确最优解与删除零乘子观测后的解不变性，不能原样推广到任意近似求解器、任意软间隔偏置选择或其他不稳定的解选择规则。对偶表示不唯一并不破坏上述论证：固定任意一组最优乘子，删除其中的零系数后，KKT证明仍成立。
+
+若数据独立同分布，且含两类的相关有限样本几乎必然严格线性可分，则每一个被留出的观测都独立于其余$n-1$个观测。再由交换性，留一误差中的各项具有相同期望，得到
+\begin{equation}
+  \begin{aligned}
+    \mathbb{E}_{D_{n-1}}R_{01}(A(D_{n-1}))
+      &=\mathbb{E}_{D_n}\widehat R_{\mathrm{LOO}}(D_n)\\
+      &\le\frac{\mathbb{E}_{D_n}|S(D_n)|}{n}.
+  \end{aligned}
+  \label{eq:classification-svm-loo-expectation}
+\end{equation}
+只含一类的样本采用前述常值规则，并把其$S$记为空集，相同关系仍适用。左侧是用$n-1$个观测训练的学习器的期望风险，不是当前$n$样本模型的条件风险。当前训练集的$|S|/n$可以作为留一误差的可计算上界，但没有额外概率分析时，不能把它宣称为当前模型真实风险的无条件上界。
+
+\label{sec:classification-svm-perceptron-comparison}
+
+\textbf{与感知机Novikoff定理的对比。}感知机的Novikoff错误次数界也包含$(R/\gamma)^2$。在相同输入范数、偏置处理和间隔约定下，这种形式相近来自同一几何事实：较小的输入半径与较大的分离间隔，限制了错误驱动更新能够持续发生的程度。但Novikoff定理计数的是感知机沿训练序列犯错并更新的次数，不是对任意测试分布的风险界。
+
+SVM的间隔风险界则需要独立同分布抽样，并将训练间隔、候选函数类的范数与样本量共同联系起来。感知机不保证找到最小范数解或最大间隔解，SVM也不因为优化了最大间隔就对所有问题取得更低测试误差。两种结果提供了不同层面的信息：前者解释一个在线更新过程何时停止犯训练错误，后者解释在额外统计条件下，什么样的间隔结构有助于控制新样本错误。
+
+\subsubsection{支持几乎线性分类（软间隔）}
+\label{sec:classification-svm-soft-margin}
+
+硬间隔要求每个观测都能被严格分开。只要两个相同输入带有相反标签，约束就无解；即使仍然可分，一个位置异常的样本也可能把边界推向不适合大多数数据的位置。解决办法是允许样本违反间隔要求，但把违反量计入目标。这就是\term{软间隔}（soft margin）：间隔仍是选择边界的依据，却不再是每个观测都必须满足的硬性条件。
+
+为第$i$个观测引入\term{松弛变量}（slack variable）$\xi_i\ge0$，表示其函数间隔相对于$1$的不足量。令$\bm{\xi}=(\xi_1,\ldots,\xi_n)^{\top}$，惩罚系数记为$\lambda_{\mathrm{s}}>0$，以免与本章的类别数$C$混淆。标准的线性松弛惩罚形式为
+\begin{equation}
+  \begin{aligned}
+    \min_{\bm{w},b,\bm{\xi}}\quad&
+      \frac12\lVert\bm{w}\rVert_2^2
+       +\lambda_{\mathrm{s}}\sum_{i=1}^n\xi_i\\
+    \text{s.t.}\quad&
+      y_i(\bm{w}^{\top}\bm{x}_i+b)\ge1-\xi_i,\\
+    &\xi_i\ge0,\qquad i=1,\ldots,n.
+  \end{aligned}
+  \label{eq:classification-svm-soft-primal}
+\end{equation}
+在这个目标中，$\lambda_{\mathrm{s}}$越大，一单位间隔违反越昂贵；它惩罚的是间隔不足，而不只是错分次数。固定$(\bm{w},b)$后，$\xi_i$越小目标越低，因而最优松弛量必为$\max\{0,1-y_i g(\bm{x}_i)\}$。
+
+当$\xi_i=0$时，样本位于规范间隔边界或其外侧；当$0<\xi_i<1$时，样本仍被正确分类，但位于间隔内部；$\xi_i=1$表示零得分；$\xi_i>1$才表示落在错误一侧。图\ref{fig:classification-svm-margin}固定$g(\bm{x})=x_1-2$，用同一个边界比较这几种情形。点A与点B都是正类，分别有$y_Ag(\bm{x}_A)=0.5$和$y_Bg(\bm{x}_B)=-0.5$，所以最小松弛量分别为$0.5$与$1.5$。松弛量是在得分尺度上测量的；当$\bm{w}\ne\bm{0}$时，除以$\lVert\bm{w}\rVert_2$才是沿法向方向补足至相应规范间隔边界的距离。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/classification-svm-margin}
+  \caption{硬间隔与软间隔的教学示意，坐标无量纲。蓝圆为负类，赭方为正类；两个面板都给定$\bm{w}=(1,0)^{\top}$、$b=-2$，实线为$g=0$，虚线为$g=\pm1$。单侧规范间隔为$1/\lVert\bm{w}\rVert_2=1$，两虚线总宽为$2/\lVert\bm{w}\rVert_2=2$；左图圈出间隔上的样本。右图A位于$x_1=2.5$，正确分类但在间隔内，$\xi_A=0.5$；B位于$x_1=1.5$，已被错分，$\xi_B=1.5$。右图仅说明给定分界面下的最小松弛量，并非优化后的SVM最优解。}
+  \label{fig:classification-svm-margin}
+\end{figure}
+
+消去$\bm{\xi}$，式\eqref{eq:classification-svm-soft-primal}等价于
+\begin{equation}
+  \min_{\bm{w},b}\quad
+    \frac12\lVert\bm{w}\rVert_2^2
+    +\lambda_{\mathrm{s}}\sum_{i=1}^n
+       \max\{0,1-y_i g(\bm{x}_i)\}.
+  \label{eq:classification-svm-hinge-objective}
+\end{equation}
+其中$\ell(z)=\max\{0,1-z\}$是\term{合页损失}（hinge loss）：达到目标间隔以后不再奖励更大的得分，间隔不足时线性增加惩罚。它与前面的截断间隔损失不同，错误一侧的损失没有截断，因而保持凸性。这一形式把“最大间隔加违规代价”与“平方范数正则化加经验损失”联系起来。
+
+惩罚参数的数值还依赖损失是求和还是取平均。将式\eqref{eq:classification-svm-hinge-objective}除以$n\lambda_{\mathrm{s}}$，等价目标是平均合页损失加$\lVert\bm{w}\rVert_2^2/(2n\lambda_{\mathrm{s}})$。所以在不同样本量或不同软件约定之间比较超参数时，应先统一归一化方式。较大的$\lambda_{\mathrm{s}}$允许模型付出更大范数来降低训练损失，较小的值更重视范数控制；是否过拟合或欠拟合还取决于数据、表示与验证结果，不能由单个超参数独立决定。
+
+软间隔的乘子上界来自松弛变量的最优性条件。分别为$1-\xi_i-y_i g(\bm{x}_i)\le0$与$-\xi_i\le0$引入$\alpha_i,\mu_i\ge0$，拉格朗日函数为
+\[
+  \begin{aligned}
+    L={}&\frac12\lVert\bm{w}\rVert_2^2
+       +\lambda_{\mathrm{s}}\sum_i\xi_i\\
+      &+\sum_i\alpha_i
+        \bigl[1-\xi_i-y_i(\bm{w}^{\top}\bm{x}_i+b)\bigr]
+       -\sum_i\mu_i\xi_i.
+  \end{aligned}
+\]
+关于$\bm{w},b$的驻点条件仍是式\eqref{eq:classification-svm-stationarity}，关于每个$\xi_i$则要求
+\[
+  \lambda_{\mathrm{s}}-\alpha_i-\mu_i=0.
+\]
+结合$\mu_i\ge0$，得到$0\le\alpha_i\le\lambda_{\mathrm{s}}$。取$\bm{w}=\bm{0}$、$b=0$和所有$\xi_i>1$可以严格满足两组不等式，因此不论数据是否可分，Slater条件都成立。消去原始变量后有
+\begin{equation}
+  \begin{aligned}
+    \max_{\bm{\alpha}}\quad&
+      \sum_{i=1}^n\alpha_i
+       -\frac12\sum_{i,j=1}^n
+         \alpha_i\alpha_j y_i y_j
+         \bm{x}_i^{\top}\bm{x}_j\\
+    \text{s.t.}\quad&
+      \sum_{i=1}^n\alpha_i y_i=0,\\
+    &0\le\alpha_i\le\lambda_{\mathrm{s}},
+      \qquad i=1,\ldots,n.
+  \end{aligned}
+  \label{eq:classification-svm-soft-dual}
+\end{equation}
+对偶可行域非空且紧，目标连续，所以对偶最优值可以取得。原始形式同样有最优解；两类非空时，限制目标的水平集可控制$\bm{w}$与$\bm{\xi}$，再由两类约束控制$b$。
+
+软间隔的互补松弛关系多了一组：
+\begin{equation}
+  \begin{aligned}
+    &\alpha_i^{\ast}(m_i^{\ast}-1+\xi_i^{\ast})=0,\\
+    &(\lambda_{\mathrm{s}}-\alpha_i^{\ast})\xi_i^{\ast}=0,\\
+    &m_i^{\ast}\ge1-\xi_i^{\ast},\qquad \xi_i^{\ast}\ge0.
+  \end{aligned}
+  \label{eq:classification-svm-soft-kkt}
+\end{equation}
+联合原始与对偶可行性，可以逐项读出
+\begin{equation}
+  \begin{aligned}
+    \alpha_i^{\ast}=0
+      &\ \Longrightarrow\
+        \xi_i^{\ast}=0,\quad m_i^{\ast}\ge1,\\
+    0<\alpha_i^{\ast}<\lambda_{\mathrm{s}}
+      &\ \Longrightarrow\
+        \xi_i^{\ast}=0,\quad m_i^{\ast}=1,\\
+    \alpha_i^{\ast}=\lambda_{\mathrm{s}}
+      &\ \Longrightarrow\
+        m_i^{\ast}=1-\xi_i^{\ast}\le1.
+  \end{aligned}
+  \label{eq:classification-svm-soft-cases}
+\end{equation}
+边界上的样本可以出现在三种乘子状态中：$\alpha_i^{\ast}=0$允许$m_i^{\ast}=1$，$\alpha_i^{\ast}=\lambda_{\mathrm{s}}$也允许$\xi_i^{\ast}=0$且$m_i^{\ast}=1$。反过来，$m_i^{\ast}>1$必有$\alpha_i^{\ast}=0$，$m_i^{\ast}<1$必有$\alpha_i^{\ast}=\lambda_{\mathrm{s}}$，而$m_i^{\ast}=1$时乘子可以是盒约束中的任意值，只要整体KKT系统成立。达到上界的乘子因此可能对应边界点、间隔内的正确样本或错分样本，需要结合$m_i^{\ast}$才能区分。
+
+范数项依然只对$\bm{w}$严格凸，足以保证最优权重唯一，却不能保证偏置唯一。一个简单反例是两个输入都为零，标签分别为$+1$与$-1$。此时$\bm{w}^{\ast}=\bm{0}$，任意$b\in[-1,1]$都使总合页损失为$2$，因此都最优。该情形也说明，软间隔可能得到常值得分；只有$\bm{w}\ne\bm{0}$时，才可以继续用$1/\lVert\bm{w}\rVert_2$解释规范间隔的几何宽度。
+
+若存在$0<\alpha_k^{\ast}<\lambda_{\mathrm{s}}$的\term{自由支持向量}（free support vector），它既参与决策又未碰到乘子上界，可用$m_k^{\ast}=1$恢复偏置。若没有这种样本，就应使用KKT给出的偏置区间。令$h_i=\sum_j\alpha_j^{\ast}y_j\bm{K}_{j,i}$，则$\alpha_i^{\ast}=0$要求$y_i(h_i+b)\ge1$，$\alpha_i^{\ast}=\lambda_{\mathrm{s}}$要求$y_i(h_i+b)\le1$。正标签的前一条件与负标签的后一条件给出下界，另两种组合给出上界；从两组界的交集中选择一个$b$，才是完整的恢复规则。该区间不一定收缩为单点。
+
+SMO的一元目标与误差公式不变，但可行区间必须同时保证两个乘子都位于盒子内。令$s=y_i y_j$，新的$\alpha_j$区间为
+\begin{equation}
+  \begin{aligned}
+    s=+1:\quad
+    L&=\max\{0,\alpha_i^{(t)}+\alpha_j^{(t)}
+                    -\lambda_{\mathrm{s}}\},\\
+    H&=\min\{\lambda_{\mathrm{s}},
+                    \alpha_i^{(t)}+\alpha_j^{(t)}\};\\
+    s=-1:\quad
+    L&=\max\{0,\alpha_j^{(t)}-\alpha_i^{(t)}\},\\
+    H&=\min\{\lambda_{\mathrm{s}},
+           \lambda_{\mathrm{s}}+\alpha_j^{(t)}-\alpha_i^{(t)}\}.
+  \end{aligned}
+  \label{eq:classification-svm-smo-soft-interval}
+\end{equation}
+这是由盒约束与等式约束共同截出的区间，通常小于$[0,\lambda_{\mathrm{s}}]$。使用式\eqref{eq:classification-svm-smo-update}剪裁并回代即可；当$\eta=0$时，这里的区间总是有限，可以直接比较端点目标。偏置仍按式\eqref{eq:classification-svm-smo-bias}计算，但优先使用更新后满足$0<\alpha_i<\lambda_{\mathrm{s}}$或$0<\alpha_j<\lambda_{\mathrm{s}}$的样本；二者都不自由时，可暂取两个候选偏置的平均，停止时再按全体KKT条件核验。
+
+在可分数据上，足够大的有限惩罚就能使软间隔与硬间隔精确对应。取任意硬间隔最优乘子$\bm{\alpha}^{\mathrm{h}}$，若$\lambda_{\mathrm{s}}>\max_i\alpha_i^{\mathrm{h}}$，则硬间隔原始解连同$\bm{\xi}=\bm{0}$、$\bm{\alpha}^{\mathrm{h}}$和$\mu_i=\lambda_{\mathrm{s}}-\alpha_i^{\mathrm{h}}>0$满足软间隔KKT。由强对偶它也是软间隔最优解，而且正的$\mu_i$迫使所有最优松弛量为零。若数据不可分，则无论把惩罚增大到多少，都不能恢复一个本来就不存在的硬间隔可行解。
+
+\subsubsection{支持非线性分类（核方法）}
+\label{sec:classification-svm-kernels}
+
+软间隔改变对间隔违反的容忍程度，核化则把同一个间隔目标放到第\ref{sec:classic-overview-kernel-trick}节定义的特征空间中。以下直接使用简介中的正定核$K$，推导分类SVM的对偶、预测和风险界；特征映射、核合法性与常用核见第\ref{sec:classic-overview-kernel-validity}节和第\ref{sec:classic-overview-common-kernels}节。
+
+将$\bm{w}\in\mathbb{R}^d$换成$\bm{w}\in\mathcal{H}$，将平方范数换成$\lVert\bm{w}\rVert_{\mathcal{H}}^2$，软间隔原始问题的推导仍然成立。更具体地，把任意$\bm{w}$分解为训练特征张成空间内的部分与其正交部分，后者不改变任何训练得分，却只会增加范数。因此最优权重可以限制在有限个训练特征的张成空间中；驻点条件进一步给出$\bm{w}^{\ast}=\sum_i\alpha_i^{\ast}y_i\bm{\phi}(\bm{x}_i)$。核化对偶于是为
+\begin{equation}
+  \begin{aligned}
+    \max_{\bm{\alpha}}\quad&
+      \sum_{i=1}^n\alpha_i
+       -\frac12\sum_{i,j=1}^n
+          \alpha_i\alpha_j y_i y_j
+          K(\bm{x}_i,\bm{x}_j)\\
+    \text{s.t.}\quad&
+      \sum_{i=1}^n\alpha_i y_i=0,\\
+    &0\le\alpha_i\le\lambda_{\mathrm{s}},
+      \qquad i=1,\ldots,n.
+  \end{aligned}
+  \label{eq:classification-svm-kernel-dual}
+\end{equation}
+在映射后严格可分的硬间隔情形，去掉乘子上界即可。新输入的得分与预测为
+\begin{equation}
+  \begin{aligned}
+    g^{\ast}(\bm{x})
+      &=\sum_{i\in S}\alpha_i^{\ast}y_i
+         K(\bm{x}_i,\bm{x})+b^{\ast},\\
+    \hat y(\bm{x})&=\operatorname{sign}(g^{\ast}(\bm{x})).
+  \end{aligned}
+  \label{eq:classification-svm-kernel-prediction}
+\end{equation}
+边界在$\mathcal{H}$中仍然是线性的，在原输入空间中则可能是曲线或曲面。SMO也只需把$\bm{K}_{i,j}$换成$K(\bm{x}_i,\bm{x}_j)$；此时$\eta=\lVert\bm{\phi}(\bm{x}_i)-\bm{\phi}(\bm{x}_j)\rVert_{\mathcal{H}}^2\ge0$，前面的区间、零曲率处理与偏置更新都继续适用。
+
+核技巧去掉了对显式特征维数的直接依赖，但没有去掉对样本量的依赖。构建完整Gram矩阵需要$O(n^2)$次核调用，之后还要执行优化迭代；两者合起来才是训练成本。若一次核计算耗时$t_K$，单次预测的主要核计算量是$O(|S|t_K)$。因此，无限维特征可以通过有限次内积运算使用，与“训练成本只由核计算决定”是两回事。
+
+统计分析也可以沿用同一结构。若$K(\bm{x},\bm{x})\le\kappa^2$几乎处处，则$\lVert\bm{\phi}(\bm{x})\rVert_{\mathcal{H}}\le\kappa$；将间隔风险界中的$R$换成$\kappa$、将权重范数换成Hilbert范数即可。控制的是函数范数、间隔与偏置，而不是显式坐标个数。核和超参数若由数据选择，仍需计入相应的选择代价。
+
+\subsubsection{支持多分类}
+\label{sec:classification-svm-multiclass}
+
+二分类模型只需判断得分的正负；当候选类别超过两个时，还需要规定多个类别怎样竞争。硬间隔、软间隔和核方法都能作为构件，但组合多个二分类器与直接优化多类间隔会得到不同的训练目标。
+
+现在将标签改为$y_i\in\{1,\ldots,C\}$，其中$C\ge3$，类别索引记为$c$。最直接的推广仍然保留二分类求解器，只改变训练任务的组织方式。\term{一对一}（one-vs-one，OvO）为每对类别$c<c'$训练一个分类器$h_{c,c'}$，仅使用标签为$c$或$c'$的样本，共有$C(C-1)/2$个模型。每个模型在这两个类别之间投一票，预测为
+\[
+  \hat y(\bm{x})
+  =\argmax_{c\in\{1,\ldots,C\}}
+     \sum_{c_1<c_2}\mathbb{1}\{h_{c_1,c_2}(\bm{x})=c\}.
+\]
+其中$c_1,c_2\in\{1,\ldots,C\}$，票数并列时采用预先约定的固定规则，例如选择较小类别编号。不同类别对可能作出不相容的局部判断，投票负责把这些判断汇总成一个输出，并不要求它们对应同一个全局概率模型。
+
+\term{一对其余}（one-vs-rest，OvR）为每个类别$c$构造二分类标签：原标签为$c$时取$+1$，其余取$-1$。训练$C$个实值得分函数$g_c$后，使用
+\[
+  \hat y(\bm{x})=\argmax_{c\in\{1,\ldots,C\}}g_c(\bm{x}),
+\]
+并固定平局规则。即使所有得分都为负，或多个类别得分为正，这个最大值规则仍能给出类别。它比较的是独立模型的得分，得分尺度与训练中的类别不平衡可能影响比较，因此通常需要统一预处理、损失约定并评估各类别的错误，而不能将这些数值直接当作互相可比的后验概率。
+
+图\ref{fig:classification-svm-multiclass}把四个类别展开成具体训练任务。沿着一列看，一对一中的每个类别只参与三个任务；一对其余中，每个样本都参与四个任务，但只有一个任务把它标为正类。沿着一行看，前者忽略不属于当前类别对的样本，后者把所有其他类别合并为负类。这种训练标签的差异，决定了两个组合器面对的子问题并不相同。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/classification-svm-multiclass}
+  \caption{四分类任务中的两种二分类组合方式。各行对应一个待训练模型，各列对应样本的原类别；$+1$和$-1$是为该任务重新编码的标签，点号表示该类样本不参与训练。一对一训练6个模型并汇总类别选票，一对其余训练4个模型并比较实值得分。图中给出训练与预测规则，不预设两种方法会产生相同的分类结果。}
+  \label{fig:classification-svm-multiclass}
+\end{figure}
+
+OvO模型多，但每个子问题只用两类样本；OvR模型少，但每个子问题都涉及全部样本，并把一个类别与可能很大的其余类别集合比较。所以“模型数较少”不等于“总训练一定更快”。LIBSVM的多类SVM使用OvO，scikit-learn的核分类器\code{SVC}沿用这一训练方式；其输出得分的展示形状与底层实际训练了哪些二分类器是不同层面的设置。类别很多时，还应把模型存储、支持向量重复使用与预测核调用量纳入选择。
+
+如果希望组合器能够容忍若干二分类判断错误，可以为每个类别安排一个彼此分离的编码。\term{纠错输出码}（error-correcting output codes，ECOC）将类别$c$表示成长度为$q$的码字$\bm{M}_{c,:}$，其中码本$\bm{M}\in\{-1,+1\}^{C\times q}$的各行互不相同，每列同时含两种符号。第$j$列定义一个二分类任务，样本$i$的训练标签为$\bm{M}_{y_i,j}$；训练后得到$q$个二分类器$h_j$。预测时形成输出码$\bm{h}(\bm{x})=(h_1(\bm{x}),\ldots,h_q(\bm{x}))$，再选择最近的类别码字：
+\begin{equation}
+  \begin{aligned}
+    \hat y(\bm{x})
+      &=\argmin_c d_{\mathrm{H}}
+          \bigl(\bm{h}(\bm{x}),\bm{M}_{c,:}\bigr),\\
+    d_{\mathrm{H}}(\bm{u},\bm{v})
+      &=\sum_{j=1}^q\mathbb{1}\{u_j\ne v_j\}.
+  \end{aligned}
+  \label{eq:classification-svm-ecoc}
+\end{equation}
+这里的\term{汉明距离}（Hamming distance）就是两个码字不一致的位置数。要表示$C$个不同类别，至少需要$q\ge\lceil\log_2 C\rceil$；加入冗余位的目的，是增大不同类别之间的距离，而不只是增加分类器个数。Dietterich与Bakiri系统研究了这种将多分类转换为多个编码位学习问题的方法\scite{dietterich1995ecoc}
+
+纠错能力可以直接证明。记码本最小类间距离为$\Delta_{\min}$，若真实类别为$c$，输出码与$\bm{M}_{c,:}$相差$e$位，则对任意$c'\ne c$，三角不等式给出
+\[
+  d_{\mathrm{H}}(\bm{h},\bm{M}_{c',:})
+  \ge d_{\mathrm{H}}(\bm{M}_{c,:},\bm{M}_{c',:})-e
+  \ge\Delta_{\min}-e.
+\]
+只要$2e<\Delta_{\min}$，真实码字就比任何其他码字更近。因此至多$\lfloor(\Delta_{\min}-1)/2\rfloor$位错误可以被最近码字解码纠正。这个结论以实际错误位数为条件；若多个二分类器因为相同特征缺陷而同时犯错，冗余编码本身并不能保证错误位数足够小。
+
+另一条路线不再训练彼此独立的二分类器，而是直接优化类别之间的竞争关系。\term{Crammer--Singer多类SVM}（Crammer--Singer multiclass SVM）要求真实类别得分至少比每个错误类别高一个单位间隔，从而在同一目标中学习所有类别权重。
+
+令$\bm{W}=[\bm{w}_1,\ldots,\bm{w}_C]\in\mathbb{R}^{d\times C}$，使用带偏置的版本$g_c(\bm{x})=\bm{w}_c^{\top}\bm{x}+b_c$，相应优化问题为\scite{crammer2001multiclass}
+\begin{equation}
+  \begin{aligned}
+    \min_{\bm{W},\bm{b},\bm{\xi}}\quad&
+      \frac12\sum_{c=1}^C\lVert\bm{w}_c\rVert_2^2
+       +\lambda_{\mathrm{s}}\sum_{i=1}^n\xi_i\\
+    \text{s.t.}\quad&
+      g_{y_i}(\bm{x}_i)-g_c(\bm{x}_i)\ge1-\xi_i,
+      \quad c\ne y_i,\\
+    &\xi_i\ge0,\qquad i=1,\ldots,n.
+  \end{aligned}
+  \label{eq:classification-svm-crammer-singer}
+\end{equation}
+不使用偏置时固定$\bm{b}=\bm{0}$；使用偏置时，可加$\sum_c b_c=0$去掉共同平移的不识别性。消去松弛变量后，每个样本的损失为$\max\{0,\max_{c\ne y_i}[1+g_c(\bm{x}_i)-g_{y_i}(\bm{x}_i)]\}$，即惩罚最强错误竞争者超过允许差距的程度。预测仍取$\argmax_c g_c(\bm{x})$，并可将权重推广到核特征空间。
+
+这一联合目标明确比较了类别之间的相对间隔，OvR则分别比较“该类”与“其余类”。二者的约束数、求解器和数据分解方式不同，训练成本与预测质量也要在相同数据和调参预算下评估。联合建模提供了不同的归纳偏好，并不构成相对于OvO或OvR的普遍性能排序。
+
+\subsubsection{小结}
+\label{sec:classification-svm-summary}
+\label{sec:classification-svm-assessment}
+
+SVM的主要特点是把分类偏好写进一个明确的优化问题：表示由核决定，复杂度由范数限制，训练误差通过间隔损失进入目标。它不要求预先假设完整的类条件分布，能够用于高维特征，并通过支持向量表示保留决定边界的训练信息。文本分类可以先评估稀疏线性模型，手写字符识别可以比较线性与局部非线性核，生物序列任务则可能需要结构化核。这些应用说明可选择的表示丰富，并不意味着某个核在所有场景都有优势。
+
+计算代价应按任务拆开估计。通用核SVM可能需要二次规模的核存储，优化时间受工作集策略、缓存、条件数和停止精度影响；预测成本又随支持向量数变化。线性SVM可以直接使用稀疏特征与专门求解器，其扩展性不能用稠密核训练的成本概括。是否适合某一数据规模，应根据实际内存、训练时间和预测延迟衡量，而不采用统一的样本量阈值。
+
+输出含义也需要与使用目标一致。$g(\bm{x})$是有符号的分类得分，其绝对值不等于后验概率。需要概率时，可以在未用于拟合该得分函数的校准数据上使用\term{Platt缩放}（Platt scaling），拟合形如
+\[
+  \widehat p(y=+1\mid\bm{x})
+  =\frac1{1+\exp(a_{\mathrm{cal}}g(\bm{x})+b_{\mathrm{cal}})}
+\]
+的映射；也可以采用\term{保序回归}（isotonic regression），在保持得分顺序的条件下学习非参数的单调概率映射。前者形状受限，后者更灵活但在校准样本较少时可能过拟合，二者都需要独立评估概率质量\scite{niculescu2005probabilities}
+
+实践中也可用交叉拟合得到样本外得分来训练校准器。校准增加了一层需要数据学习的模型，并不会使原始SVM得分自动成为可靠概率。
+
+回到开头的边界选择问题，SVM给出的答案是：在约定的特征几何中，同时衡量边界的范数与样本的间隔不足。这个答案能够通过凸优化实现，也能在输入有界、范数受限和正确抽样假设下获得统计解释。真正使用时，还需共同选择特征尺度、核参数与$\lambda_{\mathrm{s}}$，并把超参数选择、概率校准和最终测试分开。最大间隔、稀疏表示与核化分别解决不同问题；明确它们的条件，才能判断模型的表达能力、计算成本和泛化表现是否符合当前任务。

@@ -1,0 +1,537 @@
+\subsection{线性判别分析（LDA）}
+\label{sec:classification-lda}
+
+如果用一个线性得分区分类别，怎样确定各特征的权重和分类阈值？一种办法是先描述每一类样本在空间中的分布，再比较新样本来自各类的可能性。\term{线性判别分析}（linear discriminant analysis, LDA）在高斯生成模型下采用这条路线：估计类均值、共享协方差和类先验，再由贝叶斯法则得到线性判别函数。
+
+LDA还有一个几何起点。Fisher在1936年的鸢尾花分类研究中寻找一种线性组合，使两类均值的差异相对于类内波动尽可能大。这一准则不要求样本服从高斯分布；它与高斯生成模型可以给出相同的判别方向，但概率解释和适用条件有所不同\scite{fisher1936}
+
+从两类的线性组合转向多个总体的判别，问题不再只是选择一条轴，还包括需要保留多少个方向。Rao在1948年系统讨论了多总体的生物分类与判别表示，这也为理解LDA如何从分类规则延伸为有监督降维方法提供了历史背景\scite{rao1948}
+
+\subsubsection{模型结构}
+\label{sec:classification-lda-model}
+
+沿用训练集$D_n=\{(\bm{x}_i,y_i)\}_{i=1}^{n}$，其中$\bm{x}_i\in\mathbb{R}^{d}$、$y_i\in\{1,\ldots,C\}$。生成式LDA假设
+\begin{equation}
+  \label{eq:classification-lda-distribution}
+  \begin{aligned}
+    \mathbb{P}(y=c)&=\pi_c,\qquad \pi_c>0,\quad
+      \sum_{c=1}^{C}\pi_c=1,\\
+    p(\bm{x}\mid y=c)&=\mathcal{N}(\bm{x};\bm{\mu}_c,\bm{\Sigma}),
+      \qquad \bm{\Sigma}\succ0 .
+  \end{aligned}
+\end{equation}
+这里$\bm{\mu}_c\in\mathbb{R}^{d}$描述第$c$类的中心，$\bm{\Sigma}\in\mathbb{R}^{d\times d}$描述类内各方向的波动及特征之间的相关性。共享协方差意味着各类可以有不同中心，但在中心附近具有相同的椭球形状和朝向；并不要求各个特征相互独立。
+
+在零一损失下，应选择后验概率最大的类别。取对数并展开高斯密度，有
+\begin{equation}
+  \label{eq:classification-lda-score}
+  \begin{aligned}
+    \log\{\pi_c p(\bm{x}\mid y=c)\}
+      &=a(\bm{x})+\delta_c(\bm{x}),\\
+    \delta_c(\bm{x})
+      &=\bm{x}^{\top}\bm{\Sigma}^{-1}\bm{\mu}_c\\
+      &\quad-\frac12\bm{\mu}_c^{\top}\bm{\Sigma}^{-1}\bm{\mu}_c
+        +\log\pi_c .
+  \end{aligned}
+\end{equation}
+其中$a(\bm{x})$收集了$-\bm{x}^{\top}\bm{\Sigma}^{-1}\bm{x}/2$、对数行列式和高斯归一化常数，均与类别无关。正是共享协方差使二次项在类别比较时抵消，留下关于$\bm{x}$的仿射函数。任意两类得分相等的位置通常为超平面；多分类时，各类别区域由若干这样的比较共同确定，而不是全体类别只共用一个分割面。
+
+训练后把估计参数代入$\delta_c$，得到$\hat{\delta}_c$。预测规则及相应的模型后验为
+\begin{equation}
+  \label{eq:classification-lda-prediction}
+  \begin{aligned}
+    \hat f_{\mathrm{LDA}}(\bm{x})
+      &=\argmax_{c\in\{1,\ldots,C\}}\hat{\delta}_c(\bm{x}),\\
+    \hat p_c(\bm{x})
+      &=\frac{\exp\{\hat{\delta}_c(\bm{x})\}}
+        {\sum_{j=1}^{C}\exp\{\hat{\delta}_j(\bm{x})\}} .
+  \end{aligned}
+\end{equation}
+本节对$\argmax$的平局统一选择索引最小的类别。若放宽共享协方差约束，让每类使用自己的$\bm{\Sigma}_c$，二次项便不再普遍抵消，得到\term{二次判别分析}（quadratic discriminant analysis, QDA），即允许二次决策边界的高斯分类器\scite{hastie2009}
+
+\subsubsection{参数学习}
+\label{sec:classification-lda-learning}
+
+\paragraph{生成模型的极大似然估计}
+有标签样本已经给出了每个观测所属的高斯分量，因此这里不需要推断隐含类别。令$n_c=\sum_{i=1}^{n}\mathbb{1}\{y_i=c\}$，暂设各类都有样本。忽略与参数无关的常数，对数似然为
+\begin{equation}
+  \label{eq:classification-lda-likelihood}
+  \begin{aligned}
+    \ell
+      &=\sum_{c=1}^{C}n_c\log\pi_c
+        -\frac n2\log\det\bm{\Sigma}\\
+      &\quad-\frac12\sum_{c=1}^{C}\sum_{i:y_i=c}
+        (\bm{x}_i-\bm{\mu}_c)^{\top}
+        \bm{\Sigma}^{-1}(\bm{x}_i-\bm{\mu}_c).
+  \end{aligned}
+\end{equation}
+对先验加入约束$\sum_c\pi_c=1$，拉格朗日驻点给出$n_c/\pi_c$为同一常数；归一化后该常数为$n$。对$\bm{\mu}_c$求导，则有$\bm{\Sigma}^{-1}\sum_{i:y_i=c}(\bm{x}_i-\bm{\mu}_c)=\bm{0}$。由此得到
+\begin{equation}
+  \label{eq:classification-lda-mean-prior}
+  \hat\pi_c=\frac{n_c}{n},\qquad
+  \hat{\bm{\mu}}_c=\frac1{n_c}\sum_{i:y_i=c}\bm{x}_i .
+\end{equation}
+这两个估计分别是类别出现频率和该类的样本均值。
+
+把均值代回似然，定义\term{类内散度矩阵}（within-class scatter matrix）
+\begin{equation}
+  \label{eq:classification-lda-within}
+  \bm{S}_{\mathrm{W}}
+    =\sum_{c=1}^{C}\sum_{i:y_i=c}
+      (\bm{x}_i-\hat{\bm{\mu}}_c)
+      (\bm{x}_i-\hat{\bm{\mu}}_c)^{\top}.
+\end{equation}
+它累加每个样本相对于本类中心的偏离。用精度矩阵$\bm{\Omega}=\bm{\Sigma}^{-1}$改写剩余目标，得到$n\log\det\bm{\Omega}/2-\operatorname{tr}(\bm{\Omega}\bm{S}_{\mathrm{W}})/2$。其驻点满足$n\bm{\Omega}^{-1}=\bm{S}_{\mathrm{W}}$，故当$\bm{S}_{\mathrm{W}}\succ0$时，
+\begin{equation}
+  \label{eq:classification-lda-covariance}
+  \hat{\bm{\Sigma}}=\frac1n\bm{S}_{\mathrm{W}} .
+\end{equation}
+对$\bm{\Omega}$的目标是严格凹的，因此该驻点给出极大似然解。
+
+式~\eqref{eq:classification-lda-covariance}的分母是$n$，不是$n-C$。这种合并各类类内变动的估计称为\term{合并协方差}（pooled covariance），其无偏形式为
+\[
+  \hat{\bm{\Sigma}}_{\mathrm{U}}
+    =\frac{\bm{S}_{\mathrm{W}}}{n-C},\qquad n>C .
+\]
+在共享协方差假设下，给定各类样本数，有$\mathbb{E}[\bm{S}_{\mathrm{W}}\mid y_1,\ldots,y_n]=(n-C)\bm{\Sigma}$，因为估计每个类中心各消耗一个自由度。极大似然与无偏估计是不同准则；两种估计渐近相同，但有限样本下有所区别。特别是先验不等时，整体缩放协方差会改变几何得分相对于$\log\hat\pi_c$的权重，预测边界未必相同。
+
+闭式估计不等于没有计算代价。对稠密数据，累积类内散度需要$O(nd^2)$运算，矩阵分解需要$O(d^3)$运算。实现时分解一次$\hat{\bm{\Sigma}}$，再解$C$个线性方程组$\hat{\bm{\Sigma}}\bm{a}_c=\hat{\bm{\mu}}_c$，预存$\bm{a}_c$和常数得分项；不必显式求逆，预测一个样本只需$O(Cd)$运算。若$\bm{S}_{\mathrm{W}}$奇异，正定参数域内上述极大似然解并不存在，需要降低维数或作正则化，不能直接使用逆矩阵公式。
+
+\paragraph{Fisher投影的学习}
+生成模型之外，还可以直接比较投影后的类间分离与类内波动。令总样本均值$\hat{\bm{\mu}}=\sum_c(n_c/n)\hat{\bm{\mu}}_c$，定义\term{类间散度矩阵}（between-class scatter matrix）
+\[
+  \bm{S}_{\mathrm{B}}
+    =\sum_{c=1}^{C}n_c
+      (\hat{\bm{\mu}}_c-\hat{\bm{\mu}})
+      (\hat{\bm{\mu}}_c-\hat{\bm{\mu}})^{\top}.
+\]
+它衡量各类中心相对于总中心的分散程度。投影到方向$\bm{w}$后，两种散度分别变为$\bm{w}^{\top}\bm{S}_{\mathrm{B}}\bm{w}$和$\bm{w}^{\top}\bm{S}_{\mathrm{W}}\bm{w}$。\term{Fisher判别准则}（Fisher discriminant criterion）取两者之比。以下假设$\bm{S}_{\mathrm{W}}\succ0$，使每个非零方向的分母都为正：
+\begin{equation}
+  \label{eq:classification-fisher-criterion}
+  J(\bm{w})
+    =\frac{\bm{w}^{\top}\bm{S}_{\mathrm{B}}\bm{w}}
+      {\bm{w}^{\top}\bm{S}_{\mathrm{W}}\bm{w}},
+    \qquad \bm{w}\ne\bm{0}.
+\end{equation}
+分子鼓励类中心远离，分母抑制同类样本投影后过于分散。
+
+图~\ref{fig:classification-lda-projection}固定同一组二维教学样本，只改变投影方向。沿$\bm{w}_{\mathrm{A}}=(1,0)^{\top}$，两类投影均值相差$2$，而各类仅在宽度$0.6$的区间内波动；沿$\bm{w}_{\mathrm{B}}=(3/5,4/5)^{\top}$，均值差缩为$1.2$，同类投影却散布得更宽，异类点在数轴上交错。由图注中的构造可算得$\bm{S}_{\mathrm{W}}=\operatorname{diag}(2/5,8)$、$\bm{S}_{\mathrm{B}}=\operatorname{diag}(8,0)$，所以$J(\bm{w}_{\mathrm{A}})=20$，$J(\bm{w}_{\mathrm{B}})=180/329$。这个比较衡量的是同一批样本投影后的相对分离程度，不是测试错误率。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/classification-lda-projection}
+  \caption{同一点集在两个单位方向上的投影。两类各有4点，中心分别为$(-1,0)^{\top}$、$(1,0)^{\top}$，都加上偏移$(-0.3,-1)^{\top}$、$(-0.1,1)^{\top}$、$(0.1,1)^{\top}$、$(0.3,-1)^{\top}$；这是人为构造，坐标无量纲。蓝圆为类1，赭方为类2，青色箭头分别表示$\bm{w}_{\mathrm{A}}=(1,0)^{\top}$与$\bm{w}_{\mathrm{B}}=(3/5,4/5)^{\top}$，并以实线、虚线区分。下方按$z=\bm{w}^{\top}\bm{x}$计算投影，两类分行显示，纵向位置只为避免遮挡；短竖线标出各类投影均值，两面板共用数轴尺度。}
+  \label{fig:classification-lda-projection}
+\end{figure}
+
+由于$J$不受$\bm{w}$的非零倍数缩放影响，可以约束$\bm{w}^{\top}\bm{S}_{\mathrm{W}}\bm{w}=1$。对$\bm{w}^{\top}\bm{S}_{\mathrm{B}}\bm{w}-\lambda(\bm{w}^{\top}\bm{S}_{\mathrm{W}}\bm{w}-1)$求导，得到\term{广义特征值问题}（generalized eigenvalue problem）：
+\begin{equation}
+  \label{eq:classification-fisher-eigenproblem}
+  \bm{S}_{\mathrm{B}}\bm{w}
+    =\lambda\bm{S}_{\mathrm{W}}\bm{w}.
+\end{equation}
+驻点还需比较大小。令$\bm{v}=\bm{S}_{\mathrm{W}}^{1/2}\bm{w}$，则
+\[
+  J(\bm{w})=\frac{\bm{v}^{\top}\bm{A}\bm{v}}{\bm{v}^{\top}\bm{v}},
+  \qquad
+  \bm{A}=\bm{S}_{\mathrm{W}}^{-1/2}
+    \bm{S}_{\mathrm{B}}\bm{S}_{\mathrm{W}}^{-1/2}.
+\]
+把$\bm{v}$展开到对称半正定矩阵$\bm{A}$的正交特征向量上，上式就是各特征值的加权平均，权重非负且总和为$1$。最大值因而是最大特征值；取对应特征向量，再乘$\bm{S}_{\mathrm{W}}^{-1/2}$，便得到最优Fisher方向。若最大特征值有重数，最优方向未必唯一。
+
+二分类时，令$\bm{h}=\hat{\bm{\mu}}_1-\hat{\bm{\mu}}_2\ne\bm{0}$，由总均值的定义可得
+\[
+  \bm{S}_{\mathrm{B}}=\frac{n_1n_2}{n}\bm{h}\bm{h}^{\top},
+  \qquad
+  \bm{w}_{\mathrm{F}}\propto\bm{S}_{\mathrm{W}}^{-1}\bm{h}.
+\]
+生成式LDA的法向量则为$\bm{w}_{\mathrm{G}}=\hat{\bm{\Sigma}}^{-1}\bm{h}=n\bm{S}_{\mathrm{W}}^{-1}\bm{h}$，两者方向相同。但完整的生成式分类规则还比较
+\begin{equation}
+  \label{eq:classification-lda-binary-threshold}
+  \hat\delta_1(\bm{x})-\hat\delta_2(\bm{x})
+    =\bm{w}_{\mathrm{G}}^{\top}
+      \left(\bm{x}-\frac{\hat{\bm{\mu}}_1+\hat{\bm{\mu}}_2}{2}\right)
+      +\log\frac{\hat\pi_1}{\hat\pi_2}
+\end{equation}
+的正负。Fisher准则本身只给方向，不给类先验、后验概率或这一阈值。两类均值相同时，均值散度准则没有正特征值方向，而生成模型仍可按先验选择类别。由此可见，非高斯数据上仍能使用Fisher投影，但不能据此沿用高斯LDA的贝叶斯最优性结论。
+
+\subsubsection{理论分析}
+\label{sec:classification-lda-analysis}
+
+\paragraph{收敛性分析}
+生成式LDA的均值、先验与协方差都有闭式估计，因此这里考察的是样本量增加时估计是否趋近真实参数，而不是某个迭代过程何时停止。\term{一致性}（consistency）正是这种渐近性质；它不表示某个有限训练集上的估计已经准确。
+
+\begin{theorem}[LDA参数估计的一致性]
+  \label{thm:classification-lda-consistency}
+  设$d$和$C$固定，训练样本独立同分布，真实分布满足式~\eqref{eq:classification-lda-distribution}，且所有$\pi_c^\ast>0$、$\bm{\Sigma}^\ast\succ0$。当$n\to\infty$时，
+  \[
+    \hat\pi_c\xrightarrow{\mathbb{P}}\pi_c^\ast,\qquad
+    \hat{\bm{\mu}}_c\xrightarrow{\mathbb{P}}\bm{\mu}_c^\ast,\qquad
+    \hat{\bm{\Sigma}}\xrightarrow{\mathbb{P}}\bm{\Sigma}^\ast .
+  \]
+  所有类别非空且$\hat{\bm{\Sigma}}$正定的概率趋于$1$。
+\end{theorem}
+
+\begin{proof}
+  为处理随机的$n_c$，把类均值写成两个全样本平均之比：
+  \[
+    \hat{\bm{\mu}}_c
+      =\frac{n^{-1}\sum_{i=1}^{n}\bm{x}_i\mathbb{1}\{y_i=c\}}
+        {n^{-1}\sum_{i=1}^{n}\mathbb{1}\{y_i=c\}} .
+  \]
+  大数定律使分母收敛到$\pi_c^\ast>0$，分子收敛到$\pi_c^\ast\bm{\mu}_c^\ast$，因而先验和均值都一致。尚未观察到某一类时可以任意约定其均值；该事件的概率趋于零，不影响结论。
+
+  共享协方差估计可展开为
+  \[
+    \hat{\bm{\Sigma}}
+      =\frac1n\sum_{i=1}^{n}\bm{x}_i\bm{x}_i^{\top}
+        -\sum_{c=1}^{C}\hat\pi_c
+          \hat{\bm{\mu}}_c\hat{\bm{\mu}}_c^{\top}.
+  \]
+  高斯分布有有限二阶矩，故第一项收敛到
+  \[
+    \mathbb{E}[\bm{x}\bm{x}^{\top}]
+      =\bm{\Sigma}^\ast+
+        \sum_{c=1}^{C}\pi_c^\ast
+          \bm{\mu}_c^\ast(\bm{\mu}_c^\ast)^{\top}.
+  \]
+  第二项消去类中心对二阶矩的贡献，余下$\bm{\Sigma}^\ast$。固定维数下，矩阵逐元素收敛也给出算子范数收敛；由$\bm{\Sigma}^\ast$的最小特征值严格为正，估计矩阵以趋于$1$的概率可逆。上述步骤实际上可由强大数定律加强为几乎必然收敛。
+\end{proof}
+
+矩阵求逆和$\log\pi_c$在这些条件下连续，所以在参数几乎必然收敛的事件上，对每个固定输入$\bm{x}$，有$\hat\delta_c(\bm{x})\to\delta_c^\ast(\bm{x})$。但$\argmax$在平局处不连续：在真实最大得分唯一的输入处，估计类别最终等于该输入的唯一贝叶斯类别；平局处则未必如此。若最优类别平局的输入集合概率为零，就能进一步推出随机输入上的预测标签收敛。不同贝叶斯分类器在平局处可以选择不同标签，却有相同风险。
+
+\paragraph{泛化分析}
+参数趋近真实值以后，还需要说明这如何影响独立测试样本上的错误率。分类风险的一致性不必要求标签处处收敛。记$p_c^\ast(\bm{x})$为真实后验，$f^\ast$任选一个贝叶斯规则。由于$\hat f_{\mathrm{LDA}}$最大化$\hat p_c$，逐点有
+\begin{equation}
+  \label{eq:classification-lda-excess-risk}
+  \begin{aligned}
+    0&\leq p_{f^\ast(\bm{x})}^\ast(\bm{x})
+      -p_{\hat f_{\mathrm{LDA}}(\bm{x})}^\ast(\bm{x})\\
+      &\leq 2\max_{1\leq c\leq C}
+          |\hat p_c(\bm{x})-p_c^\ast(\bm{x})| .
+  \end{aligned}
+\end{equation}
+这个上界来自在两项之间分别加减相应的估计后验，并利用$\hat p_{\hat f_{\mathrm{LDA}}}\geq\hat p_{f^\ast}$。在参数几乎必然收敛的事件上，后验估计也对每个输入收敛；右端趋于零且不超过$2$。对与训练集独立、来自同一分布的测试输入积分，再用支配收敛定理，得到
+\[
+  R(\hat f_{\mathrm{LDA}}\mid D_n)
+    \longrightarrow R^\ast
+    \quad\text{几乎必然},
+\]
+其中$R(\hat f_{\mathrm{LDA}}\mid D_n)$是给定训练集后的测试错误率，$R^\ast$是贝叶斯错误率。有限样本中无法拟合时可暂用任意固定分类器，不改变这一渐近结论。这是模型正确指定、固定维数下的保证，不是对任意分布或$d$随$n$快速增长的普遍保证，也未给出有限样本的收敛速率。Fisher准则在当前训练集上取得最大值，不能替代这一风险分析。
+
+\subsubsection{支持有监督降维}
+\label{sec:classification-lda-reduction}
+
+如果类别多于两个，一条投影轴可能不足以保留类中心之间的差异。把多个广义特征向量作为$\bm{W}\in\mathbb{R}^{d\times r}$的列，就可以把输入转换为$\bm{z}=\bm{W}^{\top}(\bm{x}-\hat{\bm{\mu}})\in\mathbb{R}^{r}$。以下仍假设$\bm{S}_{\mathrm{W}}\succ0$，并取$1\leq r\leq d$。
+
+为避免重复选择同一方向，可要求不同投影轴在类内散度度量下正交：
+\begin{equation}
+  \label{eq:classification-lda-subspace}
+  \max_{\bm{W}}\operatorname{tr}
+       (\bm{W}^{\top}\bm{S}_{\mathrm{B}}\bm{W})
+  \quad\text{满足}\quad
+  \bm{W}^{\top}\bm{S}_{\mathrm{W}}\bm{W}=\bm{I}_r .
+\end{equation}
+在前述白化坐标中，该问题选择$\bm{A}$最大的$r$个特征值对应的正交方向，因而也就是式~\eqref{eq:classification-fisher-eigenproblem}中最大的$r$个广义特征值方向。
+
+为什么有用的方向至多为$C-1$个？令$\bm{M}\in\mathbb{R}^{d\times C}$的第$c$列为$\sqrt{n_c}(\hat{\bm{\mu}}_c-\hat{\bm{\mu}})$，则
+\[
+  \bm{S}_{\mathrm{B}}=\bm{M}\bm{M}^{\top},\qquad
+  \bm{M}
+  \begin{pmatrix}\sqrt{n_1}\\ \vdots\\ \sqrt{n_C}\end{pmatrix}
+  =\bm{0}.
+\]
+右侧列向量非零，说明$\bm{M}$的$C$列线性相关。因此$\operatorname{rank}(\bm{S}_{\mathrm{B}})\leq\min(d,C-1)$；可逆白化不改变秩，$\bm{A}$也至多有这么多个正特征值。若类中心还有额外的线性依赖，实际维数更低。这个限制针对类均值散度，不表示任意分类任务的全部信息都能无损压缩到$C-1$维；例如均值相同而协方差不同的类别，可能被该准则忽略。
+
+LDA投影使用了标签，因此训练和验证时必须把它作为学习流程的一部分，在每个训练划分内重新估计投影，不能先用全体样本标签降维再评估。得到的低维特征可以交给近邻分类器等后续模型。第\ref{chap:dimensionality-reduction}章按保留信息的目标比较降维方法；其中第\ref{sec:dim-pca}节的PCA保留输入方差而不使用类别标签，LDA则保留类别均值相对于类内波动的判别信息。Fisherfaces人脸识别方法就是借助Fisher准则构造低维判别表示的一个具体例子\scite{belhumeur1997}
+
+\subsubsection{小结}
+\label{sec:classification-lda-summary}
+
+LDA给线性得分提供了两种解释：共享协方差高斯模型给出概率、方向和阈值，Fisher准则则直接选择类中心相对分离的投影。两者在二分类且采用同一类内散度时给出相同方向，但概率解释和风险保证仍依赖额外假设。作为特征变换，LDA也用于语音识别；例如Haeb-Umbach与Ney研究了按语音类别学习线性变换，再与后续识别模型结合的方案\scite{haebumbach1992}
+
+选用LDA时，需要同时考察分布近似和协方差的可估计性。偏离高斯不必然使分类失效，却使前述最优性证明不再适用；异常样本也会影响均值与协方差。由于$\operatorname{rank}(\bm{S}_{\mathrm{W}})\leq\min(d,n-C)$，当$n-C<d$时估计必然奇异，即使样本稍多于这个界也可能不稳定。降维或收缩协方差可以改善可计算性，但引入了新的选择及偏差，需要用独立验证评估。
+
+\subsection{感知机}
+\label{sec:classification-perceptron}
+
+如果不估计类条件分布，能否直接根据分类结果调整边界？\term{感知机}（perceptron）的做法是用线性得分预测类别，遇到错误就修正权重。它不要求高斯分布；线性可分性是其有限次更新保证的条件，而不是运行算法的前提。Rosenblatt在1958年的论文中研究了感知机的学习机制，本节介绍的是其中广泛使用的线性阈值模型与误差修正规则\scite{rosenblatt1958}
+
+这条研究路线也有硬件实现。康奈尔航空实验室建造的Mark I Perceptron将感知机思想实现为电子装置，但历史上的系统还包含感觉、关联和响应等组织，不能把它的全部结构等同于今天的单个线性分类器\scite{smithsonianMarkI}
+
+\subsubsection{模型结构}
+\label{sec:classification-perceptron-model}
+
+本小节先使用二分类标签$y_i\in\{-1,+1\}$。为了使偏置在更新规则和收敛证明中始终处于同一坐标系，引入\term{增广向量}（augmented vector），即在输入末尾补一个恒为$1$的分量，并把偏置并入参数：
+\begin{equation}
+  \label{eq:classification-perceptron-augmented}
+  \tilde{\bm{x}}=
+    \begin{pmatrix}\bm{x}\\1\end{pmatrix},\qquad
+  \tilde{\bm{w}}=
+    \begin{pmatrix}\bm{w}\\b\end{pmatrix}
+    \in\mathbb{R}^{d+1}.
+\end{equation}
+其中$\bm{w}\in\mathbb{R}^{d}$，$b\in\mathbb{R}$。分类规则为
+\begin{equation}
+  \label{eq:classification-perceptron-prediction}
+  f(\bm{x})=\operatorname{sign}
+    (\tilde{\bm{w}}^{\top}\tilde{\bm{x}})
+    =\operatorname{sign}(\bm{w}^{\top}\bm{x}+b).
+\end{equation}
+约定$\operatorname{sign}(s)=+1$当$s\geq0$，否则为$-1$。非退化边界$\bm{w}^{\top}\bm{x}+b=0$是在$d$维输入空间中的$(d-1)$维超平面。它与二分类LDA具有相同的边界形式，但其参数不由类分布及先验推出，也不自动给出类别概率。
+
+在这一表示下，正间隔可分是指存在单位向量$\bm{u}^\ast\in\mathbb{R}^{d+1}$和$\gamma>0$，使
+\begin{equation}
+  \label{eq:classification-perceptron-margin}
+  \begin{aligned}
+    y_i\langle\bm{u}^\ast,\tilde{\bm{x}}_i\rangle
+      &\geq\gamma,\qquad i=1,\ldots,n,\\
+    \|\bm{u}^\ast\|_2&=1,\qquad
+    \|\tilde{\bm{x}}_i\|_2\leq R .
+  \end{aligned}
+\end{equation}
+这里$R$约束的是增广输入，因此$R\geq\max_i\sqrt{\|\bm{x}_i\|_2^2+1}$。$\gamma$也是增广空间中的间隔；若$\bm{u}^\ast=(\bm{v}^{\top},a)^{\top}/\sqrt{\|\bm{v}\|_2^2+a^2}$，其分母包含偏置$a$，不同于原输入空间中以$\|\bm{v}\|_2$归一化的几何距离。有限训练集只要能被仿射超平面严格分开，就存在这样的正$\gamma$。
+
+线性表示的边界也很具体。例如异或任务把$(0,0)$、$(1,1)$标为负类，把$(1,0)$、$(0,1)$标为正类。按上述平局规则，前两点要求$b<0$和$w_1+w_2+b<0$，后两点要求$w_1+b\geq0$和$w_2+b\geq0$。前两式相加与后两式相加，对同一个$w_1+w_2+2b$给出矛盾要求。Minsky与Papert在1969年的《Perceptrons》中系统研究了此类表示能力限制；改变输入特征或加入非线性隐藏层可以越过单个线性边界的限制，但那已经改变了模型族\scite{minsky1969}
+
+\subsubsection{参数学习}
+\label{sec:classification-perceptron-learning}
+
+从$\tilde{\bm{w}}^{(0)}=\bm{0}$出发，若当前样本满足$y_i\langle\tilde{\bm{w}}^{(t)},\tilde{\bm{x}}_i\rangle\leq0$，便进行一次更新：
+\begin{equation}
+  \label{eq:classification-perceptron-update}
+  \tilde{\bm{w}}^{(t+1)}
+    =\tilde{\bm{w}}^{(t)}+\eta y_i\tilde{\bm{x}}_i,
+    \qquad \eta>0 .
+\end{equation}
+这里$t$只数实际更新，学习率$\eta$保持不变。拆开最后一个分量，就是$\bm{w}\leftarrow\bm{w}+\eta y_i\bm{x}_i$和$b\leftarrow b+\eta y_i$。同一个样本的有符号得分增加$\eta\|\tilde{\bm{x}}_i\|_2^2$，所以更新确实朝修正当前判断的方向移动；但它可能同时破坏其他样本的正确分类，因而需要反复遍历。零得分也触发更新，即使按平局规则恰好预测为正确的正类，仍要求它离开边界。
+
+\begin{algorithm}[带遍历上限的感知机训练]
+  \label{alg:classification-perceptron}
+  \begin{algorithmic}[1]
+    \Require $D_n$，固定学习率$\eta>0$，最大遍历轮数$E\geq1$
+    \Ensure 参数$\tilde{\bm{w}}$与是否已验证收敛的状态
+    \State $\tilde{\bm{w}}\gets\bm{0}$
+    \For{$e=1,\ldots,E$}
+      \State $m\gets0$
+      \For{$i=1,\ldots,n$}
+        \State $\tilde{\bm{x}}_i\gets(\bm{x}_i^{\top},1)^{\top}$
+        \If{$y_i\langle\tilde{\bm{w}},\tilde{\bm{x}}_i\rangle\leq0$}
+          \State $\tilde{\bm{w}}\gets\tilde{\bm{w}}+\eta y_i\tilde{\bm{x}}_i$
+          \State $m\gets m+1$
+        \EndIf
+      \EndFor
+      \If{$m=0$}
+        \State \Return $(\tilde{\bm{w}},\text{已收敛})$
+      \EndIf
+    \EndFor
+    \State \Return $(\tilde{\bm{w}},\text{达到轮数上限})$
+  \end{algorithmic}
+\end{algorithm}
+
+一整轮没有更新时，所有样本都是在同一个参数下得到严格正的有符号得分，才构成收敛证据。达到轮数上限只表示预算用尽，不能据此断言数据不可分。稠密实现每轮需要$O(nd)$运算，除训练集外只需$O(d)$参数空间；样本访问顺序可以改变输出的分隔面。
+
+从优化角度看，定义\term{感知机损失}（perceptron loss）
+\begin{equation}
+  \label{eq:classification-perceptron-loss}
+  \ell_{\mathrm{P}}(\tilde{\bm{w}};\bm{x}_i,y_i)
+    =\max\{0,-y_i\langle\tilde{\bm{w}},\tilde{\bm{x}}_i\rangle\}.
+\end{equation}
+负得分处的梯度为$-y_i\tilde{\bm{x}}_i$，正得分处为$\bm{0}$；零得分处选择次梯度$-y_i\tilde{\bm{x}}_i$，就得到式~\eqref{eq:classification-perceptron-update}。这是逐样本次梯度更新；随机抽取样本时才相应成为随机次梯度下降。这里使用的是零间隔损失，不是标准的\term{合页损失}（hinge loss）$\max\{0,1-y_i\langle\tilde{\bm{w}},\tilde{\bm{x}}_i\rangle\}$。前者在零参数处就对所有样本取零，因此“感知机损失为零”本身不能证明分类正确；算法在零得分处仍更新的约定不可省略。
+
+\subsubsection{理论分析}
+\label{sec:classification-perceptron-analysis}
+
+\paragraph{收敛性分析}
+每次修正可能破坏已有判断，为什么这些修正不会无穷持续？关键是存在一个始终把所有样本分对的参考方向：更新朝该方向取得线性累积的进展，而参数范数的平方只能线性增长。Novikoff在1962年报告的证明清楚展示了这两个增长速度之间的矛盾\scite{novikoff1962}
+
+\begin{theorem}[感知机的错误更新界]
+  \label{thm:classification-perceptron-mistakes}
+  若$D_n$满足式~\eqref{eq:classification-perceptron-margin}，从零参数出发，以固定$\eta>0$按式~\eqref{eq:classification-perceptron-update}更新，则对任意样本访问顺序，错误更新次数$M$满足
+  \[
+    M\leq\left(\frac R\gamma\right)^2 .
+  \]
+  这里错误更新包括零得分时的更新。若持续完整遍历训练集，且不因预算提前退出，算法在有限轮后得到所有训练样本上有符号得分均严格为正的参数。
+\end{theorem}
+
+\begin{proof}
+  设第$t+1$次更新使用样本$i_t$。沿单位参考方向$\bm{u}^\ast$考察更新，得到
+  \begin{align*}
+    \langle\tilde{\bm{w}}^{(t+1)},\bm{u}^\ast\rangle
+      &=\langle\tilde{\bm{w}}^{(t)},\bm{u}^\ast\rangle
+        +\eta y_{i_t}\langle\tilde{\bm{x}}_{i_t},\bm{u}^\ast\rangle\\
+      &\geq\langle\tilde{\bm{w}}^{(t)},\bm{u}^\ast\rangle+\eta\gamma .
+  \end{align*}
+  从零参数累加$M$次，便有
+  \[
+    \langle\tilde{\bm{w}}^{(M)},\bm{u}^\ast\rangle
+      \geq M\eta\gamma .
+  \]
+  另一方面，展开更新后的平方范数：
+  \begin{align*}
+    \|\tilde{\bm{w}}^{(t+1)}\|_2^2
+      &=\|\tilde{\bm{w}}^{(t)}\|_2^2
+        +2\eta y_{i_t}
+          \langle\tilde{\bm{w}}^{(t)},\tilde{\bm{x}}_{i_t}\rangle\\
+      &\quad+\eta^2\|\tilde{\bm{x}}_{i_t}\|_2^2\\
+      &\leq\|\tilde{\bm{w}}^{(t)}\|_2^2+\eta^2R^2 .
+  \end{align*}
+  不等式使用了更新条件：交叉项非正；并使用同一增广空间中的长度界$R$。再次累加，得到$\|\tilde{\bm{w}}^{(M)}\|_2^2\leq M\eta^2R^2$。由Cauchy--Schwarz不等式和$\|\bm{u}^\ast\|_2=1$，
+  \[
+    M\eta\gamma
+      \leq\langle\tilde{\bm{w}}^{(M)},\bm{u}^\ast\rangle
+      \leq\|\tilde{\bm{w}}^{(M)}\|_2
+      \leq\eta R\sqrt{M}.
+  \]
+  $M=0$时结论直接成立；$M>0$时除以$\eta\sqrt M$再平方，得到所述界。因此更新不可能无限发生。持续完整遍历会在最后一次更新之后再检查所有样本；若仍有非正得分就还会更新，产生矛盾，故最终必有一整轮没有更新。
+\end{proof}
+
+这个界不显式含$n$，也不依赖访问顺序，但$R$和$\gamma$随数据而定；增加样本可能缩小可分间隔。它只约束更新次数，不包括寻找错误时检查正确样本的开销。对于算法~\ref{alg:classification-perceptron}的逐轮扫描，若不提前截断，至多需要$M+1$轮，包括最终的无更新确认轮。
+
+若数据不可分，有限更新保证失效，持续遍历可能反复更新，此时可以限制训练预算并保留历史较好解，或采用允许间隔违约的在线方法。这些处理改变了停止或选解方式，仍须分别分析。
+
+\paragraph{泛化分析}
+错误更新界不是最终分类器的测试风险界。前述证明既没有独立同分布假设，也没有说明未来数据如何产生；仅凭某个训练集上的零误差，不能控制测试误差。研究问题从“修正会不会停止”转向“怎样从训练历史中选出风险小的分类器”后，还需要抽样条件和输出规则。Cesa-Bianchi、Conconi与Gentile在2004年系统分析了这种联系：利用独立同分布样本上的在线表现，控制历史预测规则的风险，并讨论从中选择输出的方法\scite{cesabianchi2004generalization}
+
+下面给出一个期望风险的简单结论，说明额外条件怎样进入证明。按独立同分布的到达顺序，仅遍历$D_n$一次，从零参数出发使用固定学习率$\eta>0$和原更新规则。用$f_i$表示看到第$i$个样本之前的分类器；它只依赖$D_{i-1}$，其中$D_0$为空。这里$i$计数已访问的样本位置，与只计实际更新的$t$不同。训练后独立地从$\{1,\ldots,n\}$均匀抽取$I$，返回$f_I$，而不是默认返回最后一次更新后的参数。
+
+\begin{theorem}[随机历史分类器的期望风险]
+  \label{thm:classification-perceptron-risk}
+  设训练样本独立同分布，测试样本独立来自同一分布。假设存在固定的单位向量$\bm{u}^\ast$及常数$R<\infty$、$\gamma>0$，使
+  \[
+    \|\tilde{\bm{x}}\|_2\leq R,\qquad
+    y\langle\bm{u}^\ast,\tilde{\bm{x}}\rangle\geq\gamma
+    \quad\text{几乎必然}.
+  \]
+  对上述单遍历训练和随机输出规则，有
+  \begin{equation}
+    \label{eq:classification-perceptron-risk}
+    \mathbb{E}_{D_n,I}\!\left[R(f_I\mid D_n,I)\right]
+      \leq\frac{R^2}{n\gamma^2}.
+  \end{equation}
+\end{theorem}
+
+\begin{proof}
+  令$e_i=\mathbb{1}\{f_i(\bm{x}_i)\ne y_i\}$。由于$f_i$尚未使用第$i$个样本，独立性给出
+  \[
+    \mathbb{E}[e_i\mid D_{i-1}]
+      =R(f_i\mid D_{i-1}).
+  \]
+  对两边取期望，再对均匀的$I$平均，就有
+  \[
+    \mathbb{E}_{D_n,I}[R(f_I\mid D_n,I)]
+      =\frac1n\sum_{i=1}^{n}\mathbb{E}[e_i].
+  \]
+  每次预测错误都会触发更新，零得分且预测正确时也可能更新，故$\sum_i e_i\leq M$。分布层面的共同间隔和长度界使定理~\ref{thm:classification-perceptron-mistakes}几乎必然适用于每个训练序列，于是$M\leq R^2/\gamma^2$，代入即得结论。
+\end{proof}
+
+这里的$R$和$\gamma$约束整个数据分布，而不只是碰巧可分的一份训练集。式~\eqref{eq:classification-perceptron-risk}控制的是训练抽样与随机选取历史状态共同平均后的风险，不是对某次训练的高概率保证；当上界大于$1$时也没有提供非平凡信息。它不能直接套给最终参数、平均参数或反复遍历后的参数，因为这些输出与上述随机规则不同，多轮训练时当前样本也不再独立于已有参数。投票感知机等方法正是在如何利用训练历史这一环节作出不同选择，其风险需要相应的分析。
+
+\subsubsection{支持多分类}
+\label{sec:classification-perceptron-multiclass}
+
+对$C$类问题，把标签改为$y_i\in\{1,\ldots,C\}$，每类维护一组增广参数$\tilde{\bm{w}}_c=(\bm{w}_c^{\top},b_c)^{\top}$，得分和预测为
+\[
+  s_c(\bm{x})=\langle\tilde{\bm{w}}_c,\tilde{\bm{x}}\rangle,
+  \qquad
+  \hat y=\argmax_{c\in\{1,\ldots,C\}}s_c(\bm{x}).
+\]
+平局仍按最小类别索引处理。这个构造把正确类别的得分与每个竞争类别作比较，也可用\term{Kesler构造}（Kesler construction）把这些比较写成一个扩展空间中的线性可分问题。
+
+遇到$\hat y_i\ne y_i$时，只提高正确类别的参数并降低错误获胜类别的参数：
+\begin{equation}
+  \label{eq:classification-perceptron-multiclass-update}
+  \begin{aligned}
+    \tilde{\bm{w}}_{y_i}
+      &\leftarrow\tilde{\bm{w}}_{y_i}+\eta\tilde{\bm{x}}_i,\\
+    \tilde{\bm{w}}_{\hat y_i}
+      &\leftarrow\tilde{\bm{w}}_{\hat y_i}-\eta\tilde{\bm{x}}_i .
+  \end{aligned}
+\end{equation}
+其余类别不变，两个类别的偏置也随各自最后一个分量同时更新。若平局后预测错误，同样更新；若已选择正确类别，则该规则不更新。与二分类中所有零得分均更新的约定不同，这里直接按最终预测是否正确判断。
+
+收敛条件也必须改为多类的得分差条件。把各类参数按行堆成$\tilde{\bm{W}}\in\mathbb{R}^{C\times(d+1)}$；假设存在$\|\bm{U}^\ast\|_{\mathrm{F}}=1$和$\gamma_{\mathrm{mc}}>0$，使对所有$i$和$c\ne y_i$都有
+\[
+  \langle\bm{U}_{y_i,:}^\ast-\bm{U}_{c,:}^\ast,
+    \tilde{\bm{x}}_i\rangle\geq\gamma_{\mathrm{mc}} .
+\]
+这里$\|\cdot\|_{\mathrm{F}}$是所有矩阵元素平方和的平方根，行向量的内积按对应坐标计算。一次更新的方向矩阵仅两行非零，分别为$\tilde{\bm{x}}_i^{\top}$与$-\tilde{\bm{x}}_i^{\top}$，其平方范数至多为$2R^2$。它与$\bm{U}^\ast$的内积至少为$\gamma_{\mathrm{mc}}$；与当前参数的内积则为$s_{y_i}(\bm{x}_i)-s_{\hat y_i}(\bm{x}_i)\leq0$。因此零初始化时完全沿用二分类证明，得到
+\[
+  M\eta\gamma_{\mathrm{mc}}
+    \leq\|\tilde{\bm{W}}^{(M)}\|_{\mathrm{F}}
+    \leq\eta R\sqrt{2M},
+  \qquad
+  M\leq\frac{2R^2}{\gamma_{\mathrm{mc}}^2}.
+\]
+有限更新保证因而保留下来，但它要求所有正确类与竞争类之间都具有共同的正间隔，而不是只检查任意一对类别。
+
+\subsubsection{小结}
+\label{sec:classification-perceptron-summary}
+
+感知机说明了不估计概率分布也可以学习线性边界：只要存在正间隔分隔面，误差驱动更新就能在有限次修正后找到一个可行解。但它没有规定在可行解之间怎样选择，也没有保证不可分数据上停止。围绕这些限制，形成了不同的扩展。
+
+\term{口袋算法}（Pocket algorithm）处理的是“当前权重未必比过去更好”的问题。常用的带历史最优记录的版本额外保存$\tilde{\bm{w}}_{\mathrm{pocket}}$：每次检查候选参数时，计算全训练集零一错误数，仅在严格改进时替换记录；预算用尽后返回记录参数。它可以用于噪声或矛盾标签数据，但有限预算内只是已检查候选中的最好解，不保证全局最优，反复评估全训练集也有额外开销。Gallant在1990年的论文中系统讨论了Pocket及相关学习方法\scite{gallant1990}
+
+若问题在于原空间不能线性分开，可把输入换成特征映射$\bm{\phi}(\bm{x})$。核函数$K(\bm{x},\bm{z})=\langle\bm{\phi}(\bm{x}),\bm{\phi}(\bm{z})\rangle$直接计算映射后的内积，省去显式构造高维坐标，得到\term{核感知机}（kernel perceptron）。为与前文偏置一致，使用增广映射$(\bm{\phi}(\bm{x}),1)$及其核$\tilde K(\bm{x},\bm{z})=K(\bm{x},\bm{z})+1$。零初始化、单位学习率下，参数在特征空间中是更新样本的线性组合，预测可写为
+\begin{equation}
+  \label{eq:classification-kernel-perceptron}
+  f(\bm{x})=\operatorname{sign}
+    \left(\sum_{i=1}^{n}\alpha_i y_i
+      [K(\bm{x}_i,\bm{x})+1]\right).
+\end{equation}
+这里$\alpha_i$是样本$i$的更新次数；遇到非正有符号得分时令$\alpha_i\leftarrow\alpha_i+1$。必须选用正定核，即它在任意有限输入集上生成半正定Gram矩阵，才能作上述内积解释；有限更新还要求增广特征空间内存在正间隔，长度界相应变为$\sqrt{K(\bm{x}_i,\bm{x}_i)+1}$的上界。预测需要访问系数非零的样本，数量可能随训练增长。将内积推广到特征空间的思路可追溯至Aizerman、Braverman与Rozonoer在1964年的势函数研究\scite{aizerman1964}
+
+另一类扩展保留多段训练历史。\term{投票感知机}（voted perceptron）保存历次参数$\tilde{\bm{w}}^{(j)}$及其使用时长$q_j$，以时长作为票数：
+\[
+  f_{\mathrm{vote}}(\bm{x})
+    =\operatorname{sign}\left(
+      \sum_{j=1}^{J}q_j
+        \operatorname{sign}
+          (\langle\tilde{\bm{w}}^{(j)},\tilde{\bm{x}}\rangle)
+      \right).
+\]
+其中$J$为保存的参数状态数，$q_j$按该参数持续使用的样本步数计数，而不只数更新次数。\term{平均感知机}（averaged perceptron）则对相同历史平均参数，
+\[
+  \bar{\tilde{\bm{w}}}
+    =\frac{\sum_{j=1}^{J}q_j\tilde{\bm{w}}^{(j)}}
+      {\sum_{j=1}^{J}q_j},
+  \qquad
+  f_{\mathrm{avg}}(\bm{x})
+    =\operatorname{sign}
+       (\langle\bar{\tilde{\bm{w}}},\tilde{\bm{x}}\rangle).
+\]
+平均向量可通过累计和维护，预测仍只需一次线性得分；投票则需保留多个状态。先取符号再投票与先平均再取符号一般不等价。Freund与Schapire在1999年的工作中研究了投票法，也比较了平均法；其大间隔泛化结论有明确的抽样和训练设置，不能解释为二者在任意噪声数据上都优于最终参数\scite{freund1999}
+
+若希望每次更新不仅改正符号，还达到指定得分间隔，\term{被动攻击算法}（passive-aggressive algorithm, PA）把“尽量少改参数”和“满足当前样本的单位间隔”合成一个投影问题。用$\bm{v}$表示待求的新增广参数，
+\begin{equation}
+  \label{eq:classification-pa-projection}
+  \begin{aligned}
+    \min_{\bm{v}}\quad&
+      \frac12\|\bm{v}-\tilde{\bm{w}}\|_2^2\\
+    \text{满足}\quad&
+      y_i\langle\bm{v},\tilde{\bm{x}}_i\rangle\geq1 .
+  \end{aligned}
+\end{equation}
+令$\ell_i=\max\{0,1-y_i\langle\tilde{\bm{w}},\tilde{\bm{x}}_i\rangle\}$。约束已满足时参数不变；否则，拉格朗日驻点要求$\bm{v}=\tilde{\bm{w}}+\tau_i y_i\tilde{\bm{x}}_i$，将活跃约束代回即得
+\[
+  \tau_i=\frac{\ell_i}{\|\tilde{\bm{x}}_i\|_2^2},
+  \qquad
+  \tilde{\bm{w}}\leftarrow
+    \tilde{\bm{w}}+\tau_i y_i\tilde{\bm{x}}_i .
+\]
+因此PA在间隔足够时“被动”，不足时按违约大小调整。增广方式也意味着这里把偏置变化纳入距离惩罚。噪声下硬性满足当前样本可能调整过大，PA-I可用$\tau_i=\min\{\lambda_{\mathrm{PA}},\ell_i/\|\tilde{\bm{x}}_i\|_2^2\}$限制步长，其中$\lambda_{\mathrm{PA}}>0$控制容忍程度。Crammer等人的2006年论文统一分析了这些在线大间隔方法；它们不是一次更新就求得全训练集上的最优分隔面\scite{crammer2006}
+
+如果输出是一整条词性序列等组合对象，可以把多分类的得分比较推广到结构之间。\term{结构化感知机}（structured perceptron）用联合特征$\bm{\phi}(\bm{x},y)$描述输入与候选结构，预测
+\[
+  \hat y_i=\argmax_{y\in Y(\bm{x}_i)}
+    \langle\bm{\theta},\bm{\phi}(\bm{x}_i,y)\rangle ,
+\]
+其中$Y(\bm{x}_i)$是候选结构集合，$\bm{\theta}$是与联合特征同维的参数。解码错误时进行
+\[
+  \bm{\theta}\leftarrow\bm{\theta}
+    +\eta\bigl[\bm{\phi}(\bm{x}_i,y_i)
+      -\bm{\phi}(\bm{x}_i,\hat y_i)\bigr].
+\]
+需要的类别或结构偏置也作为联合特征中的相应指示分量处理；对所有候选都相同的常数项会在得分差中消去。在特征差有界、正确结构与所有错误结构之间正间隔可分、且能精确解码的条件下，可沿用多类证明。近似搜索则需另行分析，不能直接继承这一保证。Collins在2002年将这种更新与参数平均用于序列标注，提供了词性标注和短语识别等实例，也为比较感知机与条件随机场等结构化模型提供了参照\scite{collins2002}
+
+这些扩展改变的是不同环节：Pocket选择返回哪个历史解，核方法改变输入表示，投票与平均利用训练轨迹，PA改变单步目标，结构化感知机改变输出及解码方式。它们保留了逐样本修正得分的思路，却不会自动消除各自的可分性、计算或泛化限制。理解这种区分，比把所有扩展都视为原始感知机的无条件改进更有助于选择方法。

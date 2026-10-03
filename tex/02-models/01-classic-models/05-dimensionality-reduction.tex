@@ -1,0 +1,2311 @@
+\chapter{降维}
+\label{chap:dimensionality-reduction}
+
+基因测量或文档向量可能有成千上万个坐标，分析却只需要其中部分变化。\term{降维}（dimensionality reduction）把观测$\bm{x}\in\mathbb{R}^{d}$转为表示$\bm{z}\in\mathbb{R}^{k}$，通常取$k\ll d$。保留方差、距离、邻域或生成因素是不同目标；低维表示是否有用，还要看它怎样影响后续预测、分组或解释。
+
+20世纪初的PCA从线性变化中提取主方向，1950年代的MDS从对象差异恢复坐标。1990年代的核PCA扩展了非线性表示，2000年前后的Isomap与LLE转向局部几何；2008年的t-SNE和2018年的UMAP进一步推动了高维数据的可视化\scite{dimScholkopf1998,dimTenenbaum2000}
+
+现在，PCA仍是压缩、去噪和建模前处理的常见基线，t-SNE与UMAP则常用于探索局部邻域结构。图上的分离可以提出假设，仍需回到原始表示和任务证据检验\scite{classic-decomposition-guide,dim-mcinnes2018umapsoftware}本章依次讨论线性关系及核扩展、距离、邻域与概率方法：分别保留全局组合、点间差异、局部关系或生成因素。
+
+以下用$n$表示样本数，$\bm{X}\in\mathbb{R}^{n\times d}$与$\bm{Z}\in\mathbb{R}^{n\times k}$按行存放观测和低维表示，邻居数记为$q$，内在维数记为$m$。“表示”统称变换结果，“嵌入”强调几何或邻域坐标，“隐变量”则指参与生成但未被观测的量。共享建模机制见第\ref{chap:classic-models-overview}章。
+
+\section{基于线性关系的降维}
+\label{sec:dim-linear}
+
+如果多个传感器的读数主要随同一个物理量一起变化，那么数据可能集中在一条直线附近。推广到多个变化因素，就得到低维线性子空间。线性投影用$\bm{z}=\bm{W}^{\top}(\bm{x}-\bm{\mu})$描述这一结构，其中$\bm{W}\in\mathbb{R}^{d\times k}$为列正交的基矩阵，$\bm{\mu}$为中心；对应的正交投影算子是$\bm{W}\bm{W}^{\top}$。学习后，新样本只需一次矩阵乘法；投影的每一维也能追溯到原特征的线性组合。
+
+本节还讨论非负矩阵分解和稀疏编码。它们的共同点是用基向量的线性组合重构观测，但编码通常需要求解约束优化，未必是输入的线性函数。统计独立性也不只依赖协方差。因此，“线性”在本节中既包括线性编码，也包括线性重构；不能据此把所有方法归结为二阶统计量或一次特征分解。核PCA随后把方差目标放到简介定义的特征空间中；这里的线性关系可以针对编码、生成或映射后的特征，三者不能混为同一种原空间线性投影。
+
+\subsection{主成分分析（PCA）}
+\label{sec:dim-pca}
+
+选择一个投影方向时，可以问投影以后还剩多少变化，也可以问由投影恢复原样本会损失多少信息。\term{主成分分析}（principal component analysis, PCA）在平方误差和正交投影的设定下给出同一个答案：选择方差最大的方向，就得到平均重构误差最小的子空间。Pearson在1901年研究点集的最佳拟合直线与平面，Hotelling在1933年从多元统计角度讨论主成分；这两条表述分别突出了几何拟合与变量变化的分解\scite{pearson1901pca,hotelling1933pca}
+
+\subsubsection{模型结构}
+\label{sec:dim-pca-structure}
+
+本小节先规定标准PCA优化什么对象，以及投影得分怎样重构观测；具体求解留到下一小节。先减去样本均值，以下暂以$\bm{X}$表示中心化后的数据矩阵，定义样本协方差$\bm{S}=\bm{X}^{\top}\bm{X}/n$。本章采用分母$n$，它与极大似然中的协方差约定一致；改用$n-1$只会整体缩放特征值，不改变主成分方向。
+
+在单位方向$\bm{w}$上的投影方差为$\bm{w}^{\top}\bm{S}\bm{w}$。选择$k$个正交单位方向组成$\bm{W}$，得到
+\begin{equation}
+  \max_{\bm{W}^{\top}\bm{W}=\bm{I}_k}
+      \operatorname{tr}(\bm{W}^{\top}\bm{S}\bm{W}),
+  \qquad \bm{Z}=\bm{X}\bm{W}.
+  \label{eq:dim-pca-variance}
+\end{equation}
+式中的$\bm{W}$是候选$k$维子空间的一组正交基；目标只取决于它张成的子空间，并未要求每一列都是协方差矩阵的特征向量。投影得分$\bm{z}=\bm{W}^{\top}\bm{x}$与基向量本身是不同对象。
+
+由得分重构中心化样本为$\widehat{\bm{x}}=\bm{W}\bm{W}^{\top}\bm{x}$。残差与子空间正交，勾股关系给出
+\begin{equation}
+  \lVert\bm{x}-\widehat{\bm{x}}\rVert_2^2
+  =\lVert\bm{x}\rVert_2^2-\lVert\bm{W}^{\top}\bm{x}\rVert_2^2.
+  \label{eq:dim-pca-pythagoras}
+\end{equation}
+对样本取平均，第一项与$\bm{W}$无关，所以最大化投影方差等价于最小化平均平方重构误差。图\ref{fig:dim-pca-projection}展示了这两个量的几何关系。对未经中心化的新观测，编码时减去训练均值，重构时再加回均值。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/dim-pca-projection}
+  \caption{二维到一维的正交投影示意。实线方向$\bm{w}_1$张成保留子空间，点$\bm{x}$投到$\widehat{\bm{x}}$，虚线为与子空间垂直的重构残差。图中散点为示意位置，未表示真实实验。}
+  \label{fig:dim-pca-projection}
+\end{figure}
+
+\subsubsection{参数学习}
+\label{sec:dim-pca-learning}
+
+模型目标确定后，本小节说明怎样计算一个最优表示，并区分解析解与数值近似。对单位方向的约束问题引入乘子$\lambda$，驻点满足$\bm{S}\bm{w}=\lambda\bm{w}$，此时方差正好为$\lambda$。将特征值排序为$\lambda_1\geq\cdots\geq\lambda_d\geq0$，前$k$个特征向量组成$\bm{V}_k$；$\bm{V}_k$的列称为\term{主成分方向}（principal component directions）。取$\bm{W}=\bm{V}_k$便得到一个解析解，此时得分$\bm{X}\bm{V}_k$的经验协方差为$\operatorname{diag}(\lambda_1,\ldots,\lambda_k)$，所以各主成分得分不相关；这还不意味着统计独立。
+
+这里有三个不能混同的对象。一般的最优$\bm{W}$是所选主子空间的一组正交基矩阵，$\operatorname{span}(\bm{W})$是主子空间，$\bm{P}=\bm{W}\bm{W}^{\top}$是到该子空间的投影算子。若$\lambda_k>\lambda_{k+1}$，主子空间与投影算子唯一，但最优$\bm{W}$仍不唯一：任意$k$阶正交矩阵$\bm{Q}$都使$\bm{W}\bm{Q}$给出同一投影，而所有最优基均可写成$\bm{V}_k\bm{Q}$。若从$\bm{W}=\bm{V}_k$出发，且$\bm{Q}$混合不同特征值对应的方向，则$\bm{W}\bm{Q}$的列一般不再是$\bm{S}$的特征向量，得分协方差$\bm{Q}^{\top}\operatorname{diag}(\lambda_1,\ldots,\lambda_k)\bm{Q}$一般也不再是对角矩阵。因此，主成分方向和互不相关的主成分得分特指排序特征向量基$\bm{V}_k$及其得分，而不是主子空间的每一组最优正交基。若还要求各列是按特征值排序的特征向量，则单特征值对应的方向只差符号，所选范围内的重特征值允许在整个重特征子空间中旋转。若$\lambda_k=\lambda_{k+1}$使重特征值跨过截断位置，最优主子空间和投影算子一般也不唯一。
+
+数值计算通常直接对数据作\term{奇异值分解}（singular value decomposition, SVD），即$\bm{X}=\bm{U}\bm{\Sigma}\bm{V}^{\top}$。右奇异向量给出方向，$\lambda_j=\sigma_j^2/n$，得分为$\bm{U}_k\bm{\Sigma}_k$。直接SVD避免显式形成$\bm{X}^{\top}\bm{X}$所带来的条件数平方问题。完整稠密分解约需$O(nd\min(n,d))$次运算；当只要少数方向时，截断算法可以降低开销，不能把形成$d\times d$协方差矩阵的代价当成所有PCA实现的下界。
+
+若$d\gg n$，也可以分解$n\times n$的Gram矩阵$\bm{X}\bm{X}^{\top}$。若$\bm{X}\bm{X}^{\top}\bm{u}_j=\sigma_j^2\bm{u}_j$且$\sigma_j>0$，则$\bm{v}_j=\bm{X}^{\top}\bm{u}_j/\sigma_j$。这是同一SVD的两侧表示；第\ref{sec:dim-kpca}节将把这种样本空间计算推广到核函数。
+
+维数选择常用\term{累计解释方差}（cumulative explained variance），即
+\begin{equation}
+  \eta_k=\frac{\sum_{j=1}^{k}\lambda_j}
+                    {\sum_{j=1}^{d}\lambda_j}.
+  \label{eq:dim-explained-variance}
+\end{equation}
+分母非零时，可按预先约定的比例选$k$，或查看特征值随序号下降的碎石图。$85\%$、$95\%$等比例只是经验阈值：低方差方向可能包含第\ref{sec:classification-lda-reduction}节所关心的类别判别信息，高方差方向也可能来自量纲或背景干扰。特征单位差异很大时，是否标准化要由任务决定；若用于预测，应在训练集内部用验证性能选择维数。
+
+对大型矩阵，随机化SVD先构造近似列空间，再在较小矩阵上分解；增量PCA则分批更新子空间。这些算法以近似误差或更新规则换取内存、时间收益，均需把求解误差与PCA目标本身区分\scite{halko2011}
+
+\subsubsection{理论分析}
+\label{sec:dim-pca-theory}
+
+\paragraph{收敛性分析}
+
+前两小节给出了问题设定与求解方式；这里先分析固定数据上的经验最优性，再在“泛化分析”中转向有限样本估计总体结构的问题。PCA的解析最优性是关于给定数据的结论。这个结论也可由Eckart--Young低秩逼近定理得到\scite{eckart1936}
+
+主线阅读只需记住：在正交投影和平方重构误差下，前$k$维主子空间达到经验全局最优，最小误差等于被舍弃特征值之和。下面的进阶证明把这一结论化为特征值加权和，并用截断处的谱隙判断子空间何时唯一；它不负责说明有限样本估计是否接近总体子空间。
+
+\begin{theorem}[PCA的最优线性重构性质]
+  \label{thm:dim-pca-optimal}
+  设$\bm{X}$已中心化，$1\leq k<d$，$\lambda_j$为$\bm{S}=\bm{X}^{\top}\bm{X}/n$按降序排列的特征值。则
+  \[
+    \min_{\bm{W}^{\top}\bm{W}=\bm{I}_k}
+       \frac1n\lVert\bm{X}-\bm{X}\bm{W}\bm{W}^{\top}\rVert_F^2
+       =\sum_{j=k+1}^{d}\lambda_j.
+  \]
+  前$k$个特征向量张成的子空间达到最小值。若$\lambda_k>\lambda_{k+1}$，最优投影算子$\bm{W}\bm{W}^{\top}$唯一，但子空间内的正交基不唯一。
+\end{theorem}
+
+\begin{proof}
+由式\eqref{eq:dim-pca-pythagoras}，经验误差等于$\operatorname{tr}(\bm{S})-\operatorname{tr}(\bm{W}^{\top}\bm{S}\bm{W})$。写$\bm{S}=\bm{V}\bm{\Lambda}\bm{V}^{\top}$，令$\bm{A}=\bm{V}^{\top}\bm{W}$，则$\bm{A}^{\top}\bm{A}=\bm{I}_k$。记$a_j=\lVert\bm{A}_{j,:}\rVert_2^2$，有$0\leq a_j\leq1$及$\sum_j a_j=k$。上界来自$\bm{A}\bm{A}^{\top}$是正交投影，每个对角元不超过$1$。
+
+令$u=\sum_{j>k}a_j=\sum_{j\leq k}(1-a_j)$。按特征值次序，
+\[
+  \begin{aligned}
+  \sum_{j=1}^{k}\lambda_j-\sum_{j=1}^{d}\lambda_j a_j
+  &=\sum_{j\leq k}\lambda_j(1-a_j)
+       -\sum_{j>k}\lambda_j a_j\\
+  &\geq(\lambda_k-\lambda_{k+1})u\geq0.
+  \end{aligned}
+\]
+因此保留方差最多为$\sum_{j\leq k}\lambda_j$，取$\bm{W}=\bm{V}_k$达到该值。若边界处有严格谱隙，等号要求$u=0$，因而投影到唯一的前$k$维子空间。若$\lambda_k=\lambda_{k+1}$，可以在跨越截断位置的重特征值空间中选择不同子空间，仍有相同误差。
+\end{proof}
+
+这个定理刻画了数值算法要逼近的全局最优解。使用迭代谱算法时，还应检查特征方程残差与方向的正交误差；求解精度不足造成的误差，不能与有限样本的估计误差混合。固定数据下把迭代做得更充分，可以改善前者，却不会自动改善后者。
+
+\paragraph{泛化分析}
+
+定理中的平均值是训练样本平均，不能直接改写为未知分布下的期望。若总体中心为$\bm{0}$、协方差为$\bm{\Sigma}_{\star}$，则总体重构风险为$R(\bm{P})=\operatorname{tr}((\bm{I}-\bm{P})\bm{\Sigma}_{\star})$，其中$\bm{P}$为秩$k$正交投影。设$\widehat{\bm{P}}$最小化样本风险，$\bm{P}_{\star}$最小化总体风险，加入并减去样本协方差项可得
+\begin{equation}
+  \begin{aligned}
+  R(\widehat{\bm{P}})-R(\bm{P}_{\star})
+  &\leq\operatorname{tr}
+      ((\bm{P}_{\star}-\widehat{\bm{P}})
+        (\bm{\Sigma}_{\star}-\bm{S}))\\
+  &\leq 2k\lVert\bm{S}-\bm{\Sigma}_{\star}\rVert_2.
+  \end{aligned}
+  \label{eq:dim-pca-excess-risk}
+\end{equation}
+第一步使用$\widehat{\bm{P}}$的经验最优性。第二步使用$\bm{P}_{\star}-\widehat{\bm{P}}$的核范数至多为$2k$，其中核范数是矩阵奇异值之和。若编码还使用样本均值，总体重构风险另外包含均值估计误差。在固定$d$、独立同分布且二阶矩有限时，样本均值与协方差依大数定律收敛，风险差因此趋于零。方向估计还取决于谱隙；特征值十分接近时，小协方差扰动也可能使方向明显旋转，而重构误差变化很小。
+
+当$d$与$n$同步增长时，固定维数结论不能直接沿用。Nadler对尖峰协方差模型的有限样本与渐近分析说明，样本特征值和方向可能偏离总体值，弱信号甚至不能被一致识别\scite{nadler2008}Marchenko--Pastur型谱极限给出了这种区别的一个基准：在独立同分布噪声且$d/n$趋于正常数的典型设定中，即使总体协方差是单位矩阵，样本特征值也不会全部收缩到$1$，而会形成非退化的极限谱分布\scite{marchenko1967}这一结论有明确的矩阵与比例极限条件，并不是对任意总体谱都适用的统一纠偏公式。
+
+稀疏PCA利用载荷结构减少有效自由度；奇异值阈值或收缩则调整谱幅度，适合低秩矩阵去噪等设定。两条路线的假设不同，例如Donoho与Gavish研究的最优硬阈值依赖具体噪声和损失条件，不能当作所有高维PCA的默认修正\scite{donoho2014threshold}
+
+\subsubsection{支持稀疏载荷（Sparse PCA）}
+\label{sec:dim-sparse-pca}
+
+前述小节分别给出标准PCA的设定、求解和论证；下面两小节改变载荷约束与污染模型，属于模型扩展。标准主成分可能包含几乎所有原始特征，难以说明哪些变量共同驱动某个方向。\term{稀疏PCA}（sparse PCA）限制主成分载荷中的非零项，使一个成分主要由少数变量表达。Zou、Hastie与Tibshirani在2006年将PCA改写为回归式矩阵分解，把主成分提取与回归中的变量选择联系起来，并讨论了基因表达等高维数据的计算问题\scite{zou2006spca}这一路线直接把稀疏要求纳入优化目标，而不是先求普通主成分再删去小载荷：
+\begin{equation}
+  \begin{aligned}
+  \min_{\bm{A},\bm{B}}\quad&
+    \lVert\bm{X}-\bm{X}\bm{B}\bm{A}^{\top}\rVert_F^2
+    +\lambda_1\sum_{j=1}^{k}\lVert\bm{b}_j\rVert_1
+    +\lambda_2\lVert\bm{B}\rVert_F^2,\\
+  \text{约束}\quad&\bm{A}^{\top}\bm{A}=\bm{I}_k.
+  \end{aligned}
+  \label{eq:dim-sparse-pca}
+\end{equation}
+这里$\bm{A},\bm{B}\in\mathbb{R}^{d\times k}$，$\bm{b}_j$为$\bm{B}$第$j$列，$\lambda_1,\lambda_2\geq0$。$\bm{B}$控制编码载荷，$\bm{A}$控制重构方向。$\ell_1$项促使载荷稀疏，平方惩罚缓解相关变量下的数值不稳定。
+
+固定$\bm{A}$时，把$\bm{X}$分解到$\bm{A}$的列空间及其正交补，便有
+\[
+  \lVert\bm{X}-\bm{X}\bm{B}\bm{A}^{\top}\rVert_F^2
+  =\lVert\bm{X}\bm{A}-\bm{X}\bm{B}\rVert_F^2
+   +\lVert\bm{X}(\bm{I}-\bm{A}\bm{A}^{\top})\rVert_F^2.
+\]
+后一项与$\bm{B}$无关，因此各列成为弹性网回归。固定$\bm{B}$时，最大化$\operatorname{tr}(\bm{A}^{\top}\bm{X}^{\top}\bm{X}\bm{B})$是正交Procrustes问题，可由SVD求解。交替更新通常得到局部解，需要检查初始化和惩罚强度的敏感性。
+
+稀疏性提高了变量筛选层面的可读性，却改变了标准PCA的正交结构：$\bm{B}$各列通常不正交，得分也未必不相关，不能直接把各稀疏成分方差相加当作无重叠的解释方差。基因表达、文本等高维场景中，应同时报告稀疏程度、重构效果与跨样本稳定性。
+
+\subsubsection{支持异常值与低秩加稀疏分解（Robust PCA）}
+\label{sec:dim-robust-pca}
+
+稀疏PCA约束载荷中使用哪些变量，本小节则改变观测误差的结构。平方误差会放大幅度很大的污染值。例如固定摄像机的视频中，背景随帧变化较少，运动前景却会改变少数像素。把各帧排成矩阵，便可尝试将观测$\bm{M}\in\mathbb{R}^{n\times d}$拆为低秩背景$\bm{L}$与稀疏扰动$\bm{E}$。\term{鲁棒PCA}（robust PCA, RPCA）在这里指这种低秩加稀疏分解；它只是稳健子空间估计的一种形式。
+
+直接最小化$\operatorname{rank}(\bm{L})+\lambda\lVert\bm{E}\rVert_0$具有组合困难。\term{主成分追踪}（principal component pursuit, PCP）用凸惩罚替代这两个量：
+\begin{equation}
+  \min_{\bm{L},\bm{E}}\
+     \lVert\bm{L}\rVert_*+\lambda\lVert\bm{E}\rVert_1,
+  \qquad \bm{M}=\bm{L}+\bm{E}.
+  \label{eq:dim-pcp}
+\end{equation}
+$\lVert\bm{L}\rVert_*=\sum_j\sigma_j(\bm{L})$是核范数，$\lVert\bm{E}\rVert_1$在这里指所有元素绝对值之和。前者鼓励少数非零奇异值，后者鼓励少数非零元素。
+
+可恢复性要求两部分能够区分：若一个矩阵本身既低秩又稀疏，就可能在$\bm{L}$与$\bm{E}$之间任意转移。Candès等的精确恢复定理要求低秩部分满足不相干性，即奇异向量不集中在少数坐标上，并对秩、稀疏污染比例及随机支持作出限制。在这些条件下，$\lambda=1/\sqrt{\max(n,d)}$可作为无需知道污染幅度的理论选择；任意位置的对抗性污染不自动满足该保证\scite{candes2011rpca}
+
+求解可采用交替方向乘子法。给定惩罚参数$\rho>0$和缩放对偶变量$\bm{U}$，一次更新分别为
+\begin{equation}
+  \begin{aligned}
+  \bm{L}^{(t+1)}&=\operatorname{SVT}_{1/\rho}
+                  (\bm{M}-\bm{E}^{(t)}+\bm{U}^{(t)}),\\
+  \bm{E}^{(t+1)}&=\mathcal{S}_{\lambda/\rho}
+                  (\bm{M}-\bm{L}^{(t+1)}+\bm{U}^{(t)}),\\
+  \bm{U}^{(t+1)}&=\bm{U}^{(t)}
+                   +\bm{M}-\bm{L}^{(t+1)}-\bm{E}^{(t+1)}.
+  \end{aligned}
+  \label{eq:dim-rpca-admm}
+\end{equation}
+$\mathcal{S}_{a}(u)=\operatorname{sign}(u)(|u|-a)_+$逐元素软阈值化，$\operatorname{SVT}_{a}$则对奇异值作同样操作。停止时应检查原始与对偶残差，不能用固定的“几十次迭代”保证收敛。
+
+若观测还有小幅稠密噪声，可将等式约束改成$\lVert\bm{M}-\bm{L}-\bm{E}\rVert_F\leq\delta$，得到稳定PCP形式。在线、带侧信息的变体分别面向流式观测和已知子空间特征。视频背景、图像遮挡与异常检测是否适用，取决于污染是否符合所选稀疏模型；整行异常常需组稀疏惩罚，不能简单套用逐元素稀疏假设。
+
+\subsubsection{小结}
+\label{sec:dim-pca-summary}
+
+PCA给出正交线性压缩的经验平方误差最优解，同时提供可复用的编码与重构公式。维数、尺度和异常值会改变得到的子空间；总体可靠性还受样本量与谱隙影响。稀疏PCA改变载荷结构，RPCA改变污染模型，第\ref{sec:dim-ppca}节的概率PCA则显式描述噪声与隐变量。这些扩展分别回答不同问题，不能用一个“改进PCA”的名称替代条件比较。
+
+\subsection{典型相关分析（CCA）}
+\label{sec:dim-cca}
+
+一张图像与它的文字描述具有不同坐标，却可能反映共同内容。单独在两个视图中保留最大方差方向，并不能保证保留的是共有变化。\term{典型相关分析}（canonical correlation analysis, CCA）为成对观测各找一组投影，使对应得分的相关系数尽可能大。Hotelling的经典工作建立了这一双视图分析框架\scite{hotelling1936cca}
+
+\subsubsection{模型结构}
+\label{sec:dim-cca-structure}
+
+设中心化成对观测为$\bm{x}\in\mathbb{R}^{d_x}$、$\bm{y}\in\mathbb{R}^{d_y}$，协方差为$\bm{\Sigma}_{xx}$、$\bm{\Sigma}_{yy}$，交叉协方差为$\bm{\Sigma}_{xy}=\mathbb{E}[\bm{x}\bm{y}^{\top}]$。实际计算时用同一批配对样本估计这些矩阵。第一对典型方向求解
+\begin{equation}
+  \max_{\bm{w}_x,\bm{w}_y}
+  \frac{\bm{w}_x^{\top}\bm{\Sigma}_{xy}\bm{w}_y}
+  {\sqrt{\bm{w}_x^{\top}\bm{\Sigma}_{xx}\bm{w}_x}
+   \sqrt{\bm{w}_y^{\top}\bm{\Sigma}_{yy}\bm{w}_y}}.
+  \label{eq:dim-cca-correlation}
+\end{equation}
+分母要求两个投影具有非零方差。由于尺度不影响相关性，可固定两侧投影方差为$1$，只最大化分子。
+
+图\ref{fig:dim-cca-shared}把这一目标与PCA放在同一个例子中比较。两侧各自方差最大的坐标分别为$u$和$v$，它们相互独立；较小方差的坐标却都是$t$。因此，保留最多变化与保留共有变化会选择不同方向。这里保留各坐标的原方差；若先逐坐标标准化，PCA的方向选择也会改变。
+
+\begin{figure*}[!ht]
+  \centering
+  \input{figures/dim-cca-shared}
+  \caption{CCA提取共有变化的构造例子。设$t,u,v$相互独立且均值为零，方差依次为$1,4,4$；两视图为$\bm{x}=(t,u)^\top$和$\bm{y}=(v,t)^\top$。实线连接共享因素，虚线连接各视图独有因素。各保留一维时，PCA选择$u,v$，CCA选择$t,t$，对应相关系数分别为$0$和$1$。箭头表示坐标构造关系，图中结论针对给定总体，不是样本拟合结果。}
+  \label{fig:dim-cca-shared}
+\end{figure*}
+
+提取多对方向时，同一视图内要求$\bm{W}_x^{\top}\bm{\Sigma}_{xx}\bm{W}_x=\bm{I}_k$和$\bm{W}_y^{\top}\bm{\Sigma}_{yy}\bm{W}_y=\bm{I}_k$。这是协方差度量下的正交，通常不是原坐标中的欧氏正交。对应跨视图得分协方差可对角化为$\operatorname{diag}(\rho_1,\ldots,\rho_k)$。可识别的对数受维数、样本秩和交叉协方差秩共同限制。
+
+\subsubsection{参数学习}
+\label{sec:dim-cca-learning}
+
+假设两侧协方差正定，先用白化把各自协方差变为单位阵。令
+\[
+  \bm{K}=\bm{\Sigma}_{xx}^{-1/2}
+               \bm{\Sigma}_{xy}\bm{\Sigma}_{yy}^{-1/2},
+  \qquad
+  \bm{K}=\bm{U}\bm{D}\bm{V}^{\top}.
+\]
+若设$\bm{a}=\bm{\Sigma}_{xx}^{1/2}\bm{w}_x$、$\bm{b}=\bm{\Sigma}_{yy}^{1/2}\bm{w}_y$，目标就成为单位向量约束下的$\max\bm{a}^{\top}\bm{K}\bm{b}$。最大值为$\bm{K}$最大奇异值，取相应左右奇异向量达到。因此
+\begin{equation}
+  \bm{W}_x=\bm{\Sigma}_{xx}^{-1/2}\bm{U}_k,\qquad
+  \bm{W}_y=\bm{\Sigma}_{yy}^{-1/2}\bm{V}_k,
+  \label{eq:dim-cca-svd}
+\end{equation}
+而$\bm{D}$的前$k$个对角元就是典型相关系数。数值上可用Cholesky分解与三角求解实现白化，无须显式求逆。
+
+对约束目标求导也可得到$\bm{\Sigma}_{xy}\bm{w}_y=\rho\bm{\Sigma}_{xx}\bm{w}_x$及另一侧的对称关系。消去$\bm{w}_y$，便有
+\[
+  \bm{\Sigma}_{xy}\bm{\Sigma}_{yy}^{-1}
+       \bm{\Sigma}_{yx}\bm{w}_x
+  =\rho^2\bm{\Sigma}_{xx}\bm{w}_x.
+\]
+这解释了CCA与广义特征值问题的联系。若样本协方差奇异，可在非零方差子空间求解，或分别加$\lambda_x\bm{I}$、$\lambda_y\bm{I}$进行正则化。后一种做法改变了归一化度量，应通过留出配对样本检查相关性，而不能只看训练相关系数。
+
+核CCA以核特征替代原特征，深度CCA进一步学习非线性变换\scite{andrew2013dcca}Andrew等在2013年提出深度CCA时，关注的不只是非线性表示，还包括固定核对表示的限制，以及新样本计算对训练样本的依赖。他们改用两条联合学习的参数化映射，保留相关性目标，使新样本可以通过前向计算获得表示。这些扩展改变了表示形式与计算方式，也需要额外的复杂度控制。
+
+\subsubsection{小结}
+\label{sec:dim-cca-summary}
+
+CCA寻找两个视图的共同线性变化，适合配对传感器、多模态匹配和跨域分析。它最大化相关而非因果效应，也不保证保留每个视图中所有重要信息。高维小样本时训练相关性容易被高估，正则化与样本外检验尤其必要。现代双塔表示与对比学习也处理多视图对齐，但负采样、损失和训练机制并不能直接由CCA推得。
+
+\subsection{独立成分分析（ICA）}
+\label{sec:dim-ica}
+
+不相关仍可能高度依赖。例如$X\sim\mathcal{N}(0,1)$时，$X$与$X^2$的协方差为零，后者却由前者完全确定。如果观测是多个源信号的混合，仅去除相关性还不足以分离源。\term{独立成分分析}（independent component analysis, ICA）利用分量独立性和非高斯结构估计混合过程，典型任务包括分离说话人、脑电活动与眼动伪迹\scite{comon1994ica}
+
+ICA也与信息论和早期神经网络研究相交。Bell与Sejnowski在1995年从非线性网络的信息传递出发推导学习规则，利用超出协方差的统计信息减少输出之间的依赖\scite{bell1995infomax}原论文同时研究未知混合语音的分离和未知回声的消除，将信息最大化思路用于两类盲信号处理问题。这里“盲”指混合或传播过程未知，并非不对源信号作出假设。
+
+\subsubsection{模型结构}
+\label{sec:dim-ica-structure}
+
+先考虑中心化、无噪声且源数等于通道数的模型
+\begin{equation}
+  \bm{x}=\bm{A}\bm{s},\qquad
+  \bm{z}=\bm{W}^{\top}\bm{x},\qquad
+  \bm{W}^{\top}=\bm{A}^{-1}.
+  \label{eq:dim-ica-model}
+\end{equation}
+其中$\bm{A}\in\mathbb{R}^{d\times d}$可逆，$\bm{s}$的分量相互独立。这里$\bm{W}$按列存放解混方向，因此$\bm{W}=\bm{A}^{-\top}$；若把解混矩阵定义为$\bm{A}^{-1}$，编码就应写成左乘该矩阵，不能混用两种约定。
+
+经典可识别性还要求源非退化，且至多一个源为高斯。多个标准高斯源的联合分布在正交旋转下不变，观测无法区分该高斯子空间内的不同方向。即使条件满足，源的排列和尺度仍无法仅由观测确定：交换源及对应混合列、同时反向缩放两者，都不改变$\bm{x}$。
+
+若解混后密度存在，可以用分量联合分布相对于边际分布乘积的KL散度衡量剩余依赖：
+\[
+  I(z_1,\ldots,z_d)
+  =\sum_{j=1}^{d}h(z_j)-h(\bm{z}),
+\]
+其中$h$为微分熵，表达式要求相应量有定义。它为零当且仅当分量独立。另一种路线在单位方差约束下最大化非高斯性，例如负熵$J(z)=h(g)-h(z)$，$g$是同均值、同方差的高斯变量。独立变量相加常使分布更接近高斯，这为分离提供直觉；中心极限定理本身并不保证任意有限线性组合的所有非高斯性指标都严格单调。
+
+若为源选择密度$p_j$，变量替换给出对数似然
+\begin{equation}
+  \ell(\bm{W})
+  =n\log|\det\bm{W}|
+   +\sum_{i=1}^{n}\sum_{j=1}^{d}
+        \log p_j(\bm{w}_j^{\top}\bm{x}_i).
+  \label{eq:dim-ica-likelihood}
+\end{equation}
+行列式项来自解混的Jacobian。互信息、非高斯性与似然提供相关视角，但采用近似对比函数或错误的源密度时，其优化解不必完全相同。
+
+\subsubsection{参数学习}
+\label{sec:dim-ica-learning}
+
+通常先做\term{白化}（whitening），把协方差变为单位阵：若$\bm{S}=\bm{V}\bm{\Lambda}\bm{V}^{\top}$且保留特征值为正，令$\widetilde{\bm{x}}=\bm{\Lambda}^{-1/2}\bm{V}^{\top}\bm{x}$。把源方差规范为$1$后，白化空间中的混合矩阵正交，剩下的问题是在球面上寻找独立方向。
+
+图\ref{fig:dim-ica-whitening}说明白化后为何还需要解混。左图的协方差已经是单位阵，但给定靠近边缘的$x_1$时，$x_2$可取的区间随之改变，两个分量仍有依赖。旋转回右图的源坐标后，均匀方形的联合分布才分解为两个一维均匀分布。协方差在旋转前后相同，区分这些方向必须使用更完整的分布信息。
+
+\begin{figure*}[!ht]
+  \centering
+  \input{figures/dim-ica-whitening}
+  \caption{白化与独立源恢复的区别。设$s_1,s_2$独立且均服从$\mathcal{U}[-\sqrt3,\sqrt3]$，$\bm{R}(\theta)$为逆时针旋转矩阵。左图为$\bm{x}=\bm{R}(30^\circ)\bm{s}$，右图为逆旋转恢复的$\bm{s}$；两者协方差均为$\bm{I}_2$，只有右侧所示坐标对应独立源。实线轮廓为总体支持域，圆点为确定性格点，虚线箭头为解混方向。图为无量纲构造示意，未运行ICA优化；该方形解混本身不减少维数。}
+  \label{fig:dim-ica-whitening}
+\end{figure*}
+
+FastICA用固定点迭代近似优化非高斯性。给定当前单位方向$\bm{u}^{(t)}$，用样本平均代替期望计算
+\begin{equation}
+  \begin{aligned}
+  \bm{v}^{(t+1)}
+    &=\frac1n\sum_{i=1}^{n}
+      \widetilde{\bm{x}}_i
+           g((\bm{u}^{(t)})^{\top}\widetilde{\bm{x}}_i)\\
+    &\quad-\left[\frac1n\sum_{i=1}^{n}
+      g'((\bm{u}^{(t)})^{\top}\widetilde{\bm{x}}_i)\right]\bm{u}^{(t)},\\
+  \bm{u}^{(t+1)}
+    &=\bm{v}^{(t+1)}/\lVert\bm{v}^{(t+1)}\rVert_2.
+  \end{aligned}
+  \label{eq:dim-fastica}
+\end{equation}
+常见选择有$g(u)=\tanh u$或$g(u)=u^3$，分别对应不同的对比函数；四次矩形式对极端值更敏感。提取多个成分时，可逐个对已得方向正交化，也可对整组方向做对称正交化。停止准则通常检查方向变化，并允许符号翻转\scite{hyvarinen1999fastica}
+
+FastICA的快速收敛结论依赖源分布、对比函数和初始化等条件；若更新向量接近零，需重新初始化或调整设置。前述信息最大化路线Infomax通过选择输出非线性并最大化输出熵学习解混，适合梯度更新；JADE则联合对角化四阶累积量矩阵。它们使用的信息与数值开销不同，不能只按迭代次数比较效率。
+
+\subsubsection{小结}
+\label{sec:dim-ica-summary}
+
+ICA把去相关推进到独立源识别，但独立性是模型前提和估计目标，不是任意数据上的保证。标准方形ICA本身不减少维数；只有先截断白化空间，或采用源数少于通道数的模型，才同时完成压缩。源数多于通道数才是欠定混合，通常需要稀疏性等额外条件。非线性混合、相关源、多个高斯源和较强噪声，也会改变可识别性与适用算法。
+
+\subsection{非负矩阵分解（NMF）}
+\label{sec:dim-nmf}
+
+词频、光谱强度和像素亮度天然非负。若表示允许任意正负抵消，一个基向量的物理含义可能难以解释。\term{非负矩阵分解}（nonnegative matrix factorization, NMF）要求系数与基均非负，使重构由若干成分相加得到。
+
+% 为两条完整的历史文献边注保留空间。
+\Needspace{12\baselineskip}
+非负分解的早期工作来自不同问题。Paatero与Tapper在1994年的正矩阵分解中，根据环境测量各项误差的大小加权残差，并在拟合时直接施加非负约束\scite{paatero1994nmf}Lee与Seung在1999年则从整体与部件的感知关系出发，用人脸和文本展示加性表示可以学出怎样的组成成分\scite{lee1999nmf}前者强调测量误差与物理约束，后者强调表示的组成方式；这也说明同样的非负结构可以配合不同损失和应用假设。
+
+\subsubsection{模型结构}
+\label{sec:dim-nmf-structure}
+
+对非负矩阵$\bm{X}\in\mathbb{R}_{+}^{n\times d}$，求
+\begin{equation}
+  \bm{X}\approx\bm{W}\bm{H},\qquad
+  \bm{W}\in\mathbb{R}_{+}^{n\times k},\quad
+  \bm{H}\in\mathbb{R}_{+}^{k\times d}.
+  \label{eq:dim-nmf-factorization}
+\end{equation}
+本小节$\bm{W}$表示样本系数，区别于PCA中的正交基矩阵；其第$i$行就是第$i$个样本的表示，$\bm{H}$各行为共享基。例如文档可由若干主题词模式相加近似，光谱可由若干成分谱相加近似。非负性禁止抵消，但不自动保证基局部化、系数稀疏或主题具有人工可读的语义。
+
+图\ref{fig:dim-nmf-parts}用两个固定的非负基说明逐元素相加。把九个像素按行展开，令$\bm{H}$两行为横条基与竖条基的转置，系数$(0.6,1.0)$就生成右侧图案。两条基在中心像素都有贡献，所以中心值为$1.6$。固定字典后，两个系数足以重构这个特定图案；一般观测仍可能有近似误差，字典本身也需要存储。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/dim-nmf-parts}
+  \caption{两个非负基的加性重构。左侧两幅$3\times3$栅格分别给出未加权的横条、竖条基，外侧系数为$0.6$与$1.0$；右侧为逐像素加权和，粗框中心格等于$0.6+1.0=1.6$。数值无量纲，本构造恰好精确重构，不表示NMF总能学出这样的部件或保证唯一分解。}
+  \label{fig:dim-nmf-parts}
+\end{figure}
+
+连续观测常使用$\frac12\lVert\bm{X}-\bm{W}\bm{H}\rVert_F^2$，对应固定方差高斯残差的似然形式。对非负计数，可使用广义KL目标
+\begin{equation}
+  \mathcal{L}_{\mathrm{KL}}
+  =\sum_{i,j}\left[
+      \bm{X}_{i,j}\log\frac{\bm{X}_{i,j}}{(\bm{W}\bm{H})_{i,j}}
+      -\bm{X}_{i,j}+(\bm{W}\bm{H})_{i,j}\right].
+  \label{eq:dim-nmf-kl}
+\end{equation}
+约定$0\log(0/u)=0$；若$\bm{X}_{i,j}>0$而重构为零，损失为无穷大。对于条件独立的Poisson计数，这与负对数似然相差一个仅依赖数据的常数；过度离散的计数则可能需要其他观测模型。
+
+一般NMF不唯一。即使只考虑正对角矩阵$\bm{D}$，$\bm{W}\bm{H}=(\bm{W}\bm{D})(\bm{D}^{-1}\bm{H})$就显示了尺度自由度，成分排列也不唯一。稀疏、平滑或归一化约束可以减少歧义，但仍不能无条件保证唯一分解。
+
+\subsubsection{参数学习}
+\label{sec:dim-nmf-learning}
+
+两个因子联合优化非凸，固定一个时，另一个的平方误差子问题是带非负约束的凸问题。Lee与Seung的乘法更新利用非负比率维持可行性。以下所有乘除均逐元素进行，两个更新顺序执行\scite{lee2001nmf}
+\begin{equation}
+  \begin{aligned}
+    \bm{W}&\leftarrow\bm{W}\odot
+       \frac{\bm{X}\bm{H}^{\top}}
+        {\bm{W}\bm{H}\bm{H}^{\top}},\\
+    \bm{H}&\leftarrow\bm{H}\odot
+       \frac{\bm{W}^{\top}\bm{X}}
+        {\bm{W}^{\top}\bm{W}\bm{H}}.
+  \end{aligned}
+  \label{eq:dim-nmf-mu}
+\end{equation}
+在正初始化与更新有定义等条件下，可用辅助函数证明目标单调不增。由于目标非负，目标值序列收敛；这一步并不等于已证明参数收敛到局部极小或全局最优。零元素还可能一直锁在零上，使基本更新难以满足最优性条件。实现中须处理零分母，并检查约束下的梯度残差和多次初始化结果。
+
+投影梯度用$\max(0,\cdot)$将更新投回非负区域；交替非负最小二乘则更充分地求解各子问题。HALS或坐标下降逐个调整基与系数，适合利用稀疏矩阵结构。求解速度取决于损失、稀疏性、停止精度与初始化，不能从目标单调性推出某个算法普遍最快\scite{lin2007nmf}
+
+基$\bm{H}$固定后，新样本表示通过非负最小二乘或相应KL目标求得。例如平方误差下求$\min_{\bm{w}\geq0}\lVert\bm{x}-\bm{H}^{\top}\bm{w}\rVert_2^2$，通常不是简单乘一个固定投影矩阵。普通稠密平方误差更新的主要乘法约需$O(ndk)$；训练总成本还要乘迭代次数。
+
+\subsubsection{小结}
+\label{sec:dim-nmf-summary}
+
+NMF适用于有加性解释的非负数据，代价是非凸学习与通常不唯一的表示。低秩时，PCA与NMF都一般存在重构误差；PCA的正交性并不意味着压缩后无损。若数据经过中心化出现负值，直接平移到非负区间也会改变分解含义，应先确认这种预处理是否符合任务。
+
+在合适的归一化和计数似然约定下，采用I散度目标的NMF与概率隐语义索引优化同一个目标函数，但两者的更新算法并不相同\scite{ding2008nmf-plsi}隐狄利克雷分配进一步为文档主题比例引入先验，不能仅视为换个名称的NMF\scite{blei2003}非负张量分解处理多轴数据，凸NMF、正交NMF、稀疏NMF和深度NMF分别改变基的构成、成分关系、稀疏结构与层次组织。它们增加的约束应由应用中的可解释性要求支持。
+
+\subsection{稀疏编码与字典学习}
+\label{sec:dim-sparse-coding}
+
+一个图像块可能只包含少量边缘，却需要从许多位置和方向中选择这些边缘。因此，与其只准备少数基向量，也可以准备很大的候选库，而要求每次只用其中几个。\term{稀疏编码}（sparse coding）在给定字典中寻找少数活跃系数，\term{字典学习}（dictionary learning）则进一步从样本中学习这些共享基。
+
+Olshausen与Field在1996年关心的是，自然图像的统计结构能否解释初级视觉皮层神经元响应的局部性、方向选择性和空间频率选择性。他们检验了稀疏线性编码能否学出同时具有这些性质的一组基，并将其与小波表示比较\scite{olshausen1996}这项工作把视觉神经科学与信号表示联系起来；计算结果与感受野相似，并不能证明大脑执行了完全相同的学习算法。
+
+\subsubsection{模型结构}
+\label{sec:dim-sparse-coding-structure}
+
+记字典为$\bm{D}\in\mathbb{R}^{d\times p}$，列$\bm{d}_j$称为字典原子；本小节用$p$表示原子数，允许$p>d$，此时字典过完备。样本满足$\bm{x}_i\approx\bm{D}\bm{\alpha}_i$，系数$\bm{\alpha}_i\in\mathbb{R}^{p}$多数为零。常用学习目标为
+\begin{equation}
+  \begin{aligned}
+  \min_{\bm{D},\{\bm{\alpha}_i\}}\quad&
+   \sum_{i=1}^{n}\left[
+      \tfrac12\lVert\bm{x}_i-\bm{D}\bm{\alpha}_i\rVert_2^2
+      +\lambda\lVert\bm{\alpha}_i\rVert_1\right],\\
+  \text{约束}\quad&\lVert\bm{d}_j\rVert_2\leq1
+                 \quad(j=1,\ldots,p).
+  \end{aligned}
+  \label{eq:dim-dictionary-objective}
+\end{equation}
+列范数约束防止把字典无限放大、系数相应缩小，以任意降低$\ell_1$惩罚而不改变重构。与NMF不同，这里不要求非负；与PCA不同，这里不要求正交，表示长度甚至可以超过原维数。
+
+固定一个含$s$个原子的支持集，重构位于至多$s$维的线性子空间；允许支持集变化，就得到许多子空间的并。这解释了“稀疏性代替低维性”的含义，也说明它一般不是一张光滑低维流形。编码的活跃集合随输入改变，编码映射通常非线性。
+
+\subsubsection{参数学习}
+\label{sec:dim-sparse-coding-learning}
+
+固定字典后，各样本独立求解Lasso型问题，可采用坐标下降、LARS或近端梯度。以单一样本为例，若$L\geq\lVert\bm{D}^{\top}\bm{D}\rVert_2$且$L>0$，ISTA更新为
+\begin{equation}
+  \bm{\alpha}^{(t+1)}
+  =\mathcal{S}_{\lambda/L}\left(
+      \bm{\alpha}^{(t)}
+      +L^{-1}\bm{D}^{\top}
+          (\bm{x}-\bm{D}\bm{\alpha}^{(t)})\right).
+  \label{eq:dim-ista}
+\end{equation}
+梯度步减小重构误差，软阈值步对应$\ell_1$惩罚的近端映射。FISTA加入加速外推，在凸子问题的标准条件下改善目标值收敛率；这一保证针对固定字典，不直接覆盖字典和编码的联合优化\scite{beck2009fista}
+
+固定编码后，记$\bm{A}=[\bm{\alpha}_1,\ldots,\bm{\alpha}_n]\in\mathbb{R}^{p\times n}$，字典步最小化$\frac12\lVert\bm{X}^{\top}-\bm{D}\bm{A}\rVert_F^2$并满足列范数约束。MOD从无约束最小二乘解$\bm{X}^{\top}\bm{A}^{\dagger}$出发更新方向；简单归一化是常用实现，但一般不等于精确求解带耦合列约束的子问题。需要严格下降时，应使用适当的约束求解或可验证更新。
+
+K-SVD通常配合$\lVert\bm{\alpha}_i\rVert_0\leq s$的稀疏度约束：更新某个原子时，先去掉其他原子的贡献，仅保留使用该原子的样本，再对残差作秩一SVD，同时更新原子及其活跃系数。这不同于直接精确求解式\eqref{eq:dim-dictionary-objective}的$\ell_1$目标\scite{aharon2006ksvd}
+
+在线字典学习逐次处理小批样本，并积累编码二阶统计量与观测交叉统计量，以近似更新字典。它减少了反复扫描全部数据的开销，但达到给定精度的成本仍取决于原子数、稀疏求解和更新次数，不能仅由一次遍历写成无条件的$O(n)$总成本\scite{mairal2009online}
+
+\subsubsection{小结}
+\label{sec:dim-sparse-coding-summary}
+
+稀疏编码用少量活跃原子描述样本，适合去噪、修复和具有可组合模式的信号表示。新样本仍须推断系数，因此使用成本与线性投影不同。压缩感知进一步研究稀疏信号何时可由少量线性测量恢复，需要测量矩阵满足受限等距或相关条件；稀疏性本身并不足以保证恢复。
+
+判别式字典把标签信息加入学习，结构稀疏规定哪些原子应共同出现，卷积稀疏编码共享不同位置的滤波器。稀疏自编码器和层次特征学习也吸收了类似的表示约束，但不能由滤波器外观相近就推出算法或理论等价。稀疏编码在本章中的位置，是补充线性组合表示这一方向，而不是把高维稀疏向量重新称为低维坐标。
+
+\subsection{随机投影（Random Projection）}
+\label{sec:dim-rp}
+
+前述方法需要根据数据选择投影或字典。对于维数极高、必须立即处理的流式数据，能否预先固定一个映射，仍近似保留样本间的欧氏距离？\term{随机投影}（random projection）从指定分布抽取矩阵，再用同一个矩阵变换所有样本。Johnson--Lindenstrauss引理说明，对任意预先给定的有限点集，这种构造能够以较高概率同时近似保距\scite{johnson1984jl}
+
+保距保证解决了表示是否存在的问题，数据库应用还要求映射容易生成和计算。Achlioptas在2003年为此构造离散随机矩阵，使投影可以化为对属性的加减、聚合与统一缩放\scite{achlioptas2003}这种发展保留了不依赖数据拟合的几何保证，改变的是计算所需的操作。
+
+\subsubsection{模型结构}
+\label{sec:dim-rp-structure}
+
+令$\bm{\Pi}\in\mathbb{R}^{k\times d}$，编码为$\bm{z}=\bm{\Pi}\bm{x}$。最直接的选择是独立采样$\bm{\Pi}_{i,j}\sim\mathcal{N}(0,1/k)$。对任意固定$\bm{x}$，
+\[
+  \mathbb{E}_{\bm{\Pi}}\lVert\bm{\Pi}\bm{x}\rVert_2^2
+  =\lVert\bm{x}\rVert_2^2.
+\]
+平均保范数还不够；要让同一次采样同时适合很多样本，必须控制偏离均值的尾概率。
+
+稀疏构造可以降低乘法和存储开销。例如Achlioptas矩阵的元素以$1/6$概率取$\sqrt{3/k}$、以$1/6$概率取$-\sqrt{3/k}$，其余取零，仍可建立相应的集中界。Li、Hastie与Church研究了更稀疏的构造，但进一步稀疏化的误差分析与输入分量集中程度有关，不能只凭二阶矩匹配就宣称任意稀疏率都有相同保证\scite{li2006sparserp}
+
+快速Johnson--Lindenstrauss变换利用随机符号、Hadamard变换与后续抽样或稀疏映射。其结构化变换部分约需$O(d\log d)$，总体代价还包含输出维数及精度相关项。它与直接存放$kd$个高斯元素的实现具有不同的内存、算术和输入尺寸要求\scite{ailon2009fjlt}
+
+\subsubsection{参数学习}
+\label{sec:dim-rp-learning}
+
+随机投影没有数据拟合步骤，但仍有需要选择的超参数：目标维数$k$、矩阵分布及其稀疏程度。矩阵确定以后，训练与新样本共享同一个映射；稠密投影每个样本需$O(kd)$次运算。分布式使用时，共享种子还需同时固定伪随机数实现与矩阵生成顺序，才能重现同一映射。
+
+下述定理给出$k$与误差、点数、失败概率之间的关系。理论维数可能相当保守；若它已经超过$d$，这个上界就没有给出实际压缩收益。工程中可以在训练或验证数据上测量距离失真，再决定是否采用较小的$k$。先随机压缩到中等维数、再做PCA或最近邻搜索，也是一种可比较的方案，但下游效果仍须独立验证。
+
+主线阅读可直接使用定理中的维数尺度和失败概率，把它作为候选$k$的上界依据。进阶证明说明单个差向量的卡方集中怎样经联合界扩展到全部训练点对；因此，结论的对象是预先固定的有限集合，而不是投影后自适应选择的任意查询。
+
+\subsubsection{理论分析}
+\label{sec:dim-rp-theory}
+
+\paragraph{收敛性分析}
+
+随机投影无需拟合或迭代。这里的收敛考察投影维数增加时距离误差的概率集中；定理给出一次随机采样同时保留全部训练点对距离的条件。
+
+\begin{theorem}[高斯随机投影的Johnson--Lindenstrauss保证]
+  \label{thm:dim-jl}
+  给定$n\geq2$个固定点$\bm{x}_1,\ldots,\bm{x}_n\in\mathbb{R}^{d}$，取$0<\varepsilon<1$、$0<\delta<1$。若
+  \[
+    k\geq\frac{8}{\varepsilon^2}
+              \log\frac{n(n-1)}{\delta},
+  \]
+  且$\bm{\Pi}_{r,j}$独立服从$\mathcal{N}(0,1/k)$，则以至少$1-\delta$的概率，对全部样本对同时有
+  \[
+  \begin{aligned}
+  (1-\varepsilon)\lVert\bm{x}_i-\bm{x}_j\rVert_2^2
+  &\leq\lVert\bm{\Pi}(\bm{x}_i-\bm{x}_j)\rVert_2^2\\
+  &\leq(1+\varepsilon)\lVert\bm{x}_i-\bm{x}_j\rVert_2^2.
+  \end{aligned}
+  \]
+\end{theorem}
+
+\begin{proof}
+固定单位向量$\bm{u}$，随机变量$Y=k\lVert\bm{\Pi}\bm{u}\rVert_2^2$服从$k$自由度的卡方分布，其矩母函数为$\mathbb{E}e^{tY}=(1-2t)^{-k/2}$，$t<1/2$。对上尾应用Chernoff方法并取$t=\varepsilon/(2(1+\varepsilon))$，有
+\[
+  \mathbb{P}(Y\geq k(1+\varepsilon))
+  \leq\exp\{-k[\varepsilon-\log(1+\varepsilon)]/2\}.
+\]
+下尾采用负$t$可得$\exp\{-k[-\varepsilon-\log(1-\varepsilon)]/2\}$。在$0<\varepsilon<1$内，两者均不超过$\exp(-k\varepsilon^2/8)$，故
+\[
+  \mathbb{P}\left(
+   \left|\lVert\bm{\Pi}\bm{u}\rVert_2^2-1\right|>\varepsilon
+   \right)\leq2e^{-k\varepsilon^2/8}.
+\]
+对每一非零差向量归一化后使用这个界；重合点对自动满足要求。用联合界控制至多$n(n-1)/2$个事件，得到至少一对失败的概率不超过
+\[
+  n(n-1)e^{-k\varepsilon^2/8}\leq\delta.
+\]
+联合界不要求不同点对的事件独立。
+\end{proof}
+
+JL的$\varepsilon^{-2}\log n$维数尺度在相应参数区间内还有匹配的下界\scite{larsen2017jl}若希望失败概率至多$1/n$，上述证明给出的简洁充分条件是$k\geq24\log n/\varepsilon^2$：此时$n(n-1)e^{-k\varepsilon^2/8}\leq n^2n^{-3}=1/n$。常数取决于集中界的具体形式；关键是$k$随点数对数增长，上界不直接依赖原始维数$d$。
+
+\paragraph{泛化分析}
+
+保证针对投影之前固定的有限点集，并非同时保证$\mathbb{R}^{d}$中的所有向量。若$k<d$，投影必有非零核空间，那里某些距离被压成零。对独立于投影预先指定的新查询点，可将其加入有限集合重新计算联合界；对观察投影后自适应选出的任意查询，则需要额外分析。
+
+\subsubsection{小结}
+\label{sec:dim-rp-summary}
+
+随机投影提供了无需先拟合数据的距离近似，适合流式处理和超高维预处理。它保留的是指定度量下的有限点集几何，不会自动筛选预测相关特征，也不保证能压到二维而仍有很小失真。局部敏感哈希、压缩感知和随机化线性代数都使用相关随机构造，但各自要求的碰撞概率、稀疏集合保距或子空间逼近保证有所不同。随机Fourier特征近似平移不变核，特征哈希依赖哈希与符号映射；这些方法与随机投影相关，也不能一概视为同一个JL矩阵。
+
+\subsection{核主成分分析（Kernel PCA）}
+\label{sec:dim-kpca}
+
+也可以先改变特征，再保留方差。\term{核主成分分析}（kernel principal component analysis, Kernel PCA）在非线性特征空间中做PCA，只通过核函数计算内积，无须显式列出特征。Schölkopf、Smola与Müller在1998年给出了这一核特征值方法\scite{dimScholkopf1998}
+
+\subsubsection{模型结构}
+
+直接使用第\ref{sec:classic-overview-kernel-validity}节的Hilbert特征空间$\mathcal{H}$、映射$\bm{\phi}$与正定核$K$；训练核矩阵及中心化矩阵$\bm{H}$沿用第\ref{sec:classic-overview-kernel-matrix}节。本节要求在该特征空间保留方差，核SVM使用的分类间隔并不是这里的目标。
+
+按简介中的训练特征中心化规则，记
+\[
+  \bar{\bm{\phi}}=\frac1n\sum_i\bm{\phi}(\bm{x}_i),
+  \qquad
+  \bm{\phi}_{\mathrm{c}}(\bm{x})=\bm{\phi}(\bm{x})-\bar{\bm{\phi}}.
+\]
+经验协方差算子作用于方向$\bm{v}\in\mathcal{H}$的方式为
+\begin{equation}
+  \label{eq:dim-kpca-covariance}
+  \widehat{\mathcal{C}}\bm{v}
+  =\frac1n\sum_i
+    \bm{\phi}_{\mathrm{c}}(\bm{x}_i)
+    \langle\bm{\phi}_{\mathrm{c}}(\bm{x}_i),\bm{v}\rangle_{\mathcal{H}}.
+\end{equation}
+若$\widehat{\mathcal{C}}\bm{v}=\lambda^{\mathrm{C}}\bm{v}$且$\lambda^{\mathrm{C}}>0$，由右边可知$\bm{v}$在中心化训练特征张成的空间中；零特征值方向不必满足此结论。
+
+因此写$\bm{v}_\ell=\sum_i(\bm{\alpha}_\ell)_i\bm{\phi}_{\mathrm{c}}(\bm{x}_i)$。令$\bm{K}_{\mathrm{c}}=\bm{H}\bm{K}\bm{H}$，代回协方差特征方程得到核特征值$\lambda_\ell^{\mathrm{K}}=n\lambda_\ell^{\mathrm{C}}$。
+
+\subsubsection{参数学习}
+
+令$\bm{u}_\ell$是中心化核矩阵的欧氏单位特征向量。正确的归一化关系是
+\begin{equation}
+  \label{eq:dim-kpca-normalization}
+  \begin{aligned}
+    \bm{K}_{\mathrm{c}}\bm{u}_\ell
+      &=\lambda_\ell^{\mathrm{K}}\bm{u}_\ell,
+      \qquad\lVert\bm{u}_\ell\rVert_2=1,\\
+    \bm{\alpha}_\ell
+      &=\frac{\bm{u}_\ell}{\sqrt{\lambda_\ell^{\mathrm{K}}}},\\
+    \lVert\bm{v}_\ell\rVert_{\mathcal{H}}^2
+      &=\bm{\alpha}_\ell^{\top}\bm{K}_{\mathrm{c}}\bm{\alpha}_\ell=1.
+  \end{aligned}
+\end{equation}
+训练点在方向$\bm{v}_\ell$上的投影构成一整列坐标：
+\begin{equation}
+  \label{eq:dim-kpca-training}
+  \bm{Z}_{:,\ell}
+  =\bm{K}_{\mathrm{c}}\bm{\alpha}_\ell
+  =\sqrt{\lambda_\ell^{\mathrm{K}}}\,\bm{u}_\ell
+  =\lambda_\ell^{\mathrm{K}}\bm{\alpha}_\ell.
+\end{equation}
+单位向量$\bm{u}_\ell$和展开系数$\bm{\alpha}_\ell$的归一化不同，训练坐标是$\sqrt{\lambda_\ell^{\mathrm{K}}}\bm{u}_\ell$，而不是$\sqrt{\lambda_\ell^{\mathrm{K}}}\bm{\alpha}_\ell$。
+
+核选择会先决定哪些变化值得保留。图\ref{fig:dim-kernel-radial}刻意取$\phi(\bm{x})=\lVert\bm{x}\rVert_2^2$，只观察半径平方；核$K(\bm{x},\bm{y})=\phi(\bm{x})\phi(\bm{y})$因此正半定。两个圆各取相同数量的点，特征均值就是$(1+4)/2=2.5$，中心化坐标为$-1.5$和$1.5$。这里核PCA保留了径向差异，却无法恢复已经被特征映射丢掉的角度信息。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/dim-kernel-radial}
+  \caption{由核选择保留量的构造例子。左图在半径为$1,2$的圆上各取16个等角度样本，圆点与方点区分两圈。所示特制核对应标量特征$\phi(\bm{x})=\lVert\bm{x}\rVert_2^2$，中心化核矩阵秩为1；选择图示主轴方向，核PCA坐标为$\pm1.5$。右侧每个标记表示16点重合，坐标无量纲。此结果依赖所选核，不能推广为任意高斯核或多项式核的输出。}
+  \label{fig:dim-kernel-radial}
+\end{figure*}
+
+对新样本$\bm{x}$，仍应使用训练特征均值。定义$\bm{k}(\bm{x})_i=K(\bm{x}_i,\bm{x})$，其完整中心化公式与投影公式为
+\begin{equation}
+  \label{eq:dim-kpca-extension}
+  \begin{aligned}
+    \bm{k}_{\mathrm{c}}(\bm{x})
+      ={}&\bm{k}(\bm{x})-\frac1n\bm{K}\bm{1}\\
+         &-\frac1n\bm{1}\bm{1}^{\top}\bm{k}(\bm{x})
+          +\frac1{n^2}\bm{1}\bm{1}^{\top}\bm{K}\bm{1},\\
+    z_\ell(\bm{x})
+      ={}&\bm{\alpha}_\ell^{\top}\bm{k}_{\mathrm{c}}(\bm{x}).
+  \end{aligned}
+\end{equation}
+两个减项扣除相对于训练均值的内积，末项补回均值自内积；仅对新核向量减去自身均值并不充分，加入新点重算均值则会改变已学映射。
+
+常用核构造约需$O(n^2d)$，稠密谱分解为$O(n^3)$，存储为$O(n^2)$。Nystr\"om用代表列近似核矩阵；随机Fourier特征为合适的平移不变核构造有限维特征，再做线性PCA。两者都需评价近似误差，后者不适用于任意核。
+
+高斯带宽过大使核值接近，中心化后信号很弱；过小使核矩阵接近单位矩阵，难以分辨主方向。距离中位数可提供初始尺度，再按任务验证。服务于监督任务时，中心化与主成分都应只在训练折拟合。
+
+\subsubsection{理论分析}
+\label{sec:dim-kpca-theory}
+
+\paragraph{收敛性分析}
+
+固定正定核后，核PCA的经验目标仍可全局求解；数值误差来自核矩阵近似与谱求解。它还可以从特征距离的角度理解：
+
+\begin{theorem}[核诱导距离下的等价关系]
+  \label{thm:dim-kpca-mds}
+  设$\kappa$为正定核，定义训练点之间的特征距离
+  \[
+    \bm{D}_{i,j}^2
+    =\bm{K}_{i,i}+\bm{K}_{j,j}-2\bm{K}_{i,j}.
+  \]
+  对此距离进行经典MDS，与对$\bm{K}$进行中心化核PCA，在选择相同正特征子空间和归一化后给出相同训练坐标。重特征值和截断处的非唯一性与定理\ref{thm:dim-mds-pca}相同。
+\end{theorem}
+\begin{proof}
+  令向量$\bm{a}$的元素$a_i=\bm{K}_{i,i}$，距离平方矩阵为$\bm{a}\bm{1}^{\top}+\bm{1}\bm{a}^{\top}-2\bm{K}$。双中心化消去前两项，得到$\bm{B}=\bm{H}\bm{K}\bm{H}=\bm{K}_{\mathrm{c}}$。两个方法因而输出相同的$\bm{U}_k\bm{\Lambda}_k^{1/2}$。
+\end{proof}
+
+该等价仅针对正定核及其诱导距离；后文的局部重构、图平滑目标不是同一种方差最大化。
+
+\paragraph{泛化分析}
+
+固定有界核、可分特征空间和独立同分布采样下，经验协方差算子随样本增加逼近总体对象；目标谱与其余谱之间有正间隔时，主子空间也可稳定逼近\scite{blanchard2007kpca}核随数据变化或谱隙趋零时，需要另作分析。
+
+样本外公式不保证分布之外的表示质量，新点与训练点的核值可能几乎一致。截断特征也未必有对应的输入原像，原始空间重构需另行求解。
+
+\subsubsection{小结}
+
+核PCA先选特征几何，再选主方向。它保留谱求解与明确的样本外公式，但结果依赖有效核、训练中心化、带宽与谱隙，并非无条件恢复流形。
+
+\subsection{模型对比与总结}
+\label{sec:dim-linear-comparison}
+
+同样使用矩阵计算，并不意味着线性与核方法保留了相同信息。表\ref{tab:dim-linear-comparison}将训练目标与新样本编码放在一起比较：前者决定学到了什么，后者决定表示能否经济地复用。ICA的标准方形形式保留维数，过完备稀疏编码甚至增加坐标数；本节的共同范围是线性投影与线性组合表示，而非每种方法都必然输出更短的向量。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    方法 & 主要目标与约束 & 新样本的表示 & 典型边界\\
+    \midrule
+    PCA & 正交投影下保留方差 & 中心化后矩阵乘法 & 对尺度、异常值敏感\\
+    CCA & 配对视图的相关性最大 & 两侧分别线性投影 & 需配对观测，易过拟合相关性\\
+    ICA & 独立源的线性解混 & 白化及解混乘法 & 独立性、非高斯性与可识别性\\
+    NMF & 非负基与非负系数重构 & 非负约束推断 & 非凸、通常不唯一\\
+    稀疏编码 & 少量原子重构观测 & 稀疏优化 & 可为高维编码，需控制推断成本\\
+    随机投影 & 随机矩阵近似保距 & 固定矩阵乘法 & 维数、误差与失败概率的权衡\\
+    核PCA & 特征空间方差 & 训练中心化核投影 & 核几何、样本展开与原空间重构\\
+    \bottomrule
+  \end{tabularx}
+  \caption{线性投影与线性组合方法的比较。目标成立均依赖各小节的具体条件；“新样本可编码”不等于编码具有统计泛化保证。}
+  \label{tab:dim-linear-comparison}
+\end{table*}
+
+求解方式也呈现不同取舍。PCA与CCA可化为谱分解，ICA用非高斯对比函数学习，NMF与字典学习需要交替优化；随机投影只生成矩阵。对于迭代方法，稠密矩阵乘法的单步代价不等于训练总成本；稀疏结构、所需精度和迭代次数都可能改变比较结果。NMF和字典学习的基具有可追溯性，但成分是否对应可解释概念，还须由数据和任务验证。
+
+当响应或类别标签可用时，也可以直接寻找与预测目标有关的方向。第\ref{sec:regression-regularization}节中的PCR先按输入方差构造主成分，PLS则让响应参与成分构造；第\ref{sec:classification-lda-reduction}节中的线性判别分析比较类间与类内散度。切片逆回归利用$\mathbb{E}[\bm{x}\mid y]$的变化，在相应线性条件与非退化条件下恢复有效降维方向，却可能遗漏条件均值无法显示的对称响应结构\scite{li1991sir}这些监督目标都不同于PCA只保留观测方差的准则。
+
+监督降维构造新的方向，特征选择则保留原坐标的子集；二者可以组合，却不能因输出都变短就混为同一问题。用于预测时，应把响应参与的方向学习、特征选择和后续预测器全部限制在训练折内，并用相同下游风险比较无监督表示、监督表示与不降维基线。
+
+因子分析为线性组合增加特征特异的噪声模型，将在第\ref{sec:dim-probabilistic}节展开；多维缩放从点间距离出发，在欧氏距离输入下与PCA联系起来，是下一节的入口。选择方法时，应先确定需要保留方差、视图相关、独立源、非负部件、稀疏支持还是点对距离，再比较求解代价。对于弯曲流形，仅改变线性基通常不足以恢复内在几何，需要改用非线性关系。
+
+\section{基于距离的降维}
+\label{sec:dim-distance}
+
+有些数据给出的是对象间差异，而不是可以直接投影的特征。这里采用多维缩放，从差异恢复坐标；它不要求输入来自流形。这个距离入口位于线性与核方法之后，再连接下一节依据局部邻域构造的几何表示。
+
+\subsection{多维缩放（MDS）}
+\label{sec:dim-mds}
+
+感知差异评分可以描述对象间的关系，却不提供坐标。\term{多维缩放}（multidimensional scaling, MDS）为这些对象安排低维位置，使其符合输入差异。Young与Householder在1938年研究了距离对坐标的代数约束，为这种坐标恢复提供了几何依据\scite{dimYoung1938}
+
+Torgerson在1952年系统提出经典MDS时，首先面对的是心理距离的测量问题：刺激比较得到的差异甚至可能没有确定真实零点。他先讨论比较距离及其中未知加性常数的估计，再讨论心理空间的维数和刺激坐标\scite{dimTorgerson1952}这段历史提醒我们，输入差异往往已经经过测量与建模；原文中的加性常数问题，也不同于下文对坐标或核矩阵作中心化。
+
+\subsubsection{模型结构}
+
+输入为对称差异矩阵$\bm{D}\in\mathbb{R}^{n\times n}$，满足$\bm{D}_{i,j}\geq0$、$\bm{D}_{i,i}=0$。欧氏距离、编辑距离、图距离或人工评分都可作为差异，但未必能由低维欧氏距离实现。按照拟合准则，可以区分三种MDS。
+
+\term{经典MDS}（classical MDS）把距离平方转换为中心化内积。记$\bm{1}\in\mathbb{R}^n$为全一向量，$\bm{I}_n$为单位矩阵，定义
+\begin{equation}
+  \label{eq:dim-mds-centering}
+  \begin{aligned}
+    \bm{H}&=\bm{I}_n-\frac{1}{n}\bm{1}\bm{1}^{\top},\\
+    \bm{D}^{\circ2}_{i,j}&=(\bm{D}_{i,j})^2,\\
+    \bm{B}&=-\frac12\bm{H}\bm{D}^{\circ2}\bm{H}.
+  \end{aligned}
+\end{equation}
+上标$\circ2$表示逐元素平方。左右乘$\bm{H}$分别减去列、行均值，称为双中心化。对欧氏输入，$\bm{B}$是中心化坐标的Gram矩阵，即两两内积组成的半正定矩阵。
+
+设$\bm{B}$的正特征值按降序排列为$\lambda_1\geq\cdots\geq\lambda_r>0$，对应欧氏单位特征向量为$\bm{u}_1,\ldots,\bm{u}_r$。取$k\leq r$，经典MDS给出
+\begin{equation}
+  \label{eq:dim-mds-coordinates}
+  \bm{Z}=\bm{U}_k\bm{\Lambda}_k^{1/2},
+  \qquad
+  \bm{Z}_{i,\ell}=\sqrt{\lambda_\ell}\,(\bm{u}_\ell)_i.
+\end{equation}
+其中$\bm{U}_k$按列收集特征向量，$\bm{\Lambda}_k$为相应对角矩阵。该解最小化的是内积残差，通常称为strain：
+\begin{equation}
+  \label{eq:dim-mds-strain}
+  \min_{\substack{\bm{Z}\in\mathbb{R}^{n\times k}\\
+                  \bm{Z}^{\top}\bm{1}=\bm{0}}}
+  \left\lVert\bm{B}-\bm{Z}\bm{Z}^{\top}\right\rVert_{\mathrm{F}}^2.
+\end{equation}
+非欧氏输入可能产生负特征值。最优半正定秩约束近似舍去负谱，只保留最大的至多$k$个正特征值，此时通常不再精确保留输入距离。
+
+若任务直接关心距离数值，应使用以距离残差为目标的\term{度量MDS}（metric MDS）。给定对称非负权重$w_{i,j}$，令$\delta_{i,j}(\bm{Z})=\lVert\bm{z}_i-\bm{z}_j\rVert_2$，其常见应力（stress）目标为
+\begin{equation}
+  \label{eq:dim-mds-stress}
+  S(\bm{Z})
+  =\sum_{i<j}w_{i,j}
+    \bigl(\delta_{i,j}(\bm{Z})-\bm{D}_{i,j}\bigr)^2.
+\end{equation}
+strain惩罚内积误差，stress惩罚距离误差，二者并不等价。距离与中心化内积能相互转换，不意味着两类残差平方和具有相同的最优近似。有些文献把经典MDS也称为metric scaling，这里按目标函数区分。
+
+\term{非度量MDS}（nonmetric MDS）用于顺序比数值更可信的差异。它以非递减函数$g(\bm{D}_{i,j})$替换式\eqref{eq:dim-mds-stress}中的目标距离，同时估计$g$与$\bm{Z}$，并约束尺度以避免共同收缩到零。保序约束作用于拟合差异，有限维嵌入未必实现全部严格次序；Kruskal在1964年将这种顺序信息与应力准则结合\scite{dimKruskal1964}
+
+\subsubsection{参数学习}
+
+经典MDS通过双中心化和谱截断求解。平方Frobenius损失在正交特征方向上分解，半正定约束排除负谱，秩约束要求优先保留较大的正特征值。这给出全局最优解的谱表达，实际特征分解仍需数值计算。
+
+直接拟合stress通常需要迭代。以全部$\bm{D}_{i,j}>0$的样本对为例，\term{Sammon映射}采用
+\begin{equation}
+  \label{eq:dim-sammon}
+  S_{\mathrm{Sammon}}(\bm{Z})
+  =\frac{1}{\sum_{i<j}\bm{D}_{i,j}}
+    \sum_{i<j}
+    \frac{\bigl(\delta_{i,j}(\bm{Z})-\bm{D}_{i,j}\bigr)^2}
+         {\bm{D}_{i,j}}.
+\end{equation}
+相同绝对误差在小距离处受到更大惩罚，但这不保证全部邻域被保留。零差异需合并对象或另设权重\scite{dimSammon1969}
+
+应力型MDS可用梯度法、拟牛顿法或\term{SMACOF}（scaling by majorizing a complicated function）求解。SMACOF在当前配置构造相切的二次上界，再最小化上界；若上界记为$Q$，其下降依据为
+\[
+  S(\bm{Z}^{(s+1)})
+  \leq Q(\bm{Z}^{(s+1)}\mid\bm{Z}^{(s)})
+  \leq Q(\bm{Z}^{(s)}\mid\bm{Z}^{(s)})
+  =S(\bm{Z}^{(s)}).
+\]
+非度量情形可交替作保序回归和配置更新。目标非负且不增加，因而目标值收敛，但不保证全局最优，也不保证迭代点总到达局部极小。通常用经典MDS初始化，并比较多次运行；SMACOF的构造与实现可参见de Leeuw与Mair的系统介绍\scite{dimDeLeeuw2009}
+
+稠密经典MDS需$O(n^2)$存储、通常$O(n^3)$的完整谱分解。部分谱求解或Nystr\"om近似可减少计算；标志点MDS先嵌入少量代表点，再由到代表点的距离扩展。代表点覆盖不足仍会导致失真。
+
+\subsubsection{理论分析}
+\label{sec:dim-mds-theory}
+
+\paragraph{收敛性分析}
+
+本段先区分固定数据上的谱最优性与应力优化，再核对经典MDS和PCA处理同一批欧氏观测时的代数关系。经典MDS通过谱截断达到内积逼近目标的全局最优；应力型MDS采用迭代算法时，通常只能保证在适当条件下目标下降。
+
+若$\bm{D}$由任意坐标矩阵$\bm{X}$的行间欧氏距离得到，令$\bm{X}_{\mathrm{c}}=\bm{H}\bm{X}$，则平移不改变$\bm{D}$，而双中心化给出
+\[
+  \bm{B}=\bm{H}\bm{X}\bm{X}^{\top}\bm{H}
+  =\bm{X}_{\mathrm{c}}\bm{X}_{\mathrm{c}}^{\top}.
+\]
+因此，经典MDS应与中心化后的$\bm{X}_{\mathrm{c}}$所做的PCA比较，而不是与未经中心化的数据或任意距离上的PCA比较：
+
+主线结论是两种方法在相同$k$下共享中心化坐标的谱截断，而不是任意MDS都等价于PCA。进阶证明只展开欧氏距离平方经双中心化得到Gram矩阵这一步；精确保距还要在定理后另查是否保留全部正谱。
+
+\begin{theorem}[欧氏距离下经典MDS与PCA的关系]
+  \label{thm:dim-mds-pca}
+  设$\bm{X}^{\top}\bm{1}=\bm{0}$，$\bm{D}_{i,j}=\lVert\bm{x}_i-\bm{x}_j\rVert_2$，且$1\leq k\leq\operatorname{rank}(\bm{X})$。若PCA与经典MDS选取相互对应的前$k$个奇异方向，则两者的坐标都可取为$\bm{U}_k\bm{\Sigma}_k$，从而得到相同的坐标Gram矩阵$\bm{U}_k\bm{\Sigma}_k^2\bm{U}_k^{\top}$。同一所选子空间内的坐标可相差右侧正交变换，而Gram矩阵保持不变。
+\end{theorem}
+\begin{proof}
+  令$\bm{a}\in\mathbb{R}^n$满足$a_i=\lVert\bm{x}_i\rVert_2^2$。展开距离平方并双中心化，得到
+  \[
+    \begin{aligned}
+      \bm{D}^{\circ2}
+        &=\bm{a}\bm{1}^{\top}+\bm{1}\bm{a}^{\top}
+          -2\bm{X}\bm{X}^{\top},\\
+      \bm{B}
+        &=\bm{H}\bm{X}\bm{X}^{\top}\bm{H}
+         =\bm{X}\bm{X}^{\top}.
+    \end{aligned}
+  \]
+  第一、第二项消失，是因为$\bm{H}\bm{1}=\bm{0}$；末步使用样本已经中心化。对薄奇异值分解$\bm{X}=\bm{U}\bm{\Sigma}\bm{V}^{\top}$，有$\bm{B}=\bm{U}\bm{\Sigma}^2\bm{U}^{\top}$。MDS坐标与PCA得分因而分别为
+  \[
+    \bm{Z}_{\mathrm{MDS}}=\bm{U}_k\bm{\Sigma}_k,
+    \qquad
+    \bm{X}\bm{V}_k=\bm{U}_k\bm{\Sigma}_k.
+  \]
+  在同一所选子空间内旋转坐标轴不改变Gram矩阵。
+\end{proof}
+
+这里的等价要求两种方法使用相同的保留维数$k$，等价对象是中心化训练坐标的秩为$k$的Gram矩阵及其诱导距离，而不是原始特征轴。只有保留全部正特征值，即$k=\operatorname{rank}(\bm{X}_{\mathrm{c}})$时，低维坐标才精确保留输入的全部欧氏距离；若$k<\operatorname{rank}(\bm{X}_{\mathrm{c}})$，两种方法等价于同一个谱截断，通常都会改变原距离。
+
+若$\lambda_k=\lambda_{k+1}$，截断穿过重特征值块，最优子空间也可能不唯一，不同部分子空间的结果未必只差一个$k$维旋转。距离扰动很小时，小谱隙仍可能造成方向变化，宜比较对齐后的坐标、子空间或重构距离。
+
+\paragraph{泛化分析}
+
+这里的“泛化”包含统计估计与固定训练表示后的样本外机制。输入是同一批观测产生的欧氏距离且样本独立同分布时，MDS与PCA的等价关系允许沿用前述协方差估计分析。对任意差异矩阵则没有这一直接结论，需要另外说明差异的生成机制及其估计误差。
+
+若新对象到训练对象的距离可计算，经典MDS也能给出样本外扩展。设$s_i$为这些距离的平方，$\bar s=n^{-1}\sum_i s_i$，$r_i=n^{-1}\sum_j\bm{D}_{i,j}^2$，$\bar r=n^{-1}\sum_i r_i$，则
+\begin{equation}
+  \label{eq:dim-mds-extension}
+  \begin{aligned}
+    b_i&=-\frac12(s_i-\bar s-r_i+\bar r),\\
+    \bm{z}(\bm{x})
+      &=\bm{\Lambda}_k^{-1/2}\bm{U}_k^{\top}\bm{b}.
+  \end{aligned}
+\end{equation}
+第一行沿用训练中心化，第二行求内积的最小二乘坐标。这固定了训练点，不等价于加入新点后重做MDS；非欧氏差异下只是相对于已有表示的近似投影\scite{dimBengio2003}
+
+\subsubsection{小结}
+
+MDS从差异恢复坐标，但经典、度量和非度量形式保留的信息不同。对同一批观测的欧氏距离作经典MDS，等价于对中心化观测作相同保留维数的PCA；降到低于中心化数据秩的维数时，两者共享谱截断结果，却都不再精确保留全部原距离。非欧氏性、谱截断与距离矩阵规模是主要限制。
+
+\subsection{模型对比与总结}
+
+已有特征向量且希望保留方差时，PCA可以直接学习投影；只有对象间差异时，MDS提供坐标恢复的入口。经典MDS比较双中心化后的内积，度量MDS比较距离，非度量MDS主要匹配差异顺序。选择时应确认原始差异表达哪一种关系，再用相应目标与样本外机制评价，不能把这些形式的目标值直接互比。
+
+\section{基于邻域的降维}
+\label{sec:dim-neighbors}
+\label{sec:dim-manifold}
+
+第\ref{sec:classic-overview-neighborhood}节说明邻域与图可以约束低维坐标。本节具体区分应保留的关系：Isomap使用图路径近似测地距离，LLE保留局部重构，拉普拉斯特征映射与扩散映射利用图上的平滑或连通性；SNE、t-SNE和UMAP则优先安排适合观察邻域关系的低维布局。
+
+其中部分方法假设输入接近\term{流形}（manifold），即局部能用少量连续坐标描述的空间。弯曲结构的局部方向会随位置改变，直接投影可能混合沿曲面相距很远的点；局部自由度少，也不保证整个空间能在同样维数中无失真地展开。图方法各自需要的采样与几何条件将在相应模型中说明。
+
+沿用章首的$n,d,k,m,q$与矩阵$\bm{X},\bm{Z}$。邻域布局中的输入距离记为$\delta_{i,j}=\lVert\bm{x}_i-\bm{x}_j\rVert_2$，低维距离记为$r_{i,j}=\lVert\bm{z}_i-\bm{z}_j\rVert_2$；布局方法主要学习训练样本的坐标，样本外使用另需规定映射或扩展。
+
+\subsection{等距映射（Isomap）}
+\label{sec:dim-isomap}
+
+对弯曲流形上的两个点，穿过观测空间的直线距离与沿流形行走的最短距离可能相差很大。后者称为\term{测地距离}（geodesic distance），记作$d_{\mathcal{M}}$。\term{等距映射}（isometric mapping, Isomap）用邻域图上的最短路径估计这种距离，再调用经典MDS。Tenenbaum、de Silva与Langford在2000年提出该方法；它与同年发表的LLE分别选择了路径距离和局部重构关系作为建模对象\scite{dimTenenbaum2000}
+
+\subsubsection{模型结构}
+
+Isomap先建立无向邻域图$\mathcal{G}=(V,E)$，顶点对应样本。可以连接距离不超过$\varepsilon$的点，也可以将$q$近邻关系对称化；采用并集还是互近邻会改变图，必须明确。每条边的长度取$\ell_{i,j}=\lVert\bm{x}_i-\bm{x}_j\rVert_2$。这里边权是行走成本，越小越近，与后文表示连接强度的相似度权重含义不同。
+
+对图中任意路径，将边长相加，再取最小值，得到
+\begin{equation}
+  \label{eq:dim-isomap-distance}
+  d_{\mathcal{G}}(i,j)
+  =\min_{\substack{i=i_0,\ldots,i_s=j\\(i_{a-1},i_a)\in E}}
+    \sum_{a=1}^{s}\ell_{i_{a-1},i_a}.
+\end{equation}
+形成$\bm{D}_{\mathcal{G}}$后，令$\bm{B}_{\mathcal{G}}=-\tfrac12\bm{H}\bm{D}_{\mathcal{G}}^{\circ2}\bm{H}$，按式\eqref{eq:dim-mds-coordinates}恢复坐标。这三步分别估计局部连接、汇总全局路径长度、拟合欧氏表示。图距离估计与MDS近似是两层不同的误差来源。
+
+图\ref{fig:dim-geodesic}说明邻域选择为何重要。两段曲线虽然在观测空间中接近，沿曲线却可能相距很远；一条跨越弯曲部分的错误边就可能大幅缩短许多点对的最短路径。
+\begin{figure}[htbp]
+  \centering
+  \input{figures/dim-geodesic}
+  \caption{一维弯曲曲线上的距离示意。曲线表示嵌入观测空间的一维流形，曲线上的点表示离散样本；连接两个目标点的直线表示欧氏距离，沿相邻样本连接的折线表示邻域图路径，其各段长度之和用于近似沿曲线的测地距离。直线穿过曲线之外的区域，不能视为沿流形行走；若将这样的连接误纳入邻域图，就会形成低估测地距离的短路。图为几何示意，不是算法输出或实验结果，未给出数值误差。}
+  \label{fig:dim-geodesic}
+\end{figure}
+
+\subsubsection{参数学习}
+
+暴力计算邻居需约$O(n^2d)$时间；空间索引可能加速低维、分布适宜的数据，但不能保证高维下仍有对数查询成本。对非负边长，从每个点运行带二叉堆的Dijkstra算法，成本为$O(n(|E|+n)\log n)$；Floyd--Warshall算法为$O(n^3)$。随后稠密MDS需要$O(n^2)$存储和通常$O(n^3)$的完整谱分解。即使邻域图稀疏，全体点对距离通常仍然稠密。
+
+需要选择的不仅有$q$或$\varepsilon$，还有嵌入维数$k$、输入距离及预处理。邻域太小会断连，太大会引入跨越流形的边；噪声和采样密度不均会进一步改变可用尺度。应检查连通分量、边长分布及邻域变化时的嵌入稳定性。距离相关系数给出的残差$1-R^2$可辅助诊断，但相关性对统一尺度变化不敏感，不能证明距离误差小，更不能证实测地距离估计正确。
+
+标志点Isomap（Landmark Isomap）选取$s\ll n$个代表点，只从这些点出发求最短路径，保存$s\times n$的距离表，再由标志点MDS和距离扩展得到其他坐标。它不是只算标志点彼此的距离，也不是必须进行三角剖分。de Silva与Tenenbaum的原论文同时讨论了标志点计算和共形变换下的距离修正；两者分别改变计算规模与几何假设，不能混为一种加速技巧\scite{dimDeSilva2002}
+
+\subsubsection{理论分析}
+\label{sec:dim-isomap-theory}
+
+\paragraph{收敛性分析}
+
+Isomap的最短路径与经典MDS步骤各有确定的求解目标；这里更关心采样变密时，所求图距离是否趋近测地距离。为此需要同时避免漏掉必要连接和增加错误捷径，以下确定性结论分别控制这两个误差来源。
+
+主线阅读可把覆盖空隙$h$和单边弦长失真$\eta$视为两项诊断：前者太大容易断连，后者太大允许短路。进阶证明沿一条最短测地线放置分割点，再用附近样本替代它们，从而构造图路径并控制上下界；它没有证明目标几何一定能嵌入给定的$k$维欧氏空间。
+
+\begin{theorem}[覆盖条件下的图距离界]
+  \label{thm:dim-isomap-bound}
+  设$\mathcal{M}\subset\mathbb{R}^d$连通，任意两点间存在最短测地线。样本的测地填充距离为
+  \[
+    h=\sup_{\bm{x}\in\mathcal{M}}\min_i
+      d_{\mathcal{M}}(\bm{x},\bm{x}_i).
+  \]
+  图连接全部欧氏距离不超过$\varepsilon$的样本对，并以欧氏弦长为边长。假设$h<\varepsilon/2$，且存在$0\leq\eta<1$，使每条边都满足
+  \[
+    \lVert\bm{x}_i-\bm{x}_j\rVert_2
+    \geq(1-\eta)d_{\mathcal{M}}(\bm{x}_i,\bm{x}_j).
+  \]
+  则对所有样本对，图距离有限，且
+  \begin{equation}
+    \label{eq:dim-isomap-bound}
+    \begin{aligned}
+      d_{\mathcal{G}}(i,j)
+        &\geq(1-\eta)d_{\mathcal{M}}(\bm{x}_i,\bm{x}_j),\\
+      d_{\mathcal{G}}(i,j)
+        &\leq\left(1+\frac{2h}{\varepsilon-2h}\right)
+          d_{\mathcal{M}}(\bm{x}_i,\bm{x}_j).
+    \end{aligned}
+  \end{equation}
+\end{theorem}
+\begin{proof}
+  对任意图路径，各边弦长至少是对应测地距离的$1-\eta$倍。将其相加，再用测地距离的三角不等式，就得到下界。
+
+  为证明上界，记两端点的测地距离为$L$，取连接它们的一条最短测地线，令$a=\varepsilon-2h>0$。若$L=0$，结论成立；否则沿测地线每隔$a$放一个分割点，末段不足$a$，总段数为$s=\lceil L/a\rceil$。保留原来的两个样本端点，把每个内部分割点替换成测地距离不超过$h$的样本。相邻替代样本的测地距离至多$a+2h=\varepsilon$，欧氏距离不更大，因此构成图中的边；重复样本可略去。
+
+  每个内部分割点的替代误差至多在两条相邻边中各计一次，而两端点无需替代，故所构造路径的长度至多
+  \[
+    L+2h(s-1)
+    \leq L+\frac{2hL}{\varepsilon-2h}.
+  \]
+  图最短路径不长于这条路径，得到上界，同时证明图中这些端点相连。
+\end{proof}
+
+定理中$h$控制覆盖空隙，$\eta$控制每条边的弦长失真。若一列样本与邻域满足$h/\varepsilon\to0$和$\eta\to0$，便得到样本对上统一的相对图距离一致性。仅有曲率有界还不足以排除邻近卷层间的错误边；还需要邻域尺度小于造成跨层连接的尺度。独立采样密度具有正下界时，可以进一步研究$h$随$n$的概率界，但须明确流形体积、维数、覆盖数与密度，不能混写“均匀采样”和任意非均匀密度。
+
+\paragraph{泛化分析}
+
+距离一致性不自动保证低维欧氏展开。单位球面赤道上依次相隔四分之一周长的四个点，相邻测地距离为$\pi/2$，两组对点距离为$\pi$。若这些距离能同时成为欧氏距离，则由三角不等式取等号的条件，另外两点都必须是同一对点连线的中点；它们却应相距$\pi$，产生矛盾。这说明即使测地距离完全已知，也未必存在保持它的欧氏坐标，更不必说二维平面坐标。
+
+Isomap恢复平直潜在坐标的典型充分情形，是流形与$\mathbb{R}^m$中一个凸区域在长度意义下等距，此时区域内测地距离就是直线距离。带孔的非凸区域即使局部平直，绕孔路径也未必等于直线距离。进入MDS步骤后，还需控制距离误差对中心化内积和所选特征子空间的影响。对新点，可用其到邻居的边长加训练图距离估计到全部训练点的距离，再用式\eqref{eq:dim-mds-extension}扩展；这固定了训练图，不等于加入新点后重新求全部最短路径。
+
+\subsubsection{小结}
+
+Isomap用局部边长构造全局距离，适合检验数据是否具有可展开的长度结构。可靠结果需要足够覆盖、没有短路的邻域，以及目标距离能够被所选欧氏维数近似实现。图断连时跨分量距离为无穷大，必须分别处理或依据额外信息连接，不能随意填入大数并当作原算法的统一嵌入。
+
+\subsection{局部线性嵌入（LLE）}
+\label{sec:dim-lle}
+
+如果只信任局部相对位置，而不希望估计全体点对的路径距离，可以把每个样本写成邻居的仿射组合，再把这种组合关系移到低维空间。\term{局部线性嵌入}（locally linear embedding, LLE）采用这一思路。它仍依赖距离来选择邻居，也利用局部内积估计权重；绕开的是全局距离矩阵，而不是全部距离信息。
+
+Isomap与LLE的论文在2000年同一期《Science》上相邻发表，都尝试由局部可获得的信息组织整个数据集。LLE尤其强调建立一个统一的全局坐标系，而不只是分别表示若干局部区域；其原文致谢还记录了与Tenenbaum的讨论以及对方提供Isomap代码的帮助\scite{dimRoweis2000}两项探索有实际交流，也保留了各自不同的局部约束。
+
+\subsubsection{模型结构}
+
+令$\mathcal{N}_i$为样本$i$的$q$个邻居。重构权矩阵$\bm{W}\in\mathbb{R}^{n\times n}$满足非邻居权重为零，每行权重和为一，并最小化
+\begin{equation}
+  \label{eq:dim-lle-weights}
+  \begin{aligned}
+    \min_{\bm{W}}\quad&
+      \sum_i\left\lVert\bm{x}_i-\sum_j\bm{W}_{i,j}\bm{x}_j
+      \right\rVert_2^2,\\
+    \text{满足}\quad&
+      \bm{W}\bm{1}=\bm{1},\qquad
+      \bm{W}_{i,j}=0\quad(j\notin\mathcal{N}_i).
+  \end{aligned}
+\end{equation}
+行和约束保证平移不变性：对整个邻域加同一个向量，中心点与重构点会同步平移。经典LLE不强制权重非负，所以这是仿射组合而不一定是凸组合；权重也不是随机游走概率，矩阵通常不对称。
+
+权重固定后，低维坐标最小化相同形式的重构残差。令$\bm{M}=(\bm{I}_n-\bm{W})^{\top}(\bm{I}_n-\bm{W})$，则
+\begin{equation}
+  \label{eq:dim-lle-embedding}
+  \begin{aligned}
+    \min_{\bm{Z}}\quad&
+      \lVert(\bm{I}_n-\bm{W})\bm{Z}\rVert_{\mathrm{F}}^2
+      =\operatorname{tr}(\bm{Z}^{\top}\bm{M}\bm{Z}),\\
+    \text{满足}\quad&
+      \bm{Z}^{\top}\bm{1}=\bm{0},\qquad
+      \bm{Z}^{\top}\bm{Z}=n\bm{I}_k.
+  \end{aligned}
+\end{equation}
+这些矩阵乘法以样本按行排列为前提。$\bm{Z}\bm{M}\bm{Z}^{\top}$在此约定下维数不匹配。中心化去掉整体平移，列正交及定范数约束防止所有点塌缩成同一点，但所固定的尺度是代数约定，不是原始距离的尺度。
+
+图\ref{fig:dim-lle-weights}中，原邻域中心是三个邻居的加权和，权重依次为$0.3,0.3,0.4$。移动邻居后，仍用这组权重放置中心点，就能保持该点的零重构残差，而三角形的边长已经改变。完整LLE需要同时协调所有邻域，再满足全局约束；单个三角形只展示其中一项局部关系。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/dim-lle-weights}
+  \caption{LLE局部权重保持的示意。左图用二维局部坐标绘出三个邻居和菱形中心点；虚线旁为重构权重，其和为1。右图将邻居移至所标位置，同样的权重给出中心$(0.60,0.55)^\top$。两图使用相同的无量纲尺度，实线三角形的形状与边长可以改变。两个画面用于对照高维局部几何与目标邻域，不是完整LLE输出，也不表示一次二维到二维的降维。}
+  \label{fig:dim-lle-weights}
+\end{figure*}
+
+\subsubsection{参数学习}
+
+将第$i$个邻域按固定顺序排列，令$\bm{A}_i\in\mathbb{R}^{q\times d}$的每行为$(\bm{x}_j-\bm{x}_i)^{\top}$，局部Gram矩阵为$\bm{C}_i=\bm{A}_i\bm{A}_i^{\top}$。局部权重$\bm{w}_i\in\mathbb{R}^q$的目标变为
+\[
+  \min_{\bm{1}^{\top}\bm{w}_i=1}
+    \bm{w}_i^{\top}\bm{C}_i\bm{w}_i.
+\]
+若$\bm{C}_i$正定，拉格朗日驻点条件给出$\bm{C}_i\bm{w}_i=c\bm{1}$，再用行和约束确定$c$，得到
+\begin{equation}
+  \label{eq:dim-lle-local}
+  \bm{w}_i
+  =\frac{\bm{C}_i^{-1}\bm{1}}
+         {\bm{1}^{\top}\bm{C}_i^{-1}\bm{1}}.
+\end{equation}
+实现时求解线性方程即可，不必显式求逆。$q>d$时矩阵必奇异；即使$q\leq d$，流形局部接近$m$维切空间，也可能使它秩亏或病态。常用正则化$\bm{C}_i+\rho_i\bm{I}_q$，例如令$\rho_i$与$\operatorname{tr}(\bm{C}_i)$成比例；若邻居全部重合、迹为零，还需要正的尺度下限或单独处理。正则化改善条件数，也改变了原来的重构问题。
+
+由$\bm{W}\bm{1}=\bm{1}$可知$\bm{M}\bm{1}=\bm{0}$。设常数方向之外最小的$k$个特征方向组成$\bm{U}_k$，且其列为单位向量，则式\eqref{eq:dim-lle-embedding}的解是$\bm{Z}=\sqrt n\,\bm{U}_k$。只有在零空间恰好由常数向量张成时，才可以简单地“取最小$k+1$个特征向量，再丢掉一个”。图有多个断连分量时，各分量的指示向量都是零模态；连通也并不对任意带符号权重保证零空间只有一维。
+
+这种退化有明确后果：在只排除全局常数方向后，剩余零能量坐标可能只是在给不同分量分配常数，而没有表达分量内部形状。即使各分量能分别求嵌入，整体相对位置、方向和尺度也不由局部重构关系确定，不能据此声称LLE对断连问题更稳健。
+
+局部Gram矩阵构造与线性求解约需$O(nq^2d+nq^3)$。全局阶段不必显式形成可能更稠密的$\bm{M}$，可以先乘$\bm{I}_n-\bm{W}$，再乘其转置，一次矩阵向量乘约需$O(nq)$。部分特征求解的总成本还依赖谱隙、迭代次数与重正交，不能统一写成$O(n^2)$。实际超参数至少包括$q$、$k$和正则化尺度。
+
+LLE的几何依据是局部近似，而非任意等距变换都严格保持重构权。对一个光滑坐标函数$f$，在局部坐标中令邻居位移为$\bm{\xi}_j$，Taylor展开给出
+\[
+  \begin{aligned}
+    f(\bm{x}_i)-\sum_j\bm{W}_{i,j}f(\bm{x}_j)
+    ={}&-\nabla f^{\top}\sum_j\bm{W}_{i,j}\bm{\xi}_j\\
+       &+O\left(\sum_j|\bm{W}_{i,j}|
+                  \lVert\bm{\xi}_j\rVert_2^2\right).
+  \end{aligned}
+\]
+权重和为一消去了常数项；若加权位移接近零，一阶项也小，重构误差主要受曲率和二阶变化影响。大幅正负抵消的权重会放大余项，噪声也会改变邻域与局部Gram矩阵，所以局部建模本身不提供无条件抗噪保证。
+
+固定训练嵌入后，新点可按同样的局部约束求权重，再令$\bm{z}(\bm{x})=\sum_{j\in\mathcal{N}(\bm{x})}w_j(\bm{x})\bm{z}_j$。这是局部插值，不是重新求全局特征向量；训练支持之外或邻域选择不稳定的点仍可能得到失真坐标。
+
+\subsubsection{小结}
+
+LLE保留的是局部仿射重构关系，不是距离或角度的精确保真。它免去全体点对最短路径计算，却依然受邻域尺度、局部秩、权重稳定性与全局零空间影响。Hessian LLE进一步约束局部二阶变化，局部切空间对齐（LTSA）则显式估计并对齐切空间；这些扩展将在本节比较中说明各自增加的条件，而不是视为对任意流形都成立的展开保证。
+
+\subsection{拉普拉斯特征映射（Laplacian Eigenmaps）}
+\label{sec:dim-le}
+
+除了拟合局部重构关系，还可以直接要求邻近点的坐标变化缓慢。\term{拉普拉斯特征映射}（Laplacian Eigenmaps）把这种平滑要求写成图上的二次能量，再在防止塌缩的约束下寻找低能量坐标。Belkin与Niyogi在NIPS 2001介绍了相关谱方法，2003年的期刊论文系统展开了模型及其几何联系。它与第\ref{sec:clustering-spectral}节的谱聚类共享建图、图拉普拉斯和低频特征向量，但这里输出连续坐标，谱聚类还要把谱表示离散为簇分配\scite{dimBelkin2003}
+
+\subsubsection{模型结构}
+
+在对称化邻域图上定义非负相似度$\bm{W}_{i,j}$，相邻点可取$\exp(-\lVert\bm{x}_i-\bm{x}_j\rVert_2^2/(4\tau))$或$1$，其余位置取零。$\tau>0$控制权重衰减尺度。令$b_i=\sum_j\bm{W}_{i,j}$，度矩阵$\bm{D}_b=\operatorname{diag}(b_1,\ldots,b_n)$，图拉普拉斯矩阵$\bm{L}=\bm{D}_b-\bm{W}$。对任意标量图信号$\bm{f}\in\mathbb{R}^n$，对称性给出
+\begin{equation}
+  \label{eq:dim-le-energy}
+  \bm{f}^{\top}\bm{L}\bm{f}
+  =\frac12\sum_{i,j}\bm{W}_{i,j}(f_i-f_j)^2.
+\end{equation}
+因此$\bm{L}$半正定，常数信号的能量为零。把各坐标的能量相加，模型变为
+\begin{equation}
+  \label{eq:dim-le-objective}
+  \begin{aligned}
+    \min_{\bm{Z}}\quad&
+      \operatorname{tr}(\bm{Z}^{\top}\bm{L}\bm{Z}),\\
+    \text{满足}\quad&
+      \bm{Z}^{\top}\bm{D}_b\bm{Z}=\bm{I}_k,\qquad
+      \bm{Z}^{\top}\bm{D}_b\bm{1}=\bm{0}.
+  \end{aligned}
+\end{equation}
+度加权定范数防止零解，加权中心化排除常数方向。只写第一个约束而不排除常数，会把一个没有区分能力的方向纳入嵌入。该目标鼓励相邻点靠近，却没有逐对强制远点分离，不能单凭低能量就断言全局距离保真。
+
+\subsubsection{参数学习}
+
+对一个坐标列求拉格朗日驻点，在常数正交子空间中得到$\bm{L}\bm{v}=\lambda\bm{D}_b\bm{v}$。若各点度为正，令$\bm{u}=\bm{D}_b^{1/2}\bm{v}$，可化为普通对称特征值问题：
+\[
+  \bm{L}_{\mathrm{sym}}\bm{u}=\lambda\bm{u},
+  \qquad
+  \bm{L}_{\mathrm{sym}}
+  =\bm{I}_n-\bm{D}_b^{-1/2}\bm{W}\bm{D}_b^{-1/2}.
+\]
+求得单位向量$\bm{u}$后，应变回$\bm{v}=\bm{D}_b^{-1/2}\bm{u}$，才能满足式\eqref{eq:dim-le-objective}的归一化。对连通图，广义问题的零特征向量为常数，对称问题的零特征向量却与$\bm{D}_b^{1/2}\bm{1}$成比例。图有多个连通分量时，应识别全部零模态；零度点则不能直接参与逆度归一化。
+
+若$\bm{W}$有$O(nq)$个非零元，矩阵向量乘也为$O(nq)$，适合使用部分谱求解器。总成本仍包含邻域构造、所求维数$k$、迭代和正交化，并无统一的$O(nq^2)$保证。$q$决定连接关系，$\tau$决定已连接点之间的相对权重，$k$决定保留多少坐标。带宽过小会使部分度数接近零，过大会弱化局部差异，二者都应通过图诊断与任务评价检查。
+
+\subsubsection{理论分析}
+\label{sec:dim-le-theory}
+
+\paragraph{收敛性分析}
+
+这里区分固定图上的特征值求解与采样变密时的谱收敛。前者逼近一个有限维代数问题，后者需要把离散能量与连续对象联系起来。式\eqref{eq:dim-le-energy}的连续对应物是\term{Dirichlet能量}，即函数沿流形各方向的变化率平方的积分。采用非负号约定$\Delta_{\mathcal{M}}=-\operatorname{div}_{\mathcal{M}}\nabla_{\mathcal{M}}$，在紧致无边界流形上，
+\begin{equation}
+  \label{eq:dim-dirichlet}
+  \mathcal{E}(f)
+  =\int_{\mathcal{M}}\lVert\nabla_{\mathcal{M}}f\rVert_2^2\,\mathrm{d}V
+  =\int_{\mathcal{M}}f\Delta_{\mathcal{M}}f\,\mathrm{d}V.
+\end{equation}
+这个Laplace--Beltrami算子衡量函数相对局部邻域的变化，类似欧氏空间中的负拉普拉斯。为求均值为零、平方积分为一的最平滑函数，对能量加上约束乘子，并沿任意光滑扰动$g$求导：
+\[
+  2\int_{\mathcal{M}}g\Delta_{\mathcal{M}}f\,\mathrm{d}V
+  -2\lambda\int_{\mathcal{M}}gf\,\mathrm{d}V
+  -2c\int_{\mathcal{M}}g\,\mathrm{d}V=0.
+\]
+分部积分给出第一项；取$g=1$得$c=0$，再利用$g$任意，得到$\Delta_{\mathcal{M}}f=\lambda f$。依次增加与已选特征函数正交的约束，就得到从低频到高频的方向。这说明低频坐标为何平滑，而不是仅凭“流形像一张图”的类比来解释算法。
+
+从图到流形有两个不同问题。点态算子收敛考察固定光滑函数$f$经离散算子作用后是否接近$\Delta_{\mathcal{M}}f$；谱收敛则考察随样本变化的特征值与特征函数，不能由前者直接推出。Belkin与Niyogi在2006年发表的谱收敛研究，专门连接了经验算子的谱逼近与小带宽下的连续谱逼近\scite{dimBelkin2006}
+
+\begin{theorem}[一种定性的谱一致性结论]
+  \label{thm:dim-le-spectral}
+  设$\mathcal{M}$是紧致、连通、无边界的$C^\infty$嵌入$m$维黎曼流形，为简化常数令其体积为一。样本独立均匀采自$\mathcal{M}$。考虑全连接高斯图对应的经验算子
+  \[
+    \begin{aligned}
+      \widehat{\mathcal{L}}_{n,\tau}f(\bm{x})
+      ={}&\frac{1}{n\tau(4\pi\tau)^{m/2}}\\
+      &\cdot\sum_{j=1}^n
+        e^{-\lVert\bm{x}-\bm{x}_j\rVert_2^2/(4\tau)}
+        \bigl(f(\bm{x})-f(\bm{x}_j)\bigr).
+    \end{aligned}
+  \]
+  存在趋于零而足够缓慢的带宽序列$\tau_n$，使每个固定的低频特征值依概率收敛到$\Delta_{\mathcal{M}}$的相应特征值。将经验特征向量按该算子延拓并作$L^2(\mathcal{M})$归一化后，孤立单特征值对应的特征函数可在符号对齐后依概率收敛；重特征值应按相应有限维特征子空间比较。
+\end{theorem}
+
+定理陈述的是一种具体高斯算子和存在性的带宽选择，不是任意$q$近邻图、任意带宽序列的保证。归一化幂次取决于内在维数$m$，而非观测维数$d$。定理中的未归一化算子与式\eqref{eq:dim-le-objective}的度归一化广义问题也需区分：均匀采样时度的极限趋向空间常数，经过尺度校正可联系二者；非均匀采样、稀疏截断或有边界时，须重新分析度、极限测度及边界条件。
+
+\paragraph{泛化分析}
+
+在非均匀密度$p$下，未经密度修正的局部能量一般会包含$p^2$权重，密集区域对低频表示的影响更大。即便已证明谱收敛，截取少数特征函数也不保证映射单射或保持所有距离。样本外表示可通过核特征函数延拓或另拟合映射获得；第\ref{sec:classification-label-propagation}节的标签传播在已知类别语义下求类别得分，第\ref{sec:clustering-spectral}节的谱聚类输出簇分配，本节则直接输出连续低维坐标。三者复用图平滑方向，却需要不同的目标和评价依据。
+
+\subsubsection{小结}
+
+拉普拉斯特征映射把邻域相似度转成平滑坐标，其解释来自离散二次能量与连续Dirichlet能量的对应。正确使用它需要区分对称与广义特征向量、常数零模态与断连零空间，以及点态和谱两种收敛。它提供的是所建图上的低频表示，并不自动消除采样密度，也不自动保持全局距离。
+
+\subsection{扩散映射（Diffusion Map）}
+\label{sec:dim-diffusion}
+
+平滑坐标还留下一个问题：嵌入中两点的欧氏距离，在原图上究竟表示什么？\term{扩散映射}（diffusion map）从随机游走回答它：若从两个点出发，经过相同步数后到达各处的概率相似，就把这两个点视为接近。Coifman与Lafon在2006年的论文将这一概率距离写成谱坐标，并用时间参数控制保留的扩散尺度\scite{dimCoifman2006}
+
+\subsubsection{模型结构}
+
+令$\bm{K}$为对称、非负的原始相似度矩阵，例如全连接高斯核或稀疏邻域权重。为区分邻居数$q$与度数，记原始度为$r_i$，密度重加权后的度为$b_i$：
+\begin{equation}
+  \label{eq:dim-diffusion-normalization}
+  \begin{aligned}
+    r_i&=\sum_j\bm{K}_{i,j},&
+    \widetilde{\bm{K}}_{i,j}
+      &=\frac{\bm{K}_{i,j}}{r_i^\alpha r_j^\alpha},\\
+    b_i&=\sum_j\widetilde{\bm{K}}_{i,j},&
+    \bm{P}_{i,j}&=\frac{\widetilde{\bm{K}}_{i,j}}{b_i},
+    \qquad 0\leq\alpha\leq1.
+  \end{aligned}
+\end{equation}
+假设所用度数均为正。$\bm{P}$每行和为一，是转移概率矩阵；$\bm{P}_{i,j}$表示从$i$一步走到$j$的概率。其平稳分布由重加权后的度决定：
+\begin{equation}
+  \label{eq:dim-diffusion-stationary}
+  \pi_i=\frac{b_i}{\sum_j b_j},
+  \qquad
+  \pi_i\bm{P}_{i,j}=\pi_j\bm{P}_{j,i}.
+\end{equation}
+末式称为详细平衡，表示平稳状态下每对点的双向概率流相等；由此求和可验证$\bm{\pi}^{\top}\bm{P}=\bm{\pi}^{\top}$。除$\alpha=0$等特殊情形，不能用原始$r_i$替代$b_i$计算平稳分布。
+
+对整数$t\geq0$，令$p_t(i,j)=(\bm{P}^t)_{i,j}$。扩散距离定义为
+\begin{equation}
+  \label{eq:dim-diffusion-distance}
+  D_t^2(i,j)
+  =\sum_{a=1}^n\frac{(p_t(i,a)-p_t(j,a))^2}{\pi_a}.
+\end{equation}
+它比较两整个转移分布，而非某条路径的长度。分母用平稳概率校正目标点的权重：相同的概率差异，在很少被访问的点上计入更大的贡献。若两个起点的转移分布恰好相同，$D_t$也可能为零，因此在一般图上严格说可为伪度量。瓶颈会减缓两侧分布混合，使某些扩散尺度能够分辨这些区域。
+
+图\ref{fig:dim-diffusion-walk}用两个只由一条弱边连接的团展示这种现象。团内传播很快，跨团却必须经过弱桥；4步后，大部分概率仍留在出发一侧。到64步时，两行分布已经接近一些，但并未相同。扩散距离比较的正是这些到达概率的差异，并按$\pi_a$加权；图中节点之间画得多远并不进入该距离。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/dim-diffusion-walk}
+  \caption{扩散时间与跨团瓶颈。每团三个节点，团内边及所有自环权重为1，唯一跨团边权重为$0.15$。令$\alpha=0$并按行归一化，热图两行分别表示从左1、右3出发的$\bm{P}^t$对应行，六列为固定节点顺序；各时刻共用概率色标。数值由有理数矩阵乘法计算，显示三位小数，舍入后行和可能略偏离1。64步仍未充分混合；因图连通且有自环，极限分布均为$\bm{\pi}^{\top}=(20,20,21,21,20,20)/122$。}
+  \label{fig:dim-diffusion-walk}
+\end{figure*}
+
+\subsubsection{参数学习}
+
+记$\bm{\Pi}=\operatorname{diag}(\pi_1,\ldots,\pi_n)$。详细平衡保证
+\[
+  \bm{S}=\bm{\Pi}^{1/2}\bm{P}\bm{\Pi}^{-1/2}
+\]
+对称。取$\bm{S}$的欧氏单位特征向量$\bm{u}_\ell$，令$\bm{\psi}_\ell=\bm{\Pi}^{-1/2}\bm{u}_\ell$，则
+\begin{equation}
+  \label{eq:dim-diffusion-eigenvectors}
+  \begin{aligned}
+    \bm{P}\bm{\psi}_\ell&=\lambda_\ell\bm{\psi}_\ell,\\
+    \sum_i\pi_i\psi_\ell(i)\psi_r(i)&=\delta_{\ell,r}.
+  \end{aligned}
+\end{equation}
+这是在$L^2(\bm{\pi})$内积下正交，不是普通欧氏正交。若图连通，平凡特征对为$\lambda_0=1,\psi_0(i)=1$。其余特征值为实数且位于$[-1,1]$；假设链还非周期，则绝对值严格小于一。保留正自环的连通图满足非周期性，无自环二部图则可能有$-1$特征值。
+
+一般对称非负权重不保证正半定，因而可能产生负特征值；此时应按$|\lambda_1|\geq|\lambda_2|\geq\cdots$选择主要扩散模态。全连接正定核经上述对角缩放仍保持半正定，才可按非负特征值降序处理；稀疏截断可能破坏这一性质。定义$k$维扩散坐标
+\begin{equation}
+  \label{eq:dim-diffusion-map}
+  \bm{\Psi}_{t,k}(i)
+  =\bigl(\lambda_1^t\psi_1(i),\ldots,
+         \lambda_k^t\psi_k(i)\bigr)^{\top}.
+\end{equation}
+第$i$行取其转置便得到$n\times k$嵌入矩阵。指数$t$是矩阵乘方所对应的步数；含负谱时不能随意用实数$t$解释$\lambda_\ell^t$。
+
+稠密构造、存储和完整谱分解的成本与核PCA同阶。稀疏权重允许低成本矩阵向量乘，但总求谱成本仍由$k$、谱间隔、迭代精度决定。除邻域或核带宽、$k$外，还应选择$\alpha$与$t$。时间加权使模态重要性发生变化，而不需要每个$t$都重新求一次谱。
+
+\subsubsection{理论分析}
+\label{sec:dim-diffusion-theory}
+
+\paragraph{收敛性分析}
+
+扩散距离的谱表达是有限图上就成立的代数恒等式，不依赖流形采样的渐近极限。先证明它，再讨论截断和连续几何，才能分清不同层次的保证。
+
+主线阅读只需使用两个结果：完整非平凡谱精确表示扩散距离，截断误差受未保留特征值和平稳概率共同控制。进阶证明在$L^2(\bm{\pi})$内积下展开转移概率，并用正交性消去交叉项；它不能替代核尺度和有限样本图结构的敏感性检查。
+
+\begin{theorem}[扩散距离的谱表示与截断界]
+  \label{thm:dim-diffusion-isometry}
+  设$\bm{P}$由连通的对称非负权重构造，$\pi_i>0$，特征函数按式\eqref{eq:dim-diffusion-eigenvectors}归一化。对整数$t\geq0$，全部非平凡模态给出
+  \begin{equation}
+    \label{eq:dim-diffusion-identity}
+    D_t^2(i,j)
+    =\sum_{\ell=1}^{n-1}\lambda_\ell^{2t}
+      \bigl(\psi_\ell(i)-\psi_\ell(j)\bigr)^2.
+  \end{equation}
+  当$t=0$时按$\bm{P}^0=\bm{I}_n$约定所有模态系数为一。若按特征值绝对值排序，$k<n-1$且$i\ne j$，截断的平方距离误差$R_{t,k}$满足
+  \begin{equation}
+    \label{eq:dim-diffusion-tail}
+    \begin{aligned}
+      R_{t,k}(i,j)
+        &:=D_t^2(i,j)
+          -\lVert\bm{\Psi}_{t,k}(i)-\bm{\Psi}_{t,k}(j)\rVert_2^2,\\
+      0\leq R_{t,k}(i,j)
+        &\leq|\lambda_{k+1}|^{2t}
+          \left(\frac1{\pi_i}+\frac1{\pi_j}\right).
+    \end{aligned}
+  \end{equation}
+\end{theorem}
+\begin{proof}
+  对称矩阵$\bm{S}$的谱分解给出
+  \[
+    p_t(i,a)=\pi_a\sum_{\ell=0}^{n-1}
+      \lambda_\ell^t\psi_\ell(i)\psi_\ell(a).
+  \]
+  令$c_\ell=\lambda_\ell^t(\psi_\ell(i)-\psi_\ell(j))$，则$c_0=0$。代入定义，展开平方并使用加权正交性：
+  \[
+    \begin{aligned}
+      D_t^2(i,j)
+        &=\sum_a\pi_a
+          \left(\sum_{\ell=1}^{n-1}c_\ell\psi_\ell(a)\right)^2\\
+        &=\sum_{\ell,r=1}^{n-1}c_\ell c_r
+          \sum_a\pi_a\psi_\ell(a)\psi_r(a)
+         =\sum_{\ell=1}^{n-1}c_\ell^2.
+    \end{aligned}
+  \]
+  其中$\pi_a$来自分子中$\pi_a^2$除以定义中的$\pi_a$，不能再次消去。截断后余项是$\ell>k$的非负和。由绝对值排序及完整正交基关系，
+  \[
+    \begin{aligned}
+      R_{t,k}
+        &\leq|\lambda_{k+1}|^{2t}
+          \sum_{\ell=1}^{n-1}
+            (\psi_\ell(i)-\psi_\ell(j))^2,\\
+      \sum_{\ell=0}^{n-1}\psi_\ell(i)\psi_\ell(j)
+        &=\frac{\delta_{i,j}}{\sqrt{\pi_i\pi_j}},
+    \end{aligned}
+  \]
+  对$i\ne j$展开平方，即得所述上界；$i=j$时两种距离和余项都为零。
+\end{proof}
+
+全部$n-1$个模态实现精确距离，截取$k$维一般只能近似。误差不只取决于$|\lambda_{k+1}|^{2t}$，还取决于特征函数在点上的幅度；式\eqref{eq:dim-diffusion-tail}中的平稳概率因子说明，稀少区域可能有较大的绝对误差界。误差随时间变小也不保证相对精度，因为被近似的距离本身同时变小。
+
+对不可约、非周期的有限链，所有非平凡模态都满足$|\lambda_\ell|<1$，故$t\to\infty$时$p_t(i,\cdot)\to\bm{\pi}^{\top}$，所有$D_t(i,j)\to0$。较大但未充分混合的$t$突出慢模态；无限增大$t$会丢失区分，而不是越来越完整地恢复全局结构。若需要连续时间，可使用$\exp[-s(\bm{I}_n-\bm{P})]$，其权重为$e^{-s(1-\lambda_\ell)}$，而不能把离散步数直接当作任意实数。
+
+在相同对称权重下，拉普拉斯广义问题满足
+\[
+  (\bm{D}_b-\bm{W})\bm{v}=\mu\bm{D}_b\bm{v}
+  \quad\Longleftrightarrow\quad
+  \bm{P}\bm{v}=(1-\mu)\bm{v}.
+\]
+所以二者共享对应特征方向。把有限个选定方向的时间权重设为一，并统一归一化，才得到无时间加权的拉普拉斯坐标；$L^2(\bm{\pi})$与$\bm{D}_b$归一化还相差一个全局尺度。存在负谱并按绝对值选模态时，扩散映射甚至可能优先保留拉普拉斯的高端模态。因而不能不加条件地把二者等同于$t\to0$的极限。
+
+\paragraph{泛化分析}
+
+密度修正的含义属于另一层渐近分析。在光滑正密度$p$、足够采样和小高斯带宽的内点极限中，重加权随机游走的生成元含有与$2(1-\alpha)\nabla_{\mathcal{M}}\log p$有关的漂移。取$\alpha=1$消去这一主导密度漂移，得到由流形几何决定的扩散算子；它不是有限样本下精确消除密度影响。取$\alpha=0$则保留密度对随机游走的影响，有时这正是任务所关心的概率结构。
+
+扩散映射也有样本外Nystr\"om延拓。沿用训练核与$r_j$，对新点计算$r(\bm{x})=\sum_j\kappa(\bm{x},\bm{x}_j)$，再按式\eqref{eq:dim-diffusion-normalization}构造到训练点的归一化转移概率$p(\bm{x},j)$。对$\lambda_\ell\ne0$，
+\begin{equation}
+  \label{eq:dim-diffusion-extension}
+  \psi_\ell(\bm{x})
+  =\frac1{\lambda_\ell}\sum_jp(\bm{x},j)\psi_\ell(j),
+  \qquad
+  z_\ell(\bm{x})=\lambda_\ell^t\psi_\ell(\bm{x}).
+\end{equation}
+它把训练特征方程延伸到新点，保持训练度和谱不变；很小的特征值会放大误差，零特征值不能这样求逆。对图结构的错误连接，扩散概率可能分散单条边的影响，也可能因其显著改变瓶颈而严重失真，不能由“使用多条路径”推出普遍优于Isomap。
+
+\subsubsection{小结}
+
+扩散映射为谱坐标赋予了明确的概率距离解释：以重加权后的平稳分布定义距离，在$L^2(\bm{\pi})$中归一化特征函数，再用时间因子控制各模态。各向异性的$\alpha$重加权调整密度作用，扩散小波以扩散算子的幂组织多尺度函数基；后者不只是选择几个不同$t$画散点图\scite{dimCoifmanMaggioni2006}
+
+向量扩散映射进一步把邻域之间的方向对齐纳入传播，适合研究切向量和局部方向的一致性。它与标量扩散共享多步传播思路，却需要额外估计局部坐标系。核尺度、采样误差、慢模态选择、混合时间及延拓稳定性仍是这些表示的实际限制。
+
+\subsection{随机邻居嵌入（SNE）}
+\label{sec:dim-sne}
+
+同样一段距离，在稠密区域可能跨过许多样本，在稀疏区域却只够到达最近邻。Hinton与Roweis于2002年提出的\term{随机邻居嵌入}（stochastic neighbor embedding，SNE）为每个样本建立“选择谁作邻居”的概率分布，让低维表示复现这种选择倾向。“随机”描述概率模型，不意味着坐标是随机抽取的。
+
+原论文还以单词bank为例讨论歧义：它既与河岸有关，也与金融语境有关，只给一个低维位置可能难以同时表达这两组关系。作者因而讨论了允许同一对象具有多个位置的混合扩展\scite{dim-hinton2002sne}本节先介绍每个样本只有一个位置的基本形式；这个历史例子说明，如何定义邻域之外，还存在低维表示本身是否足以表达语义的问题。
+
+\subsubsection{模型结构}
+
+以样本$i$为中心，SNE用高斯核比较其他样本的相对接近程度，定义
+\begin{equation}
+  \label{eq:dim-sne-high}
+  \begin{aligned}
+    p_{j\mid i}
+      &=\frac{\exp(-\delta_{i,j}^2/(2\sigma_i^2))}
+      {\sum_{\ell\ne i}\exp(-\delta_{i,\ell}^2/(2\sigma_i^2))},
+      \qquad j\ne i,\\
+    p_{i\mid i}&=0,\qquad \sum_{j\ne i}p_{j\mid i}=1.
+  \end{aligned}
+\end{equation}
+带宽$\sigma_i>0$控制局部尺度：带宽小时，概率集中在少数近邻上；带宽大时，较远样本也获得较多权重。尽管距离对称，$p_{j\mid i}$和$p_{i\mid j}$一般不等，因为带宽和归一化分母不同。
+
+给定$P_i=(p_{j\mid i})_{j\ne i}$，用\term{困惑度}（perplexity）衡量它相当于在多少个邻居之间作均匀选择，再据此确定带宽。采用自然对数时，
+\begin{equation}
+  \label{eq:dim-sne-perplexity}
+  \begin{aligned}
+    H(P_i)&=-\sum_{j\ne i}p_{j\mid i}\log p_{j\mid i},\\
+    \operatorname{Perp}(P_i)&=\exp\!\bigl(H(P_i)\bigr).
+  \end{aligned}
+\end{equation}
+若$q$个邻居均分概率，其余为零，困惑度就是$q$；一般情况下它可以是非整数，并非硬截断的近邻数。若熵使用以$2$为底的对数，外层才写成$2^{H_2(P_i)}$。
+
+给定目标困惑度$\tau$，可以二分搜索带宽。令$\beta_i=1/(2\sigma_i^2)$、$D_j=\delta_{i,j}^2$、$B_i=\sum_{j\ne i}\exp(-\beta_iD_j)$，则
+\begin{equation}
+  \label{eq:dim-sne-entropy-monotonicity}
+  \begin{aligned}
+    H(P_i)&=\log B_i+\beta_i\mathbb{E}_{P_i}[D],\\
+    \frac{\mathrm{d}}{\mathrm{d}\beta_i}\mathbb{E}_{P_i}[D]
+      &=-\operatorname{Var}_{P_i}(D),\\
+    \frac{\mathrm{d}H(P_i)}{\mathrm{d}\beta_i}
+      &=-\beta_i\operatorname{Var}_{P_i}(D)\leq 0.
+  \end{aligned}
+\end{equation}
+困惑度随$\sigma_i$单调不减，候选距离不全相等时严格递增。若有$h_i$个并列最近邻，带宽趋于零和无穷时，困惑度分别趋于$h_i$和$n-1$。因此，仅当$\tau\in(h_i,n-1)$时存在唯一有限正带宽；距离全相等时，困惑度恒为$n-1$。重复样本和距离并列都可能限制可达目标。
+
+稀疏区域通常需要较大带宽，稠密区域需要较小带宽，但自适应尺度并不保留原始密度。困惑度常从$5$至$50$尝试，还需结合样本数和群体规模；标准化、去噪和特征选择也会改变邻居分布，带宽搜索不能自动消除无关特征。
+
+在低维空间，SNE固定核尺度，仅让坐标变化：
+\begin{equation}
+  \label{eq:dim-sne-low-loss}
+  \begin{aligned}
+    q_{j\mid i}
+      &=\frac{\exp(-r_{i,j}^2)}
+      {\sum_{\ell\ne i}\exp(-r_{i,\ell}^2)},\qquad q_{i\mid i}=0,\\
+    C_{\mathrm{SNE}}(\bm{Z})
+      &=\sum_i\operatorname{KL}(P_i\Vert Q_i)\\
+      &=\sum_i\sum_{j\ne i}p_{j\mid i}
+        \log\frac{p_{j\mid i}}{q_{j\mid i}}.
+  \end{aligned}
+\end{equation}
+其中$Q_i=(q_{j\mid i})_{j\ne i}$。$\exp(-r^2)$对应方差为$1/2$、标准差为$1/\sqrt{2}$的高斯核。固定带宽是在选择坐标单位；改变共同带宽可由坐标缩放吸收，但带宽固定后单独缩放坐标仍会改变目标。
+
+KL散度优先匹配较大的$p_{j\mid i}$：把这些近邻拉远会增大$-\log q_{j\mid i}$。但单项$p_{j\mid i}\log(p_{j\mid i}/q_{j\mid i})$可能为负，非负的是整体散度。高维远点挤到低维近处也会占用$Q_i$的概率质量，减少真正近邻分得的概率；归一化竞争因此会产生斥力。
+
+\subsubsection{参数学习}
+
+SNE先根据$\bm{X}$和$\tau$求带宽，固定$P_i$后再优化$\bm{Z}$。令$A_i=\sum_{\ell\ne i}\exp(-r_{i,\ell}^2)$，第$i$个散度可写为
+\begin{equation}
+  \label{eq:dim-sne-anchor-loss}
+  \begin{aligned}
+    C_i&=\sum_{j\ne i}p_{j\mid i}\log p_{j\mid i}
+      +\sum_{j\ne i}p_{j\mid i}r_{i,j}^2+\log A_i.
+  \end{aligned}
+\end{equation}
+第一项与坐标无关，第二项缩短高概率邻居的距离，第三项来自归一化。只对距离项求导，会丢失防止点云塌缩的作用。
+
+坐标$\bm{z}_i$以两种身份影响总损失。它是$C_i$的中心点，也是每个$C_j$中的候选邻居。因此分别有
+\begin{equation}
+  \label{eq:dim-sne-two-roles}
+  \begin{aligned}
+    \nabla_{\bm{z}_i}C_i
+      &=2\sum_{j\ne i}(p_{j\mid i}-q_{j\mid i})
+        (\bm{z}_i-\bm{z}_j),\\
+    \nabla_{\bm{z}_i}C_j
+      &=2(p_{i\mid j}-q_{i\mid j})
+        (\bm{z}_i-\bm{z}_j),\qquad j\ne i.
+  \end{aligned}
+\end{equation}
+第一行中的负项来自$\nabla_{\bm{z}_i}\log A_i$；对$\log A_j$求导时，只有包含$i$的核项变化，得到第二行中的负项。相加得到
+\begin{equation}
+  \label{eq:dim-sne-gradient}
+  \begin{aligned}
+    \nabla_{\bm{z}_i}C_{\mathrm{SNE}}
+      &=2\sum_{j\ne i}
+        \bigl[(p_{j\mid i}-q_{j\mid i})\\
+      &\qquad +(p_{i\mid j}-q_{i\mid j})\bigr]
+        (\bm{z}_i-\bm{z}_j).
+  \end{aligned}
+\end{equation}
+方括号内系数为正时，梯度指向远离$j$的方向，负梯度更新才把$i$拉向$j$；系数为负时则推开。吸引力和斥力描述的是负梯度，且两个有向残差可能相互抵消，不能只看一个方向。
+
+基本更新为$\bm{Z}^{(t+1)}=\bm{Z}^{(t)}-\eta_t\nabla C_{\mathrm{SNE}}(\bm{Z}^{(t)})$，学习率$\eta_t>0$。可加入动量，带入上一轮的部分位移。原始工作还使用逐渐减弱的随机扰动帮助离开不良布局，但没有全局最优保证。初始化可取小随机点云，避免全部重合造成对称的零梯度状态。
+
+完整高维距离计算需$O(n^2d)$时间、概率矩阵需$O(n^2)$存储；固定$k$时，每轮嵌入优化为$O(n^2)$。迭代需监测目标值、梯度或位移和近邻保留情况；数值停止变化不等于图上结构都可靠。
+
+\subsubsection{理论分析}
+\label{sec:dim-sne-theory}
+
+\paragraph{收敛性分析}
+
+$C_{\mathrm{SNE}}$对坐标非凸；平移、旋转和反射又使坐标不唯一。梯度光滑、步长合适时，可讨论下降或趋近驻点，但没有任意初始化下的全局收敛保证。谱方法虽通常能全局求解固定图上的特征值子问题，也不意味着选错近邻图后仍能恢复真实几何。数值求解与结构保真需要分开。
+
+更充分的迭代也不能消除\term{拥挤问题}（crowding problem），即许多高维邻域关系难以同时放进低维空间。若样本局部近似均匀地分布在$m$维流形上，在足够小且远离边界的尺度内，半径$r$内的样本数近似随$r^m$增长，而$k$维体积随$r^k$增长。这里使用内在维数$m$而非观测维数$d$；体积比较只是容量冲突的直觉，不是任意数据的计数定理。
+
+当$m>k$时，大量中距离邻居难以同时得到合适位置，高斯核的快速衰减又限制了布局。图\ref{fig:dim-neighbor-tails}中，$r=3$时高斯核约为$0.00012$，Cauchy形核为$0.1$，后者允许较远点仍保有相似度。这只是核值比较，实际概率还依赖归一化。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/dim-neighbor-tails}
+  \caption{高斯核$\exp(-r^2)$与Cauchy形核$1/(1+r^2)$的尾部。横轴$r$为无量纲距离，纵轴为未归一化核值，非概率密度、非实验结果；尾部形状本身不保证嵌入保真。}
+  \label{fig:dim-neighbor-tails}
+\end{figure}
+
+\paragraph{泛化分析}
+
+标准SNE只输出训练坐标，没有直接接收新样本的函数。样本外扩展需另行规定邻域关系及旧坐标是否固定；训练邻域保留良好不代表新点表示稳定。若输入距离由噪声支配，充分优化也可能只是忠实展示噪声。
+
+\subsubsection{小结}
+
+SNE以困惑度确定尺度，以条件概率表达邻近，以KL散度匹配分布。它留下三个不同问题：低维模型能否表达输入邻域，优化能否找到合适布局，点对计算能否承受。更换核、改进优化和加速计算分别处理这些问题，不能彼此替代。
+
+\subsection{t-SNE}
+\label{sec:dim-tsne}
+
+为缓解拥挤，可让低维相似度随距离衰减得慢一些。van der Maaten与Hinton于2008年提出的\term{t-SNE}（t-distributed stochastic neighbor embedding）采用重尾低维核，同时把逐点条件分布改成对称点对分布；它不只是替换SNE的指数函数\scite{dim-vandermaaten2008tsne}
+
+\subsubsection{模型结构}
+
+高维条件概率仍由式\eqref{eq:dim-sne-high}和困惑度确定。为使同一对样本具有一个共同权重，t-SNE定义
+\begin{equation}
+  \label{eq:dim-tsne-joint}
+  \begin{aligned}
+    p_{i,j}&=\frac{p_{j\mid i}+p_{i\mid j}}{2n},\qquad i\ne j,\\
+    p_{i,i}&=0,\qquad p_{i,j}=p_{j,i},\qquad
+      \sum_{i\ne j}p_{i,j}=1.
+  \end{aligned}
+\end{equation}
+求和遍历有序对，$(i,j)$和$(j,i)$各出现一次。$n$个条件分布每行和为$1$，对称化后总和为$2n$，故分母取$2n$。改用无序对$i<j$时，归一化和系数也要相应调整。
+
+低维相似度则由Cauchy形核给出：
+\begin{equation}
+  \label{eq:dim-tsne-low}
+  \begin{aligned}
+    u_{i,j}&=(1+r_{i,j}^2)^{-1},\qquad
+      \mathcal{Z}=\sum_{a\ne b}u_{a,b},\\
+    q_{i,j}&=\frac{u_{i,j}}{\mathcal{Z}},\qquad i\ne j,\\
+    q_{i,i}&=0,\qquad \sum_{i\ne j}q_{i,j}=1.
+  \end{aligned}
+\end{equation}
+$u_{i,j}$与自由度为$1$的一维Student $t$分布有相同核形状，但$q_{i,j}$是有限有序点对上的离散概率，不是$\mathbb{R}^k$上的多元Cauchy密度。它允许较远点仍有一定相似度，而不要求高低维距离相等。
+
+记$\bm{P}=(p_{i,j})$、$\bm{Q}=(q_{i,j})$，t-SNE最小化
+\begin{equation}
+  \label{eq:dim-tsne-loss}
+  C_{\mathrm{tSNE}}(\bm{Z})
+    =\sum_{i\ne j}p_{i,j}\log\frac{p_{i,j}}{q_{i,j}}.
+\end{equation}
+这里不再是$n$个分别归一化的条件分布。一个点移动会改变$\mathcal{Z}$及其他点对的概率，因此所有点必须在共同的概率预算下协调位置。
+
+目标优先避免把高概率邻居拉远，却不要求还原簇间距离、面积或密度。小$p_{i,j}$的点对吸引很弱，但仍参与归一化并产生斥力；偏重局部结构不等于忽略远点。
+
+\subsubsection{参数学习}
+
+将式\eqref{eq:dim-tsne-low}代入目标，并利用$\sum_{i\ne j}p_{i,j}=1$，可把与坐标有关的部分展开为
+\begin{equation}
+  \label{eq:dim-tsne-gradient-derivation}
+  \begin{aligned}
+    C_{\mathrm{tSNE}}
+      &=\text{常数}
+        +\sum_{a\ne b}p_{a,b}\log(1+r_{a,b}^2)
+        +\log\mathcal{Z},\\
+    \nabla_{\bm{z}_i}\mathcal{Z}
+      &=-4\sum_{j\ne i}u_{i,j}^2(\bm{z}_i-\bm{z}_j),\\
+    \nabla_{\bm{z}_i}\log\mathcal{Z}
+      &=-4\sum_{j\ne i}q_{i,j}u_{i,j}(\bm{z}_i-\bm{z}_j).
+  \end{aligned}
+\end{equation}
+距离平方求导给出因子$2$，有序对中的两个方向再给出一个因子$2$。同理，第二项的梯度为$4\sum_{j\ne i}p_{i,j}u_{i,j}(\bm{z}_i-\bm{z}_j)$。于是
+\begin{equation}
+  \label{eq:dim-tsne-gradient}
+  \nabla_{\bm{z}_i}C_{\mathrm{tSNE}}
+    =4\sum_{j\ne i}(p_{i,j}-q_{i,j})u_{i,j}
+      (\bm{z}_i-\bm{z}_j).
+\end{equation}
+当$p_{i,j}>q_{i,j}$时，负梯度把$i$拉向$j$；反之推开。即使稀疏近似令$p_{i,j}=0$，有限距离下$q_{i,j}>0$，斥力仍然存在。实际移动是所有点对作用的合成。
+
+\term{早期夸大}（early exaggeration）在初始若干轮中把梯度里的$p_{i,j}$替换成$\alpha p_{i,j}$，$\alpha>1$，只增强吸引，随后恢复$\alpha=1$。原论文取$\alpha=4$，后续也常用$12$；选择需结合学习率和样本规模。夸大权重的总和为$\alpha$，故这一更新不能仍解释为原归一化分布间KL散度的梯度。
+
+动量有助于优化，但不保证逃离局部极小值。PCA初始化以缩放后的主成分提供有结构的起点，随机初始化则不带这些信息。宏观布局因此也受初始化影响，不能把算法间全部差异归功于目标函数。运行时应记录困惑度、学习率、初始化及夸大系数和持续轮数。
+
+原始算法每轮为$O(n^2)$。Barnes--Hut t-SNE稀疏化吸引关系，用低维树结构把远点组聚合为位置和总权重，近似其斥力；二维中常用四叉树。固定近邻预算和近似精度、嵌入维数较小时，每轮典型代价为$O(n\log n)$，但建图和极端布局仍影响时间\scite{dim-vandermaaten2014accelerating}
+
+FIt-SNE把核求和转到插值网格上，再用快速傅里叶变换加速卷积\scite{dim-linderman2019fitsne}固定插值阶数时，斥力计算约为$O(n+g\log g)$，$g$是网格节点数，另需计算稀疏吸引项。网格随范围和精度变化，不能无条件视为常数。2019年的原工作展示了百万级单细胞数据的处理，但不构成统一的规模上限或速度倍数。
+
+\subsubsection{理论分析}
+\label{sec:dim-tsne-theory}
+
+\paragraph{收敛性分析}
+
+t-SNE仍然非凸，重尾核没有带来全局最优保证。Linderman与Steinerberger的2019年SIAM期刊论文，在输入相似度具有适当簇结构、初始嵌入集中、夸大系数和步长满足条件时，分析早期簇内收缩及其与谱聚类的联系。这不是任意数据或整个训练过程的谱等价定理\scite{dim-linderman2019clustering}
+
+初始点间距很小时，$u_{i,j}\approx1$；若相关斥力扰动相对较小，暂不计动量，更新近似为
+\begin{equation}
+  \label{eq:dim-tsne-spectral-approximation}
+  \begin{aligned}
+    \bm{Z}^{(t+1)}
+      &\approx(\bm{I}-4\eta_t\alpha\bm{L}_{P})\bm{Z}^{(t)},\\
+    \bm{L}_{P}&=\bm{D}_{P}-\bm{P},\qquad
+    (\bm{D}_{P})_{i,i}=\sum_{j\ne i}p_{i,j}.
+  \end{aligned}
+\end{equation}
+$\bm{D}_{P}$为对角矩阵。合适步长下，图平滑衰减变化快的方向，因而与拉普拉斯谱有关。但点云展开后，核接近$1$的近似可能失效，斥力也不可忽略；反复平滑更不等于直接提取特征向量。关闭夸大后，吸引和斥力仍共同调整布局。
+
+\paragraph{泛化分析}
+
+困惑度改变$\bm{P}$，也改变问题本身。小困惑度强调细邻域，可能割裂连续结构；大困惑度引入更广关系，也可能模糊稀有群体。可在可达范围内比较$5$、$30$、$50$等尺度和多次初始化，检查稳定关系。由于目标分布不同，不能直接按不同困惑度下的KL数值排名。
+
+整体旋转和镜像通常无解释意义，簇间距、面积和疏密也不能直接还原为输入量。大簇可能被展开，小簇可能被压紧，连续变化可能呈现为分离区域。单细胞、文本或图像特征中的可视化分组，需要回到合适的高维表示，并按第\ref{sec:clustering-summary}节区分内部指标、稳定性、参考标签和下游任务等证据。
+
+原始t-SNE没有显式样本外映射，但openTSNE等实现可固定参考嵌入，根据新样本与参考样本的相似度优化新点。这是给定参考布局的条件嵌入，不等于新旧样本联合重训，也不保证训练集缺失的新群体被正确安排\scite{dim-policar2024opentsne}
+
+\subsubsection{小结}
+
+t-SNE以对称点对概率简化匹配，用重尾核缓解拥挤，适合探索局部相似性，但不是可直接测量的全局地图。计算加速和样本外扩展分别改善效率与使用方式，都不消除非凸优化和结构保真的限制。
+
+\subsection{UMAP}
+\label{sec:dim-umap}
+
+除了全局归一化，也可以分别描述每条邻接关系有多强。\term{统一流形逼近与投影}（uniform manifold approximation and projection，UMAP）据此构造局部加权图，再优化低维布局。
+
+McInnes、Healy与Melville从2018年起公开的方法长文，将拉普拉斯特征映射、黎曼几何与模糊拓扑联系起来，重点讨论实际样本不均匀时如何调整局部度量，以及如何合并不同局部描述\scite{dim-mcinnes2018umap}这一问题设置也面向机器学习预处理中的较高维表示，并不限于二维画图。方法长文与同年的JOSS软件论文是不同文献；其几何构造、软件实现和可视化效果也需要分别评价。
+
+\subsubsection{模型结构}
+
+记$q$个近邻的索引集为$N_q(i)$，不包含$i$。先假设样本互异、最近邻无并列，局部连接参数采用单位设置。令$\rho_i=\min_{j\ne i}\delta_{i,j}$，定义
+\begin{equation}
+  \label{eq:dim-umap-directed}
+  \begin{aligned}
+    v_{j\mid i}
+      &=
+      \begin{cases}
+        \exp\!\left(-\dfrac{\max(0,\delta_{i,j}-\rho_i)}
+        {\sigma_i}\right),&j\in N_q(i),\\
+        0,&j\notin N_q(i),
+      \end{cases}\\
+    \sum_{j\in N_q(i)}v_{j\mid i}&=\log_2 q.
+  \end{aligned}
+\end{equation}
+$\rho_i$使最近邻权重为$1$，$\sigma_i$控制其余连接的衰减。可按任务更换距离度量，但需重审几何解释。当$q>2$且上述条件成立时，权重和随正带宽从$1$向$q$增长，可以搜索到目标值。
+
+$v_{j\mid i}$是边的隶属强度，各边可同时很强，行和不是$1$。$\log_2 q$是尺度校准目标，并非熵或困惑度。重复样本、并列近邻或其他局部连接设置可能使多条边固定为$1$，导致目标不可达；实现需要零距离处理、带宽下界和容差。
+
+两个方向的局部判断用模糊并集合并：
+\begin{equation}
+  \label{eq:dim-umap-union}
+  v_{i,j}=v_{j\mid i}+v_{i\mid j}-v_{j\mid i}v_{i\mid j}.
+\end{equation}
+结果满足$v_{i,j}=v_{j,i}\in[0,1]$。一个方向为$1$时，合并权重为$1$；两个方向都是$0.4$时，合并为$0.64$，既非平均也非全局归一化。它采用模糊集合运算，无须假定两条有向边是独立随机事件。
+
+\term{模糊单纯集}（fuzzy simplicial set）提供更一般的描述：以点、边、三角面等组合结构表达空间，并赋予隶属强度。范畴论框架解释局部观察如何组合，实际目标主要使用一维骨架，即样本和加权边。这种有限样本表示不保证图中每个环或空白都对应真实拓扑。
+
+低维连接采用可调的重尾函数
+\begin{equation}
+  \label{eq:dim-umap-kernel}
+  w_{i,j}=\frac{1}{1+a r_{i,j}^{2b}},\qquad a>0,\quad b>0.
+\end{equation}
+$a$、$b$由\code{min\_dist}和\code{spread}确定，用光滑核逼近近处接近$1$、超过指定尺度后衰减的目标曲线。\code{min\_dist}是软紧凑参数，并非所有点间距的硬下界。当$a=b=1$时，$w_{i,j}$仅与t-SNE的未归一化核$u_{i,j}$相同，没有除以$\mathcal{Z}$，故不等于$q_{i,j}$。
+
+为了让高维和低维的边强度接近，可把每条边看成一次带软标签的二元判断。对无序对$i<j$，完整目标写成
+\begin{equation}
+  \label{eq:dim-umap-bernoulli}
+  \begin{aligned}
+    C_{\mathrm{B}}(\bm{Z})
+      &=\sum_{i<j}\left[
+        v_{i,j}\log\frac{v_{i,j}}{w_{i,j}}\right.\\
+      &\qquad\left.+
+        (1-v_{i,j})\log\frac{1-v_{i,j}}{1-w_{i,j}}
+        \right].
+  \end{aligned}
+\end{equation}
+这是逐边Bernoulli分布的KL散度之和。去掉只依赖$v_{i,j}$的常数项，得到二元交叉熵
+\begin{equation}
+  \label{eq:dim-umap-cross-entropy}
+  \begin{aligned}
+    C_{\mathrm{CE}}(\bm{Z})
+      &=-\sum_{i<j}\left[
+        v_{i,j}\log w_{i,j}\right.\\
+      &\qquad\left.+
+        (1-v_{i,j})\log(1-w_{i,j})\right].
+  \end{aligned}
+\end{equation}
+采用$0\log0=0$约定。两式对$\bm{Z}$有相同梯度；与t-SNE的区别不在“交叉熵对KL”，而在逐边二元匹配与全局归一化点对匹配。
+
+第一项拉近有边的点，第二项阻止非邻居贴近。但零权重只表示没有保留局部连接，相距稍远和极远都可能得到$v_{i,j}=0$；非边项因此不保证全局距离保真。
+
+\subsubsection{参数学习}
+
+定义吸引损失$\ell^+_{i,j}=-\log w_{i,j}$和排斥损失$\ell^-_{i,j}=-\log(1-w_{i,j})$。当$r_{i,j}>0$时，
+\begin{equation}
+  \label{eq:dim-umap-pair-gradient}
+  \begin{aligned}
+    \nabla_{\bm{z}_i}\ell^+_{i,j}
+      &=\frac{2ab r_{i,j}^{2b-2}}
+        {1+a r_{i,j}^{2b}}(\bm{z}_i-\bm{z}_j),\\
+    \nabla_{\bm{z}_i}\ell^-_{i,j}
+      &=-\frac{2b}
+        {r_{i,j}^2(1+a r_{i,j}^{2b})}
+        (\bm{z}_i-\bm{z}_j).
+  \end{aligned}
+\end{equation}
+负梯度分别拉近和推开点，完整交叉熵再用$v_{i,j}$和$1-v_{i,j}$加权。重合附近的排斥项有奇异性，实现需作数值稳定处理并限制过大更新。
+
+遍历全部点对仍需二次方计算。UMAP用\term{负采样}（negative sampling）加速：按正边权重安排吸引更新，再对中心点抽取$s$个排斥对象；抽样并非逐一核验非邻居。若图有$O(nq)$条边，每边每轮更新次数有界，固定$k$时一轮约为$O(nq(1+s))$。只有$q$、$s$固定时才近似线性，且不包括建图和总轮数。
+
+中心点被抽到的机会依赖正边权重，负样本的机会依赖采样分布。没有相应的重要性修正，期望更新不等于完整交叉熵梯度；负采样改变了吸引和排斥比例，并非无偏地少算一些非边。
+
+Damrich与Hamprecht于2021年分析这一过程。记加权度$\omega_i=\sum_{j\ne i}v_{i,j}$。在其均匀负采样模型中，若每次排斥都更新双端，略去共同正常数后，有效目标为
+\begin{equation}
+  \label{eq:dim-umap-effective-loss}
+  \begin{aligned}
+    \widetilde C(\bm{Z})
+      &=\sum_{i<j}\left[
+        v_{i,j}\ell^+_{i,j}
+        +\gamma_{i,j}\ell^-_{i,j}\right],\\
+    \gamma_{i,j}&=\frac{s(\omega_i+\omega_j)}{2n}.
+  \end{aligned}
+\end{equation}
+排斥权重不再是$1-v_{i,j}$，而依赖样本数、加权度和负采样数。论文所分析的非参数实现仅移动排斥对的一端，期望更新一般甚至不对应标量损失的梯度；式\eqref{eq:dim-umap-effective-loss}对应补上双端更新的版本，必须保留这一条件\scite{dim-damrich2021umaploss}
+
+若$w_{i,j}$可独立选择，逐对最优值为$v_{i,j}/(v_{i,j}+\gamma_{i,j})$。正边权重远大于$\gamma_{i,j}$时，最优值接近$1$，有助于解释紧凑布局的倾向。但坐标耦合了所有权重，未必能同时达到逐对最优值。
+
+实际流程依次完成近邻搜索、尺度估计、模糊并图、初始化和采样更新。可用谱或随机初始化；图不连通时，各分量相对位置缺少约束。学习率通常逐渐衰减，采样数和排斥强度也影响结果，不能只关注两个主要超参数。
+
+\code{n\_neighbors}控制建图尺度，大值加入更广连接，但不保证全局指标单调改善。\code{min\_dist}小则允许更紧的群组，大则通常更分散。\code{umap-learn}常用的$q=15$和\code{min\_dist=0.1}只是起点，还需记录度量、维数、轮数、种子和版本\scite{dim-mcinnes2018umapsoftware}
+
+\subsubsection{理论分析}
+\label{sec:dim-umap-theory}
+
+\paragraph{收敛性分析}
+
+完整交叉熵和有效目标对坐标都非凸，近邻近似、有限轮随机更新和梯度裁剪又引入额外差异。驻点结论不等于最佳拓扑布局保证。负采样分析强调有效吸引与排斥，并不证明UMAP等价于非负矩阵分解，也不证明它比t-SNE更保留全局结构。
+
+\paragraph{泛化分析}
+
+局部流形近似、尺度调整和模糊拓扑拼接解释了UMAP如何建图，却不保证任意有限样本的二维结果保留全局结构。光滑流形、合适局部度量和充分采样等假设需要检验；理论构造、近似建图和采样优化的保证不能跨层直接套用。
+
+UMAP的\code{transform}在训练集中寻找新样本的近邻，以邻居坐标初始化，再固定参考嵌入、优化新点。这是条件定位，不是显式解析映射或新旧坐标联合重训。新数据与训练分布接近时，可放入同一参考图；出现新类别或分布漂移时，位置可能失真。
+
+先拟合子样本、再变换其余样本可以降低计算负担，但子样本需覆盖稀有群体等重要结构。用于下游预测时，应只在训练划分内拟合预处理和嵌入，再变换验证集和测试集，避免结构泄漏。图形美观与预测效果是不同问题。
+
+\subsubsection{小结}
+
+UMAP以局部尺度和模糊并建图，用可调核布局，以采样控制计算。模糊边权、匹配目标和有效更新必须区分。参考图变换虽方便，结果仍受度量、建图、初始化及采样影响，紧凑图形不等于可靠结构。
+
+\subsection{模型对比与总结}
+\label{sec:dim-manifold-comparison}
+\label{sec:dim-neighbors-comparison}
+
+表\ref{tab:dim-manifold-comparison}回顾前述线性与核、距离和邻域方法，按输入、保留对象和求解方式比较六种代表方法。它们都可以处理关系数据，但不都依赖流形假设，也不都归结为一次特征分解：应力型MDS是明显例外。复杂度应按稠密矩阵、稀疏图和近似方案分别讨论，而不是给每个方法贴一个固定阶数。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{22mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    方法 & 输入与保留对象 & 核心求解 & 样本外使用与主要限制 \\
+    \midrule
+    MDS & 给定差异；经典型拟合内积，应力型拟合距离或顺序
+      & 经典型取正谱；度量及非度量应力通常迭代求解
+      & 需要到训练点的差异；非欧氏性与目标维数限制保真程度 \\
+    核PCA & 正定核；特征空间方差
+      & 中心化核矩阵的主特征方向
+      & 核投影有明确公式；依赖训练中心化、核尺度和谱隙 \\
+    Isomap & 邻域图；全局测地距离的估计
+      & 最短路径后做经典MDS
+      & 接入图后做距离扩展；短路、断连及不可展开几何会失真 \\
+    LLE & 邻居与局部重构权；仿射重构关系
+      & 局部线性方程与全局低端谱
+      & 局部权重插值；病态邻域、多零模态与噪声需诊断 \\
+    Laplacian Eigenmaps & 对称非负邻域权重；图上平滑性
+      & 度加权广义特征值问题
+      & 可作谱延拓；度、密度、断连影响低频表示 \\
+    Diffusion Map & 对称权重及重加权；给定步数的扩散距离
+      & 可逆转移矩阵的谱与时间加权
+      & Nystr\"om延拓；截断、带宽和过度混合限制区分能力 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{六类方法在本节所述标准构造下的比较。MDS一行区分经典型与应力型，不能把二者的目标和求解混同。样本外一栏均指固定训练表示后的扩展，不代表加入新样本重新训练的等价结果，也不是预测性能保证。}
+  \label{tab:dim-manifold-comparison}
+\end{table*}
+
+选择方法时，需要先确定误差的含义。感知评分可用度量或非度量MDS，非线性预处理可考察核PCA；若潜在区域可展开且长度有意义，Isomap提供相应的距离模型。局部仿射关系可信时可考察LLE，图上平滑性是重点时可用拉普拉斯坐标，跨时间尺度的概率连通性则由扩散距离描述。动力系统分析只有在构图与所关心的动力过程相符时，才能把慢扩散模态解释为相关的慢变量，不能仅凭数据来自时间序列作出这一判断。
+
+这些方法还对应不同的扩展方向。\term{Hessian LLE}亦称Hessian特征映射，估计局部坐标中函数的二阶变化，并寻找其平方积分接近零的方向。在连通、局部等距于欧氏区域等条件下，仿射坐标具有零Hessian；原理论允许某些非凸、带孔的参数区域，不等于任意带孔流形都能无失真恢复。离散方法还需要足够多且分布合适的邻居来估计二阶项，通常比一阶局部拟合更依赖采样条件\scite{dimDonoho2003}
+
+\term{局部切空间对齐}（local tangent space alignment, LTSA）先在每个邻域做局部PCA，估计$m$维切空间及局部坐标，再选择一组全局坐标，使其在各邻域中能通过局部仿射变换与切空间坐标对齐。这把LLE中隐含的局部线性结构显式化，但切空间估计误差和不适当的邻域仍会传播到全局结果\scite{dimZhang2004}
+
+\term{最大方差展开}（maximum variance unfolding, MVU）则把局部距离直接写成约束，学习未知Gram矩阵$\bm{B}$：
+\[
+  \begin{aligned}
+    \max_{\bm{B}\succeq0}\quad&
+      \operatorname{tr}(\bm{B}),\qquad \bm{B}\bm{1}=\bm{0},\\
+    \text{满足}\quad&
+      \bm{B}_{i,i}+\bm{B}_{j,j}-2\bm{B}_{i,j}
+      =\lVert\bm{x}_i-\bm{x}_j\rVert_2^2,\quad(i,j)\in E.
+  \end{aligned}
+\]
+中心化下，增大迹相当于在保持局部边长时增大全体点的总方差。这是半正定规划，凸的是Gram矩阵优化，不是额外施加固定秩后的任意低维问题。最优矩阵未必恰好秩为$k$，谱截断后局部约束也可能不再精确；规模较大时，半正定求解本身是主要成本\scite{dimWeinberger2006}
+
+\term{向量扩散映射}（vector diffusion maps）由邻域切空间之间的正交对齐矩阵替代纯标量权重的一部分作用，使路径上的方向运输也参与比较\scite{dimSinger2012}其连续联系是连接拉普拉斯算子，即作用于向量场而非标量函数的几何算子。它补充的是方向一致性信息，并非普通扩散距离在所有任务上的更好替代。
+
+这些联系不宜扩张成“所有非线性降维都是换一种距离做MDS”。例如，高斯过程隐变量模型通过从隐变量到观测的概率映射和似然学习表示，不是通常意义下把某种概率距离交给经典MDS。类似地，t-SNE、UMAP侧重邻域关系的低维呈现，但不能据此认定它们全面取代几何方法，或把UMAP在未说明的极限下直接等同于拉普拉斯能量。SNE、t-SNE和UMAP同样需要用各自目标解释簇间距离和视觉分离。
+
+本节开头的问题因此有了一个带条件的答案：非线性降维不是单纯把弯曲数据“压平”，而是选择可信的关系，再接受目标维数能够保留的部分。核、邻域、归一化和时间尺度决定了关系本身；数值求解正确、训练目标小、流形极限存在与下游任务有效，是需要分别验证的四件事。
+
+表\ref{tab:dim-neighbors-comparison}比较三种方法的机制与边界，不作脱离数据的排名。t-SNE的困惑度是有效邻居数，UMAP的$q$是建图邻居数，两者作用相似但不能直接换算。
+
+\begin{table*}[tbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{0.13\linewidth}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    比较方面 & SNE & t-SNE & UMAP \\
+    \midrule
+    高维对象 & 逐点条件邻居概率 & 对称联合点对概率 & 稀疏模糊邻域图权重 \\
+    低维对象 & 行归一化高斯核 & 全局归一化重尾核 & 不作概率归一化的可调重尾权重 \\
+    建模依据 & 条件分布匹配 & 点对分布匹配 & 局部几何与模糊图构造 \\
+    优化目标 & 条件KL散度之和 & 联合KL散度 & 逐边交叉熵；负采样改变有效目标 \\
+    邻域尺度 & 困惑度及逐点带宽 & 困惑度及逐点带宽 & 邻居数$q$、局部距离偏移和带宽 \\
+    布局控制 & 初始化、学习率等 & 初始化、夸大、学习率等 & 初始化、核形状、采样和排斥等 \\
+    迭代代价 & 稠密计算$O(n^2)$ & 稠密$O(n^2)$；树或插值可加速 & 固定嵌入维数下约$O(nq(1+s))$ \\
+    全局解释 & 不保证距离或密度保真 & 簇间距、面积不宜直接解释 & 图连接提供约束，但不保证全局保真 \\
+    收敛边界 & 非凸、依赖初始化 & 非凸；部分早期阶段有条件分析 & 非凸；依赖实际采样更新规则 \\
+    新样本 & 需另定义扩展 & 参考图扩展或参数化版本 & \code{transform}或参数化版本 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{三种邻域降维方法。复杂度指固定嵌入维数下的一轮优化，不含建图和总轮数；$s$为每次正边更新的负采样数。}
+  \label{tab:dim-neighbors-comparison}
+\end{table*}
+
+速度比较需固定近邻搜索、精度、硬件、线程数和优化预算，不能把近似实现与稠密实现的差距当成普遍倍数。可复现性还依赖预处理、初始化、版本和并行方式；固定种子便于重复运行，多种子、多尺度检查才有助于辨别稳定结构。
+
+% 将段落与其完整的会议文献边注安排在同一页内。
+\Needspace{9\baselineskip}
+扩展方法可改变建图、约束或映射。Tang等人的LargeVis用随机投影树和邻居探索构造近似近邻图，再以概率化图布局和负采样优化吸引与排斥\scite{dim-tang2016largevis}它结合了可扩展建图和布局，但不是无偏求解原SNE条件KL目标的加速版。
+
+% PaCMAP的长标题与作者列表也需留出边注空间。
+\Needspace{10\baselineskip}
+局部群组之间可能缺少相对位置约束。Wang等人的PaCMAP在近邻对、较远点对之外加入中距离对，并随优化阶段调整作用权重，以组织较大尺度的联系\scite{dim-wang2021pacmap}其效果还依赖损失形状、配对和初始化，实验中的全局指标改善不是普遍保证。
+
+% 为该段及其较长的边注引文保留共同的页内空间。
+\Needspace{9\baselineskip}
+Amid与Warmuth于2019年提出的TriMap用三元组$(i,j,\ell)$要求$j$比$\ell$更接近$i$，通过跨尺度采样和加权损失编码相对关系\scite{dim-amid2019trimap}它保留所抽取的排序而非全部距离，三元组选择和初始化仍影响结果。
+
+反复嵌入新样本时，可令$\bm{z}_i=f_{\bm{\theta}}(\bm{x}_i)$，按邻域目标学习网络参数$\bm{\theta}$。van der Maaten的2009年参数化t-SNE允许前向计算新点，但批次构造和概率归一化影响训练关系，网络函数族也限制可实现的布局\scite{dim-vandermaaten2009parametric}
+
+Sainburg、McInnes与Gentner的参数化UMAP将正负样本训练与网络结合，支持小批次和半监督学习。它学到共享函数，不同于固定参考坐标后优化新点的\code{transform}。前向推断更直接，但不天然保证分布外泛化或复现全部非参数布局细节\scite{dim-sainburg2021parametricumap}
+
+流形学习与邻域嵌入不是“几何对概率”的互斥分类：LLE和拉普拉斯特征映射也用局部图，UMAP也借助流形建模。应按约束量、近似方式和使用目标选择方法。研究测地关系可考察Isomap，探索相似样本组织可比较t-SNE和UMAP；用于下游特征时还应考虑$k>2$并验证任务效果，不把二维图直接当成最佳表示。
+
+邻域嵌入把有限的低维表达能力优先用于重要邻接关系，回答了开篇的取舍问题。图形可以提出假设、展示独立分析支持的结构，却不能直接确定原数据的簇数量、大小或间隔。聚类应在原始或合适的高维表示中验证，并结合不同尺度、初始化和领域知识检查。图中所见只有经过这些核验，才能成为分析证据。
+
+\section{基于概率的降维}
+\label{sec:dim-probabilistic}
+
+本节使用第\ref{sec:classic-overview-probabilistic}节的隐变量生成视角：从低维坐标到观测规定映射及噪声，再根据观测推断坐标。PPCA、因子分析与GPLVM的差异在于生成映射、噪声结构，以及哪些未知量保留后验不确定性。沿用章首的$n,d,k$和输入矩阵$\bm{X}$。
+
+\subsection{概率主成分分析（PPCA）与因子分析}
+\label{sec:dim-ppca}
+
+几个传感器共同测量低维状态，读数又带有误差，这就需要区分共同变化与噪声。\term{概率主成分分析}（probabilistic principal component analysis, PPCA）用低维高斯状态生成线性信号，再加入同方差高斯噪声。
+
+允许各观测坐标具有不同噪声方差，就得到本节的高斯\term{因子分析}（factor analysis, FA）；“因子”是解释共同变化的隐变量。其历史可追溯到Spearman于1904年的一般智力研究，但现代多因子模型不等同于当时的心理测量假说\scite{spearman1904intelligence}
+
+Tipping与Bishop在1999年重新考察PCA时，关注的是其常见几何定义尚未为观测规定概率模型。他们用与因子分析密切相关的隐变量模型刻画主子空间，同时研究似然性质和EM估计方法\scite{tipping1999}这样，特征分解与隐变量的迭代估计便能在同一似然目标下比较，几何压缩也获得了处理噪声和缺失观测的统计工具。
+
+\subsubsection{模型结构}
+\label{sec:dim-ppca-structure}
+
+设$\bm{z}\in\mathbb{R}^k$为隐变量，$\bm{W}\in\mathbb{R}^{d\times k}$为载荷矩阵，$\bm{\mu}\in\mathbb{R}^d$为均值。PPCA取$1\leq k<d$，并假设
+\begin{equation}
+\label{eq:dim-ppca-generative}
+\begin{aligned}
+\bm{z}&\sim\mathcal{N}(\bm{0},\bm{I}_k),\\
+\bm{x}&=\bm{\mu}+\bm{W}\bm{z}+\bm{\epsilon},\\
+\bm{\epsilon}&\sim\mathcal{N}(\bm{0},\sigma^2\bm{I}_d),
+\qquad \bm{\epsilon}\perp\bm{z},\quad \sigma^2>0.
+\end{aligned}
+\end{equation}
+各向同性只限制噪声，不要求观测总方差相等。固定$\bm{z}$后，条件负对数似然包含$\lVert\bm{x}-\bm{\mu}-\bm{W}\bm{z}\rVert_2^2/(2\sigma^2)$，解释了平方误差的来源；边际似然还要对$\bm{z}$积分。
+
+图~\ref{fig:dim-latent-model}用结构示意区分生成与推断：生成时抽取隐变量并加入噪声，降维时给定观测计算后验。
+\begin{figure}[htbp]
+\centering
+\input{figures/dim-latent-model}
+\caption{概率生成与后验推断的结构示意。实线表示$\bm{z}\to\bm{x}$的生成方向；虚线表示$\bm{x}\to\bm{z}$的后验推断，不是额外的生成依赖。图中节点与箭头只说明变量角色和条件关系，不表示实测数据、网络层数或计算流程；噪声描述观测对信号的偏离，不是新增的隐变量维数。}
+\label{fig:dim-latent-model}
+\end{figure}
+
+独立高斯量的线性组合仍是高斯量，因而积分掉隐变量后有
+\begin{equation}
+\label{eq:dim-ppca-marginal}
+\begin{aligned}
+p(\bm{x})&=\mathcal{N}(\bm{x};\bm{\mu},\bm{C}),\\
+\bm{C}&=\bm{W}\bm{W}^\top+\sigma^2\bm{I}_d.
+\end{aligned}
+\end{equation}
+信号协方差的秩至多为$k$，正噪声保证$\bm{C}$正定，即使经验协方差因样本不足而奇异。
+
+FA改用$\bm{\Psi}=\operatorname{diag}(\psi_1,\ldots,\psi_d)$，其中$\psi_j>0$表示方差，于是$\bm{C}=\bm{W}\bm{W}^\top+\bm{\Psi}$。给定因子后，各维条件独立，跨维协方差由共同因子解释。独特方差还可包含特征特有的变化，不必全是仪器误差；标准化也会改变同方差假设的含义。
+
+图\ref{fig:dim-ppca-fa-noise}固定相同的载荷，只改变噪声。给定一个隐变量取值后，PPCA允许观测向各个方向等幅偏离条件均值，FA则允许沿某个观测坐标偏离得更多。图中的圆和椭圆表示条件噪声；把不同隐变量取值混合以后，还要加上沿载荷方向变化的信号协方差，才得到全部观测的分布。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/dim-ppca-fa-noise}
+  \caption{PPCA与FA的条件噪声示意。设$d=2$、$k=1$、$\bm{\mu}=\bm{0}$、$\bm{W}=(1,0.6)^\top$，三个实心点对应$z=-1,0,1$的条件均值。左图取$\sigma=0.28$，右图取$\bm{\Psi}=\operatorname{diag}(0.16^2,0.50^2)$；每条轮廓到其中心的平方Mahalanobis距离均为$1$。坐标为无量纲构造值，轮廓是条件等密度线，不是总体数据云或置信区域。}
+  \label{fig:dim-ppca-fa-noise}
+\end{figure}
+
+正交旋转$\bm{W}\bm{R}$不改变协方差。载荷满列秩且除旋转外局部可识别时，扣除$k(k-1)/2$个旋转自由度，PPCA和FA的协方差参数数目分别为$dk+1-k(k-1)/2$和$dk+d-k(k-1)/2$，均值另占$d$个。FA还须排除载荷与噪声间的额外不可识别性。相比自由协方差的$d(d+1)/2$个参数，小$k$约束可能降低估计方差，也可能引入偏差。
+
+\subsubsection{参数学习}
+\label{sec:dim-ppca-learning}
+
+假设样本独立同分布。记样本均值为$\bar{\bm{x}}$，$\bm{y}_i=\bm{x}_i-\bar{\bm{x}}$，$\bm{S}=n^{-1}\sum_i\bm{y}_i\bm{y}_i^\top$，分母采用极大似然所需的$n$。固定$\bm{C}$时，均值梯度为$n\bm{C}^{-1}(\bar{\bm{x}}-\bm{\mu})$，二阶导数负定，故$\hat{\bm{\mu}}=\bar{\bm{x}}$。代回得
+\begin{equation}
+\label{eq:dim-ppca-likelihood}
+\ell=-\frac{n}{2}\left[
+d\log(2\pi)+\log|\bm{C}|
++\operatorname{tr}(\bm{C}^{-1}\bm{S})\right].
+\end{equation}
+对数行列式限制分布过度扩散，迹项限制数据变化较大的方向上方差过小。
+
+记$\bm{S}=\bm{U}\bm{\Lambda}\bm{U}^\top$，$\lambda_1\geq\cdots\geq\lambda_d\geq0$，$\bm{U}_k$取前$k$个特征向量，$\bm{\Lambda}_k=\operatorname{diag}(\lambda_1,\ldots,\lambda_k)$。
+
+下面的证明会用到Birkhoff--von Neumann分解：双随机矩阵是行和、列和都为$1$的非负方阵，每个有限维双随机矩阵都可写成置换矩阵的凸组合\scite{birkhoff1946}因此，对它取值的线性目标不小于所有置换取值中的最小者。
+
+主线阅读可先保留极大似然解的结构：载荷张成PCA主子空间，噪声方差取被舍弃样本特征值的均值，载荷内部仍可旋转。进阶证明先用双随机分解证明样本谱与模型谱应同序对齐，再逐项优化谱值；这解释全局最优性，但不自动给出奇异点或高维渐近下的统计保证。
+
+\begin{theorem}[PPCA的极大似然解]
+\label{thm:dim-ppca-mle}
+设$1\leq k<d$，尾谱均值$\tau=(d-k)^{-1}\sum_{j=k+1}^d\lambda_j$满足$\tau>0$且$\lambda_k>\tau$。在$\sigma^2>0$的PPCA模型中，以下参数达到全局最大似然：
+\begin{equation}
+\label{eq:dim-ppca-mle}
+\begin{aligned}
+\hat{\bm{\mu}}&=\bar{\bm{x}},\qquad
+\hat{\sigma}^2=\tau,\\
+\hat{\bm{W}}&=\bm{U}_k(\bm{\Lambda}_k-\tau\bm{I}_k)^{1/2}\bm{R}.
+\end{aligned}
+\end{equation}
+其中$\bm{R}$为任意$k$阶正交矩阵。截断处有重根时，$\bm{U}_k$可在对应特征子空间内选取不同正交方向。
+\end{theorem}
+
+\begin{proof}
+需最小化$F(\bm{C})=\log|\bm{C}|+\operatorname{tr}(\bm{C}^{-1}\bm{S})$。写$s=\sigma^2$，由信号半正定且秩至多为$k$，可行协方差的谱满足
+\[
+c_1\geq\cdots\geq c_k\geq s,\qquad
+c_{k+1}=\cdots=c_d=s>0.
+\]
+允许$c_j=s$便包括载荷秩不足$k$的情况。
+
+固定谱，设$\bm{p}_b$为$\bm{C}$的第$b$个单位特征向量，则
+\[
+\operatorname{tr}(\bm{C}^{-1}\bm{S})
+=\sum_{a=1}^d\sum_{b=1}^d
+\frac{\lambda_a}{c_b}(\bm{u}_a^\top\bm{p}_b)^2.
+\]
+平方内积构成非负且各行各列和为$1$的双随机矩阵，可写成置换矩阵的凸组合，所以上式不小于置换配对的最小值。若$\lambda_a\geq\lambda_b$、$c_a\geq c_b$，同序配对减去交换配对等于
+\[
+(\lambda_a-\lambda_b)
+\left(\frac{1}{c_a}-\frac{1}{c_b}\right)\leq0.
+\]
+消去逆序配对即得$\operatorname{tr}(\bm{C}^{-1}\bm{S})\geq\sum_j\lambda_j/c_j$，取$\bm{p}_j=\bm{u}_j$达到等号。对数行列式只依赖谱，故同序对齐是固定谱下的全局最优。
+
+对齐后，目标化为
+\[
+\begin{aligned}
+F&=\sum_{j=1}^k\left(\log c_j+\frac{\lambda_j}{c_j}\right)\\
+&\quad+(d-k)\log s+\frac{(d-k)\tau}{s}.
+\end{aligned}
+\]
+暂去$c_j\geq s$及排序约束。对$a>0$，函数$g_a(v)=\log v+a/v$的导数为$(v-a)/v^2$，在$a$左侧为负、右侧为正，故$v=a$为唯一全局最小点。各首部项因此在$c_j=\lambda_j$处最小，尾部$(d-k)g_\tau(s)$在$s=\tau$处最小。
+
+由$\lambda_k>\tau>0$，此解满足原约束。式~\eqref{eq:dim-ppca-mle}构造的协方差恰与$\bm{S}$同序对齐，首$k$个特征值为$\lambda_j$，其余为$\tau$，达到上述共同下界，故是全局最优。正交$\bm{R}$不改变载荷乘积；重根配对差为零，允许所述的不唯一性。
+\end{proof}
+
+若$\lambda_k=\tau>0$，同式仍给出最优协方差，但载荷降秩，满秩自由度与常规渐近结论不再直接适用。若$\tau=0$，则样本协方差秩至多为$k$；让未被数据占据的方向方差趋零，似然无界增大，正噪声空间中无有限极大值。$\sigma^2=0$对应奇异高斯分布，不再有$d$维普通密度。
+
+定理统一的是主子空间，不是坐标或整个概率模型。编码观测需要后验，由生成式得到联合高斯分布
+\begin{equation}
+\label{eq:dim-ppca-joint}
+\begin{bmatrix}\bm{z}\\ \bm{x}\end{bmatrix}
+\sim\mathcal{N}\left(
+\begin{bmatrix}\bm{0}\\ \bm{\mu}\end{bmatrix},
+\begin{bmatrix}
+\bm{I}_k&\bm{W}^\top\\
+\bm{W}&\bm{C}
+\end{bmatrix}\right).
+\end{equation}
+高斯分块条件公式给出后验均值$\bm{W}^\top\bm{C}^{-1}(\bm{x}-\bm{\mu})$和协方差$\bm{I}_k-\bm{W}^\top\bm{C}^{-1}\bm{W}$。定义$\bm{M}=\bm{W}^\top\bm{W}+\sigma^2\bm{I}_k$，由$\bm{C}\bm{W}=\bm{W}\bm{M}$可得$\bm{W}^\top\bm{C}^{-1}=\bm{M}^{-1}\bm{W}^\top$，因而
+\[
+\bm{I}_k-\bm{M}^{-1}\bm{W}^\top\bm{W}
+=\sigma^2\bm{M}^{-1}.
+\]
+于是后验为
+\begin{equation}
+\label{eq:dim-ppca-posterior}
+p(\bm{z}\mid\bm{x})
+=\mathcal{N}\left(
+\bm{M}^{-1}\bm{W}^\top(\bm{x}-\bm{\mu}),
+\sigma^2\bm{M}^{-1}\right).
+\end{equation}
+在极大似然解中取$\bm{R}=\bm{I}_k$，第$j$个后验均值坐标是
+\begin{equation}
+\label{eq:dim-ppca-score}
+\mathbb{E}[z_j\mid\bm{x}]
+=\frac{\sqrt{\lambda_j-\tau}}{\lambda_j}
+\bm{u}_j^\top(\bm{x}-\bar{\bm{x}}).
+\end{equation}
+它是PCA得分的缩放；映射回观测空间的系数为$1-\tau/\lambda_j$，也不同于正交重构的$1$。例如教学谱$(9,1,1)$取$k=1$时，$\tau=1$，载荷为$\sqrt8\bm{u}_1$，后验方差为$1/9$，重构系数为$8/9$。
+
+后验协方差不随完整观测$\bm{x}$变化，这是线性同方差假设的结果，且不包含参数估计误差。固定满列秩载荷并令噪声趋零，重构才趋于其列空间的正交投影；隐坐标仍依赖载荷尺度。
+
+FA通常采用迭代求解。\term{期望最大化}（expectation-maximization, EM）交替执行两步：E步求隐变量后验矩，M步最大化完整数据对数似然的后验期望\scite{clust-dempster1977}
+
+对完整数据，固定$\bm{\mu}=\bar{\bm{x}}$。在第$t$次迭代，E步为
+\begin{equation}
+\label{eq:dim-fa-estep}
+\begin{aligned}
+\bm{V}^{(t)}
+&=\left[\bm{I}_k+
+(\bm{W}^{(t)})^\top(\bm{\Psi}^{(t)})^{-1}
+\bm{W}^{(t)}\right]^{-1},\\
+\bm{m}_i^{(t)}
+&=\bm{V}^{(t)}(\bm{W}^{(t)})^\top
+(\bm{\Psi}^{(t)})^{-1}\bm{y}_i,\\
+\bm{Q}_i^{(t)}
+&=\bm{V}^{(t)}+\bm{m}_i^{(t)}(\bm{m}_i^{(t)})^\top.
+\end{aligned}
+\end{equation}
+其中$\bm{m}_i^{(t)}$为后验均值，$\bm{V}^{(t)}$为协方差，$\bm{Q}_i^{(t)}$为二阶矩。汇总这些后验矩，定义
+\[
+\bm{A}^{(t)}=\frac1n\sum_i\bm{y}_i(\bm{m}_i^{(t)})^\top,
+\qquad
+\bm{B}^{(t)}=\frac1n\sum_i\bm{Q}_i^{(t)}.
+\]
+M步利用这些统计量更新载荷与噪声：
+\begin{equation}
+\label{eq:dim-fa-mstep}
+\begin{aligned}
+\bm{W}^{(t+1)}&=\bm{A}^{(t)}(\bm{B}^{(t)})^{-1},\\
+\bm{\Psi}^{(t+1)}
+&=\operatorname{diag}\left[
+\bm{S}-\bm{W}^{(t+1)}(\bm{A}^{(t)})^\top
+\right].
+\end{aligned}
+\end{equation}
+这里$\operatorname{diag}$只保留对角元。将载荷的正规方程代入期望残差协方差，即得噪声更新，实际只需$\bm{S}$的对角。不能省略二阶矩中的$\bm{V}^{(t)}$，否则低估噪声。PPCA也可用EM，将各维期望残差方差取平均即可。
+
+用PPCA载荷和正的对角残差初始化，重复两步；对角逆用除法，其余逆用线性求解。可预设$\psi_j\geq\varepsilon>0$，将更新截在下界，但须说明这是受约束估计。停止时检查相对残差
+\begin{equation}
+\label{eq:dim-fa-stopping}
+\begin{aligned}
+r_\ell^{(t)}
+&=\frac{|\ell^{(t+1)}-\ell^{(t)}|}{1+|\ell^{(t)}|},\\
+r_C^{(t)}
+&=\frac{\lVert\bm{C}^{(t+1)}-\bm{C}^{(t)}\rVert_{\mathrm{F}}}
+{1+\lVert\bm{C}^{(t)}\rVert_{\mathrm{F}}}.
+\end{aligned}
+\end{equation}
+两者连续若干步低于阈值时停止，并设最大迭代数。协方差残差不受载荷旋转影响；达到迭代上限不等于收敛。
+
+\subsubsection{理论分析}
+\label{sec:dim-ppca-analysis}
+
+\paragraph{收敛性分析}
+
+PPCA谱解直接给出条件下的全局最优。FA的精确EM提高当前似然的相切下界，故似然不下降，有上界时其数值收敛。参数收敛到驻点还需连续性、迭代有界等条件，不保证全局最优。弱因子或近零独特方差可能使EM很慢。
+
+\paragraph{泛化分析}
+
+先在消除载荷旋转后的局部可识别坐标$\bm{\theta}$中讨论信息量。令$\bm{s}_{\bm{\theta}}(\bm{x})=\nabla_{\bm{\theta}}\log p_{\bm{\theta}}(\bm{x})$。若密度的支撑集不随参数变化（更一般地，相应边界项为零），$p_{\bm{\theta}}$在真参数邻域内二阶可微，并有可积包络控制一、二阶导数，使微分与积分交换合法，则得分期望为零，且
+\[
+  \bm{I}(\bm{\theta})
+  =\mathbb{E}_{\bm{\theta}}\!\left[
+      \bm{s}_{\bm{\theta}}(\bm{X})
+      \bm{s}_{\bm{\theta}}(\bm{X})^{\top}
+    \right]
+  =-\mathbb{E}_{\bm{\theta}}\!\left[
+      \nabla_{\bm{\theta}}^2\log p_{\bm{\theta}}(\bm{X})
+    \right].
+\]
+这才是得分外积与期望负Hessian相等的Fisher信息恒等式，而不是对所有参数化模型都无条件成立的定义\scite{vanderVaart1998asymptotic}
+
+极大似然估计的一致性还要求真参数是总体期望对数似然的唯一最大点，并有一致大数律及紧性或强制性条件把样本最大点限制在其邻域。渐近正态性则进一步要求真参数是内点，模型在该点二次均值可微，Fisher信息非奇异，局部对数似然满足平方可积的Lipschitz控制，并且所选极大似然估计一致。在样本独立同分布、模型正确且$d,k$固定的这些条件下，
+\[
+  \sqrt{n}(\widehat{\bm{\theta}}_n-\bm{\theta}_0)
+  \xrightarrow{\mathrm d}
+  \mathcal{N}\!\left(
+    \bm{0},\bm{I}(\bm{\theta}_0)^{-1}
+  \right).
+\]
+这些条件及其标准形式可参见van der Vaart关于M估计和光滑参数模型的论述\scite{vanderVaart1998asymptotic}原始载荷因旋转不识别而不趋于唯一矩阵。FA还须区分低秩信号与对角噪声；参数数目不超过$d(d+1)/2$只是必要条件，须另查约束后的局部一一对应性与导数满秩。秩退化、零噪声和维数随样本增长均需另作分析。
+
+训练似然偏向较大的$k$，需要惩罚复杂度。常规模型可比较赤池信息准则AIC和贝叶斯信息准则BIC：
+\[
+\mathrm{AIC}=-2\hat{\ell}+2p,\qquad
+\mathrm{BIC}=-2\hat{\ell}+p\log n,
+\]
+其中$p$包括均值和可识别协方差参数，准则越小越好。奇异点不能直接套用该惩罚，可考虑适当的证据近似或留出验证。普通PCA也可交叉验证重构误差。隐变量维数$k$取决于噪声假设和任务，不自动等于内在维数$m$。
+
+若样本$i$只观测到坐标集$O_i$，线性模型直接使用子向量的边际分布
+\begin{equation}
+\label{eq:dim-linear-missing}
+\bm{x}_{i,O_i}\sim
+\mathcal{N}(\bm{\mu}_{O_i},\bm{C}_{O_i,O_i}).
+\end{equation}
+训练目标是各样本边际对数似然之和。E步用$\bm{W}_{O_i,:}$和$\bm{\Psi}_{O_i,O_i}$求后验，后验协方差因观测模式不同而变化。M步按各维实际观测更新，或将缺失值也作为隐变量计算一、二阶矩，不能照搬完整数据更新。补全时用高斯条件均值预测缺失属性，保留条件协方差或条件采样以传播不确定性；只填均值再当成真实观测会低估误差。
+
+忽略缺失机制通常要求\term{随机缺失}（missing at random, MAR）：给定已观测值后，缺失概率不再依赖未观测值，且缺失机制参数与数据模型参数相互独立取值。若未记录指标越严重越容易缺失，观测边际似然未必消除偏差，需另建缺失机制模型\scite{rubin1976missing}
+
+PCA也有补全扩展，概率模型的特点是统一补全、表示和似然。多个局部线性结构还能组合为混合PPCA，须另查识别与退化问题。
+
+\subsubsection{小结}
+\label{sec:dim-ppca-summary}
+
+PPCA连接主子空间与极大似然，FA允许异质噪声，适用于心理测量、经济计量或市场调研中的共同因子建模。两者都提供条件于参数的后验和生成过程，但PPCA坐标不等于原样PCA得分，FA方向也不必是主成分。
+
+\subsection{高斯过程隐变量模型（GPLVM）}
+\label{sec:dim-gplvm}
+
+少量状态控制的姿态或运动也可能形成弯曲结构。\term{高斯过程隐变量模型}（Gaussian process latent variable model, GPLVM）给低维到高维的映射设置函数先验，再从观测寻找未知输入坐标。第\ref{sec:regression-gpr}节的高斯过程回归从已观测输入预测响应，GPLVM则把这些输入坐标也作为未知隐变量；两者复用核协方差和边际似然计算，但任务方向不同。
+
+Lawrence在2003年提出GPLVM，并于2005年系统阐述了这一模型\scite{lawrence2005gplvm}这项工作从概率PCA的对偶表述出发：改变被积分和被估计的对象，将线性映射的载荷积分掉，转而估计隐坐标。随后用高斯过程描述这一映射，便能引入非线性函数先验。这一推导路线也解释了为什么基本GPLVM虽然考虑了映射的不确定性，隐坐标本身仍可以是点估计。
+
+\subsubsection{模型结构}
+\label{sec:dim-gplvm-structure}
+
+\term{高斯过程}（Gaussian process, GP）规定任意有限组输入处的函数值共同服从高斯分布，协方差核控制相关性和变化尺度。本小节的$\bm{X}$已按训练均值中心化，生成时加回均值；$\bm{Z}\in\mathbb{R}^{n\times k}$按行存储隐坐标。模型为
+\begin{equation}
+\label{eq:dim-gplvm-generative}
+\begin{aligned}
+f_j&\sim\mathcal{GP}(0,\kappa_{\bm{\theta}}),
+\qquad j=1,\ldots,d,\\
+x_{i,j}&=f_j(\bm{z}_i)+\epsilon_{i,j},
+\qquad \epsilon_{i,j}\sim\mathcal{N}(0,\sigma^2).
+\end{aligned}
+\end{equation}
+各函数独立、共享核参数$\bm{\theta}$；噪声彼此独立且独立于函数。同一函数跨样本的值通过核相关。非参数性指不预先限制为固定有限组基函数，并非没有待学习参数。
+
+固定$\bm{Z}$，把函数值积分掉。令$\bm{K}_{i,h}=\kappa_{\bm{\theta}}(\bm{z}_i,\bm{z}_h)$，$\bm{C}_Z=\bm{K}+\sigma^2\bm{I}_n$，便有
+\begin{equation}
+\label{eq:dim-gplvm-likelihood}
+\begin{aligned}
+p(\bm{X}\mid\bm{Z})
+&=\prod_{j=1}^d
+\mathcal{N}(\bm{X}_{:,j};\bm{0},\bm{C}_Z),\\
+\ell&=-\frac{nd}{2}\log(2\pi)
+-\frac{d}{2}\log|\bm{C}_Z|\\
+&\quad-\frac{1}{2}
+\operatorname{tr}(\bm{C}_Z^{-1}\bm{X}\bm{X}^\top).
+\end{aligned}
+\end{equation}
+这里的协方差跨样本，是$n$阶而非PPCA的$d$阶矩阵。基本GPLVM优化$\bm{Z},\bm{\theta},\sigma^2$，坐标仍是点估计。增加独立标准高斯坐标先验后，目标多出$-\lVert\bm{Z}\rVert_{\mathrm{F}}^2/2$；最大后验估计仍不保留坐标分布。
+
+线性核$\kappa(\bm{z},\bm{z}')=\bm{z}^\top\bm{z}'$等价于标准高斯载荷的线性函数先验。积分载荷、优化坐标，得到$\bm{C}_Z=\bm{Z}\bm{Z}^\top+\sigma^2\bm{I}_n$，称为\term{对偶PPCA}。它与PPCA交换被积分和被优化的对象，不是相同的联合概率模型。
+
+对$\bm{G}=\bm{X}\bm{X}^\top/d$取谱，记有序特征值为$\rho_i$、前$k$个特征向量为$\bm{V}_k$，$\bm{D}_k=\operatorname{diag}(\rho_1,\ldots,\rho_k)$。无坐标先验惩罚时，若$k<n$、$\eta=(n-k)^{-1}\sum_{i>k}\rho_i>0$且$\rho_k>\eta$，同一谱证明给出
+\begin{equation}
+\label{eq:dim-gplvm-dual}
+\begin{aligned}
+\hat{\sigma}_{\mathrm{dual}}^2&=\eta,\\
+\hat{\bm{Z}}&=\bm{V}_k(\bm{D}_k-\eta\bm{I}_k)^{1/2}\bm{R}.
+\end{aligned}
+\end{equation}
+归一化是除以$d$，不是PPCA中的$n$。左右奇异向量使两者联系到PCA，但缩放、噪声估计和条件分布不同；加入坐标先验后此谱解不再直接成立。
+
+平方指数或Matérn核允许非线性生成，也限制其平滑程度，不保证恢复任意映射。核PCA的核在已知观测上计算，这里的核在未知隐坐标上计算，两者并非同一种核化。
+
+\subsubsection{参数学习}
+\label{sec:dim-gplvm-learning}
+
+目标对$\bm{Z}$非凸，可用PCA初始化，再用L-BFGS、共轭梯度等最小化负对数似然，多次初始化并留出验证。某些核还存在平移、旋转或坐标尺度与长度尺度的补偿对称性，不能把一次优化结果当作唯一全局解。
+
+对行列式和逆矩阵求微分，得到协方差梯度及链式法则：
+\begin{equation}
+\label{eq:dim-gplvm-gradient}
+\begin{aligned}
+\bm{H}&:=\frac{\partial\ell}{\partial\bm{C}_Z}\\
+&=\frac12\bm{C}_Z^{-1}\bm{X}\bm{X}^\top\bm{C}_Z^{-1}
+-\frac d2\bm{C}_Z^{-1},\\
+\frac{\partial\ell}{\partial a}
+&=\operatorname{tr}\left(
+\bm{H}^\top\frac{\partial\bm{C}_Z}{\partial a}\right).
+\end{aligned}
+\end{equation}
+标量$a$可为坐标、核超参数或噪声方差，后一式把似然梯度传到这些未知量。
+
+带自动相关性确定（automatic relevance determination, ARD）的核为每个隐坐标学习独立长度尺度。记逆长度尺度平方为$\alpha_r$，它控制该维差异对函数相关性的影响。坐标影响核矩阵对应的行和列，链式求导时两处均需计入；正参数以对数参数化优化。
+
+实现不显式求逆，而做Cholesky分解$\bm{C}_Z=\bm{L}\bm{L}^\top$，以$2\sum_i\log L_{i,i}$算对数行列式，通过三角求解计算逆矩阵作用。必要的数值抖动与统计噪声应分开记录。
+
+稠密分解需$O(n^3)$时间、$O(n^2)$存储，可承受规模依赖硬件与迭代数。稀疏GPLVM用$b\ll n$个\term{诱导点}，以少量可学习位置的函数值概括函数信息，核心矩阵成本降为$O(nb^2+b^3)$，另有输出与核计算成本及近似误差\scite{lawrence2007sparse}
+
+给定隐坐标，GP条件分布提供生成观测的均值和方差；后者包含函数不确定性及观测噪声，不是隐坐标的位置方差。给定新观测要求编码时，输入坐标未知，必须反求
+\begin{equation}
+\label{eq:dim-gplvm-encoding}
+\hat{\bm{z}}_*=\argmax_{\bm{z}}
+\left\{\log p(\bm{x}_*\mid\bm{z},\bm{X},\bm{Z})
++\log p(\bm{z})\right\},
+\end{equation}
+无先验版本去掉先验项。反问题可能多解，需初始化或进一步近似坐标后验；GP正向预测不是直接编码器，额外的反向映射属于扩展。
+
+若输出$j$只在索引集$I_j$处被观测，使用$\mathcal{N}(\bm{X}_{I_j,j};\bm{0},(\bm{C}_Z)_{I_j,I_j})$。不同缺失模式不能共用一次完整分解；给定坐标可预测缺失输出，但仍未传播坐标不确定性，且需前述缺失可忽略条件。
+
+Titsias与Lawrence于2010年提出\term{贝叶斯GPLVM}\scite{titsias2010gplvm}这一方法用变分分布近似坐标后验，优化不超过对数边际似然的\term{证据下界}（evidence lower bound, ELBO）：
+\begin{equation}
+\label{eq:dim-gplvm-elbo}
+\begin{aligned}
+q(\bm{Z})&=\prod_i\mathcal{N}(\bm{z}_i;\bm{\nu}_i,\bm{S}_i),\\
+\log p(\bm{X})&\geq\mathcal{L},\\
+\mathcal{L}
+&=\mathbb{E}_{q(\bm{Z})}[\log p(\bm{X}\mid\bm{Z})]\\
+&\quad-\operatorname{KL}(q(\bm{Z})\Vert p(\bm{Z})).
+\end{aligned}
+\end{equation}
+均值$\bm{\nu}_i$和正定协方差$\bm{S}_i$是变分参数，KL为Kullback--Leibler散度。将边际似然写成$q$下的期望，再用Jensen不等式将对数移入期望便得此式：第一项拟合数据，第二项惩罚偏离先验。等价地，
+\[
+  \log p(\bm{X})-\mathcal{L}
+  =\operatorname{KL}\bigl(q(\bm{Z})\Vert p(\bm{Z}\mid\bm{X})\bigr)
+  \geq0.
+\]
+因此“下界”指$\mathcal{L}$不超过对数边际似然；只有近似后验$q(\bm{Z})$与真实后验一致时，这个差距才为零。
+
+第一项涉及随机核矩阵的逆与行列式，仍难直接积分。原方法引入诱导函数值进一步下界化，使高斯变分分布与适当核的所需期望可解析计算。诱导点位置通常作为变分参数优化，核超参数与噪声也通常点估计，并非所有未知量都做了全贝叶斯积分。
+
+ARD权重$\alpha_r$小时，核不敏感于该维差异。这是相关性学习，有助于筛选有效方向，但依赖先验、尺度、噪声与优化，不保证恢复真维数。变分正则也不消除所有过拟合，应检验留出预测与不确定性校准。
+
+\subsubsection{小结}
+\label{sec:dim-gplvm-summary}
+
+GPLVM从观测反求函数输入，基本版本给出坐标点估计和条件函数预测，贝叶斯版本近似坐标后验。人体姿态、机器人运动、蛋白质构象还可能需要领域先验；核成本、局部最优和反向编码限制其使用。
+
+\subsection{模型对比与总结}
+\label{sec:dim-probabilistic-comparison}
+
+表~\ref{tab:dim-probabilistic-comparison}从生成、学习与使用比较三种模型。噪声结构、映射形式和是否保留隐变量后验是不同的选择，不能相互替代。
+
+\begin{table*}[htbp]
+\centering
+\small
+\begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{20mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+\toprule
+比较方面 & PPCA & FA & GPLVM \\
+\midrule
+生成映射 & 线性，共享各向同性噪声 & 线性，各观测坐标独立噪声 & GP函数先验；非线性取决于核，基本噪声为同方差高斯 \\
+学习方法 & 正噪声非退化情形有谱解；也可EM & 通常用EM或其他数值优化 & 优化坐标和超参数；贝叶斯版本优化变分下界 \\
+隐变量不确定性 & 给定参数时有精确高斯后验 & 给定参数时有精确高斯后验 & 基本版本为坐标点估计；需后验近似才能量化位置不确定性 \\
+新观测编码 & 一次线性变换 & 一次线性变换 & 通常需反求新坐标，GP正向预测本身不是编码 \\
+缺失观测 & 观测子协方差边际化 & 观测子协方差边际化 & 按输出的观测索引选取核子矩阵 \\
+主要用途 & 线性压缩、去噪、受约束协方差估计 & 异质测量误差、共同因子建模 & 非线性生成关系、给定隐变量的输出预测 \\
+\bottomrule
+\end{tabularx}
+\caption{概率降维模型比较。后验以固定参数为条件；GPLVM的函数预测方差不是隐坐标方差。缺失值处理均要求正确边际化及可忽略的缺失机制。}
+\label{tab:dim-probabilistic-comparison}
+\end{table*}
+
+完整稠密数据下，PPCA形成协方差并完整分解需$O(nd^2+d^3)$，截断SVD或EM会改变成本。FA利用对角噪声，每步EM约需$O(ndk+nk^2+dk^2+k^3)$，总成本再乘迭代数$T$。稠密GPLVM每步通常需$O(n^3+n^2d+n^2k)$。比较必须固定求解器及$n,d,k$，不能只看模型名称。
+
+多个局部线性结构可用\term{混合PPCA}（mixture of PPCA）建模：以非负且和为$1$的权重混合多个PPCA密度\scite{tipping1999mixture}它与第\ref{sec:clustering-gmm}节的高斯混合模型都引入隐成分变量和责任度，但每个成分在这里还包含低秩信号与噪声结构。EM同时学习责任度和局部载荷，结合软聚类与局部降维；局部坐标却不自动构成连续的全局嵌入，还须控制分量坍缩与噪声趋零。
+
+为控制维数，\term{贝叶斯PPCA}给载荷列加分层先验，如$\bm{W}_{:,r}\mid\beta_r\sim\mathcal{N}(\bm{0},\beta_r^{-1}\bm{I}_d)$。大$\beta_r$压缩对应载荷，以ARD选择有效复杂度；它不保证找到真维数，算法也可采用证据最大化而非全参数积分\scite{bishop1999bayesian}
+
+计数或二值数据需要合适的观测分布。\term{指数族PCA}对自然参数施加低秩结构，用条件似然替换平方误差。泊松、伯努利分别对应计数与二值；正连续数据可考虑满足参数域约束的Gamma观测，而非正态--Gamma共轭先验。Collins、Dasgupta与Schapire的推广并不自动包含隐变量先验，仍须区分低秩分解与完整生成模型\scite{collins2001exponential}
+
+复杂生成关系还可用\term{变分自编码器}（variational autoencoder, VAE）：网络参数化观测条件分布，并由共享编码器输出近似后验，这称为摊销变分推断。高斯后验以“均值加标准差逐元素乘标准高斯噪声”重参数化，使随机采样可用于下界梯度估计。VAE因此不只是把GP换成神经网络，还改变推断与训练方法；第\ref{sec:neural-learned-representations}节提供神经表示学习入口，网络结构和训练由神经网络模型部分展开\scite{kingma2013}
+
+概率降维以生成假设解释误差、支持推断和缺失值处理，收益取决于假设是否合适、保留了哪些不确定性。线性结构可从PPCA或FA入手，非线性函数先验可考虑GPLVM；数据机制、预测目标和计算预算共同决定选择。
+
+\section{模型选择与评价}
+\label{sec:dim-evaluation}
+
+\subsection{方法比较}
+
+按用途选择候选的起点见表\ref{tab:dim-selection}，再用表\ref{tab:dim-navigation}核对映射、假设与样本外机制。
+
+\begin{table*}[!ht]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    分析需求 & 可比较的方法 & 应检查的关键条件\\
+    \midrule
+    压缩、去相关与重构 & PCA、稀疏PCA & 尺度、解释方差、载荷稳定性\\
+    分离低秩背景与污染 & RPCA及稳定变体 & 污染的稀疏形式、可识别性\\
+    非负成分的加性解释 & NMF & 非负性含义、损失与成分稳定性\\
+    少量原子的灵活组合 & 稀疏编码、字典学习 & 活跃原子数、推断成本\\
+    流式与超高维预处理 & 随机投影 & 有限点集的距离失真与输出维数\\
+    两个配对视图的共有信息 & CCA及正则化变体 & 配对质量、留出相关性\\
+    线性混合信号的分离 & ICA & 源独立性、源数与噪声\\
+    响应或类别相关的表示 & PLS、LDA、SIR & 监督信息仅在训练折使用，下游风险相对无监督与不降维基线\\
+    只有距离或序数差异 & 经典、度量或非度量MDS & 距离可嵌入性、应力目标\\
+    弯曲结构与几何分析 & 核PCA、Isomap、LLE、拉普拉斯特征映射 & 核、邻域、连通性与几何失真\\
+    连通结构的多尺度分析 & 扩散映射 & 密度归一化、扩散时间与谱截断\\
+    探索高维邻域结构 & t-SNE、UMAP & 邻域参数、初始化与重复运行\\
+    缺失观测、噪声与生成建模 & PPCA、FA、GPLVM & 观测模型、缺失机制与后验近似\\
+    \bottomrule
+  \end{tabularx}
+  \caption{按保留目标选择降维方法的起点。结果还应结合重构、邻域保持、样本外任务或预测分布评价；不同目标之间通常存在取舍。}
+  \label{tab:dim-selection}
+\end{table*}
+
+表\ref{tab:dim-navigation}比较各方法保留什么、怎样处理新样本，以及依赖哪些条件。核PCA归在线性关系的特征空间扩展中，MDS单列距离方法；几何展开与可视化布局都归入邻域方法，但保留对象仍须分别比较。
+
+\begin{table*}[!ht]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{21mm}*{5}{>{\RaggedRight\arraybackslash}X}@{}}
+    \toprule
+    代表方法 & 映射形式 & 保留对象 & 数据假设 & 样本外机制 & 下游用途 \\
+    \midrule
+    PCA、CCA、ICA；随机投影
+      & 前三者从数据学习线性投影或解混；随机投影与数据独立抽取
+      & 方差、跨视图相关、独立源或欧氏距离
+      & 前三者分别假设低秩线性结构、配对视图或独立混合；随机投影无数据分布假设，JL保证只覆盖映射抽取前固定的有限点集
+      & 共享矩阵直接变换
+      & 压缩、去噪、多视图对齐、信号分离或高维预处理 \\
+    NMF、稀疏编码
+      & 线性生成字典；逐样本约束推断
+      & 非负加性重构或稀疏支持
+      & 非负观测或少量活跃原子
+      & 固定字典后重新求系数
+      & 部件解释、去噪与信号表示 \\
+    经典MDS；核PCA
+      & MDS由差异矩阵恢复谱坐标；核PCA由合法正定核定义特征空间谱坐标
+      & MDS保留双中心内积及诱导距离；核PCA保留特征空间方差
+      & MDS要求差异同尺度，欧氏差异对应半正定Gram矩阵；核PCA另要求核诱导几何适合任务
+      & MDS扩展到训练点的差异；核PCA按训练中心化规则作核投影
+      & 关系数据表示、非线性预处理与几何诊断 \\
+    Isomap、LLE、拉普拉斯特征映射、扩散映射
+      & 由训练图求非参数坐标
+      & 测地距离、局部重构、图平滑或扩散距离
+      & 可信邻域、充分采样及相应流形或图结构
+      & 接入训练图后插值、距离扩展或谱延拓
+      & 几何分析、多尺度连通性与后续建模 \\
+    SNE、t-SNE、UMAP
+      & 由邻域关系优化训练布局
+      & 条件邻居概率、点对概率或模糊边权
+      & 输入距离能表达局部相似性
+      & 原始形式无共享函数；可作参考图变换或另学参数映射
+      & 低维探索、局部结构展示与假设生成 \\
+    PPCA、FA、GPLVM
+      & 隐变量到观测的线性或核生成映射
+      & 低秩协方差、异质噪声或非线性生成关系
+      & 指定观测分布、噪声结构与核先验
+      & 后验线性编码，或对新观测反求隐坐标
+      & 去噪、缺失值处理、生成建模与不确定性推断 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{降维方法的属性导航。各行给出本章标准形式的主要属性，而非互斥类别；具体变体可以改变映射、假设和样本外机制。}
+  \label{tab:dim-navigation}
+\end{table*}
+
+随机投影一行中的“固定有限点集”限定的是随机映射的保证范围，而不是对点集来源施加概率分布假设：点集可以任意，但必须在抽取映射前固定。核PCA的核正定性则是核能否表示特征内积的合法性条件，不是任务几何假设；即使核合法，仍须用验证数据判断它诱导的相似关系是否适合当前用途。
+
+\subsection{评价与选择}
+
+高维分析的困难也不只是无法画图。\term{维数灾难}（curse of dimensionality）指维数增长使空间覆盖与统计估计变得困难的一组现象。例如，在每个坐标上把单位区间分为十段，$d$维空间就有$10^d$个小区域；有限样本很快不足以覆盖这些区域。在一些具有许多弱相关分量的分布中，距离还会集中，使最近与最远样本的相对差异变小。这些现象依赖分布和度量，不能理解为所有高维数据中的距离都没有意义。降维只有在冗余、低维结构或任务相关信息确实存在时，才有机会缓解它们。
+
+内在维数$m$描述给定尺度、噪声和结构假设下的局部自由度；表示维数$k$是根据用途选择的输出规模。可视化另用$k_{\mathrm{vis}}\in\{2,3\}$，它只反映显示限制，不能证明$m$也等于$2$或$3$，也不能代替下游用途所需的$k$。
+
+降维是否成功必须按用途评价。数据划分先于指标选择：所有由数据估计的均值、尺度、特征选择、投影、字典、核参数和邻域图都只在训练折内拟合；验证数据用于选择方法、表示维数$k$和其他超参数；选择规则冻结后，最终测试数据才用于报告样本外结果。没有共享样本外机制的训练布局只能支持固定样本上的探索，若要声称可用于新样本，就必须预先规定参考图扩展、插值或参数映射。表\ref{tab:dim-evaluation-protocol}把重构、距离、邻域、可视化、下游任务、稳定性和参数敏感性分开，并要求与同一$k$和同一预算下的简单基线比较。
+
+\begin{table*}[!htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{23mm}>{\RaggedRight\arraybackslash}p{58mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    证据 & 测量与数据用法 & 基线或对照 & 不能单独替代 \\
+    \midrule
+    重构与压缩
+      & 在验证或测试样本上报告与观测类型匹配的重构损失，并同时计算表示、模型或字典存储及编码、解码成本
+      & 均值重构、同一$k$的PCA，以及不压缩的原始输入
+      & 距离、判别信息或语义解释 \\
+    距离保持
+      & 对预先声明的点对报告相对失真、应力或秩相关；样本外主张须在训练映射未见过的数据上计算
+      & 同一$k$的PCA或随机投影及原始距离
+      & 邻域保持、可视化可信或下游风险 \\
+    邻域保持
+      & 在固定输入度量与邻居数下报告近邻重合率、可信度或连续性，并检查不同局部尺度
+      & 原始空间邻域、同一$k$的PCA或随机布局
+      & 全局距离、真实簇数或因果关系 \\
+    可视化
+      & 固定$k_{\mathrm{vis}}=2$或$3$，结合距离或邻域诊断、多次初始化和领域标注说明图上哪些关系可读
+      & 二维或三维PCA、随机标签或与任务匹配的简单投影
+      & 高维结构存在、簇语义正确或最佳预测表示 \\
+    下游任务
+      & 把降维器放入每个训练折，与后续回归、分类或聚类共同选择，在独立测试集报告相应风险或效用
+      & 同一学习器使用原始表示、简单PCA和任务允许的特征选择
+      & 几何保真、生成假设正确或解释可靠 \\
+    稳定性
+      & 改变样本、初始化和随机种子；对齐坐标后比较子空间，或直接比较距离、邻域和下游结论等不变量
+      & 算法自身多次运行及确定性基线
+      & 统计正确性；稳定的偏差仍可能重复出现 \\
+    参数敏感性
+      & 在预先给定范围内改变$k$、邻居数、核带宽、困惑度或正则强度，报告结论在哪些范围保持
+      & 默认参数、简单尺度规则和等预算搜索
+      & 独立测试；用测试集挑参数会使其失去最终证据资格 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{降维的统一评价协议。各类证据回答不同问题；训练目标低、二维图清晰或单次下游得分高，都不能替代其余证据。}
+  \label{tab:dim-evaluation-protocol}
+\end{table*}
+
+选择维数时，可以按同一数据协议依次缩小候选范围：
+\begin{enumerate}
+  \item 先声明下游用途和保留对象，并据此确定重构、距离、邻域、可视化或任务风险中的主要证据。
+  \item 在训练折内完成尺度与表示拟合，再用局部谱、邻域尺度、重构曲线或内在维数估计形成$m$与候选$k$的证据；这些估计依赖尺度和假设，不作为真值标签。
+  \item 在验证数据上连同核、邻居数和正则强度选择$k$。若交付二维或三维图，则另设$k_{\mathrm{vis}}$，并用较高维候选和表\ref{tab:dim-evaluation-protocol}中的诊断检查显示造成的额外失真。
+  \item 冻结预处理、映射、$k$、样本外机制和评价规则，最后只在独立测试数据上报告结果；看过最终测试结果后再改维数，就需要新的测试证据。
+\end{enumerate}
+
+实际流程可以先用PCA或随机投影压缩，再作非线性嵌入，但应验证前一步没有丢掉所需结构，“保留50维”只是经验起点。用于第\ref{chap:regression}章或第\ref{chap:classification}章的预测时，降维器、维数和后续模型必须在同一训练流程内选择，并在独立数据上比较风险；用于第\ref{chap:clustering}章的分组时，还须在原特征或经过验证的表示空间中检查稳定性、外部证据与下游用途，不能仅凭二维图判断。二维展示另用$k_{\mathrm{vis}}$，不应迫使部署表示也取二维。
+
+\Needspace{18\baselineskip}
+\section{本章小结}
+\label{sec:dim-summary}
+
+降维要回答“用更少的坐标保留什么”。线性关系与核扩展分别在原空间或特征空间提取全局变化，距离方法恢复对象关系，邻域方法保留局部几何或布局，概率方法解释隐变量生成。方差、距离、邻域、重构和预测收益是不同目标，不能只凭维数变小判断成功。
+
+内在维数$m$、表示维数$k$与可视化维数$k_{\mathrm{vis}}$也不能互相替代。方法选择还取决于新样本怎样编码、哪些未知量保留不确定性，以及存储和计算成本。二维图可以提出假设，无法独立证明高维簇结构或最佳预测表示。
+
+用于回归和分类时，降维须与预测模型在同一训练与验证流程中选择，并用独立数据评价风险；用于聚类时，则要同时检验表示所改变的距离与群组证据。只有与用途匹配、由相应证据支持的结构，才是低维表示确实保留的信息。

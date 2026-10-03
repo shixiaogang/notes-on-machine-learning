@@ -1,0 +1,319 @@
+\section{基于邻域的分类}
+\label{sec:classification-instances}
+
+第\ref{sec:classic-overview-neighborhood}节的近邻计算在本节用于类别判断。与第\ref{sec:regression-knn}节平均响应不同，$k$-NN分类聚合邻居的类别标签。以下保留实例，比较多数投票、距离加权与原型压缩，并分析局部类别噪声怎样影响风险；表示、尺度和检索仍按简介中的邻域约定处理。
+
+\subsection{$k$近邻分类（$k$-NN）}
+\label{sec:classification-knn}
+
+近邻分类的统计目标是学习类别决策，而不只是复现训练标签。Cover与Hart在1967年的论文中回顾了Fix与Hodges始于1951年报告的近邻判别研究：在所研究的条件下，让近邻数随样本量增长、同时让其占比趋于零，可以获得一致性。Cover与Hart则分析了始终只取一个最近邻时，极限错误率与贝叶斯风险之间的界。前者用越来越多的邻居平均标签噪声，后者刻画单个邻居仍保留多少判别信息；两者讨论的是不同的渐近设定，都不是任意有限数据集上的最优性保证\scite{coverhart1967}
+
+\subsubsection{模型结构}
+\label{sec:classification-knn-structure}
+
+给定训练集$D_n=\{(\bm{x}_i,y_i)\}_{i=1}^n$、距离$\rho$以及$1\leq k\leq n$，用$N_k(\bm{x})\subseteq\{1,\ldots,n\}$表示查询$\bm{x}$的$k$个最近邻索引。预测规则为
+\begin{equation}
+  \hat h_{n,k}(\bm{x})
+  =\argmax_{c\in\{1,\ldots,C\}}
+  \sum_{i\in N_k(\bm{x})}\mathbb{1}\{y_i=c\}.
+  \label{eq:classification-knn-vote}
+\end{equation}
+距离相同时，按预先约定、独立于标签的顺序选取邻居；类别票数并列时也使用固定规则。即使$k$是奇数，多分类仍可能出现票数并列，不能省略这一约定。
+
+式\eqref{eq:classification-knn-vote}也可以理解为估计查询附近的类别比例：
+\begin{equation}
+  \hat\eta_{n,c}(\bm{x})
+  =\frac{1}{k}\sum_{i\in N_k(\bm{x})}\mathbb{1}\{y_i=c\},
+  \qquad
+  \hat h_{n,k}(\bm{x})=\argmax_c\hat\eta_{n,c}(\bm{x}).
+  \label{eq:classification-knn-posterior}
+\end{equation}
+比例估计解释了投票为什么可能有效：若邻域内的条件类别分布变化不大，邻居标签就能提供关于当前输入的统计证据。有限样本下，这种局部比例仍受邻域大小和噪声影响，不能仅因总和为1就认为已经得到准确概率。
+
+图~\ref{fig:classification-knn-neighborhood}固定训练点和查询，只改变参与投票的近邻数。取查询$\bm{x}=(0,0)$，类1的三个样本为$\bm{x}_1=(0.6,0.8)$、$\bm{x}_4=(-0.5,-2)$、$\bm{x}_6=(2.4,1.8)$；类2的四个样本为$\bm{x}_2=(-1,1)$、$\bm{x}_3=(1.5,-0.5)$、$\bm{x}_5=(-2,-1)$、$\bm{x}_7=(-2.5,2)$。按欧氏距离计算，七个样本到查询的平方距离依编号为$1,2,2.5,4.25,5,9,10.25$，因此编号也表示由近到远的次序。
+
+$k=1$时只有样本1投票，查询被判为类1；$k=5$时样本1至5投票，其中类1有两票、类2有三票，预测改为类2。两幅图中的圆分别经过第1和第5个邻居，半径为$1$和$\sqrt5$。这里改变的是当前查询使用的证据范围，圆并不是分类器在整个平面上的决策边界；由于没有给定查询的真实标签，也不能据此判断哪一个$k$更准确。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/classification-knn-neighborhood}
+  \caption{同一查询下的近邻范围与投票变化。教学构造取$n=7$、$d=2$、无量纲坐标和欧氏距离，查询为$\bm{x}=(0,0)$；两图的样本、编号及坐标尺度完全相同，具体坐标见正文。蓝色圆点表示类1，赭色方点表示类2，青色菱形表示查询，青色虚线圆表示包含边界的近邻范围。左图$k=1$、半径$1$，类1与类2票数为$1:0$；右图$k=5$、半径$\sqrt5$，票数为$2:3$。各邻居等权投票，距离和票数均无并列；点的位置、标签与参数均为人为设定，不代表真实数据实验。}
+  \label{fig:classification-knn-neighborhood}
+\end{figure}
+
+\subsubsection{参数学习}
+\label{sec:classification-knn-learning}
+
+基本$k$-NN分类没有固定维数参数的优化过程，但需要确定输入表示、距离、近邻数及检索方式。“非参数化”是指预测关系不局限于一个固定有限维参数族；它仍有超参数，预处理和模型选择也属于学习。
+
+距离决定哪些样本会参与投票。对数值特征，欧氏距离$\rho(\bm{x},\bm{z})=\lVert\bm{x}-\bm{z}\rVert_2$容易计算，却会放大数值范围较大的坐标。收入和年龄共同作为特征时，直接使用原始单位会让收入差异主导距离。标准化、按业务意义设定尺度或学习特征权重都可改变这一点；不必机械地把所有特征处理成同等重要。标准化参数只能从训练集估计，交叉验证时应在各训练折内重新拟合，避免验证信息提前进入距离。
+
+类别型特征可采用\term{汉明距离}（Hamming distance），按不同取值的坐标数比较，而不能把任意类别编码的数字差当成有意义的远近。文本的TF--IDF等稀疏向量常比较余弦相似度，强调方向而非长度；$1$减余弦相似度一般不满足三角不等式，不能直接套用所有度量空间结论。对非零向量作单位长度归一化后，按余弦相似度排序与按欧氏距离排序等价，此时可用欧氏空间中的解释。
+
+若特征之间相关，可以考虑\term{马氏距离}（Mahalanobis distance），用协方差调整方向上的尺度：
+\begin{equation}
+  \rho_{\mathrm{M}}(\bm{x},\bm{z})^2
+  =(\bm{x}-\bm{z})^\top
+   \bm{\Sigma}^{-1}(\bm{x}-\bm{z}),
+  \label{eq:classification-mahalanobis}
+\end{equation}
+其中$\bm{\Sigma}\in\mathbb{R}^{d\times d}$须正定。样本不足时协方差估计可能奇异，需要正则化；整体协方差也不一定符合分类所需的相似性。\term{度量学习}（metric learning）进一步利用标签选择距离，\term{大间隔最近邻}（large margin nearest neighbor, LMNN）是其中一种方法\scite{weinberger2009}它学习线性变换，拉近同类目标邻居，并用间隔约束排开异类样本。
+
+另一种选择是\term{近邻成分分析}（neighbourhood components analysis, NCA），它对邻居选择作概率化处理，通过提高留一预测中选到同类样本的概率学习线性变换。与只调整每个坐标尺度相比，这类方法还能改变坐标间的组合，但也引入额外训练目标和过拟合风险。学得的度量需要与$k$一起在未参与拟合的数据上评价，而不能默认监督变换总会提高泛化精度\scite{goldberger2004nca}
+
+近邻数$k$控制局部平均的范围。$k=1$时，一个错误标签就能直接影响附近查询；增大$k$通常能减少这种波动，但也会把较远区域的样本混入，从而抹平细节。这是局部估计中常见的偏差与方差取舍，而不是零一分类风险随$k$单调变化的定律。$k\approx\sqrt n$至多可作试验起点，不能替代交叉验证，更不能忽略类别比例、局部密度和距离表示。
+
+检索代价需要区分距离计算与邻居选择。对一个$d$维稠密查询，朴素扫描$n$个训练样本计算距离需$O(nd)$；若再把所有距离排序，总代价为$O(nd+n\log n)$。采用线性选择算法得到最小的$k$项，再作投票，可达$O(nd+n+k)$；使用大小为$k$的堆则需$O(nd+n\log(k+1)+k)$。因此，通常所说的$O(nd)$朴素预测复杂度隐含了无需完整排序的选择方法。训练集的存储为$O(nd)$，大规模是否可用还取决于批量计算、硬件、精度要求和延迟预算，不能仅由样本超过某个数量判定。
+
+精确检索可使用KD树或球树（ball tree）等索引，通过空间划分排除不可能更近的样本。在维数较低、分布有利时，这些结构常能显著减少访问量，但没有对任意数据均成立的对数查询保证，最坏情况下仍会扫描大部分样本；“维数小于20”也不是适用与失效的理论分界。精确索引改变计算方式而不改变选出的邻居，通常应按建索引成本、内存和查询时间选择。
+
+对高维大规模数据，还可以用\term{近似最近邻检索}（approximate nearest-neighbor search）交换少量检索误差与计算收益。局部敏感哈希（locality-sensitive hashing, LSH）让相近向量较可能进入同一哈希桶；分层可导航小世界图（hierarchical navigable small world, HNSW）沿多层邻接图逐步寻找候选；倒排文件与乘积量化（inverted file with product quantization, IVF--PQ）先缩小候选分区，再用压缩编码近似距离。这些方法的搜索预算和压缩程度会改变邻居集合，需同时检查邻居召回率与最终分类误差。以下理论以精确检索为前提，不直接覆盖任意近似索引。
+
+\subsubsection{理论分析}
+\label{sec:classification-knn-theory}
+
+基本$k$-NN分类不通过反复更新一组参数来拟合训练集，因此这里的“收敛”不是优化迭代趋于某个解，而是训练样本量$n\to\infty$时，邻居位置、条件概率估计及测试风险的渐近变化。收敛性分析先考察局部估计是否接近目标；泛化分析再考察这些估计能够给新样本的分类错误带来什么保证。
+
+近邻位置越来越近，不等于邻居的标签必然等于测试标签。即使两个输入完全相同，在有标签噪声或类别重叠时，也可能独立产生不同标签。分析需要先确定风险对哪些随机性取平均，再由邻居位置推到条件类别分布，不能把三者混为一谈。
+
+设训练样本与测试点$(\bm{X},Y)$独立同分布于$\mathbb{R}^d\times\{1,\ldots,C\}$，$P_X$为输入边缘分布，$C\geq2$。令
+\begin{equation}
+  \eta_c(\bm{x})=\mathbb{P}(Y=c\mid\bm{X}=\bm{x}),
+  \qquad
+  r^\ast(\bm{x})=1-\max_c\eta_c(\bm{x}).
+  \label{eq:classification-local-bayes-risk}
+\end{equation}
+选择后验概率最大的类别达到条件最小错误率$r^\ast(\bm{x})$，对输入平均得到\term{贝叶斯风险}（Bayes risk）$R^\ast=\mathbb{E}_{\bm{X}}r^\ast(\bm{X})$。给定一份训练集的测试风险，与再对训练集平均的风险分别记为
+\begin{align}
+  L_{n,k}(D_n)
+  &=\mathbb{P}\{\hat h_{n,k}(\bm{X})\neq Y\mid D_n\},
+  \label{eq:classification-knn-conditional-risk}\\
+  R_{n,k}&=\mathbb{E}_{D_n}L_{n,k}(D_n).
+  \label{eq:classification-knn-expected-risk}
+\end{align}
+若打破距离并列采用独立随机化，以上期望同时包含该随机化。下面的Cover--Hart界针对$R_{n,1}$的极限，不是任意有限$n$的风险上界，也不是每份训练集条件风险的逐一保证。
+
+\paragraph{收敛性分析}
+
+先说明足以支撑极限计算的一组分布条件。使用固定的欧氏距离，精确寻找最近邻，邻居选择不依赖标签；对$P_X$几乎处处的非原子点$\bm{x}$，各$\eta_c$在该点相对于$P_X$的支撑集连续。所谓原子点是$P_X(\{\bm{x}\})>0$的点，它不需要这里的连续性要求。该条件不要求输入分布有密度，更不要求每个欧氏空间位置都有正密度，但它也不只是“条件概率存在”。
+
+\begin{lemma}[最近邻风险的极限]
+  \label{lem:classification-nearest-neighbor-limit}
+  在上述抽样、检索与连续性条件下，最近邻位置几乎必然趋于查询位置，并且
+  \begin{equation}
+    R_{1,\infty}:=\lim_{n\to\infty}R_{n,1}
+    =\mathbb{E}_{\bm{X}}\left[
+      1-\sum_{c=1}^{C}\eta_c(\bm{X})^2
+    \right].
+    \label{eq:classification-nearest-neighbor-limit}
+  \end{equation}
+\end{lemma}
+
+\begin{proof}
+  将训练集看作同一无穷独立样本序列的前$n$项。固定支撑集中的查询$\bm{x}$，用$I_n$表示最近邻索引，用$B(\bm{x},\varepsilon)$表示半径$\varepsilon>0$的开球。支撑集的定义保证该球有正概率，因此
+  \[
+    \mathbb{P}\{\|\bm{X}_{I_n}-\bm{x}\|_2\geq\varepsilon\}
+    =\bigl[1-P_X(B(\bm{x},\varepsilon))\bigr]^n
+    \longrightarrow0.
+  \]
+  最近邻距离随$n$不增，对$\varepsilon=1,1/2,1/3,\ldots$分别取极限，即得$\bm{X}_{I_n}\to\bm{x}$几乎必然成立。欧氏空间具有可数拓扑基，不在支撑集中的点可被可数个零概率开集覆盖，故支撑集本身具有$P_X$概率1。若$\bm{x}$为原子点，训练序列几乎必然在有限步后出现$\bm{x}$，此后最近邻距离一直为零。
+
+  对非原子点，由连续性得到$\eta_c(\bm{X}_{I_n})\to\eta_c(\bm{x})$；对原子点，这个等式最终直接成立。最近邻索引只依赖输入及与标签独立的平局约定。给定查询和所有训练输入后，测试标签与选中的训练标签独立，选中标签属于$c$的概率为$\eta_c(\bm{X}_{I_n})$。故对训练集平均的条件错误率为
+  \[
+    r_n(\bm{x})
+    =1-\sum_{c=1}^{C}\eta_c(\bm{x})
+       \mathbb{E}\bigl[\eta_c(\bm{X}_{I_n})\bigr],
+  \]
+  这里的期望针对固定查询时的训练输入及邻居选择随机性。由于后验概率有界，可用支配收敛定理得到
+  \[
+    r_n(\bm{x})\longrightarrow
+    r_\infty(\bm{x})
+    :=1-\sum_{c=1}^{C}\eta_c(\bm{x})^2.
+  \]
+  再利用$0\leq r_n(\bm{x})\leq1$，对$\bm{x}$积分并交换极限与期望，就得到式\eqref{eq:classification-nearest-neighbor-limit}。
+\end{proof}
+
+极限中的平方项来自两次独立的类别抽取，而不是说最近邻标签本身几乎必然收敛。位置接近保证的是选中标签的条件分布接近查询的条件分布，单次标签抽样的波动仍然存在。
+
+要平均掉这部分噪声，需要让参与投票的邻居数增加；要避免把远处结构混入，又需要邻居只占全部训练样本的越来越小一部分。令$k=k_n$满足$k_n\to\infty$且$k_n/n\to0$。Stone的非参数一致性结果在固定有限维欧氏空间中建立了近邻条件概率估计的积分收敛，也就是对训练集与查询取平均后，估计的绝对误差趋于零；这为后面的风险分析提供了依据\scite{stone1977consistent}
+
+对精确欧氏近邻，距离并列时可按与数据独立的随机排列选取，类别票数并列时按固定类别顺序决定。对每个$c$，这样的近邻估计满足
+\begin{equation}
+  \mathbb{E}_{D_n,\bm{X}}
+  \bigl|\hat\eta_{n,c}(\bm{X})-\eta_c(\bm{X})\bigr|
+  \longrightarrow0.
+  \label{eq:classification-knn-posterior-consistency}
+\end{equation}
+这一结论对$\mathbb{R}^d$上任意固定联合分布成立，不需要前面为简化Cover--Hart证明而采用的逐点连续性条件。其一般证明使用欧氏空间的覆盖性质，不能只用一句普通大数定律代替，因为邻居样本是根据查询和输入位置选择出来的。
+
+在前述连续性条件下，可以直接看出式\eqref{eq:classification-knn-posterior-consistency}的两个来源。给定训练输入，记
+\[
+  \bar\eta_{n,c}(\bm{x})
+  =\frac{1}{k_n}\sum_{i\in N_{k_n}(\bm{x})}\eta_c(\bm{X}_i).
+\]
+邻居标签在给定输入后独立，所以
+\[
+  \mathbb{E}\!\left[
+    |\hat\eta_{n,c}(\bm{x})-\bar\eta_{n,c}(\bm{x})|
+    \,\middle|\,\bm{X}_1,\ldots,\bm{X}_n
+  \right]\leq\frac{1}{2\sqrt{k_n}}.
+\]
+上界来自Bernoulli变量的方差不超过$1/4$及Cauchy--Schwarz不等式。它控制标签抽样波动。对任意有正概率的查询邻域，落入其中的样本比例几乎必然趋向该邻域的概率；由于$k_n/n\to0$，最终会有至少$k_n$个训练样本落入其中。因此，第$k_n$个邻居的距离趋于零。后验连续时，$\bar\eta_{n,c}(\bm{x})-\eta_c(\bm{x})$趋于零；在原子点，最终选中的$k_n$个输入都可等于该点。结合有界性与支配收敛，就得到这组较强正则性条件下的积分收敛。Stone的结论把同一估计分析扩展到了不连续后验。
+
+\paragraph{泛化分析}
+
+已有的极限计算还需要与最优分类错误比较，才能说明近邻规则的预测保证。固定$k=1$时，Cover--Hart定理比较引理~\ref{lem:classification-nearest-neighbor-limit}中的极限局部错误与最优局部错误；让$k_n$增长时，则可用式\eqref{eq:classification-knn-posterior-consistency}控制相对于贝叶斯决策多出的错误。这两种风险保证都对训练集和独立测试点取平均。
+
+\begin{theorem}[Cover--Hart界：二分类]
+  \label{thm:classification-cover-hart-binary}
+  在引理~\ref{lem:classification-nearest-neighbor-limit}的条件下，若$C=2$，则
+  \begin{equation}
+    R^\ast\leq R_{1,\infty}
+    \leq2R^\ast(1-R^\ast)\leq2R^\ast.
+    \label{eq:classification-cover-hart-binary}
+  \end{equation}
+\end{theorem}
+
+\begin{proof}
+  固定$\bm{x}$，记$p=\eta_1(\bm{x})$，则$\eta_2(\bm{x})=1-p$，$r^\ast(\bm{x})=\min(p,1-p)$。引理给出
+  \begin{align*}
+    r_\infty(\bm{x})
+    &=1-p^2-(1-p)^2\\
+    &=2p(1-p)\\
+    &=2r^\ast(\bm{x})\bigl[1-r^\ast(\bm{x})\bigr].
+  \end{align*}
+  由于$0\leq r^\ast(\bm{x})\leq1/2$，有$2(1-r^\ast(\bm{x}))\geq1$，所以$r_\infty(\bm{x})\geq r^\ast(\bm{x})$。对输入取期望得到下界。对于上界，
+  \begin{align*}
+    R_{1,\infty}
+    &=2R^\ast-2\mathbb{E}_{\bm{X}}[r^\ast(\bm{X})^2]\\
+    &\leq2R^\ast-2(R^\ast)^2\\
+    &=2R^\ast(1-R^\ast).
+  \end{align*}
+  不等式利用$\mathbb{E}[Z^2]\geq(\mathbb{E}Z)^2$，也就是对凹函数$2z(1-z)$使用Jensen不等式。再用$1-R^\ast\leq1$得到两倍上界。
+\end{proof}
+
+多分类时，不能沿用二类的精确表达式$2p(1-p)$，因为非最大类别的概率还可以在多个类别之间分配。需要控制的是：固定最大后验概率以后，其余类别的概率平方和最小能是多少。
+
+\begin{theorem}[Cover--Hart界：多分类]
+  \label{thm:classification-cover-hart-multiclass}
+  在引理~\ref{lem:classification-nearest-neighbor-limit}的条件下，对任意有限$C\geq2$，
+  \begin{equation}
+    R^\ast\leq R_{1,\infty}
+    \leq R^\ast\left(2-\frac{C}{C-1}R^\ast\right)
+    \leq2R^\ast.
+    \label{eq:classification-cover-hart-multiclass}
+  \end{equation}
+\end{theorem}
+
+\begin{proof}
+  固定$\bm{x}$并简记$r=r^\ast(\bm{x})$。取$c^\ast$使$\eta_{c^\ast}(\bm{x})=1-r$，其余$C-1$类的概率之和为$r$。由Cauchy--Schwarz不等式，
+  \[
+    r^2
+    =\left(\sum_{c\neq c^\ast}\eta_c(\bm{x})\right)^2
+    \leq(C-1)\sum_{c\neq c^\ast}\eta_c(\bm{x})^2.
+  \]
+  因而
+  \begin{align*}
+    \sum_{c=1}^{C}\eta_c(\bm{x})^2
+    &\geq(1-r)^2+\frac{r^2}{C-1},\\
+    r_\infty(\bm{x})
+    &\leq1-(1-r)^2-\frac{r^2}{C-1}\\
+    &=2r-\frac{C}{C-1}r^2.
+  \end{align*}
+  这一步的等号在其余类别的概率都等于$r/(C-1)$时成立。记$g_C(r)=2r-Cr^2/(C-1)$，它在$0\leq r\leq1-1/C$上为凹函数。对输入取期望并用Jensen不等式，
+  \[
+    R_{1,\infty}
+    \leq\mathbb{E}_{\bm{X}}g_C(r^\ast(\bm{X}))
+    \leq g_C(R^\ast).
+  \]
+  去掉非负的二次项得到$R_{1,\infty}\leq2R^\ast$。另一方面，$\eta_c(\bm{x})\leq1-r$，故
+  \[
+    \sum_{c=1}^{C}\eta_c(\bm{x})^2
+    \leq(1-r)\sum_{c=1}^{C}\eta_c(\bm{x})=1-r.
+  \]
+  于是$r_\infty(\bm{x})\geq r$，积分后得到$R_{1,\infty}\geq R^\ast$。
+\end{proof}
+
+这两个界不要求某个参数化类别分布，却仍依赖已列出的抽样和分布正则性条件。若$R^\ast=0$，界给出1-NN的期望风险趋于零；若后验概率在所有位置都为$(0.8,0.2)$，则$R^\ast=0.2$而$R_{1,\infty}=0.32$。后一个教学计算表明，单个近邻即使位于查询附近，也仍带有一次标签抽样的噪声，因此1-NN一般不能使期望风险趋于贝叶斯风险。
+
+\term{贝叶斯一致性}（Bayes consistency）要求期望测试风险趋向贝叶斯风险。对于满足$k_n\to\infty$且$k_n/n\to0$的近邻规则，后验估计的积分收敛已经成立；从后验估计到分类风险，还需要明确的一步。对固定查询和训练集，令$c^\ast$为真实后验最大的类别，$\hat c=\hat h_{n,k_n}(\bm{x})$。由于$\hat\eta_{n,\hat c}\geq\hat\eta_{n,c^\ast}$，
+\begin{align*}
+  \eta_{c^\ast}(\bm{x})-\eta_{\hat c}(\bm{x})
+  &\leq|\eta_{c^\ast}(\bm{x})-\hat\eta_{n,c^\ast}(\bm{x})|\\
+  &\quad+|\hat\eta_{n,\hat c}(\bm{x})-\eta_{\hat c}(\bm{x})|\\
+  &\leq2\sum_{c=1}^{C}
+    |\hat\eta_{n,c}(\bm{x})-\eta_c(\bm{x})|.
+\end{align*}
+左侧就是相对于贝叶斯决策多出的条件错误率。对训练集与测试输入取期望，再使用式\eqref{eq:classification-knn-posterior-consistency}和类别数有限，得到
+\begin{equation}
+  R_{n,k_n}\longrightarrow R^\ast,
+  \qquad k_n\to\infty,\quad k_n/n\to0.
+  \label{eq:classification-knn-bayes-consistency}
+\end{equation}
+
+这里证明的是风险期望收敛。由于$L_{n,k_n}(D_n)-R^\ast\geq0$，它还蕴含条件风险依概率趋于$R^\ast$，但不能仅据此声称每份无穷训练序列都几乎必然收敛，更不能声称预测标签对几乎每个输入最终与某个固定贝叶斯分类器完全一致。后验并列时，不同标签本来就可能达到相同最小风险；即便没有并列，逐点或几乎必然的结论也需要单独的条件与论证。
+
+\subsubsection{小结}
+\label{sec:classification-knn-summary}
+
+$k$-NN分类把预测转化为表示、距离、检索和局部投票四个相连的选择。它天然支持多分类，能够表达复杂的局部边界，也能在适当增长的邻居数下达到期望风险意义的一致性。但这些渐近结果既不提供固定样本量上的精度保证，也不为任意学习度量或近似检索自动背书。
+
+高维问题主要在于局部邻域可能缺少足够样本，无关坐标还会削弱距离中的类别信号。在某些高维分布中，成对距离的相对差异会集中变小；这不是“所有样本距离必然相等”，也不是仅由$d$决定的普遍结论。数据的内在维数、相关结构和所用表示都很重要。文本分类、推荐、图像检索和异常检测可以借用近邻思想，其中检索或打分也不等同于本节的多数投票分类；是否适合作为系统基线，应连同检索成本和业务目标一起评价。
+
+\subsection{模型对比与总结}
+\label{sec:classification-instances-comparison}
+
+本小节先比较等权投票、距离加权与原型压缩，再介绍LVQ、最近质心等代表性扩展。基本$k$-NN分类保存全部训练实例，并让邻居等权投票。沿着这两个选择，可以分别改变邻居的影响强度，或把训练集压缩成少量代表点。这两种改动都保留了依据邻近关系分类的思路，也可以结合使用；不过，学习代表点通常需要显式训练，因而不能把所有基于邻域的分类方法都称为“没有训练的惰性学习”。
+
+当较远邻居会稀释近处证据时，\term{加权$k$近邻}（weighted $k$-nearest neighbors）让不同邻居贡献不同票数：
+\begin{equation}
+  \hat h(\bm{x})=\argmax_c
+  \sum_{i\in N_k(\bm{x})}
+  w_i(\bm{x})\mathbb{1}\{y_i=c\},
+  \qquad w_i(\bm{x})\geq0.
+  \label{eq:classification-weighted-knn}
+\end{equation}
+至少需要一个权重为正。Dudani在1976年研究了按邻居距离范围作线性缩放的加权方案，使最近邻具有最大权重、较远邻居的权重逐渐减小\scite{dudani1976weighted}
+
+具体地，把邻居按距离排序为$\delta_1\leq\cdots\leq\delta_k$，第$r$个邻居的权重取
+\begin{equation}
+  w_r=
+  \begin{cases}
+    \dfrac{\delta_k-\delta_r}{\delta_k-\delta_1},
+      & \delta_k>\delta_1,\\[4pt]
+    1, & \delta_k=\delta_1.
+  \end{cases}
+  \label{eq:classification-dudani-weights}
+\end{equation}
+另一类常用选择是逆距离权重或高斯形权重$\exp(-\delta_r^2/(2h^2))$，其中$h>0$控制衰减尺度。逆距离形式遇到零距离必须处理，例如只在零距离样本中投票，避免除零。距离加权可能减少远邻干扰，但也可能放大近处噪声；硬类别输出仍可能跳变，不能把加权说成必然使分类边界平滑或必然减弱对$k$的敏感性。其一致性还依赖权重不能长期集中在有限个带噪声邻居上。
+
+若主要困难是存储全部样本，可以转向\term{学习向量量化}（learning vector quantization, LVQ），用监督训练获得少量带类别的\term{原型向量}（prototype vector）。原型是可移动的代表点，不必等于任何一条训练记录。Kohonen发展的LVQ方法为每个类别配置一个或多个原型，查询时只对这些原型作最近邻比较；它保留局部距离判别的形式，但把模型规模转为可控制的原型数量\scite{kohonen2001som}
+
+以基本LVQ1为例，设原型为$\bm{m}_r\in\mathbb{R}^d$，类别标签为$a_r$，$r=1,\ldots,q$。可从各类训练样本初始化原型。每次读入$(\bm{x}_i,y_i)$，找到最近原型$r^\ast$，只更新它：
+\begin{equation}
+  \bm{m}_{r^\ast}^{(t+1)}
+  =\bm{m}_{r^\ast}^{(t)}
+   +\gamma_t s_i
+    \bigl(\bm{x}_i-\bm{m}_{r^\ast}^{(t)}\bigr),
+  \label{eq:classification-lvq-update}
+\end{equation}
+其中学习率$\gamma_t>0$通常随训练减小；若$a_{r^\ast}=y_i$，取$s_i=1$把原型拉近，否则取$s_i=-1$把原型推远。其余原型不动。反复遍历样本后，在验证集上选择原型数、学习率和停止时机，预测时输出最近原型的类别标签。
+
+当$q\ll n$时，LVQ的原型存储和朴素查询代价为$O(qd)$，可低于保留全部样本的近邻方法。但少量原型不一定足以表示多个分离的类内簇，更新也受初始化和样本顺序影响。基本吸引与排斥更新是启发式过程，不能仅凭形式类似迭代优化就声称达到全局最优，或继承增长$k$的近邻一致性保证。
+
+将每类限制为一个代表点，并直接取该类样本均值，就得到\term{最近质心分类器}（nearest centroid classifier）。它与LVQ共同使用原型距离，但不需要通过吸引与排斥来训练。令$n_c=\sum_{i=1}^n\mathbb{1}\{y_i=c\}>0$，则
+\begin{align}
+  \bm{\mu}_c&=\frac{1}{n_c}\sum_{i:y_i=c}\bm{x}_i,
+  \label{eq:classification-centroid}\\
+  \hat h(\bm{x})&=\argmin_c\|\bm{x}-\bm{\mu}_c\|_2^2.
+  \label{eq:classification-nearest-centroid}
+\end{align}
+预测是在全部$C$个类原型中作一次最近邻选择。训练计算均值需$O(nd)$，存储和单次查询需$O(Cd)$。
+
+第\ref{sec:clustering-kmeans}节的K-means也用均值作为质心，但还要在没有类别标签时估计簇分配；最近质心分类器直接按已知类别分组计算均值，目标是预测预设类别。相同的质心计算因标签条件不同而承担不同任务。
+
+最近质心的两个类别区域由两质心的等距面分开，所以欧氏距离下的两类边界是超平面。若真实类条件分布为具有共同球形协方差的高斯分布、先验概率又相等，用真实均值作最近质心决策就是贝叶斯规则；这是一组充分条件，不是它能够使用的必要条件。类别多峰、尺度差异很大或均值被异常值牵动时，一个质心会丢失重要的几何结构。
+
+在文本分类中，类质心方法常与Rocchio联系起来。Rocchio于1971年研究的相关反馈通过相关与不相关文档调整查询向量，后来的Rocchio分类把类别的文档均值作为原型，将这一思想用于没有查询向量的类别判别。文本表示还可以对文档及原型作归一化，改用余弦相似度，所得分类边界需按具体归一化方式理解\scite{manning2008ir}
+
+等权近邻保留较多局部信息，加权近邻调整这些信息的影响，LVQ和最近质心则用更紧凑的代表点换取存储与查询效率。压缩越强，对类内几何形态的限制通常越大，但推理开销不再必然随$n$线性增长。判断这些方法是否合适，应同时看距离是否保留类别关系、原型能否覆盖类内结构，以及独立测试上的误差，而不能只按“保留实例多”或“原型少”作选择。
