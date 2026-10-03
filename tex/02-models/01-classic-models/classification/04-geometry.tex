@@ -1,0 +1,94 @@
+\section{基于空间分布的分类}
+\label{sec:classification-geometry}
+
+树、规则和近邻方法已经展示了几种利用局部信息分类的方式。如果希望用一个整体的分界面概括各类之间的关系，就需要进一步决定：这个分界面由什么量确定？本节比较三种答案。线性判别分析用类别得分衡量输入对各类的支持，感知机根据得分符号上的分类错误调整分界面，支持向量机进一步用样本到分界面的间隔选择边界。这些准则都能产生线性边界，但选择边界的依据不同。
+
+这里的“空间分布”不把判别得分、分类间隔和概率分布混作同一对象。判别得分为每个类别提供可比较的实数依据，间隔衡量样本相对决策边界的分离程度，概率分布则描述输入与类别的随机关系。本节以得分和间隔为主，在LDA中完整推导共享协方差高斯模型；第~\ref{sec:classification-probability}~节再从统一的GDA模型族回顾这一特例，并讨论更一般的协方差设定与概率质量。Fisher投影只需类均值与散度，感知机的有限更新保证依赖线性可分性，软间隔SVM则允许训练样本违反间隔；这些条件约束不同对象，不能简单排成由强到弱的序列。
+
+\input{tex/02-models/01-classic-models/classification/04-lda-perceptron}
+\input{tex/02-models/01-classic-models/classification/04-svm}
+
+\subsection{模型对比与总结}
+\label{sec:classification-geometry-summary}
+
+本小节先比较LDA、感知机与SVM，再介绍协方差收缩、核判别、稀疏贝叶斯和间隔参数化等代表性扩展。三种基本模型都通过线性得分比较类别，但相同的函数形式并不意味着相同的学习问题。生成式LDA先估计类均值、协方差和先验，再由贝叶斯法则决定边界；Fisher判别则寻找类间散度相对于类内散度最大的投影。感知机只在违反分类条件时更新，在可分训练集上找到一个可行解；这个解依赖样本顺序，并没有被指定为最大间隔解。SVM把间隔写进优化目标，通过范数与训练损失之间的权衡选取分类器。表~\ref{tab:classification-linear-comparison}~将这些差异放在同一组条件下比较。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{18mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    模型 & 边界由什么决定 & 主要条件与代价 \\
+    \midrule
+    LDA & 类均值、共享协方差与类先验 & 高斯假设支持概率解释；协方差估计需足够样本或正则化。 \\
+    感知机 & 错分样本触发的权重更新 & 正间隔可分性支持有限更新界；不可分时需停止规则或变体。 \\
+    线性 SVM & 范数与间隔损失的权衡 & 硬间隔要求可分；软间隔需选择惩罚强度。 \\
+    核 SVM & 特征空间中的间隔 & 核定义相似性；训练与预测开销受样本数和支持向量数影响。 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{线性与核化分类器的比较。LDA 一行指共享协方差的高斯生成模型；Fisher 投影本身不要求高斯分布。各模型的理论保证分别针对估计、更新次数或风险，不能直接互换。}
+  \label{tab:classification-linear-comparison}
+\end{table}
+
+如果不同类别的类内变化方向和尺度明显不同，共享协方差就会限制LDA的表达能力。第~\ref{sec:classification-lda-model}~节已经定义的二次判别分析（QDA）保留类条件高斯假设，却为每个类别估计独立的协方差矩阵$\hat{\bm{\Sigma}}_c$。删去各类共同的常数项后，其判别得分为
+\begin{equation}
+  \begin{aligned}
+    \delta_c(\bm{x})
+      ={}&\log\hat{\pi}_c-\frac12\log\det\hat{\bm{\Sigma}}_c\\
+        &-\frac12(\bm{x}-\hat{\bm{\mu}}_c)^\top
+          \hat{\bm{\Sigma}}_c^{-1}(\bm{x}-\hat{\bm{\mu}}_c).
+  \end{aligned}
+  \label{eq:classification-qda-score}
+\end{equation}
+任意两类得分之差含有关于$\bm{x}$的二次项，所以边界一般是二次曲面。当协方差相同时，二次项相消，又得到 LDA。增加自由度也增加了估计负担：共享协方差模型需要$O(d^2+Cd)$个参数，QDA 则需要$O(Cd^2)$个参数；每一类只有少量样本时，独立协方差容易不稳定甚至奇异。第~\ref{sec:classification-gda}~节将从生成分布的角度统一这两种模型。
+
+在完全共享与完全独立之间，可以让各类借用一部分合并统计量。\term{正则化判别分析}（regularized discriminant analysis, RDA）通过收缩协方差来控制这种取舍。Friedman 的原始方法包含两个调节方向：将类内协方差向合并协方差收缩，再向球形协方差收缩\scite{friedman1989rda}
+记$n_c$为第$c$类样本数，$\hat{\bm{\Sigma}}$为以$n$为分母的合并协方差。一种与原始构造相符的写法是
+\begin{equation}
+  \begin{aligned}
+    \bm{A}_c(a)
+      &=\frac{(1-a)n_c\hat{\bm{\Sigma}}_c+an\hat{\bm{\Sigma}}}
+              {(1-a)n_c+an},\\
+    \tilde{\bm{\Sigma}}_c(a,b)
+      &=(1-b)\bm{A}_c(a)
+        +b\,\frac{\operatorname{tr}\bm{A}_c(a)}{d}\bm{I},
+        \qquad a,b\in[0,1].
+  \end{aligned}
+  \label{eq:classification-rda}
+\end{equation}
+当$b=0$时，$a=0$与$a=1$分别对应 QDA 与 LDA 的协方差估计；增大$b$会减弱各方向方差差异，并在平均方差为正时帮助获得可逆估计。两个参数应在训练集内部通过验证选择。单纯在 LDA 与 QDA 之间插值，并不能在两者协方差都奇异时自动解决可逆性问题。
+
+Fisher 判别还可以沿核方法的路线扩展。Mika 等提出的\term{核 Fisher 判别}（kernel Fisher discriminant, KFD）在特征空间中重新计算类均值与散度，再最大化投影后的类间与类内散度比\scite{mika1999kernel}
+将投影方向写成$\bm{w}=\sum_{i=1}^n a_i\phi(\bm{x}_i)$，即可把目标表达为关于系数$\bm{a}$和核矩阵的广义 Rayleigh 商，并用正则化处理类内散度的奇异性。它与核 SVM 的区别仍在训练准则：KFD 关注整体类统计量，SVM 关注间隔及其违反程度。KFD 的基本解通常没有支持向量式的稀疏性，预测可能需要访问全部训练样本；若要从投影得分得到后验概率，还需额外建立得分分布或校准模型。
+
+除了用间隔约束产生稀疏性，还可以用先验使多数基函数的权重收缩到零。\term{相关向量机}（relevance vector machine, RVM）采用
+\[
+  g(\bm{x})=w_0+\sum_{i=1}^n w_i K(\bm{x}_i,\bm{x}),
+  \qquad
+  p(w_i\mid a_i)=\mathcal{N}(0,a_i^{-1}),
+\]
+其中$a_i>0$是每个权重各自的先验精度。分类时再用适当的概率链接函数把$g(\bm{x})$转换为类别概率。通过最大化边际似然估计这些精度，部分$a_i$会变得很大，相应权重被强烈压缩，只有少量训练样本对应的基函数继续参与预测。Tipping 系统介绍了这一稀疏贝叶斯学习框架\scite{tipping2001rvm}
+这种做法可以输出模型内的预测分布，也不需要 SVM 的间隔惩罚参数，但仍需选择基函数并处理非凸优化。分类似然还带来近似推断的需要。相关向量在一些任务中比支持向量少，是实验观察而非普遍保证；采用贝叶斯形式也不保证概率在失配数据上自动校准。
+
+如果希望调参时直接联系间隔错误与支持向量比例，可以考虑\term{$\nu$-SVM}（nu-support vector machine）。它把间隔阈值$\rho\geq0$也作为变量，在目标中用参数$\nu$奖励更大的阈值，同时惩罚平均松弛量：
+\begin{equation}
+  \begin{aligned}
+    \min_{\bm{w},b,\rho,\bm{\xi}}\quad&
+      \frac12\lVert\bm{w}\rVert_2^2-\nu\rho
+      +\frac1n\sum_{i=1}^n\xi_i\\
+    \text{满足}\quad&
+      y_i(\bm{w}^{\top}\phi(\bm{x}_i)+b)\geq\rho-\xi_i,\\
+    &\xi_i\geq0,\qquad \rho\geq0.
+  \end{aligned}
+  \label{eq:classification-nu-svm}
+\end{equation}
+在最优$\rho>0$时，其对偶乘子满足$0\leq\alpha_i\leq1/n$且$\sum_i\alpha_i=\nu$。因此至少需要$\nu n$个非零乘子，而每个严格违反间隔的样本都占用一个达到$1/n$的乘子，于是间隔错误比例不超过$\nu$，支持向量比例不低于$\nu$。这里的错误包括正确分类但落在间隔内的样本；结论不是测试错误率保证\scite{scholkopf2000nu}
+
+参数范围还受到类别比例约束。由偏置的驻点条件$\sum_i\alpha_i y_i=0$，正负两类的乘子和都为$\nu/2$；若两类样本数分别为$n_+$和$n_-$，盒约束便要求
+\[
+  0<\nu\leq\nu_{\max}
+  :=\frac{2\min(n_+,n_-)}{n}.
+\]
+这里的上界不只是$\rho>0$解释所需的附加条件。若$\nu>\nu_{\max}$，令$\bm{w}=\bm{0}$、让常数偏置把全部样本判为多数类，并令少数类松弛量等于$2\rho$、多数类松弛量为零，就得到一条满足约束的射线；其目标值为$(\nu_{\max}-\nu)\rho$，随$\rho\to\infty$趋于$-\infty$。因此，虽然约束集合仍非空，优化问题却无界而没有有限最优解。在允许区间内取得有限最优解后，前述比例结论仍以最优$\rho>0$为条件；$\rho=0$时不能直接套用。
+
+这些扩展分别改变了协方差的共享程度、特征空间、稀疏化机制或间隔参数化方式。实际比较时，应固定特征处理与评价口径，再判断增加的自由度能否由现有样本支持、获得的表示能力是否值得相应的计算开销。仅凭边界是直线还是曲线，无法回答这些问题。

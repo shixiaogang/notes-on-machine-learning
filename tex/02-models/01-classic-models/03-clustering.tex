@@ -1,0 +1,1569 @@
+\chapter{聚类}
+\label{chap:clustering}
+
+面对一批没有类别标签的客户记录，我们仍可能希望找出消费行为相近的人群。困难在于，相近可以指消费金额相近，也可以指购买品类相似；同一批客户还可能同时存在粗细不同的分组。\term{聚类}（clustering）就是在给定相似性规则下，从样本中寻找这样的群组。与第~\ref{chap:classification}~章研究的分类相比，分类从预先约定的类别标签中作出选择，聚类则没有这份类别答案，因而“什么算一个簇”本身就是模型假设的一部分。本章要回答两个相连的问题：没有预设类别时，什么结构可以把样本界定为一簇；选定结构后，什么证据说明所得分组对当前用途有意义？
+
+本章是一篇教程式综述，聚焦以给定变量为输入的批处理经典静态聚类，选择能够建立主要簇判据、解释关键方法转折或改变实际选型的代表方法。给定变量并不禁止经典方法从中选择子空间，或在拟合过程中学习投影与度量；本章不展开的是把特征提取器与聚类目标端到端联合训练的神经表示学习。这个范围不是截至某一年的算法清单，也不声称存在适用于所有相异度和用途的唯一准则。Kleinberg 的结论有明确的适用对象：固定对象集上，以成对距离为输入并输出单一划分的距离型聚类函数。对这类函数，尺度不变性、丰富性与一致性这三项自然要求不能由同一个聚类函数同时满足\scite{clust-xu-wunsch2005,clust-kleinberg2002}这个结果只能作为无条件统一准则不存在的例证，不能直接覆盖软聚类、重叠聚类或层次聚类。流式聚类还要处理到达顺序、有限状态和概念漂移，由第~\ref{part:systems}~部分承接；多视图聚类需要联合多个表示，双聚类同时组织样本与变量，二者改变了本章的单一对象表示；深度聚类把表示学习和簇目标联合训练，其神经表示机制由第~\ref{part:neural-network-models}~部分承接。本章只在这些路线改变边界判断时定位，不展开各自的算法目录。
+
+本章给定样本 $\bm{x}_1,\ldots,\bm{x}_n\in\mathbb{R}^d$，其中 $n$ 为样本数，$d$ 为特征维数；能直接定义相异度时，样本也可以是字符串或其他对象。硬划分用 $\mathcal{P}=\{C_1,\ldots,C_K\}$ 表示，$C_k$ 是第 $k$ 个簇的样本索引集合，$c_i=k$ 表示 $i\in C_k$。下文把 $c_i$ 称为簇分配或簇标记；“类别标签”只指外部给定的监督信息，GMM 中的 $z_i$ 则称为隐成分变量。除非另有说明，划分中的簇非空、互不相交，并覆盖全部样本。密度方法可以保留噪声，子空间方法可以输出重叠簇，概率方法则可以给出软归属，这些差别将在相应位置说明。
+
+算法接收的并不是未经解释的“原始数据”。变量类型、尺度、相异度和邻接关系共同规定了哪些对象相近。业务或测量协议在数据外预定尺度时，无须从样本估计；也可以用样本估计的尺度作标准化，但这会重新分配各维对距离的影响，不能机械地用于所有任务。类别变量通常比较取值是否相同，序数变量还需说明等级间距是否可比。对于数值与类别并存的客户记录，可以先为每个变量定义落在可比范围内的相异度，再按预先说明的权重汇总；Gower 系数给出了这一经典构造\scite{clust-gower1971}Gower 规则按每个样本对执行，只汇总该样本对共同可观测的变量，并按相应权重归一化。若标准化尺度、插补参数、变量范围或权重需要根据数据确定，则只在后文所称的发现数据上估计，冻结后再应用于验证数据。
+
+\term{相异度}（dissimilarity）只要求值越小表示对象越相近，不一定满足三角不等式；需要依赖度量性质的索引或近似算法时，必须另行检查条件。相似度、核函数和原生关系数据还可以转成邻接关系：阈值图只连接足够相似的样本，$k$近邻图固定每点的候选邻居，原生网络则直接给出边。构图时还要说明有向近邻怎样对称化、边权怎样缩放以及孤立点怎样处理。由此可见，表示与邻接并非算法外的无害预处理，它们已经参与定义簇。
+
+以下七个主体节只是便于讲解的教学入口，并非互斥且完备的分类。表~\ref{tab:clustering-navigation}~改用五项相互关联的属性登记方法：簇判据回答什么关系构成群组，输出粒度说明结果是平坦、层次、硬、软还是允许重叠与噪声，表示或相异度规定算法实际比较什么，优化或推断机制说明怎样得到结果，监督信息记录外部知识从哪里进入。这些属性允许交叉，并不构成严格数学正交的坐标。HDBSCAN 同时使用密度判据和层次输出，谱聚类先构图再用划分算法离散化，CLIQUE 同时改变网格计算单位与子空间表示，半监督信息也可叠加到划分或图方法上。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{22mm}*{5}{>{\RaggedRight\arraybackslash}X}@{}}
+    \toprule
+    代表方法 & 簇判据 & 输出粒度 & 表示或相异度 & 优化或推断机制 & 监督信息 \\
+    \midrule
+    K-means、K-medoids & 到原型的总相异度 & 给定$K$的平坦硬划分 & 数值向量上的平方距离；一般对象相异度 & 交替更新；代表交换 & 无 \\
+    AGNES、DIANA & 链接或分裂准则 & 嵌套层次，事后截取 & 点或簇间相异度 & 贪心合并或启发式分裂 & 无 \\
+    DBSCAN、OPTICS、HDBSCAN、Mean Shift & 密度连通或模态吸引域 & 噪声、排序、层次或模态簇 & 邻域距离或核密度 & 区域扩展、排序、树压缩或模态搜索 & 无 \\
+    谱聚类、AP、Louvain & 图割、代表支持或模块度 & 平坦划分；簇数可显式或间接控制 & 原生图或由相似度构造的加权图 & 特征松弛、消息传递或局部移动 & 无 \\
+    STING、CLIQUE、投影聚类 & 密集单元或低维紧凑性 & 区域、重叠子空间或硬划分 & 网格、坐标子集或学习的投影 & 摘要查询、候选搜索或代表迭代 & 无 \\
+    GMM、DPM & 生成成分及其后验 & 平坦软归属；成分数固定或随机 & 数值向量及指定分布族 & EM、MCMC或变分推断 & 先验不等同于类别标签 \\
+    COP、Seeded、MPCK-means & 基础簇判据加关系或种子约束 & 通常为平坦硬划分 & 原始或学习的度量、约束图 & 受限分配、初始化或度量学习 & 成对关系、种子或少量类别标签 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{聚类方法的属性导航。每行登记代表方法在五项属性上的基本设定，不把七个主体节解释成互斥类别；方法的具体变体可能改变其中一项或多项。}
+  \label{tab:clustering-navigation}
+\end{table*}
+
+判断算法行为时，需要区分算法是否停止、目标值是否收敛、参数是否收敛，以及分组能否代表训练集之外的结构。前三项属于计算或优化性质，不能直接回答分组是否有用。为使后一问题可执行，先把数据分成\term{发现数据}（discovery data）和\term{验证数据}（validation data）：发现数据用于估计表示、尺度、相异度参数，拟合候选聚类并选择簇数或其他超参数；在查看验证结果之前，冻结候选方法、簇匹配规则、指标和用途判断。验证数据可以是预先留出的同源样本，也可以是独立收集的数据；若数据有时间、地点或个体相关性，应按未来使用单位划分，而不是随机打散泄漏结构。Ullmann、Hennig 与 Boulesteix 对使用验证数据复核聚类结果的方式给出了系统框架\scite{clust-ullmann2022}
+
+表~\ref{tab:clustering-evaluation-protocol}~依次列出训练目标、稳定性、外部标签、零模型、留出证据和下游效用。训练目标、稳定性和零模型可以在发现数据内部帮助诊断与选择；若外部标签承担最终语义验证，就不能再据此调参。留出证据与下游效用也应在规则冻结后检验样本外结论。若候选很多，还需要在发现数据内部做嵌套划分或交叉验证，不能反复查看最终验证数据。稳定性不能作为无条件的簇数选择或语义正确性判据，它还会受目标唯一性与数据对称性影响\scite{clust-ben-david2006}零模型也必须匹配待检验问题；Gap Statistic 以参考分布下的簇内离差为比较对象，只是这种检验的一种实现\scite{clust-tibshirani2001-gap}要把模拟结果解释为校准后的零模型证据，必须在每份模拟数据上重跑与观测数据相同的完整管线，包括预处理、拟合、候选搜索和选择规则；未重跑完整管线时，只能称为探索性基线。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{21mm}>{\RaggedRight\arraybackslash}p{43mm}XX@{}}
+    \toprule
+    证据 & 最小执行协议 & 可以回答 & 不能单独推出 \\
+    \midrule
+    训练目标 & 在发现数据上记录SSE、似然、图目标或约束违反，并只与相同目标和约束下的候选比较 & 求解是否满足方法声明的经验准则 & 语义正确、跨目标优越或样本外有效 \\
+    稳定性 & 对象集固定而只改变测量、初始化或关键参数时，比较共簇关系或标签置换不变的分区指标；样本重采样改变对象集时，只比较共同对象，或冻结新样本分配规则后再比较 & 哪些群组依赖少量样本、随机性或参数 & 正确簇数或业务语义；稳定性本身也可能来自唯一目标或数据对称性 \\
+    外部标签 & 标签不参与无监督拟合与选择；在验证数据上按预先规定的总体或子群计算ARI等指标 & 与指定外部语义的一致程度 & 标签之外的其他合理结构，或无标签任务中的唯一真解 \\
+    零模型 & 先说明要保留的边际、范围或相关结构；在每份模拟数据上重跑相同的预处理、拟合、候选搜索和选择规则；未重跑完整管线时只作为探索性基线 & 观察到的分离是否超出该无簇基线；Gap Statistic是一个实例 & 拒绝所有其他零模型，或证明所得簇具有用途 \\
+    留出证据 & 用发现数据拟合表示和模型，按冻结的新样本分配规则评价留出量化误差或预测对数密度 & 指定模型在同一数据制度下的样本外拟合 & 不同簇概念之间的统一优劣；无样本外规则的方法须先定义映射 \\
+    下游效用 & 冻结簇提取流程，在嵌套验证中与无聚类或更简单基线比较检索、描述或决策损失 & 群组是否改善预先声明的实际用途 & 群组在其他用途或总体上仍然有效 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{聚类结果的评价协议。发现阶段可以生成和筛选候选；最终验证数据只在表示、算法、超参数和比较规则冻结后使用。每类证据回答不同问题，指标的几何偏好和数据依赖必须随结果报告。}
+  \label{tab:clustering-evaluation-protocol}
+\end{table*}
+
+证据冲突时，应回到预先声明的簇概念和用途收窄结论，而不是让某个分数覆盖其他结果。例如，更低SSE而更差下游效用，只能说明量化目标与用途不一致；高稳定性而不优于零模型，可能表示算法反复返回同一种任意结构；外部标签一致而留出密度较差，则提示标签语义与生成模型并不对应。训练目标、稳定性、外部标签、零模型、留出证据和下游效用不能互相替代。验证指标本身也会偏好特定簇形状和粒度，独立综述中的跨指标比较同样强调应按问题选择证据\scite{clust-handl2005}
+
+\section{基于划分的聚类}
+\label{sec:clustering-partition}
+
+如果希望把客户明确分成 $K$ 组，最直接的办法是为每组选择一个代表，再使组内样本尽量接近这个代表。基于划分的聚类把这一要求写成簇内相异度之和的最小化。簇间分离通常由竞争性的分配规则间接产生，目标中未必另含一个“簇间距离最大”的项。
+
+K-means 用均值表示簇，计算方便；K-medoids 用真实样本表示簇，能够使用更一般的相异度。两者共享分配与代表选择的思路，但优化变量和求解方法不同。
+
+\subsection{K-means}
+\label{sec:clustering-kmeans}
+
+若样本是数值向量，均值是一个自然的代表：它综合了簇内所有样本的位置。\term{K均值聚类}（K-means）据此寻找 $K$ 个中心，使样本到所属中心的平方距离之和尽量小。
+
+K-means 并非在一篇论文中一次成形。Steinhaus 的早期论文《论物质体的分割》载于该刊第 4 卷第 12 期；卷册标为 1956 年，zbMATH 则按 1957 年著录\scite{clust-steinhaus1957}MacQueen 在 1967 年讨论多元观测的分类与分析时使用了 K-means 这一名称，并给出逐个吸收样本、随即调整均值的增量方法\scite{clust-macqueen1967}因此，文献中的“K-means”既可能指平方误差聚类目标，也可能指某种具体更新算法，阅读时需要区分。
+
+本节采用的批量算法来自 Lloyd 对信号量化的研究：把连续幅值映射为有限个代表值，同样需要最小化平方失真。相关工作完成于 1957 年，经典论文直到 1982 年才正式发表\scite{clust-lloyd1982}它把“选择最近代表”和“重新计算代表”交替执行，与 MacQueen 的逐样本更新不同。今天常见的批量 K-means 实现主要沿用这一 Lloyd 过程。
+
+K-means 的吸引力在于目标和计算彼此配合：一轮分配与更新只需 $O(nKd)$ 运算。它既可独立用于用户分群、向量量化和图像颜色压缩，也可为谱聚类或混合模型提供基础步骤。
+
+\subsubsection{模型结构}
+
+为第 $k$ 个簇配置中心 $\bm{\mu}_k\in\mathbb{R}^d$，其\term{簇内平方误差}（sum of squared errors, SSE）为
+\begin{equation}
+  J(\mathcal{P},\bm{\mu})
+  =\sum_{k=1}^K\sum_{i\in C_k}
+    \lVert\bm{x}_i-\bm{\mu}_k\rVert_2^2.
+  \label{eq:clustering-sse}
+\end{equation}
+这里 $\bm{\mu}=(\bm{\mu}_1,\ldots,\bm{\mu}_K)$ 表示中心参数。固定中心后，每个样本应归入距离最近的中心；固定分配后，每个中心应取簇内均值。
+
+平方欧氏距离使同一中心的等距离面成为球面，最近中心的分配区域则是由超平面分隔的 Voronoi 单元。因此 K-means 偏好紧凑、尺度相近的簇，不能自然恢复环形等非凸结构。这是一种几何偏好，并不要求每个实际簇都严格服从球形高斯分布。
+
+\subsubsection{参数学习}
+
+同时优化中心和分配较难，但两个条件子问题都可直接求解。记第 $t$ 轮的分配为 $c_i^{(t)}$，Lloyd 更新写为
+\begin{align}
+  c_i^{(t+1)}
+    &\in\argmin_{1\leq k\leq K}
+      \lVert\bm{x}_i-\bm{\mu}_k^{(t)}\rVert_2^2,
+      \label{eq:clustering-lloyd-assignment}\\
+  \bm{\mu}_k^{(t+1)}
+    &=\frac{1}{|C_k^{(t+1)}|}
+      \sum_{i\in C_k^{(t+1)}}\bm{x}_i.
+      \label{eq:clustering-lloyd-centre}
+\end{align}
+图~\ref{fig:clustering-lloyd-steps} 把两步更新放在同一组样本上。中图只移动中心，簇分配仍保持左图的状态；到右图重新比较距离时，样本 $(1,0)$ 才从方块簇转入圆点簇。目标值的降低因此来自两个不同动作，不能把中心一移动就立即重画所有簇标记当作同一个更新步。
+
+\Needspace{65mm}
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-lloyd-steps}
+ \caption{Lloyd 迭代的教学例，六个样本为 $(0,0)$、$(0,1)$、$(1,0)$、$(4,2)$、$(4,3)$、$(5,2)$，初始中心为 $(0,0)$ 和 $(1,0)$。首次更新后中心为 $(0,0.5)$ 和 $(3.5,1.75)$；图中依次展示分配、均值更新与再次分配。}
+ \label{fig:clustering-lloyd-steps}
+\end{figure}
+
+为避免等距离样本反复换簇，若原簇分配仍为最优分配，就保留原分配；初始化时按固定顺序打破平局。空簇没有均值，必须另作约定。下面的教学实现保留空簇的旧中心，因此最多输出 $K$ 个非空簇；若应用要求恰好 $K$ 个非空簇，可以重启或采用后文的容量约束。
+
+\begin{codeblock}[language=Python,label={code:clustering-kmeans}]{带平局与空簇处理的 Lloyd 迭代}
+import numpy as np
+
+def kmeans(X, K, max_iter=300, seed=0):
+    X = np.asarray(X, dtype=float)
+    n = len(X)
+    if not 1 <= K <= n or max_iter < 1:
+        raise ValueError("invalid K or max_iter")
+    rng = np.random.default_rng(seed)
+    mu = X[rng.choice(n, K, replace=False)].copy()
+    labels = np.full(n, -1)
+    for _ in range(max_iter):
+        d2 = ((X[:, None] - mu[None]) ** 2).sum(2)
+        new = d2.argmin(1)
+        rows = np.flatnonzero(labels >= 0)
+        keep = d2[rows, labels[rows]] == d2[rows, new[rows]]
+        new[rows[keep]] = labels[rows[keep]]
+        if np.array_equal(new, labels):
+            return labels, mu
+        labels = new
+        for k in range(K):
+            members = X[labels == k]
+            if len(members):
+                mu[k] = members.mean(0)
+    return labels, mu
+\end{codeblock}
+
+代码假定输入是有限的二维数值数组。达到迭代上限时，返回的中心是返回分配的均值，但分配未必已是这些中心的最近中心分配；使用者应区分“达到上限”和“到达不动点”。广播距离的实现还会临时占用 $O(nKd)$ 空间，大数据实现通常分块计算。
+
+初始化决定算法从哪个局部区域开始搜索。\term{K-means++}以距离加权采样选择初始中心：先均匀选择一个样本，随后按 $D_i^2/\sum_jD_j^2$ 选择新中心，其中 $D_i$ 是 $\bm{x}_i$ 到已有中心的最短距离。若所有 $D_i=0$，已有中心已经覆盖全部不同位置。Arthur 与 Vassilvitskii 证明，其初始目标值满足 $\mathbb{E}[J]\leq8(\log K+2)J^\ast$；后续 Lloyd 更新不会破坏这一期望上界\scite{clust-arthur2007}
+
+这一保证针对平方距离目标的期望近似质量，不表示单次运行一定接近最优。标准 K-means++ 需要逐个增加中心，代价约为 $O(nKd)$；它通常值得采用，但在分布式环境下仍需考虑扫描和通信。
+
+\subsubsection{理论分析}
+
+\paragraph{收敛性分析}
+Lloyd 算法为何会停止，需要同时解释目标下降和平局处理。仅说“目标有下界”只能证明目标值收敛，不能推出有限停止。
+
+\begin{theorem}[Lloyd 算法的单调性与有限停止]
+  \label{thm:clustering-lloyd}
+  对有限样本，在精确计算下，分配步采用最近中心规则，并在平局时优先保留原簇分配；更新步对非空簇取均值、对空簇保留旧中心。则目标值单调不增，算法在有限轮后到达分配和中心均不再变化的不动点。
+\end{theorem}
+\begin{proof}
+固定中心，逐点选择最小距离给出
+\[
+ J(\mathcal{P}^{(t+1)},\bm{\mu}^{(t)})
+ \leq J(\mathcal{P}^{(t)},\bm{\mu}^{(t)}).
+\]
+对任意非空簇 $C$，记均值为 $\bar{\bm{x}}_C$。展开平方项，并利用 $\sum_{i\in C}(\bm{x}_i-\bar{\bm{x}}_C)=\bm{0}$，得到
+\begin{equation}
+ \sum_{i\in C}\lVert\bm{x}_i-\bm{a}\rVert_2^2
+ =\sum_{i\in C}\lVert\bm{x}_i-\bar{\bm{x}}_C\rVert_2^2
+   +|C|\lVert\bm{a}-\bar{\bm{x}}_C\rVert_2^2.
+ \label{eq:clustering-mean-decomposition}
+\end{equation}
+所以均值是唯一最优中心，更新步也不会增加目标；空簇对目标贡献为零。
+
+第一次均值更新后，若分配改变，至少一个样本移向严格更近的中心，否则保留原标签的规则会阻止改变。因此完整一轮使目标严格下降。对任一分配，均值更新后的目标只由该分配决定，即使存在空簇也如此。分配至多有 $K^n$ 种，严格下降不可能无限次访问它们。分配不变时，已有非空簇中心仍为相同均值，算法遂停止。
+\end{proof}
+
+不动点是分块优化意义下的解，不能无条件称为严格局部极小值；等距离、重合中心等退化情况尤其需要区分。若所有样本的最近中心唯一且各簇非空，则在足够小的中心扰动下分配不变，均值最优性才给出相应的局部最优解释。
+
+全局求解仍然困难。当维数是输入的一部分时，Aloise 等证明了即使固定 $K=2$，欧氏平方和聚类仍为 NP-hard\scite{clust-aloise2009}在平面上把 $K$ 作为输入时，Mahajan、Nimbhorkar 与 Varadarajan 也得到了 NP-hard 结果\scite{clust-mahajan2012}因此，除非 $\mathrm{P}=\mathrm{NP}$，不能期待一般输入都有多项式时间的精确算法。
+
+\paragraph{泛化分析}
+训练 SSE 的下降也不等于统计泛化。若未来样本 $\bm{X}$ 与训练样本同分布，可考察总体量化误差 $\mathbb{E}[\min_k\lVert\bm{X}-\bm{\mu}_k\rVert_2^2]$；经验全局最优中心在矩条件和适当唯一性条件下有一致性理论，但这种结论不能直接套到任意一次 Lloyd 运行上\scite{clust-pollard1981}
+
+实际误差还取决于表示方式。平方距离会放大离群样本的影响，不同量纲会改变最近中心关系；标准化应结合业务含义，而非机械处理每一维。距离和尺度同样决定第~\ref{sec:regression-knn}~节的 $k$-NN 回归会选中哪些邻居；两者都依赖输入几何，但 K-means 优化无标签样本的量化误差，$k$-NN 回归则聚合带响应的邻域样本。多次重启可以改善优化结果，改变相似度或模型才可能纠正结构假设的失配。
+
+\subsubsection{支持大规模数据（Mini-Batch K-means）}
+
+全量扫描在大数据上代价较高。Sculley 在 2010 年提出\term{小批量K均值聚类}（Mini-Batch K-means）来降低更新成本\scite{clust-sculley2010}算法每轮抽取 $b$ 个样本，只更新它们涉及的中心。
+
+设簇 $k$ 累计接收了 $v_k$ 次样本更新。每接收一个分配到该簇的样本，就令 $v_k\leftarrow v_k+1$，并计算
+\begin{equation}
+ \bm{\mu}_k\leftarrow
+ (1-\eta_k)\bm{\mu}_k+\eta_k\bm{x}_i,
+ \qquad \eta_k=\frac{1}{v_k}.
+ \label{eq:clustering-minibatch}
+\end{equation}
+这是对历史已分配样本的增量平均，不是当前全体簇成员的精确均值。一轮距离计算降为 $O(bKd)$，但总成本仍取决于迭代次数、初始化和最终全量分配。
+
+小批量更新会引入随机波动，不能沿用定理~\ref{thm:clustering-lloyd} 的逐轮 SSE 单调性。批量大小、采样偏差和低频簇的覆盖都会影响质量；它以可控的近似误差换取吞吐量，是否足够准确应通过抽样评估或留出数据上的量化误差判断。
+
+\subsubsection{支持限制簇大小（Constrained K-means）}
+\label{sec:clustering-capacity}
+
+最小 SSE 不一定满足容量需求。客户分区、任务分片或服务网点分配常要求每簇至少或至多容纳一定数量的样本。Bradley、Bennett 与 Demiriz 研究了带最小簇规模的 K-means；加入上界后，固定中心的分配问题可统一写为\scite{clust-bradley2000}
+\begin{equation}
+ \begin{aligned}
+ \min_{\bm{Z}}\quad&
+   \sum_{i=1}^n\sum_{k=1}^K
+   z_{i,k}\lVert\bm{x}_i-\bm{\mu}_k\rVert_2^2,\\
+ \text{s.t.}\quad&
+   \sum_{k=1}^K z_{i,k}=1,\quad z_{i,k}\in\{0,1\},\\
+ & \ell_k\leq\sum_{i=1}^n z_{i,k}\leq u_k.
+ \end{aligned}
+ \label{eq:clustering-capacity}
+\end{equation}
+整数容量满足 $0\leq\ell_k\leq u_k$，且在没有其他分配禁令时，可行性条件为 $\sum_k\ell_k\leq n\leq\sum_ku_k$。
+
+这个子问题可用最小费用流精确求解：源点向每个样本连容量为 1 的边，每个样本向每个簇连容量为 1、费用为平方距离的边，每个簇向汇点连下界为 $\ell_k$、上界为 $u_k$ 的边，并要求总流量为 $n$。整数容量的网络流存在整数最优解，故每个样本恰好选中一簇。这里的关键是网络结构的整数性，而不只是线性规划属于凸优化。
+
+更新步仍取均值。若每次分配精确最优，且平局时保留已有最优分配，则每次发生改变都会降低目标；配合确定的空簇处理，可沿用有限分配的停止论证。分配成本取决于网络规模、费用表示和求解器，不能统一写成一个不附条件的固定幂次。
+
+Malinen 与 Fränti 在 2014 年研究了要求簇规模相等的平衡 K-means\scite{clust-malinen2014}当 $K$ 整除 $n$ 且要求 $|C_k|=n/K$ 时，把每个中心复制成相应数量的容量槽，得到 $n$ 对 $n$ 的指派问题；Hungarian 算法可在 $O(n^3)$ 时间内求解。
+
+若 $n$ 不能被 $K$ 整除，可指定各簇容量为 $\lfloor n/K\rfloor$ 或 $\lceil n/K\rceil$，并使总和为 $n$。按距离依次填满簇的启发式更便宜，但会受处理顺序影响，也未必满足所有下界或降低 SSE。
+
+\subsubsection{小结}
+
+K-means 适合数值表示可靠、簇较紧凑且需要快速硬划分的任务。其计算优势来自平方距离和均值更新，代价是对尺度、离群点、初始化及 $K$ 的选择敏感。Mini-Batch 主要改变计算方式，容量约束主要改变可行域；二者都没有自动消除原有几何假设。
+
+\subsection{K-medoids}
+\label{sec:clustering-kmedoids}
+
+如果要展示一个真实客户作为群组代表，均值记录可能没有业务意义；对字符串等对象，均值甚至没有定义。\term{K 中心样本聚类}（K-medoids）要求代表本身来自样本集，因而只需定义对象间相异度。
+
+Kaufman 与 Rousseeuw 在 1987 年以“通过 medoid 聚类”为题介绍了这一方法\scite{clust-kaufman1987}用观测对象而非虚构均值表示簇，使相异度矩阵可以直接成为输入。两人在 1990 年的专著中进一步系统整理了 PAM、面向较大数据的 CLARA，以及相邻的层次分析方法\scite{clust-kaufman1990}这一发展过程把两个问题分开了：如何定义一个有解释性的代表，以及如何在大量候选代表中有效搜索。
+
+\subsubsection{模型结构}
+
+设代表索引集合 $M=\{m_1,\ldots,m_K\}\subseteq\{1,\ldots,n\}$，相异度为 $\delta(\bm{x},\bm{y})$。优化目标为
+\begin{equation}
+ J(M)=\sum_{i=1}^n\min_{m\in M}\delta(\bm{x}_i,\bm{x}_m).
+ \label{eq:clustering-medoids}
+\end{equation}
+每个 $\bm{x}_{m_k}$ 称为\term{中心样本}（medoid），分配由最近代表决定。典型相异度包括欧氏距离、曼哈顿距离、汉明距离、编辑距离和 Jaccard 距离。目标本身不要求三角不等式，但某些索引加速方法需要这一性质。
+
+使用未平方的距离可以降低远处样本相对于 SSE 的影响，而中心被限制为真实样本也阻止均值式的连续偏移。不过鲁棒性仍取决于距离和污染结构，不能仅因采用 medoid 就认为结果不受离群点影响。
+
+图~\ref{fig:clustering-medoid-robustness} 用一维、单簇情形隔离这种差别。把最右侧样本从 5 移到 12 后，平方距离的最优中心随均值右移，而绝对距离的最优中心样本仍为中间观测 2。这个例子同时改变了代表约束与损失形式，说明的是这组设定下的稳健性差异。
+
+\Needspace{75mm}
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-medoid-robustness}
+ \caption{中心样本与均值对极端值的不同反应。固定 $K=1$，上方样本为 $\{0,1,2,3,5\}$，下方只把 5 改为 12；黑点为观测，圆圈标出绝对距离下的 medoid，三角形标出平方距离下的最优均值。}
+ \label{fig:clustering-medoid-robustness}
+\end{figure}
+
+\subsubsection{参数学习}
+
+\term{围绕中心样本划分}（Partitioning Around Medoids, PAM）通常包含 BUILD 初始化和 SWAP 改进。BUILD 贪心增加代表；SWAP 枚举每个当前代表 $m\in M$ 与每个非代表 $o\notin M$，计算
+\[
+ \Delta(m,o)=
+ J\bigl((M\setminus\{m\})\cup\{o\}\bigr)-J(M).
+\]
+候选 $o$ 来自整个数据集，而不限于 $m$ 所在簇；每次交换后，所有样本都重新选择最近代表。只在固定簇内选取距离总和最小的样本，是另一种交替更新，不能替代 PAM 的 SWAP。
+
+下面代码从随机代表开始，实现完整的交换邻域搜索，便于核对目标定义；它没有实现 BUILD，也没有缓存距离差分，因此主要用于教学。
+
+\begin{codeblock}[language=Python,label={code:clustering-pam}]{PAM 的完整交换步骤}
+import numpy as np
+
+def pam_swap(D, K, seed=0, max_iter=100):
+    n = len(D)
+    if D.shape != (n, n) or not 1 <= K <= n or max_iter < 1:
+        raise ValueError("invalid distance matrix, K, or max_iter")
+    rng = np.random.default_rng(seed)
+    medoids = rng.choice(n, K, replace=False)
+    cost = D[:, medoids].min(1).sum()
+    converged = False
+    for _ in range(max_iter):
+        best, best_cost = None, cost
+        outside = np.setdiff1d(np.arange(n), medoids)
+        for k in range(K):
+            for o in outside:
+                trial = medoids.copy()
+                trial[k] = o
+                value = D[:, trial].min(1).sum()
+                if value < best_cost:
+                    best, best_cost = trial, value
+        if best is None:
+            converged = True
+            break
+        medoids, cost = best, best_cost
+    return D[:, medoids].argmin(1), medoids, converged
+\end{codeblock}
+
+严格改进的交换不可能重复同一个代表集合。若某轮完整扫描没有找到改进交换，代码令 \code{converged=True}，此时返回的代表集合才是单次交换邻域中的局部最优；若 \code{max\_iter} 用尽，返回的 \code{converged=False} 表示不能确认这一性质，当前集合仍可能存在改进交换。去掉迭代上限并持续完整扫描时，有限个代表集合才保证过程最终在这样的局部最优处停止。预计算相异度矩阵需要 $O(n^2)$ 存储；若距离计算本身昂贵，还须计入其成本。经典 PAM 利用最近和次近代表缓存，一轮完整交换搜索通常按 $O(K(n-K)^2)$ 量级分析；上面朴素代码每个候选都重算 $K$ 个距离列，成本更高。
+
+CLARA 在若干子样本上运行 PAM，再用全体样本评价候选代表，适合控制内存，但可能漏掉小簇。CLARANS 把代表集合视为搜索状态，随机抽取交换邻居，减少完整邻域扫描\scite{clust-nghan1994}
+
+FastPAM 通过复用不同被替换代表之间的计算，减少经典交换步骤中对 $K$ 的重复工作；主要加速约为一个 $K$ 因子，而不是把整个算法变为对 $n$ 线性。全量距离矩阵仍可能成为瓶颈\scite{clust-schubert2019}
+
+\subsubsection{小结}
+
+K-medoids 适合需要真实代表、非数值对象或一般相异度的场景。相对于平方距离的 K-means，它常能减轻极端值的影响，但交换搜索和距离矩阵增加了成本。是否采用 CLARA、CLARANS 或 FastPAM，应根据允许的近似误差和距离存储预算决定。
+
+\subsection{模型对比与总结}
+
+本小节先比较 K-means 与 K-medoids，再把改变中心、输出粒度或表示方式的方法作为代表性扩展。K-means 和 K-medoids 的区别不只是中心的名称：前者允许中心在向量空间中移动，并优化平方欧氏距离；后者在有限样本集合中选择代表，可以使用更一般的相异度。二者不是彼此在同一约束下的特殊情况。表~\ref{tab:clustering-partition} 给出了直接比较。
+
+\begin{table}[htbp]
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 比较项 & K-means & K-medoids\\
+ \midrule
+ 代表 & 簇内均值向量 & 真实样本\\
+ 准则 & 平方欧氏距离和 & 指定相异度和\\
+ 优化步骤 & 最近中心与均值更新 & 代表交换与全局重分配\\
+ 主要成本 & 一轮 $O(nKd)$ & 完整交换搜索与距离访问\\
+ 典型用途 & 数值数据、向量量化 & 非数值对象、实例解释\\
+ \bottomrule
+ \end{tabularx}
+ \caption{两类划分方法的比较。复杂度须与具体算法相联系；PAM 的成本不能套到所有 K-medoids 求解器。}
+ \label{tab:clustering-partition}
+\end{table}
+
+沿中心与相异度两个方向，可以得到其他划分模型。\term{K 中位数聚类}（K-medians）最小化 $\ell_1$ 距离和，固定分配后逐坐标取中位数；它不等于以欧氏距离和定义的几何中位数问题。
+
+\Needspace{45mm}
+若簇之间允许模糊重叠，\term{模糊 C 均值}（Fuzzy C-Means, FCM）用隶属度 $u_{i,k}$ 代替硬簇分配\scite{clust-bezdek1981}
+\begin{equation}
+ J_{\mathrm{FCM}}
+ =\sum_{i=1}^n\sum_{k=1}^K
+ u_{i,k}^{q}\lVert\bm{x}_i-\bm{\mu}_k\rVert_2^2,
+ \quad \sum_k u_{i,k}=1,\quad q>1.
+ \label{eq:clustering-fcm}
+\end{equation}
+这里 $q$ 是模糊指数。固定隶属度时，中心是以 $u_{i,k}^q$ 为权重的均值；当各距离非零时，固定中心给出
+\[
+ u_{i,k}=
+ \left[
+ \sum_{j=1}^K
+ \left(\frac{\lVert\bm{x}_i-\bm{\mu}_k\rVert_2}
+ {\lVert\bm{x}_i-\bm{\mu}_j\rVert_2}\right)^{2/(q-1)}
+ \right]^{-1}.
+\]
+若样本与一个或多个中心重合，可把隶属度集中在这些零距离中心上。隶属度表达目标函数意义下的软归属，并不自动等于生成模型的后验概率；医学影像中的部分体积效应是这类软表达的一个应用动机。
+
+另一种改动针对分裂顺序。\term{二分 K-means}（Bisecting K-means）从全部样本属于一个簇开始，反复选择一个簇运行 $K=2$ 的 K-means，直到得到所需簇数。选择最大 SSE 的簇并对每次二分多次重启，是一种常见做法；它形成层次树，但早期分裂也会限制后续结果，不能保证总比一次性 $K$ 分更优。Steinbach 等在文档聚类比较中研究了这一方案\scite{clust-steinbach2000}
+
+% 将核距离推导及两条较长的引文安排在同一段版面内。
+\Needspace{105mm}
+若主要困难是原空间中的非凸形状，可在特征映射 $\phi$ 后运行\term{核 K-means}（kernel K-means）。这里复用了第~\ref{sec:classification-svm-kernel-trick}~节的核技巧：两种方法都用 Gram 矩阵计算特征空间内积，但核 SVM 根据类别标签学习决策边界，核 K-means 则优化无标签样本的簇内相异度。记核函数 $\kappa(\bm{x},\bm{y})=\langle\phi(\bm{x}),\phi(\bm{y})\rangle$，样本到特征空间均值的距离为
+\begin{equation}
+ \begin{aligned}
+ \lVert\phi(\bm{x}_i)-\bm{\mu}_k^\phi\rVert^2
+ ={}&\kappa(\bm{x}_i,\bm{x}_i)
+ -\frac{2}{|C_k|}\sum_{j\in C_k}\kappa(\bm{x}_i,\bm{x}_j)\\
+ &+\frac{1}{|C_k|^2}
+   \sum_{j,l\in C_k}\kappa(\bm{x}_j,\bm{x}_l).
+ \end{aligned}
+ \label{eq:clustering-kernel-kmeans}
+\end{equation}
+所以不必显式计算 $\phi$，但要承担核矩阵的计算和存储\scite{clust-girolami2002,dhillon2004}Girolami 讨论了核空间聚类；Dhillon、Guan 与 Kulis 进一步建立了带适当权重和核构造的核 K-means 与归一化割之间的联系。
+
+这个等价关系有具体的权重与核条件，不能理解成任意普通核 K-means 都等于任意归一化割。它也说明，原空间中偏好凸形区域的性质不应推广到所有划分方法。若希望保留多种粒度，下一节的层次结构则提供了另一种输出形式。
+
+\section{基于层次的聚类}
+\label{sec:clustering-hierarchy}
+
+当“应该分几类”尚不明确时，一次性输出 $K$ 个簇会过早固定粒度。\term{层次聚类}（hierarchical clustering）把簇组织成嵌套结构，用\term{树状图}（dendrogram）记录合并或分裂过程。分析者可以从同一棵树中选择不同规模的划分，但树本身并不替代粒度选择。
+
+凝聚方法从单点簇向上合并，分裂方法从全集向下拆分。图~\ref{fig:clustering-dendrogram} 展示了同一层次树上的两种截取粒度；截线只是读取既有层次，不会重新优化该粒度下的目标。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-dendrogram}
+ \caption{教学用层次树。叶节点为六个样本，内部节点高度表示合并相异度。较低截线得到三个簇，较高截线得到两个簇；图中高度为示意数值。}
+ \label{fig:clustering-dendrogram}
+\end{figure}
+
+\subsection{AGNES（凝聚层次聚类）}
+\label{sec:clustering-agnes}
+
+\term{凝聚分析}（Agglomerative Nesting, AGNES）每步合并当前最相似的两簇。凝聚方法在数值分类学中已有长期应用，Kaufman 与 Rousseeuw 在 1990 年的专著中用 AGNES 组织这一分析过程，并将它与自顶向下的 DIANA 对照介绍。与 K-means 不同，AGNES 的关键设计选择是“两个簇之间的相异度怎样计算”。
+
+层次方法的发展也体现在链接准则的变化上。单链接沿邻近关系连接样本，平均链接综合全部跨簇距离；Ward 在 1963 年则把一个明确的优化目标引入合并决策，要求每次合并尽量少增加组内平方误差。因而“凝聚”描述的是构造方向，具体形成怎样的树，还要由链接准则决定。
+
+\subsubsection{模型结构}
+
+初始划分为 $\mathcal{P}^{(0)}=\{\{1\},\ldots,\{n\}\}$。第 $t$ 步选择使 $D(A,B)$ 最小的两个当前簇，替换为 $A\cup B$，经过 $n-1$ 次合并得到根节点。固定相异度和确定的平局规则后，整棵树随之确定。
+
+不同\term{链接方式}（linkage）用不同的簇间统计量：
+\begin{align*}
+ D_{\mathrm{single}}(A,B)
+   &=\min_{i\in A,j\in B}\delta(\bm{x}_i,\bm{x}_j),\\
+ D_{\mathrm{complete}}(A,B)
+   &=\max_{i\in A,j\in B}\delta(\bm{x}_i,\bm{x}_j),\\
+ D_{\mathrm{average}}(A,B)
+   &=\frac{\sum_{i\in A,j\in B}\delta(\bm{x}_i,\bm{x}_j)}
+   {|A||B|}.
+\end{align*}
+单链接沿近邻链扩展，可以保留细长形状，也容易被稀疏桥接点连接起来；全链接控制跨簇最远距离，倾向紧凑群组；平均链接考虑所有跨簇样本对，减弱单个极值的影响。这里的平均链接指按样本数加权的 UPGMA。
+
+若样本处于欧氏空间，Ward 链接以合并引起的 SSE 增量定义相异度：
+\[
+ D_{\mathrm{Ward}}(A,B)
+ =\mathrm{SSE}(A\cup B)-\mathrm{SSE}(A)-\mathrm{SSE}(B).
+\]
+它与 K-means 共享平方误差准则，但只允许合并已有簇。Ward 的原始工作明确以这种误差增量组织层次\scite{ward1963}
+
+\subsubsection{参数学习}
+
+实现 AGNES 时，可以维护当前簇间的相异度，并在每次合并后更新相关行列。算法~\ref{alg:clustering-agnes} 省去了不影响定义的矩阵下标管理。
+
+\begin{algorithm}[凝聚层次聚类]
+ \label{alg:clustering-agnes}
+ \begin{algorithmic}[1]
+ \Require 样本相异度、链接方式和确定的平局规则
+ \Ensure 包含合并高度的层次树
+ \State 建立 $n$ 个单点簇，初始化簇间相异度
+ \While{当前簇数大于 $1$}
+  \State 选择使 $D(A,B)$ 最小的当前簇对
+  \State 记录子簇 $A,B$ 和合并高度 $D(A,B)$
+  \State 用 $A\cup B$ 替换 $A,B$
+  \State 更新新簇与其他当前簇的相异度
+ \EndWhile
+ \end{algorithmic}
+\end{algorithm}
+
+Lance--Williams 递推使多种链接共享更新形式\scite{clust-lance1967}
+\begin{equation}
+ \begin{aligned}
+ D(A\cup B,C)={}&\alpha_A D(A,C)+\alpha_B D(B,C)\\
+ &+\beta D(A,B)
+ +\gamma|D(A,C)-D(B,C)|.
+ \end{aligned}
+ \label{eq:clustering-lance-williams}
+\end{equation}
+单链接的系数为 $(1/2,1/2,0,-1/2)$，全链接为 $(1/2,1/2,0,1/2)$，平均链接为 $(|A|/(|A|+|B|),|B|/(|A|+|B|),0,0)$。若 $D$ 直接表示 Ward 的 SSE 增量，令 $s=|A|+|B|+|C|$，则
+\[
+ \alpha_A=\frac{|A|+|C|}{s},\quad
+ \alpha_B=\frac{|B|+|C|}{s},\quad
+ \beta=-\frac{|C|}{s},\quad \gamma=0.
+\]
+有些软件存储的是 Ward 增量的缩放平方根；使用递推前必须核对该软件的距离约定。
+
+每轮扫描全部簇对的朴素实现需要 $O(n^3)$ 时间和 $O(n^2)$ 存储。利用链接性质可进一步改进：SLINK 对单链接可达到 $O(n^2)$ 时间和 $O(n)$ 辅助空间；全链接也有 CLINK 等紧凑表示方法，但需遵循其算法与平局约定。平均链接、全链接和 Ward 的最近邻链实现可达到 $O(n^2)$ 时间，常见实现仍保存平方规模的距离矩阵，不能把 $O(n^2\log n)$ 当作必然下界\scite{clust-muellner2011}
+
+\subsubsection{理论分析}
+
+\paragraph{收敛性分析}
+AGNES 每步减少一个簇，因此有限停止来自计数，而非某个连续优化的收敛定理。更有意义的问题是每次合并优化了什么。
+
+\begin{theorem}[Ward 合并的贪心最优性]
+ \label{thm:clustering-ward}
+ 对欧氏样本的任一当前划分，Ward 链接选择使下一步总 SSE 增量最小的簇对；任意两个非空簇满足
+ \[
+ \Delta\mathrm{SSE}(A,B)
+ =\frac{|A||B|}{|A|+|B|}
+   \lVert\bm{\mu}_A-\bm{\mu}_B\rVert_2^2.
+ \]
+\end{theorem}
+\begin{proof}
+令 $a=|A|$、$b=|B|$，则合并均值为 $\bm{\mu}=(a\bm{\mu}_A+b\bm{\mu}_B)/(a+b)$。由式~\eqref{eq:clustering-mean-decomposition}，合并后的 SSE 等于两簇原有 SSE 加上
+\[
+ a\lVert\bm{\mu}_A-\bm{\mu}\rVert_2^2+
+ b\lVert\bm{\mu}_B-\bm{\mu}\rVert_2^2.
+\]
+又有 $\bm{\mu}_A-\bm{\mu}=b(\bm{\mu}_A-\bm{\mu}_B)/(a+b)$，另一项为其相反方向的 $a/b$ 倍。代入后系数为 $(ab^2+ba^2)/(a+b)^2=ab/(a+b)$。其他簇不变，因此选择最小 Ward 相异度恰好最小化当前总 SSE 增量。
+\end{proof}
+
+这一结论只比较当前可合并的簇对，不保证截取出的 $K$ 簇划分是 SSE 全局最优，也不保证与 K-means 的解接近。Ward 结果可以作为 K-means 的初始化，此后的重新分配可能继续降低 SSE。
+
+单链接具有另一种解释：对完整加权图求最小生成树，按边权从小到大连接，得到相同的阈值连通结构；等权边下具体二叉树表示可以不同。全链接则选择跨簇最大距离最小的簇对，它对直径的控制不同于 Ward 对总平方误差的控制。两者都不是对整棵树联合求最优。
+
+\paragraph{泛化分析}
+层次树通常描述训练样本之间的关系。新样本如何插入、抽样扰动是否改变关键分支，需要额外规则或重采样检验；得到一棵确定的树不构成总体稳定性的保证。尤其在多个候选合并的相异度十分接近时，轻微的数据变化就可能改变早期合并，再传递到更高层次。可以对样本重采样，考察关心的群组是否反复出现，而不是仅凭一次树状图的清晰程度判断结构可信。
+
+\subsubsection{小结}
+
+AGNES 提供从细到粗的层级视图，适合需要解释嵌套关系的探索任务。选择链接方式就选择了几何偏好，其中单链接本来就能表达非凸形状。主要限制是距离处理成本和合并不可撤销；后续改进可以压缩数据或改变合并准则，但不能据此宣称消除了所有早期错误。
+
+\subsection{DIANA（分裂层次聚类）}
+
+若关心的是“整个数据应先拆成哪几大块”，可以从树根开始。\term{分裂分析}（Divisive Analysis, DIANA）以全部样本为一个簇，逐步分裂不一致程度最高的簇，与 AGNES 构成方向上的对照。它更早显露顶层划分，但顶层一旦选错，也会约束后续结构。
+
+\subsubsection{模型结构}
+
+DIANA 通常用簇直径 $\max_{i,j\in C}\delta(\bm{x}_i,\bm{x}_j)$ 选择待分裂簇。每次把一个非单点簇拆成两个非空子簇；若展开完整树，恰需 $n-1$ 次分裂。若只需少数大簇，也可提前停止。
+
+\subsubsection{参数学习}
+
+对含 $m$ 个样本的簇，非平凡无序二分共有 $2^{m-1}-1$ 种，完整枚举很快变得昂贵。DIANA 用\term{分裂群}（splinter group）贪心构造二分：选取对其余样本平均相异度最大的样本作为种子，令其自成集合 $S$，其余样本组成 $R$。
+
+对每个 $i\in R$，在 $|R|>1$ 时计算
+\[
+ a_i=\frac{1}{|R|-1}\sum_{\substack{j\in R\\j\ne i}}
+ \delta(\bm{x}_i,\bm{x}_j),\qquad
+ b_i=\frac{1}{|S|}\sum_{j\in S}\delta(\bm{x}_i,\bm{x}_j).
+\]
+若最大的 $a_i-b_i$ 为正，就把对应样本从 $R$ 移到 $S$，再更新这些量；否则结束分裂。这样每一步都选择更接近分裂群的最强候选，而非按任意顺序一次扫描。保留至少一个样本在 $R$ 中，避免产生空子簇。
+
+\subsubsection{小结}
+
+DIANA 用启发式二分替代昂贵的穷举，适合优先查看顶层结构。其结果依赖相异度、种子和平局处理；仅凭分裂是启发式，不能断言它在所有数据上都比 AGNES 不稳定。完整树的成本也取决于距离缓存、分裂形态及更新方式。
+
+\subsection{模型对比与总结}
+
+本小节先比较 AGNES 与 DIANA，再把面向规模、形状或关系输入的层次方法作为代表性扩展。AGNES 不断合并，DIANA 不断分裂，两者都把粒度选择推迟到层次结果形成之后。合并时容易比较局部候选，分裂时则需在大量可能的二分中作出近似选择。是否更适合某个任务，应依据希望保留的层次以及相异度的含义判断。
+
+当数据装不进内存时，可先压缩再聚类。BIRCH 用\term{聚类特征}（clustering feature, CF）记录样本数、向量和与平方范数和\scite{clust-zhang1996}这些摘要写为
+\[
+ \mathrm{CF}(C)=
+ \left(|C|,\ \sum_{i\in C}\bm{x}_i,\
+ \sum_{i\in C}\lVert\bm{x}_i\rVert_2^2\right).
+\]
+这些量可相加，也可恢复均值和簇内平方误差。CF 树把邻近样本汇入摘要节点，再对叶摘要聚类；在树高和摘要规模受控时，扫描成本近似随 $n$ 线性增长，但最终质量受阈值、插入顺序及摘要损失影响。
+
+CURE 用多个分散代表点描述每簇\scite{clust-guha1998}选择代表时，先选离均值较远的点，再逐个选择离已有代表集合较远的点，使代表覆盖簇的不同部分；随后把它们向均值收缩，以减弱孤立点影响。若原代表为 $\bm{r}$、簇均值为 $\bm{\mu}_C$，收缩后的代表可写为
+\[
+ \bm{r}'=(1-\alpha)\bm{r}+\alpha\bm{\mu}_C,
+ \qquad 0\leq\alpha\leq1.
+\]
+两个簇的代表之间的最近距离用于决定合并。$\alpha=0$ 保留边缘形状，也更易受极端点影响；$\alpha$ 接近 1 时，代表逐渐退化为中心。CURE 结合抽样与分区降低处理规模，但不能据此给一般完整层次过程统一保证 $O(n\log n)$ 时间。
+
+对类别属性，ROCK 用共同邻居所形成的链接数量替代单纯点间距离，其工作发表于 1999 年\scite{clust-guha1999}它依然依赖邻居定义，且共享邻居统计会带来额外成本。
+
+\Needspace{55mm}
+Chameleon 在近邻图的初始子簇之上，根据相对互连度与相对相近度决定合并，使评价随簇的内部结构变化。它改进的是合并准则，而非撤销已完成合并的回溯机制\scite{clust-karypis1999}
+
+这些改进说明，层次聚类可以兼顾摘要、形状与关系信息，但每一种都有条件。若真正关心的是稀疏区域能否把群体分开，下一节可以直接把密度连通性作为簇定义。
+
+\section{基于密度的聚类}
+\label{sec:clustering-density}
+
+对于环形、月牙形或弯曲条带，单个中心未必能代表整个簇，但沿着样本密集处行走，仍可能从簇的一端到达另一端。基于密度的聚类据此寻找由低密度区域分隔的结构。这里有两种不同的定义：一种把簇看成密集区域的连通分量，另一种把簇看成密度峰的吸引域。二者都不要求球形簇，却未必产生相同结果。
+
+DBSCAN 直接用邻域计数判断密集程度，OPTICS 保留不同密度尺度的访问结构，Mean Shift 则沿核密度估计寻找驻点。噪声识别是前两者的显式输出；基本 Mean Shift 会为起点寻找归宿，并不自动拒绝孤立样本。
+
+\subsection{DBSCAN}
+\label{sec:clustering-dbscan}
+
+DBSCAN（Density-Based Spatial Clustering of Applications with Noise）用“周围是否有足够多邻居”判断一个样本能否继续扩展簇。Ester 等在 1996 年提出这一方法，使任意形状的密集连通区域和噪声能够在同一流程中处理\scite{ester1996}
+
+原始 DBSCAN 工作面向带噪声的大型空间数据库，明确把发现任意形状的簇、减少领域参数知识的要求和提高大数据处理效率列为设计目标。由此形成的关键选择，是通过邻域计数与连通扩展寻找区域，而不是先指定若干中心，再强制每个样本归属其中之一。这也解释了噪声标记为何是模型定义的一部分。
+
+\subsubsection{模型结构}
+
+固定半径 $\varepsilon>0$ 和最小邻域样本数 $m=\mathrm{MinPts}$，定义索引邻域
+\[
+ N_\varepsilon(i)=
+ \{j:\delta(\bm{x}_i,\bm{x}_j)\leq\varepsilon\}.
+\]
+本节假定相异度对称、样本到自身距离为零，并在邻域计数中包含自身。\term{核心点}（core point）满足 $|N_\varepsilon(i)|\geq m$；\term{边界点}（border point）不是核心点，但处在某个核心点的邻域内；既非核心也非边界的样本是\term{噪声点}（noise point）。
+
+若 $i$ 是核心点且 $j\in N_\varepsilon(i)$，称 $j$ 从 $i$\term{直接密度可达}（directly density-reachable）。沿这样的有向关系组成有限链，就得到\term{密度可达}（density-reachable）：链上除终点外的点都须为核心点，终点可以是边界点。若存在一个核心点，使两个样本都从它密度可达，则称它们\term{密度相连}（density-connected）。
+
+一个无歧义的理解方式是先只保留核心点，把距离不超过 $\varepsilon$ 的核心点相连。每个连通分量构成一个簇的核心，再吸收邻接的非核心点。某个边界点可能邻接多个核心分量，因此“极大密度相连集合”在全部样本上未必互不相交；实际 DBSCAN 通常把共享边界点交给先访问到它的簇。图~\ref{fig:clustering-dbscan} 展示了核心点负责扩展、边界点只被吸收的差别。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-dbscan}
+ \caption{DBSCAN 的教学示意，取 $\varepsilon=1$、$\mathrm{MinPts}=4$，计数包含自身。圆形和方形分别标识两个核心分量，颜色只作辅助；实心标记为核心点，空心标记为边界点，叉号为噪声。虚线圆表示两个示例核心点的邻域，边界点不能继续扩展簇。}
+ \label{fig:clustering-dbscan}
+\end{figure}
+
+\subsubsection{参数学习}
+
+DBSCAN 的主要工作是查询邻域并搜索核心连通分量。代码~\ref{code:clustering-dbscan} 使用暴力距离查询，完整展示暂定噪声被重新吸收为边界点的情况。
+
+\begin{codeblock}[language=Python,label={code:clustering-dbscan}]{DBSCAN 的邻域扩展}
+import numpy as np
+from collections import deque
+
+def dbscan(X, eps, min_pts):
+    X = np.asarray(X, dtype=float)
+    if eps <= 0 or min_pts < 1:
+        raise ValueError("invalid density parameters")
+    labels = np.full(len(X), -1)  # -1 未访问，-2 噪声
+    def neighbors(i):
+        d2 = ((X - X[i]) ** 2).sum(1)
+        return np.flatnonzero(d2 <= eps ** 2)
+    cid = 0
+    for i in range(len(X)):
+        if labels[i] != -1:
+            continue
+        near = neighbors(i)
+        if len(near) < min_pts:
+            labels[i] = -2
+            continue
+        labels[i] = cid
+        queue = deque(near)
+        while queue:
+            j = queue.popleft()
+            if labels[j] == -2:
+                labels[j] = cid
+            if labels[j] != -1:
+                continue
+            labels[j] = cid
+            near_j = neighbors(j)
+            if len(near_j) >= min_pts:
+                queue.extend(near_j)
+        cid += 1
+    return labels
+\end{codeblock}
+
+每个样本至多发起一次邻域查询，但队列可能包含重复索引。暴力实现的距离成本为 $O(n^2d)$；低维且邻域规模受控时，空间索引可使实践成本接近 $O(n\log n)$，然而高维或大半径下仍可能退化到平方级。预存全部邻域的实现还可能占用 $O(n^2)$ 内存。
+
+参数选择可从第 $m$ 近邻距离的排序图入手，近邻计数约定应与是否包含自身一致。曲线的转折提示不同密度尺度，但未必存在清晰肘部。Schubert 等把 $\mathrm{MinPts}\approx 2d$ 作为平滑密度估计的经验起点，而不是一般最优值\scite{clust-schubert2017}重复样本、噪声比例和有效维数都会影响合理的邻域大小与最小样本数。
+
+\subsubsection{理论分析}
+
+\paragraph{收敛性分析}
+DBSCAN 对有限样本的访问和邻域扩展会在有限步后结束。它没有需要反复优化到驻点的连续参数，因此这里更关键的性质是：算法停止时是否完整找到核心连通分量，以及结果是否依赖访问顺序。
+
+\begin{theorem}[DBSCAN 的核心点确定性]
+ \label{thm:clustering-dbscan}
+ 固定数据、对称相异度和参数 $(\varepsilon,m)$，DBSCAN 输出的每个簇限制到核心点后，恰为核心点邻接图的一个连通分量。因此核心点划分与访问顺序无关，簇编号的置换除外。
+\end{theorem}
+\begin{proof}
+在核心点集合上，距离不超过 $\varepsilon$ 的两点能相互直接密度到达。有限链的连通关系满足自反、对称和传递性，故图的连通分量就是核心点上密度相连关系的等价类。
+
+从任一尚未访问的核心点扩展时，每发现一个核心邻居就加入它的邻域。沿路径长度归纳，该点所在连通分量中的每个核心点最终都会被访问。反过来，扩展过程只能经由核心点邻接边到达其他核心点，不能穿过非核心边界点连接两个分量。因此输出的核心集合既不遗漏本分量，也不包含其他分量，结论成立。
+\end{proof}
+
+共享边界点的归属可能随顺序变化，这不与定理矛盾。
+
+\paragraph{泛化分析}
+新增样本可能改变邻域计数，使边界点变为核心点，甚至桥接两个原有分量；因此“固定数据的确定性”不能解释为“加入噪声后结构不变”。
+
+DBSCAN 通常是描述已有样本的算法。若希望给新样本预测簇标记，可检查它是否邻接已知核心点，并另设冲突和拒绝规则；这与把新样本加入数据后重新运行 DBSCAN 不完全相同。密度尺度不均时，较小 $\varepsilon$ 容易使稀疏簇断裂，较大 $\varepsilon$ 又可能合并邻近稠密簇。
+
+\subsubsection{小结}
+
+DBSCAN 用局部计数和连通性发现簇，无需给定 $K$，并显式标记噪声。它的边界在于全局密度尺度、邻域度量和高维查询成本；所谓任意形状，是指不预设中心形状，并不保证任何视觉上可辨认的群体都满足其密度连通定义。
+
+\subsection{OPTICS}
+\label{sec:clustering-optics}
+
+反复调整 DBSCAN 的半径会重复查询相似邻域。OPTICS（Ordering Points To Identify the Clustering Structure）保留一次搜索中的密度排序，使分析者能够事后读取不同尺度的结构。Ankerst 等在 1999 年提出的方法输出排序与距离记录，而非直接输出唯一划分\scite{clust-ankerst1999}
+
+从 DBSCAN 到 OPTICS，改变的不只是半径的取值方式，还包括算法交给分析者的结果形式：前者给定尺度后输出一组簇标记，后者先保存可供多个尺度读取的结构。这个选择把探索不同密度群组的工作，从反复训练转移到了对同一结果的解释与提取。
+
+\subsubsection{模型结构}
+
+设搜索半径上限为 $\varepsilon_{\max}$。若样本 $i$ 在该半径内有至少 $m$ 个邻居，则其\term{核心距离}（core distance）为第 $m$ 近邻距离；否则记为 $+\infty$：
+\[
+ a_i=
+ \begin{cases}
+ \delta_{i,(m)},&|N_{\varepsilon_{\max}}(i)|\geq m,\\
+ +\infty,&\text{其他情况}.
+ \end{cases}
+\]
+由核心点 $i$ 到邻居 $j$ 的\term{可达距离}（reachability distance）定义为
+\begin{equation}
+ r(j\mid i)=\max\{a_i,\delta(\bm{x}_i,\bm{x}_j)\}.
+ \label{eq:clustering-reachability}
+\end{equation}
+方向来自出发点的核心距离，因此通常 $r(j\mid i)\ne r(i\mid j)$。它表示在确保出发点足够密集的同时覆盖 $j$ 所需的半径。
+
+OPTICS 为每个样本记录访问次序、核心距离和当前获得的最小可达距离。按访问次序画出可达距离形成\term{可达图}（reachability plot）；低谷通常对应容易从内部到达的密集区域，较高的过渡位置提示区域之间的分隔。
+
+\subsubsection{参数学习}
+
+从一个未处理点开始，算法输出该点并查询邻域。如果它是核心点，就用式~\eqref{eq:clustering-reachability} 更新未处理邻居的最小可达距离；优先队列每次取出当前可达距离最小的点，继续同样的过程。队列为空而仍有未处理点时，再开始一个新的搜索。这个过程是按可达距离优先的遍历，而不是普通先进先出的广度优先搜索。
+
+给定 $\varepsilon'\leq\varepsilon_{\max}$，提取 DBSCAN 式结构时必须同时使用核心距离。沿排序扫描，若某点的记录可达距离大于 $\varepsilon'$，但核心距离不大于 $\varepsilon'$，它应开启一个新簇；若二者都大于阈值，才暂记为噪声；可达距离不大于阈值的点接续当前簇。只把水平线下的连续段当作簇，会漏掉可达距离很大、却负责开启新簇的核心点。不同提取规则对部分边界点的处理还可能与重新运行 DBSCAN 不同。
+
+图~\ref{fig:clustering-optics-reachability} 将原始样本间距与可达图对应起来。中间一组样本较稀疏，形成的谷底较高；用 $\varepsilon'=0.35$ 提取时它们不构成核心簇，增大阈值才会纳入。次序 1、8、14 对应三次重新开始的搜索，其可达距离为无穷；次序 23 的孤立点也有无穷可达距离，但它的核心距离同样无穷，因而不能开启簇。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-optics-reachability}
+ \caption{固定一维教学数据上的 OPTICS 排序，取 $\mathrm{MinPts}=3$（含自身）、$\varepsilon_{\max}=1.1$。三组样本的间距分别为 0.15、0.4、0.1，另有 $x=12$ 的孤立点。实线竖棒为可达距离，蓝色虚线为核心距离；无穷可达距离用顶部三角形表示，不能按其显示高度作数值比较。}
+ \label{fig:clustering-optics-reachability}
+\end{figure}
+
+若希望自动找出不同深度的低谷，可用基于相对陡降和陡升的 $\xi$ 规则，再结合最小簇规模、前驱关系和嵌套处理。原始 OPTICS 已讨论陡峭区域提取，后续工作进一步研究从排序构造密度层次；这些方法都依赖提取参数，不能理解为完全消除了尺度选择。
+
+\subsubsection{小结}
+
+OPTICS 的价值在于把邻域计算与粒度探索分开。它保留多尺度信息，却仍受 $\varepsilon_{\max}$、$\mathrm{MinPts}$ 和提取规则影响。空间索引有效且邻域输出受控时可获得较好扩展性，最坏情况仍可能为平方级；优先队列和额外记录也使成本通常高于一次 DBSCAN，具体倍率取决于实现和数据。
+
+\subsection{Mean Shift}
+\label{sec:clustering-mean-shift}
+
+密度连通性描述“能否沿密集区域走通”，但有时更想知道样本会聚向哪个密度峰。\term{均值漂移}（Mean Shift）从当前位置计算一个局部加权均值，再向该均值移动，用重复更新寻找密度估计的驻点。
+
+% 两段历史含三条较长引文，同时为边栏预留空间。
+\Needspace{125mm}
+这条路线早于 DBSCAN。Fukunaga 与 Hostetler 在 1975 年研究如何从样本估计密度梯度，并将局部均值偏移与模式识别联系起来\scite{clust-fukunaga1975}它的出发点是估计“密度朝哪个方向增加”，因此不必先明确列出簇的边界。
+
+Cheng 在 1995 年进一步讨论核与权重的推广，说明均值漂移、模态搜索和聚类之间的关系\scite{clust-cheng1995}Comaniciu 与 Meer 在 2002 年系统分析这一方法并展示其在特征空间与图像分割中的用途，使它成为视觉任务中常用的局部聚集工具\scite{clust-comaniciu2002}这段历史也提示我们，Mean Shift 的基本对象是密度估计上的移动轨迹，簇分配是在轨迹之后得到的。
+
+\subsubsection{模型结构}
+
+以径向核估计未知密度。设 $h>0$ 为带宽，核函数为 $\mathcal{K}(\bm{u})=c_k k(\lVert\bm{u}\rVert_2^2)$，其中 $c_k$ 是归一化常数，$k$ 称为核的 profile。则\term{核密度估计}（kernel density estimation, KDE）为
+\begin{equation}
+ \hat f(\bm{y})=\frac{c_k}{nh^d}
+ \sum_{i=1}^n
+ k\left(\frac{\lVert\bm{y}-\bm{x}_i\rVert_2^2}{h^2}\right).
+ \label{eq:clustering-kde}
+\end{equation}
+把每个样本作为起点，在估计密度上迭代；趋向同一模态的起点归为一簇。带宽决定平滑尺度，小带宽通常保留更多局部细节，大带宽通常合并邻近结构；在高维一般情形下，不应把模态数量随带宽变化说成无条件严格单调。
+
+\subsubsection{参数学习}
+
+令 $g(u)=-k'(u)$，并记 $u_i(\bm{y})=\lVert\bm{y}-\bm{x}_i\rVert_2^2/h^2$。直接对式~\eqref{eq:clustering-kde} 求导可得
+\[
+ \nabla\hat f(\bm{y})=
+ \frac{2c_k}{nh^{d+2}}
+ \sum_i g(u_i(\bm{y}))(\bm{x}_i-\bm{y}).
+\]
+只要权重和为正，梯度便是正系数乘以\term{均值漂移向量}
+\[
+ \bm{m}(\bm{y})=
+ \frac{\sum_i g(u_i(\bm{y}))\bm{x}_i}
+      {\sum_i g(u_i(\bm{y}))}-\bm{y}.
+\]
+因此采用下列自适应步长的梯度方向更新：
+\begin{equation}
+ \bm{y}^{(t+1)}=
+ \frac{\sum_i w_i^{(t)}\bm{x}_i}{\sum_i w_i^{(t)}},
+ \qquad w_i^{(t)}=g(u_i(\bm{y}^{(t)})).
+ \label{eq:clustering-mean-shift}
+\end{equation}
+权重由 profile 的负导数给出，而不是对向量核 $\mathcal{K}$ 直接取一元导数。高斯 profile $k(u)=\exp(-u/2)$ 给出与高斯权重成比例的 $g$；Epanechnikov profile $(1-u)_+$ 则在核支撑内部给出常数权重，边界需作分段处理。
+
+式~\eqref{eq:clustering-mean-shift} 与第~\ref{sec:regression-nadaraya-watson}~节的 Nadaraya--Watson 核平滑都计算核加权平均，但平均对象和任务不同：Mean Shift 平均输入位置以更新搜索点，核回归则平均响应以预测条件均值。
+
+图~\ref{fig:clustering-mean-shift-modes} 展示了式~\eqref{eq:clustering-mean-shift} 的一维轨迹。两个起点分别移向左右密度峰，而且接近峰值后每一步的位移变小。灰色曲线使用同一组样本但更大的带宽，此时原先的两个峰被平滑为一个峰；这说明决定簇数的是估计密度的形状，而不仅是起点的数量。
+
+\Needspace{90mm}
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-mean-shift-modes}
+ \caption{Mean Shift 的密度爬升与带宽效应。左右各有三个样本，位置为 $-2.5,-2,-1.5$ 和 $1.5,2,2.5$，均采用高斯核。彩色标记给出带宽 $h=0.6$ 时从 $\pm0.8$ 出发的初始位置和四次更新，箭头指示第一次移动；灰色虚线对应 $h=2.4$，轨迹在黑色实线上计算。}
+ \label{fig:clustering-mean-shift-modes}
+\end{figure}
+
+\begin{codeblock}[language=Python,label={code:clustering-mean-shift}]{高斯 Mean Shift 的起点更新}
+import numpy as np
+
+def mean_shift_positions(X, h, max_iter=300, tol=1e-4):
+    X = np.asarray(X, dtype=float)
+    if h <= 0:
+        raise ValueError("h must be positive")
+    Y = X.copy()
+    for _ in range(max_iter):
+        d2 = ((Y[:, None] - X[None]) ** 2).sum(2)
+        log_w = -d2 / (2 * h * h)
+        log_w -= log_w.max(1, keepdims=True)
+        W = np.exp(log_w)
+        new = (W @ X) / W.sum(1, keepdims=True)
+        step = np.linalg.norm(new - Y, axis=1).max()
+        Y = new
+        if step <= tol:
+            break
+    return Y
+\end{codeblock}
+
+返回值是最终位置，尚需合并近邻终点才能得到簇分配。可构造终点间距离不超过 $\rho$ 的图并取连通分量，例如用 $\rho=h/2$ 作为教学起点；这种阈值合并是另一个启发式，可能链式合并不同模态，应与迭代容差区分。
+
+对全部 $n$ 个起点做一轮精确更新需要 $O(n^2d)$ 运算。高斯核具有无限支撑，截断邻域或近似近邻会改变精确更新；空间索引并不能无条件把它降成 $O(n\log n)$。实际可采用分块计算、减少起点或有限支撑核，但应说明相应近似。
+
+\subsubsection{理论分析}
+
+\paragraph{收敛性分析}
+密度值增加与位置收敛是两个命题。经典分析中的上升不等式可直接证明前者；从步长平方可和到位置收敛，还需要补充条件。后续研究专门指出了把平方可和误当作 Cauchy 性的问题\scite{clust-aliyari2015}
+
+\begin{theorem}[Mean Shift 的密度单调性与条件收敛]
+ \label{thm:clustering-mean-shift}
+ 设 $k$ 非负、凸、非增且可微，$k(0)<\infty$，迭代中权重和始终为正。则式~\eqref{eq:clustering-mean-shift} 产生的密度值单调不减且收敛。若进一步假设 $g=-k'$ 连续且严格为正，样本凸包内的固定点只有有限个，则位置序列也收敛，极限为 $\hat f$ 的驻点。
+\end{theorem}
+\begin{proof}
+简记 $\bm{y}=\bm{y}^{(t)}$、$\bm{y}'=\bm{y}^{(t+1)}$。由凸性，
+\[
+ k(u_i(\bm{y}'))-k(u_i(\bm{y}))
+ \geq g(u_i(\bm{y}))
+       \bigl(u_i(\bm{y})-u_i(\bm{y}')\bigr).
+\]
+令 $w_i=g(u_i(\bm{y}))$、$s=\sum_iw_i$。由于 $\bm{y}'$ 是加权均值，展开平方后交叉项为零，得到
+\[
+ \sum_iw_i\bigl(
+ \lVert\bm{y}-\bm{x}_i\rVert_2^2
+ -\lVert\bm{y}'-\bm{x}_i\rVert_2^2\bigr)
+ =s\lVert\bm{y}'-\bm{y}\rVert_2^2.
+\]
+所以
+\begin{equation}
+ \hat f(\bm{y}')-\hat f(\bm{y})
+ \geq\frac{c_k s}{nh^{d+2}}
+       \lVert\bm{y}'-\bm{y}\rVert_2^2\geq0.
+ \label{eq:clustering-mean-shift-ascent}
+\end{equation}
+又有 $\hat f(\bm{y})\leq c_k k(0)/h^d$，故密度值收敛。
+
+在附加条件下，第一次更新后所有位置均在有限样本的紧凸包内。距离平方因此有界，而连续正函数 $g$ 在相应紧区间上有正下界，故 $s$ 也有统一正下界。对式~\eqref{eq:clustering-mean-shift-ascent} 求和，得到步长平方可和，特别地，$\lVert\bm{y}^{(t+1)}-\bm{y}^{(t)}\rVert_2\to0$。
+
+记连续更新映射为 $T$。任取收敛子列 $\bm{y}^{(t_j)}\to\bm{y}^\ast$，步长趋零与连续性给出 $T(\bm{y}^\ast)=\bm{y}^\ast$，所以每个聚点都是固定点。固定点有限，取彼此不相交的小球包围它们；序列最终必在这些小球的并集中，否则紧性会产生球外聚点。步长最终小于球之间的间隙，故序列不能再从一个球跳到另一个球。任意缩小球半径，便知它只能趋向其中一个固定点。梯度公式最后给出 $\nabla\hat f(\bm{y}^\ast)=\bm{0}$。
+\end{proof}
+
+证明没有把“平方可和”直接当作 Cauchy 性；真正排除多个极限位置的是紧性、连续性和有限固定点条件。极限是驻点，不保证总是局部极大值；从鞍点等特殊位置出发可能停在那里。Epanechnikov 核的不可微边界和零权重还需单独分析，不能直接套用定理的第二部分。
+
+\paragraph{泛化分析}
+模态聚类对带宽和密度估计误差敏感。KDE 在适当光滑性、带宽随 $n$ 缩小等条件下有统计一致性，但从密度估计一致到模态位置、吸引域乃至簇分配稳定，还需要额外正则条件。算法的上升性质只涉及当前数据上的固定估计密度。
+
+\subsubsection{小结}
+
+Mean Shift 用局部均值更新实现密度爬升，把簇解释为模态的吸引域。它不显式指定 $K$，却需要选择带宽、起点和终点合并规则。图像分割与跟踪利用了这种局部聚集能力；计算成本、非极大驻点和带宽敏感性仍是使用时的边界。
+
+\subsection{模型对比与总结}
+
+本小节先比较 DBSCAN、OPTICS 与 Mean Shift，再把结合网格或层次选择的密度方法作为代表性扩展。DBSCAN 识别固定尺度下的核心连通区域，OPTICS 保留可用于多尺度提取的排序，Mean Shift 则追踪平滑密度的驻点。一个连通密集区域可以含多个峰，因此三者即使采用相近尺度，也可能给出不同划分。需要噪声标记时应确认算法是否显式提供拒绝机制，而不能把所有密度方法视为等价。
+
+DENCLUE 用样本影响函数叠加构造密度，再以密度吸引点及其连通关系组织簇；密度阈值承担噪声处理，网格结构辅助计算。它与 Mean Shift 共享密度估计视角，但不能据此认为它自动解决了高维密度估计问题\scite{clust-hinneburg1998}
+
+HDBSCAN 把核心距离用于定义\term{互可达距离}（mutual reachability distance）：
+\[
+ \delta_{\mathrm{mr}}(i,j)
+ =\max\{a_i,a_j,\delta(\bm{x}_i,\bm{x}_j)\}.
+\]
+在这一距离上构造最小生成树并形成密度层次，再按最小簇规模压缩层次、按跨尺度持续性选择簇，可以减轻单一 $\varepsilon$ 的限制。Campello 等给出了这一层次密度框架\scite{clust-campello2013}
+
+这里的“稳定性”是特定的层次选择量，并非对所有扰动的统计稳健性证明。HDBSCAN 仍需选择最小簇规模等参数；网格、索引和层次都不能保证高维距离具有足够区分度。密度方法的价值，在于让低密度分隔进入簇定义；若已知的主要信息是样本之间的关系，则可以进一步转向图。
+
+\section{基于图的聚类}
+\label{sec:clustering-graph}
+
+社交网络中的连接、文档之间的相似度或图像像素的邻接关系，都可以直接构成加权图，不一定先转换成欧氏坐标。基于图的聚类把样本视为顶点，把相似程度视为边权，希望簇内连接较强、簇间连接较弱。距离也可以用来构图；转向图并不意味着结果不再依赖相似性设计。
+
+最小图割能表达连接稀疏，却容易偏向切下小块。加入规模归一化后，可以更明确地权衡切边代价与簇体积；谱聚类则把相应离散问题松弛为连续的特征向量问题。
+
+\subsection{谱聚类}
+\label{sec:clustering-spectral}
+
+\term{谱聚类}（spectral clustering）使用图拉普拉斯矩阵的特征向量表示顶点，再在新表示上划分。它与第~\ref{sec:dim-le}~节的拉普拉斯特征映射共享建图、拉普拉斯矩阵与低频特征向量，但前者把谱表示离散为簇分配，后者输出连续低维坐标。von Luxburg 的教程整理了不同图构造、归一化方式及其适用条件\scite{clust-luxburg2007}其理论源于图分割与代数连通性的研究；Shi 与 Malik 的归一化割把这一思路用于图像分割，Ng、Jordan 与 Weiss 给出了常用的多簇算法。
+
+早期谱方法关注的是图分割本身。Donath 与 Hoffman 在 1973 年利用矩阵的谱信息建立图划分代价的下界，把难以直接搜索的组合问题与可计算的特征值联系起来\scite{clust-donath1973}后来，Shi 与 Malik 将图像像素间的相似关系写成归一化割目标，相关工作于 1997 年在会议上发表，2000 年形成期刊论文\scite{clust-shi2000}Ng、Jordan 与 Weiss 在 2001 年会议上的工作进一步给出了多簇谱嵌入与行归一化方案，其论文集出版于 2002 年\scite{clust-ng2002}谱聚类由此形成了“建图、求低频表示、再离散化”的常用流程。
+
+\subsubsection{模型结构}
+
+设无向图的非负对称权重矩阵为 $\bm{W}\in\mathbb{R}^{n\times n}$，通常令 $w_{i,i}=0$。向量样本可用高斯相似度 $\exp(-\lVert\bm{x}_i-\bm{x}_j\rVert_2^2/(2\sigma^2))$ 构造边；近邻图则保留部分局部关系。单向近邻关系未必对称，必须明确采用并集对称化还是互近邻规则。
+
+定义顶点度 $d_i=\sum_jw_{i,j}$、度矩阵 $\bm{D}=\operatorname{diag}(d_1,\ldots,d_n)$，以及三种拉普拉斯：
+\begin{align}
+ \bm{L}&=\bm{D}-\bm{W},\nonumber\\
+ \bm{L}_{\mathrm{sym}}
+ &=\bm{I}-\bm{D}^{-1/2}\bm{W}\bm{D}^{-1/2},\nonumber\\
+ \bm{L}_{\mathrm{rw}}
+ &=\bm{I}-\bm{D}^{-1}\bm{W}.
+ \label{eq:clustering-laplacians}
+\end{align}
+后两式要求 $d_i>0$；孤立顶点应单独处理。$\bm{L}_{\mathrm{rw}}$ 一般不对称，但与 $\bm{L}_{\mathrm{sym}}$ 相似，因而有相同的实特征值。对任意 $\bm{v}\in\mathbb{R}^n$，
+\begin{equation}
+ \bm{v}^{\top}\bm{L}\bm{v}
+ =\frac12\sum_{i,j}w_{i,j}(v_i-v_j)^2\geq0.
+ \label{eq:clustering-laplacian-form}
+\end{equation}
+所以 $\bm{L}$ 半正定，且 $\bm{L}\bm{1}=\bm{0}$；零特征值的重数等于连通分量数，图连通时才为单重。
+
+归一化还具有随机游走解释。转移矩阵 $\bm{P}=\bm{D}^{-1}\bm{W}$ 让游走者按边权比例选择下一顶点，且 $\bm{L}_{\mathrm{rw}}=\bm{I}-\bm{P}$。从一个簇出发，若内部连接强而外部连接弱，游走就倾向在簇中停留较久；Meilă 与 Shi 据此研究了聚类的随机游走视角\scite{clust-meila2001}
+
+设 $\operatorname{cut}(A,\bar A)=\sum_{i\in A,j\notin A}w_{i,j}$，$\operatorname{vol}(A)=\sum_{i\in A}d_i$。\term{归一化割}（normalized cut, NCut）定义为
+\begin{equation}
+ \operatorname{NCut}(\mathcal{P})
+ =\sum_{k=1}^K
+ \frac{\operatorname{cut}(C_k,\bar C_k)}
+      {\operatorname{vol}(C_k)}.
+ \label{eq:clustering-ncut}
+\end{equation}
+它用簇的连接体积归一化切边权重，减轻小簇偏置，而不强制样本数相等\scite{clust-shi2000}\term{比率割}（RatioCut）则把分母换成 $|C_k|$，对应未归一化拉普拉斯的松弛。
+
+\subsubsection{参数学习}
+
+为把 NCut 改写成矩阵目标，定义 $\bm{F}\in\mathbb{R}^{n\times K}$，其中
+\[
+ f_{i,k}=
+ \begin{cases}
+  1/\sqrt{\operatorname{vol}(C_k)},&i\in C_k,\\
+  0,&i\notin C_k.
+ \end{cases}
+\]
+簇互不相交给出 $\bm{F}^{\top}\bm{D}\bm{F}=\bm{I}_K$。由式~\eqref{eq:clustering-laplacian-form}，第 $k$ 列的二次型恰为第 $k$ 项归一化割，故目标为 $\operatorname{tr}(\bm{F}^{\top}\bm{L}\bm{F})$。
+
+困难在于每行只允许一个特定的非零值。去掉这一离散约束，令 $\bm{H}=\bm{D}^{1/2}\bm{F}$，得到
+\begin{equation}
+ \min_{\bm{H}^{\top}\bm{H}=\bm{I}_K}
+ \operatorname{tr}(\bm{H}^{\top}
+                   \bm{L}_{\mathrm{sym}}\bm{H}).
+ \label{eq:clustering-spectral-relaxation}
+\end{equation}
+Shi--Malik 方法也可写为广义特征问题 $\bm{L}\bm{f}=\lambda\bm{D}\bm{f}$，与归一化变换相联系\scite{clust-shi2000}取 $\bm{L}_{\mathrm{sym}}$ 最小的 $K$ 个特征值对应的特征向量，即得到式~\eqref{eq:clustering-spectral-relaxation} 的最优解，下节给出证明。
+
+连续解还需离散化。\term{NJW 算法}把 $\bm{H}$ 每一行归一化到单位长度，再对行向量运行 K-means\scite{clust-ng2002}若图恰有 $K$ 个连通分量，理想谱空间中每个分量对应同一方向；行归一化消除度数造成的长度差异，图~\ref{fig:clustering-spectral} 展示了这一解释。连接较弱的实际图中，这只是近似结构。
+
+\Needspace{62mm}
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-spectral}
+ \caption{谱聚类的理想情形：圆形与方形分别标识两个互不连接的分量，颜色只作辅助；在归一化谱空间中，两个分量分别落到两个方向。细虚线表示实际数据中可能存在的弱连接；加入这些连接后，谱坐标通常形成近似群组。}
+ \label{fig:clustering-spectral}
+\end{figure}
+
+\begin{codeblock}[language=Python,label={code:clustering-spectral}]{给定相似度矩阵的 NJW 算法}
+import numpy as np
+from scipy.linalg import eigh
+
+def spectral_clustering(W, K):
+    W = np.asarray(W, dtype=float)
+    n = len(W)
+    if W.shape != (n, n) or not 1 <= K <= n:
+        raise ValueError("invalid shape or K")
+    if (W < 0).any() or not np.allclose(W, W.T):
+        raise ValueError("W must be nonnegative and symmetric")
+    degree = W.sum(1)
+    if (degree <= 0).any():
+        raise ValueError("handle isolated vertices first")
+    inv = 1 / np.sqrt(degree)
+    L = np.eye(n) - inv[:, None] * W * inv[None, :]
+    _, H = eigh(L, subset_by_index=[0, K - 1])
+    length = np.linalg.norm(H, axis=1)
+    if (length == 0).any():
+        raise ValueError("zero embedding row")
+    labels, _ = kmeans(H / length[:, None], K)
+    return labels
+\end{codeblock}
+
+代码调用代码~\ref{code:clustering-kmeans} 的函数，适用于可放入内存的稠密矩阵。若图的连通分量数超过 $K$，选出的零特征子空间可能造成零行或任意合并，宜先分析连通分量，再确定分配策略。
+
+构造稠密相似度通常需要 $O(n^2d)$ 距离计算和 $O(n^2)$ 存储，完整特征分解需 $O(n^3)$ 运算。仅求部分特征向量可使用 Lanczos 或 LOBPCG；单次矩阵乘法可按稀疏边数计费，但总成本还取决于特征间隙、精度和迭代次数，不能简单保证为 $O(n^2K)$ 或线性。近邻建图与 Nyström 等近似也是大规模实现的重要部分。
+
+\subsubsection{理论分析}
+
+\paragraph{收敛性分析}
+谱聚类包含特征求解和簇分配离散化两个计算阶段。迭代特征求解器需找到最小的 $K$ 个特征值及其特征子空间，并满足给定残差精度；随后的 K-means 仍有自己的初始化和停止条件。下面先确定谱子问题应当收敛到什么目标值：连续松弛可以全局求解，但这一性质不自动传给原始图割或最后的 K-means。
+
+\begin{theorem}[Rayleigh--Ritz 迹最小化]
+ \label{thm:clustering-rayleigh}
+ 设对称矩阵 $\bm{B}\in\mathbb{R}^{n\times n}$ 的特征值为 $\lambda_1\leq\cdots\leq\lambda_n$，对应正交单位特征向量为 $\bm{u}_1,\ldots,\bm{u}_n$。则
+ \[
+ \min_{\bm{H}^{\top}\bm{H}=\bm{I}_K}
+ \operatorname{tr}(\bm{H}^{\top}\bm{B}\bm{H})
+ =\sum_{k=1}^K\lambda_k.
+ \]
+ 取 $\bm{H}=[\bm{u}_1,\ldots,\bm{u}_K]$ 可达到最优。若 $K<n$ 且 $\lambda_K<\lambda_{K+1}$，最优列空间唯一，基仅相差右乘正交矩阵。
+\end{theorem}
+\begin{proof}
+令 $\bm{U}$ 为全部特征向量组成的正交矩阵，$\bm{A}=\bm{U}^{\top}\bm{H}$，则 $\bm{A}^{\top}\bm{A}=\bm{I}_K$。记 $b_i=\sum_{k=1}^Ka_{i,k}^2$，由于 $\bm{A}\bm{A}^{\top}$ 是正交投影矩阵，$0\leq b_i\leq1$ 且 $\sum_i b_i=K$。目标于是成为 $\sum_i\lambda_i b_i$。比较它与前 $K$ 项之和：
+\[
+ \begin{aligned}
+ \sum_i\lambda_i b_i-\sum_{i\leq K}\lambda_i
+ &=
+ \sum_{i>K}\lambda_i b_i
+ -\sum_{i\leq K}\lambda_i(1-b_i)\\
+ &\geq
+ \lambda_K\left[
+ \sum_{i>K}b_i-\sum_{i\leq K}(1-b_i)\right]=0.
+ \end{aligned}
+\]
+取前 $K$ 个特征向量时达到等号。有严格边界间隙时，等号迫使前 $K$ 个方向承载全部投影，因而列空间唯一；边界特征值重复时，可以在该重特征空间内选择不同子空间，唯一性不再成立。
+\end{proof}
+
+图割质量与谱量之间还存在 Cheeger 型联系。对连通、非负无向图，定义\term{电导}（conductance）
+\[
+ \phi(S)=
+ \frac{\operatorname{cut}(S,\bar S)}
+ {\min\{\operatorname{vol}(S),\operatorname{vol}(\bar S)\}},
+ \qquad h_G=\min_{\varnothing\ne S\ne V}\phi(S).
+\]
+若 $\lambda_2$ 是 $\bm{L}_{\mathrm{sym}}$ 的第二小特征值，则
+\begin{equation}
+ \frac{\lambda_2}{2}\leq h_G\leq\sqrt{2\lambda_2}.
+ \label{eq:clustering-cheeger}
+\end{equation}
+图上的这类不等式把低频特征向量与稀疏切割联系起来，标准谱图论教材给出了证明及其与流形版本的关系\scite{clust-chung1997}
+
+这里 $h_G$ 是最小电导，不是直接把 NCut 换个名字。二分情形满足 $\phi(S)\leq\operatorname{NCut}(S,\bar S)\leq2\phi(S)$。若 $\bm{u}$ 是 $\bm{L}_{\mathrm{sym}}$ 的第二特征向量，则
+\[
+ \bm{f}=\bm{D}^{-1/2}\bm{u},
+ \qquad
+ \bm{L}\bm{f}=\lambda_2\bm{D}\bm{f},
+ \qquad
+ \bm{L}_{\mathrm{rw}}\bm{f}=\lambda_2\bm{f}.
+\]
+因此，Cheeger sweep 应按 $f_i=u_i/\sqrt{d_i}$ 排序并扫描阈值；若直接求广义特征问题或随机游走拉普拉斯，排序坐标就是其特征向量 $\bm{f}$。只有各顶点度数相同时，按 $\bm{u}$ 与按 $\bm{f}$ 排序才必然相同。该结果不能直接视为任意多簇 NJW 加 K-means 的同一近似保证。
+
+\paragraph{泛化分析}
+统计一致性同样有条件。von Luxburg、Belkin 与 Bousquet 研究了固定相似核下经验谱对象向总体积分算子的收敛\scite{clust-luxburg2008}结论需要核、度函数和谱隔离等假设。归一化与未归一化方法的条件并不相同，离散簇分配还依赖舍入稳定性。
+
+若研究流形上的拉普拉斯--贝尔特拉米极限，还需另设带宽随样本量变化、流形光滑性、采样密度与归一化条件；它不是固定核一致性定理的直接同义表述。K-means 和密度估计也有各自的一致性研究，不能把渐近理论视为谱聚类独有。
+
+\subsubsection{小结}
+
+谱聚类通过关系图表达非凸结构，通过特征分解求解连续松弛。结果质量取决于图是否保留了期望的群组结构，也取决于离散化。特征值间隙可帮助探索 $K$，但噪声、弱连接或孤立分量都可能制造间隙；它应作为诊断线索，而非唯一判据。
+
+\subsection{模型对比与总结}
+
+本小节先比较谱聚类中的图构造、松弛与离散化，再把不同图目标和求解机制作为代表性扩展。图上的群组还可以通过消息传递或社区目标寻找。\term{近邻传播}（Affinity Propagation, AP）把每个样本作为潜在代表，以适合度和可用度两类消息协调代表选择。给定相似度 $s(i,k)$，其典型更新为
+\[
+ r(i,k)=s(i,k)-\max_{k'\ne k}\{a(i,k')+s(i,k')\},
+\]
+\[
+ a(i,k)=
+ \min\left\{0,r(k,k)+
+ \sum_{i'\notin\{i,k\}}\max\{0,r(i',k)\}\right\},
+ \quad i\ne k,
+\]
+而 $a(k,k)=\sum_{i'\ne k}\max\{0,r(i',k)\}$。适合度衡量候选相对其他代表的优势，可用度汇总其他样本对该代表的支持。对角相似度 $s(k,k)$ 是偏好参数，间接控制代表数；通常还需阻尼以缓解振荡，迭代不保证总收敛\scite{clust-frey2007}
+
+社区发现中的 Louvain 方法则优化\term{模块度}（modularity），比较实际簇内边权与保留度数的随机基准。令 $2m_G=\sum_i d_i$，典型目标为
+\[
+ Q=\frac{1}{2m_G}\sum_{i,j}
+ \left(w_{i,j}-\frac{d_i d_j}{2m_G}\right)
+ \mathbb{1}\{c_i=c_j\}.
+\]
+算法交替执行局部顶点移动与社区凝聚，在稀疏图上通常较高效；但它有分辨率限制、顺序敏感性和局部最优问题，不能与 NCut 的谱松弛保证混用\scite{clust-blondel2008}
+
+这些图方法共同把关系作为输入，却优化不同的对象。选择时需先确认要找的是低电导集合、典型代表还是高模块度社区；对于原本就是图的数据，这种区分比笼统比较“哪种聚类更强”更有意义。
+
+\section{基于网格与子空间的聚类}
+\label{sec:clustering-subspace}
+
+样本量扩大时，反复访问点对关系可能过于昂贵；维数增多时，大量无关特征又可能掩盖局部群组。在某些高维分布下，最近和最远距离的相对差异会缩小，形成距离集中；但维数本身并不必然使所有数据失去结构。
+
+基于网格的方法先把样本压缩为单元统计，主要节省后续区域查询成本。基于子空间的方法则寻找簇在哪些坐标上紧凑，允许不同簇依赖不同特征。CLIQUE 把这两种思路结合起来，不过网格单元数和子空间数本身也可能随维数指数增长。
+
+\subsection{STING}
+
+若需要反复查询“哪些区域足够密集”，可以预先保存区域统计。\term{统计信息网格}（STatistical INformation Grid, STING）由 Wang、Yang 与 Muntz 在 1997 年提出，用层次网格组织空间数据，查询时优先读取摘要\scite{clust-wang1997}
+
+\subsubsection{模型结构}
+
+STING 的典型对象是低维空间中的矩形层次网格；二维时每个单元可划成四个子单元。推广到 $d$ 维二分网格时，每次完整细分产生 $2^d$ 个子单元，但不代表必须显式分配全部空单元。
+
+每个单元保存计数、各维均值、标准差、极值及所采用的分布类型估计。为稳定合并统计，可保存计数、和与平方和，再从子单元汇总父单元。分布类型的合并通常只是近似；即使子单元属于同一个分布族，父单元也未必仍属于这个分布族。
+
+\subsubsection{参数学习}
+
+构建阶段扫描样本，确定最细单元并更新统计，再自底向上汇总。固定维数和网格规模时可按 $O(n)$ 扫描成本理解；更完整地计入维数与 $G$ 个已存单元，代价包含 $O(nd+Gd)$，还取决于定位单元的数据结构。
+
+查询时，从某层网格出发，依据摘要估计单元满足条件的可能性。例如，对密度条件使用计数，对属性范围条件使用极值或分布近似；排除不相关单元，对保留单元继续下钻。最终可以把满足密度条件且相邻的单元连成区域，必要时回到原始样本作精确检查。
+
+因此 $O(G)$ 描述的是固定摘要上的单元访问成本，不能省略首次读取 $n$ 个样本的代价；若最终精确查询访问了 $n_{\mathrm{scan}}$ 个样本，还需计入这部分成本。用估计概率剪枝时，也应区分近似查询与可证明无漏检的确定性筛选。
+
+\subsubsection{小结}
+
+STING 把一次预处理成本换成可重复使用的区域摘要，适合低维空间查询与增量统计。有限分辨率会模糊边界，轴对齐网格对倾斜结构不够精细；深度为 $L$ 的完整二分网格可达 $2^{Ld}$ 个最细单元，所以它本身不是高维问题的通用解。
+
+\subsection{CLIQUE}
+\label{sec:clustering-clique}
+
+某类客户可能仅在消费频次和品类偏好上聚集，年龄等坐标却分散。全维空间没有紧凑簇，不意味着这些低维群组不存在。CLIQUE（CLustering In QUEst）主动搜索包含密集网格单元的坐标子空间，是 Agrawal 等在 1998 年提出的子空间聚类方法\scite{clust-agrawal1998}
+
+STING 与 CLIQUE 都出现于数据库领域对聚类可扩展性的探索中，但二者把计算节省在不同位置：STING 预存空间统计，减少重复查询的工作；CLIQUE 借鉴频繁模式搜索的逐层筛选思想，减少需要检查的高维组合。它们把数据组织方式纳入聚类设计，而不只是更换一个点间距离。
+
+\subsubsection{模型结构}
+
+每维划分为 $\xi$ 个区间，区间边界采用统一的半开约定，并把最后端点纳入最后一区间。对特征索引集合 $S\subseteq\{1,\ldots,d\}$，一个单元 $U$ 是所选坐标上区间的笛卡尔积。定义支持计数
+\[
+ n(U)=|\{i:\bm{x}_{i,S}\in U\}|.
+\]
+若 $n(U)\geq\tau$，则称 $U$ 为\term{密集单元}（dense unit）。本节使用跨维相同的计数阈值 $\tau$；使用固定样本比例阈值也等价。不能在未经调整的情况下改用“计数除以单元体积”的跨维阈值。
+
+同一子空间内，两个单元若仅沿一个坐标方向相邻而其他区间相同，就视为邻接；密集单元的极大连通分量构成簇。输出是“子空间与簇”的集合，同一样本可以在不同子空间出现于多个簇，也可以未被任何簇覆盖。图~\ref{fig:clustering-subspace} 表示高维单元投影后样本计数只会增加的关键性质。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-subspace}
+ \caption{CLIQUE 的投影计数示意。二维高亮单元含三个样本，其在横轴区间上的投影还包含其他纵坐标范围的样本。取共同阈值 $\tau=3$，二维单元密集必然推出对应一维单元密集，反方向则不成立。}
+ \label{fig:clustering-subspace}
+\end{figure}
+
+\subsubsection{参数学习}
+
+CLIQUE 借鉴 Apriori 的逐层候选生成。扫描数据找到一维密集单元后，把具有兼容低维区间的单元连接成更高维候选；只有所有低一维投影都密集的候选才继续计数验证。重复直到候选为空或达到搜索维数上限。
+
+在保留下来的子空间中，算法连接相邻密集单元，形成簇，并可用轴对齐区域的析取式压缩簇描述。原始方法还包含选择子空间和简化描述的步骤；若使用额外启发式筛选，完整性应相对于筛选后的搜索范围表述。
+
+\subsubsection{理论分析}
+
+\paragraph{收敛性分析}
+CLIQUE 每轮增加候选的维数，最多搜索到 $d$ 维，因此在有限网格上必然结束。除了终止性，还需证明提前剪枝不会遗漏满足计数条件的高维单元；下面的向下封闭性给出这一保证。
+
+\begin{theorem}[子空间密集性的向下封闭性]
+ \label{thm:clustering-clique}
+ 在一致的逐维网格和共同计数阈值 $\tau$ 下，若 $S$ 上的单元 $U$ 密集，则对任意非空 $S'\subseteq S$，其投影 $U|_{S'}$ 也密集。
+\end{theorem}
+\begin{proof}
+记 $I(U)=\{i:\bm{x}_{i,S}\in U\}$。若 $i\in I(U)$，它在 $S$ 的所有选定坐标上都满足区间限制，去掉部分坐标限制后仍然满足。因此
+\[
+ I(U)\subseteq I(U|_{S'}),\qquad
+ n(U|_{S'})\geq n(U)\geq\tau.
+\]
+投影网格沿用相同区间，故 $U|_{S'}$ 是合法低维单元，并达到同一密集阈值。
+\end{proof}
+
+其逆否命题说明：一个低维投影不密集，就可以排除整个高维候选。反向推断不成立，因为不同投影上的样本可能不是同一批。这个性质与维数越高、单元体积越小的连续密度归一化无关；若阈值随维数变化，必须重新证明剪枝条件。
+
+有限网格保证搜索最终结束，但最坏情况下大量投影都密集，仍可能枚举指数多个子空间和单元。
+
+\paragraph{泛化分析}
+训练集中的密集区域是否对应总体簇，还取决于采样、网格分辨率和阈值选择，Apriori 剪枝本身没有给出泛化保证。一个单元的计数如果恰在阈值附近，更换少量样本便可能改变其密集判定，继而拆开或接通一个网格簇。评估时应同时检查区域计数与连通结构对重采样和网格平移是否敏感，而不能只核对搜索是否完整。
+
+\subsubsection{小结}
+
+CLIQUE 允许簇拥有各自的相关坐标，并利用向下封闭性减少无效搜索。它保留的是网格尺度上的结构：粗网格会混合相邻群体，细网格会稀释计数，轴对齐坐标也限制了子空间形式。MAFIA、SUBCLU 和 DOC/FASTDOC 分别从自适应网格、密度连通及随机化搜索等方向改进这些限制。
+
+\subsection{模型对比与总结}
+
+本小节先比较 STING 与 CLIQUE，再把多分辨率、密度子空间和投影搜索作为代表性扩展。STING 的主要目标是可重复查询的空间摘要，CLIQUE 的主要目标是发现不同坐标子空间中的群组。前者节省后续访问样本的次数，后者避免要求所有簇都在全维空间紧凑；两者的可扩展性都受已存单元或候选规模限制。
+
+WaveCluster 把网格计数看作离散信号，在不同小波尺度上寻找密集区域，并抑制部分高频噪声。它仍保留有限网格分辨率；固定维数、分辨率和变换规模时，读入数据可以是线性的，但不能据此忽略网格变换本身的成本\scite{clust-sheikholeslami1998}
+
+沿子空间路线，SUBCLU 在各子空间使用 DBSCAN 的密度连通性，避免固定网格边界；MAFIA 使用自适应区间改善候选分布；DOC 与 FASTDOC 则用随机抽样寻找投影中紧凑的群组。这些方法共同利用低维结构，但各自需要不同的搜索条件，不能把 CLIQUE 的计数证明原封不动地套到它们全部的剪枝规则上\scite{clust-parsons2004}
+
+\term{投影聚类}（projected clustering）通常要求每个样本有唯一簇归属，同时为每簇寻找相关子空间。PROCLUS 使用类似 K-medoids 的代表搜索并选择相关坐标；ORCLUS 进一步学习任意方向的低维正交投影，能够表达相对坐标轴倾斜的群组。前者偏向坐标子集，后者需估计方向，两者的计算与统计代价因此不同。
+
+需要覆盖多个重叠解释时，可考虑 CLIQUE 或 SUBCLU；需要明确硬划分及每簇相关坐标时，可考虑投影方法。高维表示是否包含可恢复的低维结构仍须验证，任何子空间搜索都不能凭空创造这种结构。
+
+\section{基于概率的聚类}
+\label{sec:clustering-probabilistic}
+
+中心距离、密度连通性和图割已经给出了多种分组准则。如果还希望回答“一个新样本来自哪种群体的概率有多大”，就需要显式的概率模型。基于概率的聚类假设样本先选择一个隐含成分，再由该成分的分布生成；聚类于是变成隐成分变量的后验推断与分布参数估计。
+
+这种解释自然支持软归属、预测密度和模型比较。其前提是所选分布族与任务中的群组含义相符：密度拟合需要的成分数，未必等于业务意义上的类别数。以高斯混合为例，一个复杂形状的群体可能需要多个高斯共同近似。
+
+\subsection{高斯混合模型（GMM）}
+\label{sec:clustering-gmm}
+
+\term{高斯混合模型}（Gaussian Mixture Model, GMM）为每个成分配置均值和协方差，能够表达不同方向、尺度的椭球形分布。其现代教材形式常与 EM 算法一起介绍，但混合模型的历史远早于这一算法框架\scite{bishop2006}
+
+Pearson 在 1894 年的研究中，用两个正态分布的混合拟合一组生物测量数据，并通过矩方程估计参数\scite{clust-pearson1894}关键想法是：观测到的一个总体，可能混合了多个未被直接标注的子总体。分布中的多个成分因此可以作为隐含群组的统计表示。
+
+Wolfe 在 1970 年讨论了基于多元混合分析的模式聚类，把这一表示与多维数据的似然估计结合起来\scite{clust-wolfe1970}到 1977 年，Dempster、Laird 与 Rubin 将一类含隐变量模型的估计技巧统一为 EM 框架。GMM 提供“样本怎样生成”的模型，EM 提供“看不到隐成分变量时怎样估计参数”的算法，二者解决的是不同层面的问题。
+
+相对于 K-means，GMM 的变化不只是把硬簇分配改为软归属。协方差参与衡量方向和尺度，混合权重参与描述成分比例；一个样本是否接近某个均值，也要结合这些参数判断。
+
+\subsubsection{模型结构}
+
+与第~\ref{sec:classification-gda}~节的 GDA 相比，两者都用高斯密度描述输入，但 GDA 的类别标签已经观测，可以按类直接估计；GMM 的成分归属不可观测，需要作为隐成分变量推断。具体而言，先按权重 $\pi_k\geq0$、$\sum_k\pi_k=1$ 抽取隐成分变量 $z_i\in\{1,\ldots,K\}$，再从 $\mathcal{N}(\bm{\mu}_{z_i},\bm{\Sigma}_{z_i})$ 抽取样本。要求 $\bm{\Sigma}_k\succ0$，边际密度为
+\begin{equation}
+ p(\bm{x};\bm{\theta})
+ =\sum_{k=1}^K\pi_k
+   \mathcal{N}(\bm{x};\bm{\mu}_k,\bm{\Sigma}_k),
+ \label{eq:clustering-gmm}
+\end{equation}
+其中 $\bm{\theta}$ 汇集权重、均值与协方差。独立同分布样本的对数似然为
+\[
+ \ell(\bm{\theta})
+ =\sum_{i=1}^n\log\left[
+ \sum_{k=1}^K\pi_k
+ \mathcal{N}(\bm{x}_i;\bm{\mu}_k,\bm{\Sigma}_k)\right].
+\]
+求和藏在对数内，使每个成分的参数无法独立优化。
+
+给定参数后，贝叶斯公式给出\term{责任度}（responsibility），即当前模型认为样本由某成分产生的后验概率：
+\begin{equation}
+ \gamma_{i,k}
+ =\frac{\pi_k\mathcal{N}(\bm{x}_i;\bm{\mu}_k,\bm{\Sigma}_k)}
+ {\sum_{j=1}^K\pi_j
+       \mathcal{N}(\bm{x}_i;\bm{\mu}_j,\bm{\Sigma}_j)}.
+ \label{eq:clustering-responsibility}
+\end{equation}
+每行责任度和为 1，构成软划分；需要硬簇分配时取 $\argmax_k\gamma_{i,k}$。这一概率依赖当前生成模型，不是独立于模型假设的“真实类别置信度”。
+
+图~\ref{fig:clustering-gmm-responsibilities} 区分了混合密度与成分归属：上图的两条加权成分密度相加，得到观测的总密度；下图则把各成分的贡献除以这个总密度，得到 $\gamma_k(x)=p(z=k\mid x;\bm{\theta})$。在对称位置 $x=0$，两者各占一半；沿横轴移动时，后验连续变化。两个成分的存在也不要求混合密度具有两个分离的峰。
+
+\begin{figure}[tbp]
+ \centering
+ \input{figures/clustering-gmm-responsibilities}
+ \caption{两成分 GMM 的密度与软归属。设 $\pi_1=\pi_2=1/2$、$\mu_1=-1$、$\mu_2=1$，两个方差均为 1，$p_k(x)$ 表示第 $k$ 个高斯密度。上图展示加权成分密度及其和，下图展示同一观测值对应的后验；颜色与线型在两图中保持一致。}
+ \label{fig:clustering-gmm-responsibilities}
+\end{figure}
+
+\subsubsection{参数学习}
+
+\term{期望最大化}（Expectation-Maximization, EM）交替估计隐成分变量的分布和优化参数，Dempster、Laird 与 Rubin 将这一原则统一为一般框架\scite{clust-dempster1977}E 步用当前参数 $\bm{\theta}^{(t)}$ 计算式~\eqref{eq:clustering-responsibility}；M 步固定这些责任度，最大化完全数据对数似然的期望。隐成分变量不再藏在对数的求和中，而是通过 E 步给出的分布参与加权。
+
+忽略与参数无关的常数，M 步目标为
+\begin{equation}
+ \begin{aligned}
+ Q(\bm{\theta}\mid\bm{\theta}^{(t)})
+ =\sum_{i,k}\gamma_{i,k}^{(t)}
+ \biggl[&\log\pi_k-\frac12\log\det\bm{\Sigma}_k\\
+ &-\frac12(\bm{x}_i-\bm{\mu}_k)^\top
+ \bm{\Sigma}_k^{-1}(\bm{x}_i-\bm{\mu}_k)\biggr].
+ \end{aligned}
+ \label{eq:clustering-gmm-q}
+\end{equation}
+记有效样本量 $n_k^{(t)}=\sum_i\gamma_{i,k}^{(t)}$。权重优化加入约束 $\sum_k\pi_k=1$ 的拉格朗日乘子，驻点满足 $n_k^{(t)}/\pi_k=\lambda$；求和得到 $\lambda=n$，所以
+\begin{equation}
+ \pi_k^{(t+1)}=\frac{n_k^{(t)}}{n},\qquad
+ \bm{\mu}_k^{(t+1)}
+ =\frac{\sum_i\gamma_{i,k}^{(t)}\bm{x}_i}{n_k^{(t)}}.
+ \label{eq:clustering-gmm-mean}
+\end{equation}
+均值公式来自 $Q$ 对 $\bm{\mu}_k$ 的梯度为零：公共正定因子 $\bm{\Sigma}_k^{-1}$ 消去，剩下加权残差和为零。
+
+再令精度矩阵 $\bm{\Lambda}_k=\bm{\Sigma}_k^{-1}$，加权散布为
+\[
+ \bm{S}_k=\sum_i\gamma_{i,k}^{(t)}
+ (\bm{x}_i-\bm{\mu}_k^{(t+1)})
+ (\bm{x}_i-\bm{\mu}_k^{(t+1)})^\top.
+\]
+相关目标为 $\tfrac12[n_k^{(t)}\log\det\bm{\Lambda}_k-\operatorname{tr}(\bm{\Lambda}_k\bm{S}_k)]$。求导得 $n_k^{(t)}\bm{\Lambda}_k^{-1}-\bm{S}_k=\bm{0}$，于是
+\begin{equation}
+ \bm{\Sigma}_k^{(t+1)}
+ =\frac{\bm{S}_k}{n_k^{(t)}}.
+ \label{eq:clustering-gmm-covariance}
+\end{equation}
+这些公式要求有效样本量为正；无约束协方差更新还要求加权散布正定，否则不存在正定域内的有限最优解。
+
+代码~\ref{code:clustering-gmm} 用对数概率计算责任度，避免直接相乘小概率造成下溢。它把协方差特征值限制为不小于 $\epsilon$，这是固定约束 $\bm{\Sigma}_k\succeq\epsilon\bm{I}$ 下的 M 步；它不同于不加说明地每轮给协方差加上一个常数矩阵。
+
+\begin{codeblock}[language=Python,label={code:clustering-gmm}]{带协方差下界的 GMM--EM}
+import numpy as np
+from scipy.special import logsumexp
+from scipy.stats import multivariate_normal
+
+def gmm_em(X, K, max_iter=100, tol=1e-5, eps=1e-6):
+    X = np.asarray(X, dtype=float)
+    n, d = X.shape
+    if eps <= 0:
+        raise ValueError("eps must be positive")
+    _, mu = kmeans(X, K)
+    pi = np.full(K, 1.0 / K)
+    cov = np.repeat((max(1., eps) * np.eye(d))[None], K, axis=0)
+    def e_step():
+        log_p = np.column_stack([
+            np.log(pi[k]) + multivariate_normal.logpdf(
+                X, mean=mu[k], cov=cov[k])
+            for k in range(K)])
+        normalizer = logsumexp(log_p, axis=1)
+        gamma = np.exp(log_p - normalizer[:, None])
+        return gamma, normalizer.sum()
+    gamma, ll = e_step()
+    for _ in range(max_iter):
+        nk = gamma.sum(0)
+        if (nk <= 0).any():
+            raise ValueError("numerically empty component")
+        pi = nk / n
+        mu = (gamma.T @ X) / nk[:, None]
+        for k in range(K):
+            diff = X - mu[k]
+            S = (diff * gamma[:, k, None]).T @ diff / nk[k]
+            values, vectors = np.linalg.eigh(S)
+            cov[k] = (vectors * np.maximum(values, eps)) @ vectors.T
+        gamma, new_ll = e_step()
+        if abs(new_ll - ll) <= tol * (1 + abs(ll)):
+            break
+        ll = new_ll
+    return pi, mu, cov, gamma
+\end{codeblock}
+
+该实现调用前文的 K-means，以其中心初始化，返回的责任度由最终参数重新计算。协方差特征值截断之所以是上述受限 M 步的解，是因为最优协方差与加权散布共享特征向量，每个特征值分别最小化 $\log s+\lambda/s$，在 $s\geq\epsilon$ 上得到 $s=\max\{\lambda,\epsilon\}$。实际还应监测似然下降、重启质量和数值上近空的成分。
+
+容量较大时可用完整协方差；数据不足时可限制为对角、球形或所有成分共享协方差。完整协方差的一轮成本约为 $O(nKd^2+Kd^3)$，其中立方项来自各成分的矩阵分解；对角形式可把主要计算降到 $O(nKd)$。K-means++、多次重启和由初始划分估计协方差，都有助于选择合理起点，但不保证全局最优。
+
+\subsubsection{理论分析}
+
+\paragraph{收敛性分析}
+EM 的单调性来自在旧参数处贴合的似然下界。它不要求把观测似然直接求到最优，却要求 M 步至少提高相应辅助目标。
+
+\begin{theorem}[EM 的似然单调性]
+ \label{thm:clustering-em}
+ E 步取当前精确后验，M 步满足
+ $Q(\bm{\theta}^{(t+1)}\mid\bm{\theta}^{(t)})
+ \geq Q(\bm{\theta}^{(t)}\mid\bm{\theta}^{(t)})$。
+ 在相关概率与期望有限、支持条件允许下，则
+ $\ell(\bm{\theta}^{(t+1)})\geq\ell(\bm{\theta}^{(t)})$。
+\end{theorem}
+\begin{proof}
+对每个样本任取隐变量分布 $q_i$。由对数的凹性，
+\[
+ \begin{aligned}
+ \log p(\bm{x}_i;\bm{\theta})
+ &=\log\sum_k q_i(k)
+   \frac{p(\bm{x}_i,z_i=k;\bm{\theta})}{q_i(k)}\\
+ &\geq\sum_kq_i(k)
+   \log\frac{p(\bm{x}_i,z_i=k;\bm{\theta})}{q_i(k)}.
+ \end{aligned}
+\]
+对样本求和，把右边记为 $\mathcal{L}(q,\bm{\theta})$。它与似然之差恰为
+\[
+ \ell(\bm{\theta})-\mathcal{L}(q,\bm{\theta})
+ =\sum_i\operatorname{KL}
+ \bigl(q_i\,\Vert\,p(z_i\mid\bm{x}_i;\bm{\theta})\bigr)
+ \geq0.
+\]
+E 步令 $q_i^{(t)}$ 等于旧参数的后验，因此 $\mathcal{L}(q^{(t)},\bm{\theta}^{(t)})=\ell(\bm{\theta}^{(t)})$。固定 $q^{(t)}$ 后，下界与 $Q$ 仅相差不含参数的熵项，M 步遂给出
+\[
+ \begin{aligned}
+ \ell(\bm{\theta}^{(t+1)})
+ &\geq\mathcal{L}(q^{(t)},\bm{\theta}^{(t+1)})\\
+ &\geq\mathcal{L}(q^{(t)},\bm{\theta}^{(t)})
+ =\ell(\bm{\theta}^{(t)}).
+ \end{aligned}
+\]
+这就证明了单调性。
+\end{proof}
+
+关于 EM 参数收敛的充分条件，可参见 Wu 的分析\scite{clust-wu1983}若参数域保证似然有上界，单调性进一步给出似然值收敛；参数序列收敛到驻点则需要连续性、紧性或其他正则条件。EM 可以趋近局部极大值，也可能停在鞍点，不能把单调性直接表述为“必然收敛到最优模型”。
+
+当 $K\geq2$，且模型中存在一个可塌缩的正权重成分，其余正权重成分仍使其他样本的混合密度保持正值时，无约束 GMM 的似然没有上界。令可塌缩成分的均值等于某个样本，协方差为 $\sigma^2\bm{I}$；当 $\sigma\to0$ 时，该样本处的密度按 $\sigma^{-d}$ 增长，而其他样本仍由其余成分覆盖，因此总对数似然可以无界增加。若 $K=1$ 且样本经验散布矩阵正定，单高斯的极大似然有限；若经验散布矩阵奇异，协方差仍可能在数据未占据的方向趋近边界并导致似然退化。协方差下界、适当先验或惩罚可以阻止这类塌缩，但它们各自改变了优化问题。
+
+隐成分编号的置换不改变混合密度；当成分彼此不同且权重为正时，一个解通常对应 $K!$ 个等价标号。这与不同拟合质量的局部极值是两类问题。
+
+\paragraph{泛化分析}
+GMM 可以用新样本的平均对数似然评价预测密度，但训练似然提高不保证留出数据上的表现提高。选择成分数和协方差形式时，需要权衡拟合误差与参数估计误差；使用信息准则选择 $K$ 时，也须比较相同约束下的拟合。完整协方差模型的参数数目为
+\[
+ m_K=(K-1)+Kd+\frac{Kd(d+1)}{2},
+\]
+常用准则为
+\begin{equation}
+ \mathrm{BIC}(K)=-2\ell(\hat{\bm{\theta}}_K)+m_K\log n,
+ \qquad
+ \mathrm{AIC}(K)=-2\ell(\hat{\bm{\theta}}_K)+2m_K.
+ \label{eq:clustering-bic}
+\end{equation}
+选择较小者是在拟合与复杂度之间取舍。BIC 源于模型证据的渐近近似；有限混合存在零权重边界、不可辨识和奇异性，不能直接套用所有正则模型的推导，也不能把 BIC 称为无条件一致的证据估计。混合阶数的一致性需要专门条件\scite{clust-keribin2000}
+
+即使正确估计了混合阶数，也只说明分布拟合所需的成分数。把它解释为语义类别数，还需说明一个类别是否对应一个成分。
+
+\subsubsection{小结}
+
+GMM 提供软后验、协方差结构和预测密度，适合需要概率语义的聚类、语音建模或异常评分。它的边界包括分布失配、似然奇异性及局部优化；使用多个高斯可以逼近复杂密度，却未必使每个成分都成为独立可解释的类别。
+
+\subsection{模型对比与总结}
+
+本小节先比较 GMM 与 K-means 的目标和输出，再把成分分布或成分数先验的变化作为代表性扩展。GMM 与 K-means 的联系可由小方差极限看清。固定均匀权重 $\pi_k=1/K$ 和共享球形协方差 $\bm{\Sigma}_k=\sigma^2\bm{I}$，则
+\[
+ \gamma_{i,k}=
+ \frac{\exp(-\lVert\bm{x}_i-\bm{\mu}_k\rVert_2^2/(2\sigma^2))}
+ {\sum_j\exp(-\lVert\bm{x}_i-\bm{\mu}_j\rVert_2^2/(2\sigma^2))}.
+\]
+若 $\bm{x}_i$ 的最近中心唯一为 $k^\ast$，则对任意 $j\ne k^\ast$，距离平方差为正，相应指数比随 $\sigma^2\to0$ 趋零，故 $\gamma_{i,k^\ast}\to1$。M 步的均值更新因此退化为 Lloyd 更新；平局时责任度可分散在多个最近中心，不能直接得到唯一硬簇分配。
+
+从目标看，去掉仅依赖 $\sigma$ 的常数后，$-2\sigma^2\ell$ 趋向 $\sum_i\min_k\lVert\bm{x}_i-\bm{\mu}_k\rVert_2^2$。这个联系要求共享固定方差随极限缩小，不能把自由更新各簇协方差的普通 GMM 直接等同于 K-means。FCM 也使用软归属，但其隶属度来自模糊目标，并非一般 GMM 后验。
+
+更换成分分布即可适配其他数据：伯努利混合适合二值特征，多项式混合适合计数向量；重尾的 $t$ 混合可减轻离群观测对均值和尺度估计的影响，其代价是引入额外的尺度或自由度估计\scite{clust-peel2000}
+
+\term{狄利克雷过程混合}（Dirichlet process mixture, DPM）把先验放在随机混合分布上，使潜在成分数不再预先固定；Neal 研究了这类模型的 MCMC 推断\scite{clust-neal2000}也可采用变分方法近似后验。浓度参数影响新成分的倾向；“不固定 $K$”并不意味着无需先验选择，也不自动保证恢复真实有限类别数。
+
+概率路线的优势是把分组、密度预测和模型比较放在同一框架中。是否采用它，应取决于所需概率语义和分布假设，而非认为其他几何或密度方法都没有统计解释。
+
+\section{半监督聚类}
+\label{sec:clustering-semisupervised}
+
+没有完整类别标签集，并不意味着领域知识为空。专家可能知道两份记录来自同一对象，或两个样本不应属于同类；也可能只标注了少量典型种子。\term{半监督聚类}（semi-supervised clustering）把这些信号纳入以未标注样本为主体的分组过程。
+
+第~\ref{sec:classification-semisupervised}~节的半监督分类利用未标注输入改进预先定义类别的预测，本节则用少量类别标签或关系先验共同决定分组。两者都改变可用监督信息，却保留不同的任务目标。
+
+实例级信号常写为\term{必连约束}（must-link）和\term{勿连约束}（cannot-link）：前者要求两个样本同簇，后者要求异簇。记其索引对集合为 $M$ 和 $B$，以免与簇 $C_k$ 或划分 $\mathcal{P}$ 混淆。信号既可作为硬约束，也可带权违反；少量关系判断是否比逐点类别标签更容易获取，取决于实际标注任务。
+
+本节保持聚类的目标：用几何结构和先验共同决定分组，而非假定所有类别已由带类别标签的样本充分规定。约束质量、覆盖范围及与几何假设是否冲突，都会影响最终收益。
+
+\subsection{COP-Kmeans}
+\label{sec:clustering-cop}
+
+如果必须满足全部关系约束，可以在分配时排除违法簇标记。Wagstaff 等在 2001 年提出的 COP-K-means 采用这种硬约束方式\scite{clust-wagstaff2001}算法把 K-means 的最近中心选择限制在当前可行选项内。
+
+\subsubsection{模型结构}
+
+目标仍为式~\eqref{eq:clustering-sse}，可行域增加
+\begin{equation}
+ c_i=c_j\quad((i,j)\in M),\qquad
+ c_i\ne c_j\quad((i,j)\in B).
+ \label{eq:clustering-cop}
+\end{equation}
+must-link 的传递闭包把样本分成\term{约束块}（chunklet），同一块必须整体分配。若 cannot-link 的两端落在同一块内，约束立即矛盾；但不存在这种矛盾还不足以保证给定 $K$ 下可行。
+
+把每个约束块当作顶点、cannot-link 当作边，块的簇分配实际上是该图的 $K$ 着色。例如三个两两 cannot-link 的块不能放进两个簇，即使没有任何 must-link 冲突。块级 SSE 可分解为块内常数加上“块大小乘以块均值到中心的平方距离”，因此整体分配也能利用摘要。
+
+\subsubsection{参数学习}
+
+COP-K-means 按某个顺序处理样本或约束块，对候选簇按距离排序，接受第一个与已固定分配相容的簇。若没有候选，就报告本次贪心分配失败；更新步则对每个非空簇取均值。
+
+\begin{algorithm}[COP-K-means 的约束块分配]
+ \label{alg:clustering-cop}
+ \begin{algorithmic}[1]
+ \Require must-link 闭包、块间 cannot-link、当前中心
+ \Ensure 本轮可行分配，或本轮贪心失败
+ \State 清空本轮簇分配，选定约束块访问顺序
+ \For{每个约束块 $U$}
+  \State 按 $\sum_{i\in U}\lVert\bm{x}_i-\bm{\mu}_k\rVert_2^2$ 排序候选簇
+  \State 选择不与已分配邻块冲突的最近候选
+  \If{候选不存在}
+   \State 返回本轮失败
+  \EndIf
+  \State 把 $U$ 的全部样本分给所选簇
+ \EndFor
+ \end{algorithmic}
+\end{algorithm}
+
+本轮失败不是不可行性证明。考虑 cannot-link 图为路径 $a-b-c-d$，取 $K=2$。若顺序为 $a,d,b,c$，且前两块都优先选择簇 1，那么 $b$ 被迫选择簇 2，轮到 $c$ 时两簇都被相邻块占用，贪心失败；但划分 $\{a,c\}$、$\{b,d\}$ 完全可行。
+
+此外，重新按顺序贪心分配并没有精确最小化受约束目标，不能直接继承 Lloyd 的单调性和有限停止定理。若要保证下降，可从已有可行解出发，仅接受降低目标且保持可行的块移动；或用精确受约束分配子问题配合均值更新。前者可能更早停在局部状态，后者则需承担组合优化成本。普通 COP 实现宜设置上限、记录失败并重启或回溯。
+
+\subsubsection{小结}
+
+COP-K-means 的好处是约束含义明确，成功输出可以逐项检查是否满足关系。代价是约束冲突、给定 $K$ 下不可行以及贪心顺序失败都必须处理。若先验允许出错，PCK-means 在 SSE 上增加
+\[
+ \sum_{(i,j)\in M}w_{i,j}^{M}\mathbb{1}\{c_i\ne c_j\}
+ +\sum_{(i,j)\in B}w_{i,j}^{B}\mathbb{1}\{c_i=c_j\},
+\]
+以软惩罚权衡几何和约束。有限权重不保证零违反，但避免因单条错误关系直接拒绝整个问题。
+
+\subsection{Seeded / Constrained K-means}
+\label{sec:clustering-seeded}
+
+若已知的是少量样本的类别名称，可以直接用它们确定初始中心或固定归属。Basu、Banerjee 与 Mooney 在 2002 年研究了 Seeded K-means 与类别标签约束的 Constrained K-means\scite{clust-basu2002}后者与第~\ref{sec:clustering-capacity} 节的同名容量约束方法含义不同：本节锁定种子的类别标签，容量方法限制各簇样本数。
+
+\subsubsection{模型结构}
+
+设种子索引集合为 $S$，类别标签为 $\ell_s\in\{1,\ldots,K\}$，并记 $S_k=\{s\in S:\ell_s=k\}$。当每类都有种子时，初始化为
+\[
+ \bm{\mu}_k^{(0)}
+ =\frac{1}{|S_k|}\sum_{s\in S_k}\bm{x}_s.
+\]
+缺少种子的簇需另外初始化。Seeded 版本只在初始化时使用类别标签，之后种子可以移动；Constrained 版本始终要求 $c_s=\ell_s$，把种子类别标签作为硬事实。二者都优化同一个平方误差目标，只是初始化与可行域不同。
+
+\subsubsection{参数学习}
+
+Seeded 版本随后直接运行 Lloyd。Constrained 版本在分配步冻结种子，其余样本独立选择最近中心；更新中心时同时计入种子和非种子。由于冻结限制彼此不耦合，逐点分配仍是固定中心下的精确最优解，因此可沿用定理~\ref{thm:clustering-lloyd} 的下降论证与平局条件。每簇都有固定种子时，还自然避免了空簇。
+
+种子可以帮助消除初始化歧义，却未必代表整个群组。若种子类别标签可能错，允许其移动减少了永久锁定错误的风险；若类别标签可靠而未标注数据几何有歧义，固定类别标签更能保留监督信息。效果随种子代表性、比例和错误类型变化，不能把少量种子在某些实验中的收益推广为统一保证。
+
+\subsubsection{小结}
+
+种子方法以很小的算法改动引入类别标签信息，适合已知类别名称且每类有少量代表样本的情况。它们仍依赖欧氏距离和均值表示；要表达“哪些方向更重要”，需要进一步改变度量本身。
+
+\subsection{MPCK-means}
+\label{sec:clustering-mpck}
+
+如果重要特征与无关特征混在一起，约束即使改变了簇分配，也未必能改变下一轮的距离判断。Bilenko、Basu 与 Mooney 在 2004 年提出的 MPCK-means（Metric Pairwise Constrained K-means）同时优化分配和簇相关度量，使关系约束既影响簇分配，也影响空间中的方向与尺度\scite{clust-bilenko2004}
+
+从 COP-K-means 到种子方法，再到 MPCK-means，弱监督逐步进入了不同的计算环节：关系约束限制分配，种子类别标签确定初始位置或固定成员，成对约束还可以参与塑造距离。这些路线并未相互取代，而是对应不同形式与可信程度的先验。
+
+\subsubsection{模型结构}
+
+为簇 $k$ 配置正定矩阵 $\bm{A}_k\succ0$，定义平方 Mahalanobis 距离
+\[
+ d_{\bm{A}_k}^2(\bm{x},\bm{y})
+ =(\bm{x}-\bm{y})^\top\bm{A}_k(\bm{x}-\bm{y}).
+\]
+正定性既保证非退化距离，也使 $\log\det\bm{A}_k$ 有定义。可以把这种距离看作先做坐标变换 $\tilde{\bm{x}}=\bm{A}_k^{1/2}\bm{x}$，再计算欧氏距离。图~\ref{fig:clustering-metric-constraints} 给出了一个固定变换的例子：压缩水平方向、拉伸竖直方向后，must-link 对变近，而 cannot-link 对变远。实际 MPCK-means 需要根据全部样本与约束优化 $\bm{A}_k$，并非预先知道图中的变换。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/clustering-metric-constraints}
+ \caption{度量如何改变成对关系的几何表达。四点为 $\bm{u}=(-2,0.5)$、$\bm{v}=(2,0.5)$、$\bm{w}=(-2,-0.5)$、$\bm{z}=(2,-0.5)$。实线连接 must-link 对，虚线连接 cannot-link 对（左图简记 CL）。这里人为设定 $\bm{A}=\operatorname{diag}(1/16,4)$；右图的距离等于左图的 Mahalanobis 距离，不表示一次真实训练的结果。}
+ \label{fig:clustering-metric-constraints}
+\end{figure}
+
+记在该度量下全数据的最大距离平方为
+\[
+ D_k=\max_{p,q\in\{1,\ldots,n\}}
+ d_{\bm{A}_k}^2(\bm{x}_p,\bm{x}_q).
+\]
+对违反 must-link 的样本对，惩罚同时作用于两端所属簇；对违反 cannot-link 的样本对，惩罚其相对于本簇度量下最远样本对的接近程度。具体写为
+\begin{align}
+ f_M(i,j)
+ &=\frac12\left[
+ d_{\bm{A}_{c_i}}^2(\bm{x}_i,\bm{x}_j)
+ +d_{\bm{A}_{c_j}}^2(\bm{x}_i,\bm{x}_j)\right]
+ \mathbb{1}\{c_i\ne c_j\},\nonumber\\
+ f_B(i,j)
+ &=\left[D_{c_i}
+ -d_{\bm{A}_{c_i}}^2(\bm{x}_i,\bm{x}_j)\right]
+ \mathbb{1}\{c_i=c_j\}.
+ \label{eq:clustering-mpck-penalty}
+\end{align}
+因此 cannot-link 惩罚非负，must-link 惩罚也不因交换样本对的书写顺序而改变。总目标为
+\begin{equation}
+ \begin{aligned}
+ J={}&\sum_{k=1}^K\sum_{i\in C_k}
+ \left[d_{\bm{A}_k}^2(\bm{x}_i,\bm{\mu}_k)
+       -\log\det\bm{A}_k\right]\\
+ &+\sum_{(i,j)\in M}w_{i,j}^{M}f_M(i,j)
+  +\sum_{(i,j)\in B}w_{i,j}^{B}f_B(i,j).
+ \end{aligned}
+ \label{eq:clustering-mpck}
+\end{equation}
+权重均非负，每个无序约束对只计一次。负对数行列式阻止特征值趋零，但不能单独阻止矩阵某些方向无限放大；数据退化时仍需约束或正则。
+
+\subsubsection{参数学习}
+
+固定中心和度量，逐个检查样本簇分配的所有候选，计算其涉及的几何项、行列式项和全部关系惩罚，只接受不增加整体目标的变更。由于关系耦合样本，不能仅按到中心的 Mahalanobis 距离排序就声称完成了目标最小化。
+
+固定分配和度量时，约束项不含中心。对中心求导给出
+\[
+ 2\bm{A}_k\sum_{i\in C_k}(\bm{\mu}_k-\bm{x}_i)=\bm{0},
+ \qquad
+ \bm{\mu}_k=\frac{1}{|C_k|}\sum_{i\in C_k}\bm{x}_i.
+\]
+所以这里仍是普通簇内均值，而不是对各样本施加不同权重的均值；同一簇共用的 $\bm{A}_k$ 会消去。
+
+度量步可借助散布矩阵理解。令 $\bm{S}_k=\sum_{i\in C_k}(\bm{x}_i-\bm{\mu}_k)(\bm{x}_i-\bm{\mu}_k)^\top$。在固定当前最远样本对、且该样本对在更新后仍保持活跃的一个分支上，约束项写成 $\operatorname{tr}(\bm{A}_k\bm{P}_k)$，其中 $\bm{P}_k$ 汇总违反 must-link 的半权重差分外积，以及违反 cannot-link 的“最远对外积减约束对外积”。于是子目标为
+\[
+ \operatorname{tr}\bigl(\bm{A}_k(\bm{S}_k+\bm{P}_k)\bigr)
+ -|C_k|\log\det\bm{A}_k.
+\]
+若 $\bm{S}_k+\bm{P}_k\succ0$ 且 $|C_k|>0$，其无约束驻点为
+\begin{equation}
+ \bm{A}_k=|C_k|(\bm{S}_k+\bm{P}_k)^{-1}.
+ \label{eq:clustering-mpck-metric}
+\end{equation}
+这不是无需检查的通用更新：散布调整项未必正定，更新还可能改变最大距离对应的样本对。
+
+保留 $D_k$ 对 $\bm{A}_k$ 的真实依赖时，它是有限个线性函数的最大值，故固定分配和中心的度量子问题是凸的，但通常分段光滑。可在 $\alpha\bm{I}\preceq\bm{A}_k\preceq\beta\bm{I}$、$0<\alpha<\beta$ 的固定域上求解，或使用保持正定且实际下降的优化步骤。对角度量进一步减少参数与矩阵计算。
+
+若各步确实使同一个有下界的目标不增，只能立即推出目标值收敛；连续度量参数的变化并不受有限簇分配数限制，所以不能推出有限轮停止。实践中以目标改进和参数变化的容差终止，还需单独处理空簇。
+
+\subsubsection{小结}
+
+MPCK-means 把约束用于调整几何，而非只修正分配。这个方向与 ITML、LMNN 等度量学习方法相关，但它们的损失、约束及训练目标不同，不能视为同一算法的简单改名。每簇完整度量含 $d(d+1)/2$ 个参数，少量约束或高维数据下容易估计不足；共享或对角度量是降低容量的常见办法。
+
+\subsection{模型对比与总结}
+
+本小节先比较关系约束、种子和度量学习怎样改变 K-means，再把先验进入图或共享度量的方式作为代表性扩展。COP-K-means 适合必须满足的实例关系，Seeded 与类别标签约束 K-means 适合带类别名称的种子，MPCK-means 适合希望从关系中学习几何的任务。有限惩罚权重允许违反约束，硬约束则可能无解；两类语义应在训练前明确。更多参数不必然更充分地利用监督，覆盖不足时也可能放大标注误差。
+
+先验也可加入谱聚类。Kamvar、Klein 与 Manning 的 Spectral Learning 研究了将监督信息纳入谱表示；一种直接做法是提高 must-link 边权、降低 cannot-link 边权，再对修改后的非负对称图求谱表示\scite{clust-kamvar2003}
+
+这种改图方式不会强制最终簇分配满足关系：删除一条 cannot-link 边后，两端仍可能通过其他强边进入同一簇。修改后的图仍可用相应拉普拉斯理论分析，但原图的谱间隙、连接结构和统计假设已经改变，不能说全部理论保证原样保留。关系传播还能把局部信号扩展到邻居，也可能扩散错误约束，须与传播假设一起评价。
+
+Xing 等通过相似与不相似样本关系学习 Mahalanobis 度量\scite{clust-xing2003}这是先单独学习共享度量、再交给聚类算法的解耦方式。这样可以复用监督得到的几何结构，但共享度量仍假设所有簇使用同一种空间变换，后续算法也须与该度量兼容。
+
+半监督聚类的收益取决于信号是否回答了模型原本无法区分的问题。应同时报告几何目标、约束违反情况，以及独立参考标签或下游任务上的效果；用于训练的同一组关系满足得更好，不足以证明聚类具有更好的泛化。
+
+\section{本章小结}
+\label{sec:clustering-summary}
+
+本章开头提出两个问题：没有预设类别时，怎样界定“相近样本应当归为一组”；选定定义后，怎样验证分组对当前用途有意义。七个组织视角从不同层面回答前一个问题：中心与相异度决定划分模型，嵌套关系决定层次输出，密度连通或密度峰决定密度簇，边权与图目标决定关系群组。网格和子空间改变计算单位与相关表示，概率模型提供生成解释，弱监督则把领域判断加入这些假设。它们可以组合，不能当作七种互斥的模型类别。
+
+表~\ref{tab:clustering-overview} 汇总了七个教学入口各自强调的选择。它与章首属性导航的职责不同：这里帮助读者回顾阅读位置，表~\ref{tab:clustering-navigation}~才用于登记可交叉的方法属性。所谓“不指定簇数”通常只是把控制粒度的参数从 $K$ 改成截线、密度阈值、带宽或先验，并未使粒度问题消失；所谓“任意形状”也仍然依赖连接、密度或相似图是否表达了目标结构。
+
+\begin{table}[htbp]
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{19mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 组织视角 & 主要输出与粒度 & 主要选择与限制\\
+ \midrule
+ 划分 & 给定 $K$ 的硬划分或隶属度 & 中心、相异度、初始化\\
+ 层次 & 嵌套簇；事后截取 & 链接、早期决策、距离存储\\
+ 密度 & 密集区域或模态吸引域 & 邻域、带宽、噪声规则\\
+ 图 & 图上的顶点群组 & 图构造、图目标、离散化\\
+ 网格与子空间 & 区域、子空间及可能的重叠簇 & 分辨率、支持阈值、搜索规模\\
+ 概率 & 成分后验与预测密度 & 分布族、奇异性、模型选择\\
+ 半监督 & 受先验引导的划分 & 信号形式、质量、约束强度\\
+ \bottomrule
+ \end{tabularx}
+ \caption{七个教学入口的阅读回顾。各入口可以交叉，内部也有差异：基本 Mean Shift 不显式拒绝噪声，层次链接有不同形状偏好，概率成分也未必一一对应语义类别。}
+ \label{tab:clustering-overview}
+\end{table}
+
+理论结论应跟着其证明对象使用。Lloyd 的有限停止依赖下降与平局规则；Ward 的最优性只针对当前一次合并；DBSCAN 的顺序不变性只保证核心点划分。Mean Shift 和 EM 的单调性不能单独推出参数收敛，谱松弛最优不等于离散图割最优，CLIQUE 的安全剪枝也不消除指数最坏情况。区分这些边界，才能把算法解释转化为可靠的实现。
+
+从问题驱动的角度看，聚类方法的演进可按七种压力理解，而不是按年份排成替代顺序。规模扩大促成小批量更新、抽样和数据摘要，却加入近似误差与顺序敏感性；非凸结构使密度连通、核和谱方法超越单中心表示，同时引入邻域尺度、核或构图选择；关系输入让 K-medoids 与图目标直接使用对象间联系，代价是平方存储或图计算；高维表示推动子空间和投影聚类，却增加组合搜索与估计误差；概率语义带来软后验、预测密度与模型比较，也带来分布失配、奇异性和局部推断；弱监督用关系、种子或少量类别标签消除部分歧义，但错误与冲突先验可能被放大；验证需求则把注意力从单次输出转向零模型、重复性、独立数据和用途证据。后来的路线通常改变其中一个条件，并不自动支配其他条件下的经典方法。
+
+回到客户分群，只有先说明分组将服务于量化、探索、解释还是下游决策，才能依次选择变量与尺度、相异度或邻接、簇判据、输出粒度和先验。需要快速数值量化，可从 K-means 开始；需要真实代表或一般相异度，可用 K-medoids；需要多粒度解释，采用层次树；需要低密度分隔与噪声识别，考察 DBSCAN、OPTICS 或 HDBSCAN；原始输入就是关系时，先说明边权含义再选择图目标。相关变量因簇而异时考虑子空间，后验和预测密度重要时考虑混合模型，已有可靠领域知识时再决定如何加入约束或种子。
+
+验证时按表~\ref{tab:clustering-evaluation-protocol}~分开证据。训练目标与内部指标回答当前准则是否得到满足：SSE 衡量中心量化误差，轮廓系数比较样本的簇内平均距离与最近其他簇平均距离；它们各自偏好特定几何结构，不宜直接比较目标不同的方法\scite{clust-rousseeuw1987}对象集固定而只重复测量、初始化或参数扰动时，ARI 和共簇关系可以直接比较。样本重采样使对象集不同时，只在共同对象上比较，或者先冻结由发现样本向新样本分配簇的规则；对于彼此没有共同对象的独立样本，应比较预先声明的簇轮廓、外部关联或用途指标，而不是比较 ARI 或共簇矩阵。存在独立参考标签时，调整兰德指数比较同一批样本的聚类与参考分组，并在固定边际的随机划分模型下校正期望一致\scite{clust-hubert1985}参考标签未必覆盖全部合理分组。零模型、留出量化误差或预测密度以及下游收益继续回答不同问题；若它们与内部指标冲突，应报告冲突并限制解释，不能事后只保留支持所选方法的分数。
+
+当不同初始化、样本扰动、表示或算法得到多个候选划分时，\term{共识聚类}（consensus clustering）提供一种代表性扩展：对每对样本统计它们在多少个候选结果中共簇，形成共关联矩阵，再聚类该矩阵或对应图以得到共识划分\scite{clust-strehl2002}它可把“哪些样本反复共簇”变成稳定性诊断。只有对象集固定，例如对同一批对象重复测量或重复运行时，才能直接比较共关联矩阵；样本扰动改变对象集时，应按前段规定比较共同对象或使用冻结的新样本分配规则。若在没有共同对象的独立样本上检验可复制性，应预先规定候选生成方式，并比较簇轮廓、外部关联或用途指标，不能直接比较共关联矩阵。在同一数据上反复筛选再取共识，也不能制造新的外部证据。少数但有意义的结构还可能被多数划分淹没，因此应同时报告共关联强度、候选来源和与无聚类基线的比较。
+
+经典方法长期并存，根本原因是不同簇判据、数据表示和用途之间存在不能由单一规则消除的取舍。下一章的降维方法会改变距离、邻域与相似图，并提供用于观察结果的低维坐标，详见第~\ref{chap:dimensionality-reduction}~章。尤其是第~\ref{sec:dim-neighbors-comparison}~节讨论的二维邻域布局不保证全局距离或密度保真，图上的分离只能作为探索线索，不能单独充当聚类成立的验证证据。
