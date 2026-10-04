@@ -1,0 +1,76 @@
+\section{成员选择与集成简化}
+\label{sec:ensemble-selection-compression}
+
+Bagging、Boosting和Stacking先回答怎样形成组合。训练完成后，成员数量仍可能超过存储或延迟预算，也可能包含只在少数输入区域有用的模型。简化集成有三种不同目标：为所有输入固定一个较小成员子集，针对当前输入临时选择成员，或训练一个新的紧凑模型替代原集成。前两种方法保留部分原成员，第三种方法改变了部署模型。
+
+图\ref{fig:ensemble-selection-compression}沿部署对象区分这三种目标。静态选择把成员池缩成一个固定子集，动态选择保留成员池并让路由依赖当前输入，紧凑化则把完整集成的行为转移到新模型。后续评价资源收益时，需要测量图中实际部署的整条路径。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/ensemble-selection-compression}
+  \caption{静态成员选择、动态成员选择与紧凑化改变的部署对象。静态选择为所有输入保留同一成员子集；动态选择根据输入改变运行成员或组合权重；紧凑化训练并部署新的学生模型。三种路径可能减少不同类型的成本，不能只用保留成员数比较。}
+  \label{fig:ensemble-selection-compression}
+\end{figure*}
+
+\subsection{静态成员选择}
+\label{sec:ensemble-static-selection}
+
+\term{静态成员选择}（static ensemble selection）给定已经训练好的候选池$\{h_1,\ldots,h_M\}$，选择一个对所有未来输入都相同的子集$S\subseteq\{1,\ldots,M\}$。若$\mathcal{L}_{\mathrm{val}}(S)$表示该子集按指定规则组合后的验证损失，可以写成
+\begin{equation}
+  \widehat{S}
+  \in
+  \argmin_{S\subseteq\{1,\ldots,M\}}
+  \mathcal{L}_{\mathrm{val}}(S)
+  +\lambda_1|S|
+  +\lambda_2 C(S),
+  \label{eq:ensemble-static-selection}
+\end{equation}
+其中$\lambda_1,\lambda_2\geq0$，$|S|$控制成员数，$C(S)$可以表示存储、单样本延迟或其他部署成本。这个组合优化通常随成员池大小指数增长，需要用排序、前向加入、后向删除或其他近似搜索。
+
+只按单成员验证损失排序，容易保留许多行为相近的模型；按当前组合的边际改进逐个加入成员，可以同时感知成员质量与已有组合。允许重复选择某个成员时，重复次数还形成离散权重。基于模型库的贪心集成选择就是这种做法的代表：从一个初始组合出发，每轮加入使验证指标改善最大的候选，必要时使用多起点或袋化减少搜索的不稳定性\scite{caruana2004ensemble}。
+
+成员选择与一般模型选择的区别在于，式\eqref{eq:ensemble-static-selection}固定了候选池及其预测，只搜索哪些已训练成员共同部署。若同时改变基学习算法、特征处理和超参数，搜索范围已经扩展为完整模型开发流程。候选池越大，验证集上偶然出现有利组合的机会也越多；选择所用数据不能同时充当最终测试。
+
+分歧率、误差协方差等多样性指标可以缩小候选范围，却不能替代任务损失。一个与其他成员高度不同但经常出错的模型，可能增加分歧而降低组合质量。静态选择应直接评价选定组合的输出，并在相同成员数或资源预算下与完整集成及单模型基线比较。
+
+\subsection{动态成员选择}
+\label{sec:ensemble-dynamic-selection}
+
+静态选择假设同一成员子集适合所有输入。若成员在输入空间的不同区域各有所长，可以先估计当前输入附近的成员能力，再决定由谁预测。\term{动态分类器选择}（dynamic classifier selection, DCS）为每个输入选择一个成员；\term{动态集成选择}（dynamic ensemble selection, DES）选择一个成员子集或给出输入相关权重。
+
+一种基本构造是准备独立的能力估计数据。对查询输入$\bm{x}$，在该数据中寻找非空邻域$\mathcal{N}(\bm{x})$，再以成员$m$在邻域内的正确率估计
+\begin{equation}
+  \widehat{c}_m(\bm{x})
+  =
+  \frac{1}{|\mathcal{N}(\bm{x})|}
+  \sum_{i\in\mathcal{N}(\bm{x})}
+  \mathbb{I}\!\left\{h_m(\bm{x}_i)=y_i\right\}.
+  \label{eq:ensemble-local-competence}
+\end{equation}
+DCS可以选择$\widehat{c}_m(\bm{x})$最大的成员，DES则保留超过阈值的成员或按能力加权。局部正确率只是能力估计的一种方式，还可以使用输出轮廓、分类间隔或由元模型学习的能力特征\scite{woods1997localaccuracy}。
+
+这个流程新增了两个误差来源。邻域依赖输入表示与距离，高维或分布稀疏时，附近样本未必提供稳定的局部证据；能力估计器也可能在有限数据上过拟合。成员训练数据、能力估计数据与最终测试数据需要分开，所有标准化和邻域参数都在相应开发流程内确定。
+
+动态选择不一定降低端到端延迟。若系统必须先运行全部成员才能构造输出轮廓，再选择其中几个聚合，成员计算已经发生；基于输入邻域的方法还增加了检索成本。只有能够在运行昂贵成员之前完成路由，或动态组合确实改善资源分配时，成员数减少才可能转化为实际延迟收益。
+
+\subsection{从集成模型到紧凑模型}
+\label{sec:ensemble-compression}
+
+静态与动态选择仍依赖原成员池。另一条路线是训练一个新的\term{紧凑模型}（compact model），使其逼近完整集成的输入输出映射。早期模型压缩工作已经用大型集成的输出训练较小模型；知识蒸馏随后把这种教师到学生的传递扩展为常用训练形式\scite{bucilua2006compression,hinton2015distilling}。
+
+设完整集成为教师$H$，紧凑模型为学生$s_{\bm{\theta}}$。对回归，可以组合真实响应损失与教师拟合损失：
+\begin{equation}
+  \min_{\bm{\theta}}
+  \sum_{i=1}^{n}
+  \left[
+    \alpha\ell\!\left(y_i,s_{\bm{\theta}}(\bm{x}_i)\right)
+    +(1-\alpha)
+    \ell\!\left(H(\bm{x}_i),s_{\bm{\theta}}(\bm{x}_i)\right)
+  \right],
+  \label{eq:ensemble-compression-objective}
+\end{equation}
+其中$\alpha\in[0,1]$控制真实标签与教师输出的作用。分类时可以拟合教师的完整类别分布；温度缩放会使非最大类别之间的相对关系更容易进入训练信号，但温度、损失权重与部署概率仍须分别选择和校准。
+
+学生训练输入可以来自原训练集、额外未标注样本或经过说明的合成样本。教师只在这些输入上提供目标，输入覆盖不足时，学生即使在压缩数据上高度一致，也可能在其他区域偏离教师。学生容量过小会产生逼近误差，容量很大则可能无法达到预期资源节省。
+
+紧凑化至少需要四类证据。预测一致性衡量学生是否复现教师输出；任务性能检查学生面对真实标签的风险；概率评价检查蒸馏后的得分是否仍可解释；资源测量确认模型大小、内存和延迟是否实际下降。教师与学生高度一致不自动保证二者具有相同新样本风险，学生也可能因真实标签项、正则化或额外数据而在部分样本上优于教师。原集成的成员级解释、袋外诊断和理论条件不能直接转移到新模型。

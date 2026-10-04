@@ -1,0 +1,94 @@
+\section{集成学习概述}
+\label{sec:ensemble-overview}
+
+\subsection{从单个模型到组合预测}
+\label{sec:ensemble-from-single-to-combination}
+
+第\ref{sec:regression-trees}节和第\ref{sec:classification-trees}节已经说明，树的分裂由有限训练样本决定。某些候选分裂的得分很接近时，替换少量样本就可能改变根节点，后续分支也随之变化。单棵树因而可能具有较大的训练波动。另一方面，一个受限的线性模型即使训练稳定，也可能无法表示风险只在局部条件组合下升高的现象。前一种困难主要来自估计不稳定，后一种困难主要来自表示受限；反复调节同一个模型的复杂度，不一定能同时消除二者。
+
+集成学习在原有预测任务之外增加两个环节：先产生多个\term{成员模型}（member model），再组合这些成员的输出。强调训练方法或模型族时，也常把产生成员的算法称为\term{基学习器}（base learner）。成员可以是同一算法在不同样本或随机种子下的结果，也可以来自不同模型族；最终组合得到的对象称为\term{集成模型}（ensemble model）。这种做法没有改变响应或类别标签的含义，只改变了由训练数据形成预测器的路径。
+
+组合方法围绕三个问题逐渐分化。Bagging从训练集重采样多个成员并固定聚合规则，使易受数据扰动影响的预测更稳定；Boosting让下一轮成员依赖当前组合，把新增容量分配给尚未处理好的训练信号；Stacking则用样本外成员预测训练另一层模型，使组合规则也可以学习。
+
+图\ref{fig:ensemble-three-mechanisms}固定同一训练任务，比较三类方法改变的环节。Bagging中的成员可以彼此独立训练；Boosting的第$t$个成员依赖前$t-1$轮形成的当前预测；Stacking的基成员可以独立训练，但组合层必须看到不含当前样本训练信息的折外预测。这些差异比“用了多少个模型”更能说明训练成本与泄漏风险。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/ensemble-three-mechanisms}
+  \caption{Bagging、Boosting与Stacking的成员生成及组合关系。实线表示训练或预测的主路径，虚线表示由前一轮组合产生的修正信号。三类方法都输出组合预测，但成员间依赖与组合规则不同；图中流程为机制示意，不表示三者必须使用相同成员模型。}
+  \label{fig:ensemble-three-mechanisms}
+\end{figure*}
+
+Bagging、Stacking和实用的AdaBoost分别由Breiman、Wolpert及Freund与Schapire的工作形成代表性方法，梯度提升又把序贯加法推广到一般损失\scite{breiman1996bagging,wolpert1992stacked,freund1997boosting,friedman2001gradientboost}。
+
+\subsection{成员、组合规则与输出}
+\label{sec:ensemble-members-combination-output}
+
+设训练集为
+\[
+  D_n=\{(\bm{x}_i,y_i)\}_{i=1}^{n},
+\]
+学习过程产生$M$个成员模型$h_1,\ldots,h_M$。用$\mathcal{C}$表示组合规则，集成预测统一写成
+\begin{equation}
+  H(\bm{x})
+  =\mathcal{C}\bigl(h_1(\bm{x}),\ldots,h_M(\bm{x})\bigr).
+  \label{eq:ensemble-combination}
+\end{equation}
+式\eqref{eq:ensemble-combination}只规定组合接口，还没有规定输出的语义。回归成员若都预测同一个数值目标，可以采用等权平均
+\[
+  H(\bm{x})=\frac{1}{M}\sum_{m=1}^{M}h_m(\bm{x}),
+\]
+也可以用非负权重$w_m$作加权平均，其中$\sum_m w_m=1$。分类成员则可能输出硬标签、类别得分或类别概率。硬标签适合投票，得分和概率可以逐类平均后再决策，但三种量不能在没有转换的情况下混合。
+
+输出类型之所以重要，是因为相同的代数操作可能对应不同结论。两个分类器的得分尺度不同，直接平均会让数值范围较大的成员取得更大影响；两个成员都输出概率，也不意味着平均后已经校准。若元学习器把成员得分映射为概率，还要单独检查这个映射在新样本上的可靠性。第\ref{sec:classification-evaluation}节给出的硬标签、排序得分和类别概率评价接口同样适用于集成模型。
+
+组合权重也不是成员的固有属性。等权平均预先固定权重，AdaBoost在序贯训练中同时确定成员贡献，线性Stacking则根据折外预测估计权重。权重还可以依赖输入，此时$w_m=w_m(\bm{x})$，不同样本会调用不同成员或采用不同组合比例。成员数量、权重约束、组合层复杂度以及是否允许输入相关组合，都属于训练或验证流程需要确定的模型选择。
+
+\subsection{成员质量、错误依赖与多样性}
+\label{sec:ensemble-quality-dependence-diversity}
+
+平均为什么可能比单个成员稳定，可以先看一个受控情形。固定输入$\bm{x}$，把训练集抽取、重采样和训练随机性都视为随机来源。若$M$个成员预测具有相同方差$\sigma^2(\bm{x})$，任意两个不同成员的预测相关系数均为$\rho(\bm{x})$，则等权平均的方差为
+\begin{equation}
+  \operatorname{Var}\!\left[H(\bm{x})\right]
+  =
+  \sigma^2(\bm{x})
+  \left[
+    \rho(\bm{x})
+    +
+    \frac{1-\rho(\bm{x})}{M}
+  \right].
+  \label{eq:ensemble-correlated-variance}
+\end{equation}
+其中随$M$衰减的是成员不共享的波动；$\rho(\bm{x})\sigma^2(\bm{x})$所代表的共同变化不会因继续增加同类成员而消失。式\eqref{eq:ensemble-correlated-variance}依赖等方差、等相关的简化设定，用来解释相关性的作用，不是任意集成的精确风险公式。
+
+图\ref{fig:ensemble-error-dependence}把这一差别写成成员误差的两部分。成员特有波动$u_m$在平均中可能相互抵消；若每个成员都带有共同误差$c$，增加同类成员只能继续削弱前一部分，不能消除$c$。因此，成员数增长与成员错误依赖下降是两个不同的条件。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/ensemble-error-dependence}
+  \caption{成员误差依赖与平均的作用。左图表示只有成员特有波动时，平均可以随成员数增加而削弱这些波动；右图表示所有成员还共享误差$c$时，共同项仍保留在平均预测中。图中成员数量与符号只用于说明机制，不表示实测误差。}
+  \label{fig:ensemble-error-dependence}
+\end{figure}
+
+平方误差还给出另一个逐点恒等式。对非负权重$w_m$且$\sum_mw_m=1$，令$H(\bm{x})=\sum_mw_mh_m(\bm{x})$，则
+\begin{equation}
+  \bigl(y-H(\bm{x})\bigr)^2
+  =
+  \sum_{m=1}^{M}w_m\bigl(y-h_m(\bm{x})\bigr)^2
+  -
+  \sum_{m=1}^{M}w_m\bigl(h_m(\bm{x})-H(\bm{x})\bigr)^2.
+  \label{eq:ensemble-ambiguity-decomposition}
+\end{equation}
+右侧第一项是成员平方误差的加权平均，第二项衡量成员围绕组合预测的分散程度，常称为歧义项\scite{krogh1995ensembles}。在成员平均误差固定时，更大的有效分散会降低组合误差；但若为了制造分散而加入很差的成员，第一项也会增大。多样性只能与成员质量一起解释。
+
+分类投票没有完全相同的平方误差分解，却面对同一问题：关键不只是每个成员错多少次，还包括它们是否在同一批样本上出错。对一对分类器，可以记录二者同时正确、只有一个正确和同时错误的样本数$n_{1,1},n_{1,0},n_{0,1},n_{0,0}$。分歧率$(n_{1,0}+n_{0,1})/n$描述二者给出不同正确性结果的频率，双错率$n_{0,0}/n$直接关注共同错误；Q统计量
+\[
+  Q=
+  \frac{n_{1,1}n_{0,0}-n_{1,0}n_{0,1}}
+       {n_{1,1}n_{0,0}+n_{1,0}n_{0,1}}
+\]
+在分母非零时描述两种正确性结果的关联。不同指标关注的对象不同，也不存在一个脱离成员准确率、对所有任务都能单调预测集成风险的多样性分数\scite{kuncheva2003diversity}。
+
+成员差异可以从多个位置产生。改变训练样本会改变成员看到的经验分布；改变输入特征会改变可用信息；改变模型结构或超参数会改变表示与正则；改变初始化、样本顺序或分裂候选会改变优化路径。Bagging主要扰动训练样本，随机森林和Extra Trees进一步扰动特征或阈值，Stacking则允许直接组合不同模型族。这些机制只是多样性的来源，最终是否形成互补仍要用样本外预测检查。
+
+由此可以用三个维度比较后续方法：成员怎样产生，成员之间有什么依赖，组合规则怎样确定。Bagging采用扰动后的成员和固定聚合，Boosting采用序贯依赖成员和加法组合，Stacking采用样本外成员预测和学习式组合。三类方法都可能改善预测，也都可能因共同失配、数据泄漏或过度选择而失效。
