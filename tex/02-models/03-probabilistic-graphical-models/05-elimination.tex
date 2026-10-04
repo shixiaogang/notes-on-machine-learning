@@ -1,0 +1,700 @@
+\chapter{基于变量消除的精确推断}
+\label{chap:pgm-elimination}
+
+设备发出报警以后，故障的概率是多少？如果需要给出一组最可能的故障、过热和传感器状态，又应怎样计算？第~\ref{sec:pgm-representations-local-computation}节已经把两类查询归结为组合因子与消去变量，本章进一步把这一计算写成完整算法。但表示紧凑并不意味着查询容易：即使每个变量只有两个状态，直接枚举$d$个变量的全部配置也需要访问$2^d$个组合。
+
+真正需要计算的通常不是完整联合分布，而是其中一部分变量的概率或最优配置。其余变量可以逐个消去，前提是保留它们对剩余变量的全部影响。\term{变量消除}（variable elimination, VE）就是按这一原则组织局部计算的算法：收集含有某个变量的因子，把它们相乘，再通过求和、积分或最大化消去该变量。新因子替代被收集的因子，后续计算不再访问已经消去的变量。本章将说明这些替换为何保持答案、不同查询为何需要不同的消元运算，以及运算顺序怎样影响中间因子的规模。对离散表格，规模体现为状态组合数；对高斯因子，规模体现为矩阵块的维度。这一区别决定了精确推断的实际代价。
+
+\section{推断问题与因子运算}
+\label{sec:pgm-elimination-factor-operations}
+
+\subsection{查询、证据与消元变量}
+\label{sec:pgm-elimination-query-evidence}
+
+把查询写清楚，才能决定哪些变量可以消去。设模型包含节点集合$V$，节点$i$对应随机变量$X_i$。用$O\subseteq V$表示已经观测的节点集合，观测取值为$\bm{x}_O=\bm{e}$；用$Q\subseteq V\setminus O$表示希望保留的查询节点集合。其余节点组成$R=V\setminus(O\cup Q)$。这里$O,Q,R$都是节点集合，$\bm{x}_Q$才是查询变量的一组取值。为避免与图的边集合$E$混淆，本章不用$E$表示证据节点。
+
+假定模型已经给出非负因子$\psi_a$，共有$m$个，且存在有限、非零的归一化常数$Z$，使
+\begin{equation}
+  p(\bm{x})=\frac{1}{Z}\prod_{a=1}^{m}\psi_a(\bm{x}_{S_a}),
+  \qquad S_a\subseteq V.
+  \label{eq:pgm-elimination-factorization}
+\end{equation}
+有向图模型的因子是局部条件概率，完整模型的$Z=1$；无向模型的因子未必归一化。推断时把这些因子及其参数视为已知，参数如何从数据估计留到第~\ref{chap:pgm-parameter-learning}章。
+
+将观测值代入每个因子后，得到仅以未观测变量为自变量的函数
+\begin{equation}
+  F_{\bm{e}}(\bm{x}_{V\setminus O})
+  =\left.\prod_{a=1}^{m}\psi_a(\bm{x}_{S_a})
+  \right|_{\bm{x}_O=\bm{e}}.
+  \label{eq:pgm-elimination-evidence-function}
+\end{equation}
+本章先讨论有限离散变量。查询所需的未归一化边缘函数及其归一化形式为
+\begin{equation}
+  \begin{aligned}
+    g_Q(\bm{x}_Q)
+      &=\sum_{\bm{x}_R}F_{\bm{e}}(\bm{x}_Q,\bm{x}_R),\\
+    Z_{\bm{e}}&=\sum_{\bm{x}_Q}g_Q(\bm{x}_Q),\\
+    p(\bm{x}_Q\mid\bm{e})&=\frac{g_Q(\bm{x}_Q)}{Z_{\bm{e}}}.
+  \end{aligned}
+  \label{eq:pgm-elimination-marginal-query}
+\end{equation}
+求和下标$\bm{x}_R$表示遍历$R$中所有变量的联合取值。因为$Z_{\bm{e}}=Zp(\bm{e})$，原模型的$Z$在条件概率中抵消，不必预先计算。这个比值要求$Z_{\bm{e}}>0$；若观测事件在模型下概率为零，就不能通过归一化定义该条件分布。
+
+连续变量的对应操作是积分。在联合密度存在且所需积分有限时，将式~\eqref{eq:pgm-elimination-marginal-query}中的求和换成积分，所得比值给出边缘条件密度。对连续观测，$p(\bm{e})$在这里指边缘密度值，不是单点事件的概率；上述密度比值只在分母有限且为正的取值处使用。这一改写统一了查询的形式，但积分能否精确完成，还取决于因子的函数形式。
+
+\subsection{因子乘积}
+\label{sec:pgm-elimination-factor-product}
+
+局部函数的变量往往并不相同，不能把两张因子表不加区分地逐项相乘。\term{作用域}（scope）记录一个因子以哪些变量为自变量；它使算法知道应该对齐哪些坐标，以及某个变量被消去后还剩哪些坐标。正式地，若$D_i$是$X_i$的取值集合，作用域为$S$的离散因子是非负函数$\psi_S:\prod_{i\in S}D_i\to[0,\infty)$。实现中还要保存$S$内变量的排列及各状态的编码。同一变量在不同表中的轴位置可以不同，状态含义不能不同。
+
+设两个因子的作用域分别为$A$和$B$，它们的乘积定义在$A\cup B$上：
+\begin{equation}
+  (\psi_A\psi_B)(\bm{x}_{A\cup B})
+  =\psi_A(\bm{x}_A)\psi_B(\bm{x}_B).
+  \label{eq:pgm-elimination-product}
+\end{equation}
+共享变量使用同一个取值，不共享的变量则扩展乘积的作用域。例如，$\psi_{\{F,H\}}(f,h)$与$\psi_{\{H,S\}}(h,s)$的乘积以$(f,h,s)$为索引。计算其中$(0,1,0)$一项时，访问前表的$(0,1)$项和后表的$(1,0)$项。若$F,H,S$均为二元变量，两张各有$4$项的表会产生一张有$8$项的表，而不是另一张$4$项的表。
+
+因子不必是概率分布：单个因子的所有表项之和可以不是$1$。作用域为空的因子是一个标量，它同样属于因子乘积。这样的常数在只比较相对概率时有时可以约去，但求证据概率或比较绝对得分时必须保留。也不能因为两个因子的数值恰好相同就删除其中一个；它们是乘积中的两次出现。以下用$\mathcal{F}$表示保留这些出现次数的因子集合。
+
+\subsection{因子约简与边缘化}
+\label{sec:pgm-elimination-reduction-marginalization}
+
+观测确定了某些坐标，可以直接读取这些坐标对应的切片。\term{因子约简}（factor reduction）指把证据取值代入因子，从其作用域中移去被固定的变量。例如，将$A=1$代入报警因子$p(a\mid h,s)$，得到$\ell_A(h,s)=p(A=1\mid h,s)$。这个函数衡量不同$(h,s)$对已发生报警的支持程度，通常既不是$p(h,s)$，也不是$p(h,s\mid A=1)$。后验还需要结合先验与其他因子。
+
+没有观测的变量不能通过选取某一个切片来删除。要计算其余变量的概率，需要把该变量的所有可能状态累加。\term{边缘化}（marginalization）就是这种汇总操作：若$i\in S$，则
+\begin{equation}
+  (\mathop{\textstyle\sum}_{x_i}\psi_S)
+    (\bm{x}_{S\setminus\{i\}})
+  =\sum_{x_i\in D_i}\psi_S(\bm{x}_{S\setminus\{i\}},x_i).
+  \label{eq:pgm-elimination-factor-marginal}
+\end{equation}
+约简是在一个已知取值处读取函数，边缘化则汇总一个未知变量的全部取值。两者都会缩小作用域，却回答不同的问题。
+
+在整组因子上消去$X_i$，必须先收集所有含有$X_i$的因子。若它同时出现在$\psi_1(x_i,y)$和$\psi_2(x_i,z)$中，所需结果为$\sum_{x_i}\psi_1(x_i,y)\psi_2(x_i,z)$，不能改成两个和的乘积。后一种计算允许两张表分别选取不同的$x_i$，破坏了它们共享同一个变量的约束。每次正确消元只去掉一个变量，却把它与其他变量共同产生的影响留在新因子中。
+
+归一化通常放在所有非查询变量消去之后。若将中间因子除以一个与其所有自变量无关的正常数，最终条件分布不变，但要计算$Z_{\bm{e}}$就需记录并补回这个常数。若按每一行分别归一化，除数随剩余变量改变，就会改变不同查询配置的相对权重，不能把它当成无害的数值处理。
+
+\section{边缘概率的变量消除算法}
+\label{sec:pgm-elimination-sum-product}
+
+\subsection{从朴素枚举到分配律}
+\label{sec:pgm-elimination-distributivity}
+
+继续使用设备故障教学模型。$F$表示故障，$H$表示过热，$A$表示报警，$S$表示传感器失灵，四者均取$0$或$1$。模型的分解为
+\begin{equation}
+  p(f,h,a,s)=p(f)p(h\mid f)p(s)p(a\mid h,s).
+  \label{eq:pgm-elimination-alarm-model}
+\end{equation}
+图中的有向边为$F\to H\to A\leftarrow S$，两个根节点$F,S$独立。设$p(F=1)=0.1$、$p(S=1)=0.05$，并令
+\[
+  p(H=1\mid F=0)=0.1,\qquad
+  p(H=1\mid F=1)=0.8.
+\]
+报警的条件概率见表~\ref{tab:pgm-elimination-alarm-cpt}。这些数值是用于解释算法的人工设置，并非真实设备的统计结果；每个二元分布中状态$0$的概率由$1$减去状态$1$的概率得到。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{ccc}
+    \toprule
+    $h$ & $s$ & $p(A=1\mid h,s)$\\
+    \midrule
+    $0$ & $0$ & $0.01$\\
+    $1$ & $0$ & $0.90$\\
+    $0$ & $1$ & $0.70$\\
+    $1$ & $1$ & $0.99$\\
+    \bottomrule
+  \end{tabular}
+  \caption{报警教学模型的条件概率表。表中的每一行在固定$(h,s)$后给出报警概率，未列出的不报警概率为其补数。}
+  \label{tab:pgm-elimination-alarm-cpt}
+\end{table}
+
+观测到$A=1$以后，故障查询的未归一化函数是
+\[
+  g_F(f)=\sum_h\sum_s p(f)p(h\mid f)p(s)\ell_A(h,s).
+\]
+朴素枚举会对每个$f$访问全部$(h,s)$组合。虽然此例只有$8$个三元配置，但其中$p(s)\ell_A(h,s)$与$f$无关，会被重复计算。乘法对加法的分配律允许把与当前求和变量无关的因子移到求和号外：
+\begin{equation}
+  g_F(f)
+  =p(f)\sum_h p(h\mid f)
+    \underbrace{\sum_s p(s)\ell_A(h,s)}_{\tau_S(h)}.
+  \label{eq:pgm-elimination-alarm-reorder}
+\end{equation}
+新因子$\tau_S(h)$只需计算一次，它替代$p(s)$和$\ell_A(h,s)$，供所有$f$共享。再将$p(h\mid f)\tau_S(h)$对$h$求和，得到只依赖$f$的因子。图~\ref{fig:pgm-elimination-alarm-buckets}展示了这一过程中的作用域变化。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-elimination-alarm-buckets.tex}
+  \caption{报警查询的局部消元。上部为原有向图，方形节点表示已观测的$A=1$；下部按$S,H$的顺序汇总因子。每一行的输出不再包含被消去的变量，查询变量$F$一直保留。}
+  \label{fig:pgm-elimination-alarm-buckets}
+\end{figure}
+
+节省来自共享局部计算，不来自删除概率较小的状态。每个状态仍按其原有权重参与求和，所以代数上没有近似误差。如果消去某个变量时必须把几乎所有剩余变量连到同一个因子中，分配律虽然依然成立，却未必能带来可承受的存储量。消元顺序的作用正是在这里体现出来。
+
+\subsection{变量消除算法}
+\label{sec:pgm-elimination-ve-algorithm}
+
+将上述变形推广到任意因子分解，需要在每一步明确哪些因子被替换。设$\mathcal{F}^{(0)}$为约简后的初始因子集合，消元顺序$\pi=(i_1,\ldots,i_k)$包含$R$中的每个节点且恰好一次。第$t$步处理$X_{i_t}$，把含有它的因子收集为
+\[
+  \mathcal{B}_t
+  =\{\psi\in\mathcal{F}^{(t-1)}:
+      i_t\in\operatorname{scope}(\psi)\}.
+\]
+这里$\operatorname{scope}(\psi)$表示$\psi$的作用域。这个集合也称为当前变量的\term{桶}（bucket），即本步必须共同处理的全部因子。令$U_t$为桶内作用域的并集，$N_t=U_t\setminus\{i_t\}$，则本步的局部乘积和输出为
+\begin{equation}
+  \begin{aligned}
+    \phi_t(\bm{x}_{U_t})&=\prod_{\psi\in\mathcal{B}_t}\psi,\\
+    \tau_t(\bm{x}_{N_t})&=\sum_{x_{i_t}}\phi_t(\bm{x}_{U_t}).
+  \end{aligned}
+  \label{eq:pgm-elimination-local-sum}
+\end{equation}
+乘积中的每个因子都按式~\eqref{eq:pgm-elimination-product}对齐坐标。桶外因子不含$X_{i_t}$，因此保持不动。
+
+\begin{algorithm}[离散边缘概率的变量消除]
+  \label{alg:pgm-elimination-marginal}
+  \begin{algorithmic}[1]
+    \Require 非负有限因子$\{\psi_a\}$，证据$\bm{x}_O=\bm{e}$，查询集$Q$
+    \Require $R=V\setminus(O\cup Q)$的排列$\pi=(i_1,\ldots,i_k)$
+    \Ensure 查询因子$g_Q$及$Z_{\bm{e}}>0$时的条件分布
+    \State 将证据代入各因子，得到$\mathcal{F}^{(0)}$；保留标量因子
+    \State 对未出现在任何作用域中的未观测变量，加入其恒为$1$的一元因子
+    \For{$t=1,\ldots,k$}
+      \State 收集$\mathcal{B}_t$，令$U_t$为其作用域的并集
+      \State 对齐坐标并求乘积$\phi_t=\prod_{\psi\in\mathcal{B}_t}\psi$
+      \State 对$x_{i_t}$求和，得到$\tau_t(\bm{x}_{U_t\setminus\{i_t\}})$
+      \State $\mathcal{F}^{(t)}\gets
+        (\mathcal{F}^{(t-1)}\setminus\mathcal{B}_t)\cup\{\tau_t\}$
+    \EndFor
+    \State 在查询取值空间上计算$g_Q=\prod_{\psi\in\mathcal{F}^{(k)}}\psi$
+    \State 计算$Z_{\bm{e}}=\sum_{\bm{x}_Q}g_Q(\bm{x}_Q)$
+    \If{$Z_{\bm{e}}=0$}
+      \State 返回证据与模型不相容，条件分布未定义
+    \Else
+      \State 返回$g_Q$、$Z_{\bm{e}}$及$g_Q/Z_{\bm{e}}$
+    \EndIf
+  \end{algorithmic}
+\end{algorithm}
+
+算法~\ref{alg:pgm-elimination-marginal}中的移除和加入按因子的出现次数操作。添加恒为$1$的一元因子，是为了覆盖某变量没有实际进入任何因子的退化情形：它被求和时仍应贡献其状态数。$R$为空时，循环直接跳过；$Q$为空时，最终因子是标量$Z_{\bm{e}}$，对应证据的未归一化权重。输出条件分布时只需要保留最终查询因子，不需要恢复已求和变量的某一组取值，因为这些变量的所有可能状态已经被累加。
+
+在报警例中，初始因子为$p(f)$、$p(h\mid f)$、$p(s)$、$\ell_A(h,s)$。先消去$S$，桶中只有$p(s)$和$\ell_A(h,s)$，故
+\begin{equation}
+  \begin{aligned}
+    \tau_S(0)&=0.95\times0.01+0.05\times0.70=0.0445,\\
+    \tau_S(1)&=0.95\times0.90+0.05\times0.99=0.9045.
+  \end{aligned}
+  \label{eq:pgm-elimination-alarm-s}
+\end{equation}
+移除这两个因子后，当前因子集合变为$\{p(f),p(h\mid f),\tau_S(h)\}$。消去$H$时，收集$p(h\mid f)$和$\tau_S(h)$，得到
+\begin{equation}
+  \begin{aligned}
+    \tau_H(0)&=0.9\times0.0445+0.1\times0.9045=0.1305,\\
+    \tau_H(1)&=0.2\times0.0445+0.8\times0.9045=0.7325.
+  \end{aligned}
+  \label{eq:pgm-elimination-alarm-h}
+\end{equation}
+此时只剩$p(f)$和$\tau_H(f)$。相乘得到$g_F(0)=0.11745$、$g_F(1)=0.07325$，两项之和为$0.19070$。由于这个有向图模型本来就已归一化，这个和恰好是$p(A=1)$。条件故障概率为
+\begin{equation}
+  p(F=1\mid A=1)
+  =\frac{0.07325}{0.19070}
+  \approx0.384111.
+  \label{eq:pgm-elimination-alarm-posterior}
+\end{equation}
+报警把故障概率从$0.1$提高到约$0.384$，但没有把它提高到$1$。模型还允许无故障过热、传感器失灵及小概率误报；这些不同解释都通过求和保留在分母中。
+
+整个计算只生成了$\tau_S(h)$和$\tau_H(f)$两张一元表。在更大的模型中，同样可以预先按顺序分桶：一个因子交给其作用域中最早被消去的变量，新因子再移交给后续桶。因子收集、合并和消元构成的统一算法框架可参见Dechter的桶消除论述\scite{pgm-elimination-dechter1999}
+
+\subsection{多变量查询}
+\label{sec:pgm-elimination-multivariate-query}
+
+如果既关心故障，也关心传感器是否失灵，应保留$Q=\{F,S\}$，只消去$H$。结果不是两张独立的一元分布，而是一张描述两者联合状态的表：
+\begin{equation}
+  g_{F,S}(f,s)
+  =p(f)p(s)\sum_h p(h\mid f)\ell_A(h,s).
+  \label{eq:pgm-elimination-joint-query}
+\end{equation}
+例如，其中一个联合状态的权重为
+\[
+  \begin{aligned}
+    g_{F,S}(0,0)
+    &=0.9\times0.95\times(0.9\times0.01+0.1\times0.90)\\
+    &=0.084645.
+  \end{aligned}
+\]
+其余三项按同样方式得到表~\ref{tab:pgm-elimination-joint-query}。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{ccc}
+    \toprule
+    $f$ & $g_{F,S}(f,0)$ & $g_{F,S}(f,1)$\\
+    \midrule
+    $0$ & $0.084645$ & $0.032805$\\
+    $1$ & $0.068590$ & $0.004660$\\
+    \bottomrule
+  \end{tabular}
+  \caption{观测报警后保留$F,S$得到的未归一化联合表。四项共同除以$0.19070$才得到$p(f,s\mid A=1)$；逐行归一化会得到不同的条件分布。}
+  \label{tab:pgm-elimination-joint-query}
+\end{table}
+
+表中四项之和仍为$0.19070$。对每行求和恢复$g_F(f)$；对每列求和得到$g_S(s)$。虽然$F,S$在观测前独立，报警证据会使它们相关：一种报警解释的可信度会影响另一种解释的相对权重。因此，不能把分别算出的一元后验直接相乘来替代联合查询。即使消元过程中的各个桶都很小，只要要求显式输出多个查询变量的联合表，输出本身仍可能非常大。
+
+\subsection{连续变量的边缘消除}
+\label{sec:pgm-elimination-gaussian}
+
+对非负连续因子，分配律仍允许把与当前积分变量无关的因子移出积分号；非负性保证可以用Tonelli定理交换积分次序。若目标是一个正常的条件密度，还要另外要求归一化积分有限且为正。真正新增的困难是函数表示：一般函数积分后未必仍能由有限个参数精确表示，数值求积也会引入近似。高斯因子是一个重要的可解析情形，因为二次型指数函数相乘或边缘化之后仍保留同类形式。
+
+设$\bm{x}\in\mathbb{R}^{q}$。为了让乘积容易计算，把高斯因子写成\term{规范形式}（canonical form），即用二次项、一次项和常数项的系数表示它：
+\begin{equation}
+  \psi(\bm{x})
+  =\exp\!\left\{-\frac12\bm{x}^{\top}\bm{J}\bm{x}
+                  +\bm{h}^{\top}\bm{x}+c\right\}.
+  \label{eq:pgm-elimination-gaussian-canonical}
+\end{equation}
+这里$\bm{J}\in\mathbb{R}^{q\times q}$是对称矩阵，$\bm{h}\in\mathbb{R}^{q}$，$c$是标量。若该因子是均值为$\bm{\mu}$、协方差为$\bm{\Sigma}$的非退化高斯密度，$\bm{J}=\bm{\Sigma}^{-1}$称为\term{精度矩阵}（precision matrix），它以逆协方差的方式表示二次约束强度；$\bm{h}=\bm{J}\bm{\mu}$，且$c$还包括归一化常数。单个局部因子可以在某些方向上没有约束，不要求它独立归一化；这里要求组合后的联合精度矩阵正定，从而表示一个可归一化的非退化高斯分布。
+
+两个规范形式因子相乘，只需先对齐坐标，再把相应的$\bm{J}$、$\bm{h}$和$c$相加。一个因子不涉及的变量坐标补零，这与离散因子乘积时扩展作用域相对应。连续证据的吸收也是代入取值。例如，将变量分为保留块$\bm{x}_A$和观测块$\bm{x}_O=\bm{e}$后，约简因子的参数为
+\[
+  \begin{aligned}
+    \bm{J}'&=\bm{J}_{A,A},\\
+    \bm{h}'&=\bm{h}_A-\bm{J}_{A,O}\bm{e},\\
+    c'&=c+\bm{h}_O^{\top}\bm{e}
+       -\frac12\bm{e}^{\top}\bm{J}_{O,O}\bm{e}.
+  \end{aligned}
+\]
+注意，这只是固定观测坐标，还没有消去任何未知变量。
+
+下面推导一次积分消元。把桶内因子的乘积写成式~\eqref{eq:pgm-elimination-gaussian-canonical}，将作用域分为要消去的块$B$和保留块$A$。令$\bm{y}=\bm{x}_B\in\mathbb{R}^{b}$、$\bm{z}=\bm{x}_A\in\mathbb{R}^{a}$，相应参数分块为
+\[
+  \bm{J}=
+  \begin{pmatrix}
+    \bm{J}_{B,B}&\bm{J}_{B,A}\\
+    \bm{J}_{A,B}&\bm{J}_{A,A}
+  \end{pmatrix},
+  \qquad
+  \bm{h}=
+  \begin{pmatrix}\bm{h}_B\\\bm{h}_A\end{pmatrix}.
+\]
+为使关于$\bm{y}$的积分有限，假设$\bm{J}_{B,B}\succ0$。在非退化联合高斯模型的精确消元过程中，当前完整精度矩阵及后续Schur补保持正定；所有包含$\bm{y}$的二次项都已收集进桶，因此其主块满足这一条件。
+
+指数中涉及$\bm{y}$的部分为
+\[
+  -\frac12\bm{y}^{\top}\bm{J}_{B,B}\bm{y}
+  +\bm{y}^{\top}(\bm{h}_B-\bm{J}_{B,A}\bm{z}).
+\]
+令$\bm{u}(\bm{z})=\bm{h}_B-\bm{J}_{B,A}\bm{z}$，通过配方把它改写为
+\begin{equation}
+  \begin{aligned}
+    &-\frac12
+      \bigl(\bm{y}-\bm{J}_{B,B}^{-1}\bm{u}\bigr)^{\top}
+      \bm{J}_{B,B}
+      \bigl(\bm{y}-\bm{J}_{B,B}^{-1}\bm{u}\bigr)\\
+    &\hspace{2em}
+      +\frac12\bm{u}^{\top}\bm{J}_{B,B}^{-1}\bm{u}.
+  \end{aligned}
+  \label{eq:pgm-elimination-complete-square}
+\end{equation}
+第一项是一个平移后的高斯核，其积分为$(2\pi)^{b/2}|\bm{J}_{B,B}|^{-1/2}$；第二项与$\bm{y}$无关，留在结果中。把$\bm{u}$展开，按$\bm{z}$的二次项、一次项和常数项重新收集，得到
+\begin{equation}
+  \begin{aligned}
+    \bm{J}'&=\bm{J}_{A,A}
+      -\bm{J}_{A,B}\bm{J}_{B,B}^{-1}\bm{J}_{B,A},\\
+    \bm{h}'&=\bm{h}_A
+      -\bm{J}_{A,B}\bm{J}_{B,B}^{-1}\bm{h}_B,\\
+    c'&=c+\frac12\bm{h}_B^{\top}\bm{J}_{B,B}^{-1}\bm{h}_B\\
+      &\quad+\frac b2\log(2\pi)-\frac12\log|\bm{J}_{B,B}|.
+  \end{aligned}
+  \label{eq:pgm-elimination-schur}
+\end{equation}
+因此，积分后的因子仍是$\exp\{-\bm{z}^{\top}\bm{J}'\bm{z}/2+\bm{h}'^{\top}\bm{z}+c'\}$。这里的$\bm{J}'$称为$\bm{J}_{B,B}$在$\bm{J}$中的\term{Schur补}（Schur complement），它把被消去块对保留块的影响合并进一个较小的矩阵。只删除精度矩阵的行列会遗漏减去的这一项，得到的是不同的运算。用协方差表示时，取边缘确实只需取对应主块；用精度表示时必须计算Schur补，两种参数化不可混用。
+
+对完整的正定联合精度矩阵，Schur补仍为正定。事实上，对任意$\bm{z}\ne\bm{0}$取$\bm{y}=-\bm{J}_{B,B}^{-1}\bm{J}_{B,A}\bm{z}$，则
+\[
+  \begin{pmatrix}\bm{y}\\\bm{z}\end{pmatrix}^{\top}
+  \bm{J}
+  \begin{pmatrix}\bm{y}\\\bm{z}\end{pmatrix}
+  =\bm{z}^{\top}\bm{J}'\bm{z}>0.
+\]
+因此最终查询高斯核可以归一化，其均值和协方差分别为$(\bm{J}')^{-1}\bm{h}'$与$(\bm{J}')^{-1}$。这一正定性结论针对完整当前联合矩阵；单个尚未结合其他因子的桶输出不必独立可归一化。
+
+这个式子也直接联系到线性方程消元。规范形式高斯的均值满足$\bm{J}\bm{\mu}=\bm{h}$。其$B$块方程给出$\bm{\mu}_B=\bm{J}_{B,B}^{-1}(\bm{h}_B-\bm{J}_{B,A}\bm{\mu}_A)$，代入$A$块方程即得$\bm{J}'\bm{\mu}_A=\bm{h}'$。概率边缘化与块高斯消元采用相同的Schur补更新，但概率计算还需要$c'$中的行列式项来追踪质量。高斯模型的这类消元关系可参见Lauritzen的系统论述\scite{pgm-lauritzen1996}
+
+\begin{example}[一个二维高斯核的积分]
+  \label{ex:pgm-elimination-gaussian-numeric}
+  考虑$\bm{x}=(x_1,x_2)^{\top}$，令
+  \[
+    \bm{J}=\begin{pmatrix}2&-1\\-1&2\end{pmatrix},
+    \qquad
+    \bm{h}=\begin{pmatrix}1\\0\end{pmatrix},
+    \qquad c=0.
+  \]
+  该精度矩阵的特征值为$1,3$，因此核可归一化。消去$x_1$时，$\bm{J}_{B,B}=2$、$\bm{J}_{B,A}=-1$。式~\eqref{eq:pgm-elimination-schur}给出
+  \[
+    \bm{J}'=\frac32,\qquad \bm{h}'=\frac12,\qquad
+    c'=\frac14+\frac12\log\pi.
+  \]
+  积分结果为
+  \[
+    \tau(x_2)=\sqrt{\pi}\exp\!\left\{
+      \frac14-\frac34x_2^2+\frac12x_2\right\}.
+  \]
+  将它归一化，得到$x_2\sim\mathcal{N}(1/3,2/3)$。另一方面，
+  \[
+    \bm{J}^{-1}=\frac13
+      \begin{pmatrix}2&1\\1&2\end{pmatrix},
+    \qquad
+    \bm{J}^{-1}\bm{h}=
+      \begin{pmatrix}2/3\\1/3\end{pmatrix}.
+  \]
+  联合分布的均值和协方差主块给出相同结果。若误把边缘精度写成原来的$\bm{J}_{2,2}=2$，则会错误地得到方差$1/2$。
+\end{example}
+
+高斯消元的“精确”依赖于闭包性，而不是连续变量可以按有限状态枚举。若含有离散潜变量，每个离散配置下分别是高斯，求和后一般会成为高斯混合；混合分量数可能随消元增长。若含有非二次的势函数，也不能直接套用式~\eqref{eq:pgm-elimination-schur}。把积分改为数值求积或把混合压缩成单个高斯，都是额外近似，必须与本节的解析消元区分。
+
+\section{MPE与MAP的变量消除算法}
+\label{sec:pgm-elimination-max-product}
+
+给定证据后，MPE最大化全部未观测变量，要求恢复一组完整的联合最优配置；MAP只最大化指定的目标变量，并对其余隐藏变量求和。两类查询都能复用变量消除的局部计算框架，但MPE的消元阶段只有最大化，MAP则必须保留“先对非目标隐藏变量求和，再对目标变量最大化”的运算顺序。这个差别也决定了回溯语义：MPE恢复全部未观测变量，MAP只恢复目标变量，已经求和消去的隐藏变量没有对应的最优状态。
+
+\subsection{MPE变量消除}
+\label{sec:pgm-elimination-mpe}
+
+概率分布回答每种状态有多可信；有时任务还要求选出一组完整解释。给定证据后，\term{最可能解释}（most probable explanation, MPE）指全部非证据变量的联合最优配置，而不是逐个变量分别选取边缘概率最大的状态。令$U=V\setminus O$，其目标为
+\begin{equation}
+  \begin{aligned}
+    \bm{x}_U^\star
+    &\in\argmax_{\bm{x}_U}p(\bm{x}_U\mid\bm{e})\\
+    &=\argmax_{\bm{x}_U}F_{\bm{e}}(\bm{x}_U).
+  \end{aligned}
+  \label{eq:pgm-elimination-mpe-objective}
+\end{equation}
+由于分母$Z_{\bm{e}}$是与候选配置无关的正常数，寻找最优配置不必计算它。若还要报告该配置的后验概率，则必须另外求出$Z_{\bm{e}}$。
+
+对非负函数，与$x_i$无关的乘数可以移出最大化：
+\[
+  \max_{x_i}\{\rho(\bm{z})\phi(x_i,\bm{z})\}
+  =\rho(\bm{z})\max_{x_i}\phi(x_i,\bm{z}),
+  \qquad \rho(\bm{z})\geq0.
+\]
+因此，可以沿用边缘VE的收集与替换流程，只把局部求和改为最大化。不同之处在于，最大值并没有记录由哪一个$x_i$取得。为了恢复解释，每次最大化都要保存一张\term{回溯表}（backpointer table），它针对剩余变量的每组取值，记录当前变量应取哪个最优状态：
+\begin{equation}
+  \begin{aligned}
+    \tau_t(\bm{x}_{N_t})
+      &=\max_{x_{i_t}}\phi_t(x_{i_t},\bm{x}_{N_t}),\\
+    b_t(\bm{x}_{N_t})
+      &\in\argmax_{x_{i_t}}\phi_t(x_{i_t},\bm{x}_{N_t}).
+  \end{aligned}
+  \label{eq:pgm-elimination-max-backpointer}
+\end{equation}
+若多个状态并列最优，可按预先约定的状态顺序选一个。只保存一个选择可以恢复一个最优配置；要枚举所有最优配置，则需保留所有并列选择，输出数量本身也可能很大。
+
+\begin{algorithm}[MPE消元及配置回溯]
+  \label{alg:pgm-elimination-mpe}
+  \begin{algorithmic}[1]
+    \Require 约简后的非负因子$\mathcal{F}^{(0)}$及$U$的排列$\pi$
+    \Require 各变量取值有限，$Z_{\bm{e}}>0$，每个变量有对应作用域
+    \Ensure 最优配置$\bm{x}_U^\star$及未归一化得分$v^\star$
+    \For{$t=1,\ldots,|U|$}
+      \State 收集含$X_{i_t}$的因子，形成局部乘积$\phi_t$
+      \State 令$N_t=\operatorname{scope}(\phi_t)\setminus\{i_t\}$
+      \State 按式~\eqref{eq:pgm-elimination-max-backpointer}计算$\tau_t$和$b_t$
+      \State 用$\tau_t$替换桶内因子，并保存$(i_t,N_t,b_t)$
+    \EndFor
+    \State 将剩余标量因子相乘，得到$v^\star$
+    \For{$t=|U|,\ldots,1$}
+      \State $x_{i_t}^\star\gets b_t(\bm{x}_{N_t}^\star)$
+    \EndFor
+    \State 返回$\bm{x}_U^\star$和$v^\star$
+  \end{algorithmic}
+\end{algorithm}
+
+回溯必须与消元顺序相反。第$t$步输出因子只涉及尚未消去的变量，所以$N_t$内的变量一定出现在$i_t$之后；逆序恢复时，它们已经有了确定取值。最后被消去的变量的回溯表以空配置为索引，直接给出一个状态。由它出发逐步查表，便能恢复完整配置，无须重新搜索所有状态。
+
+报警模型给出一个可以逐项核验的过程。仍按$S,H,F$的顺序消元，但用最大值替代求和。消去$S$得到
+\[
+  \begin{aligned}
+    \tau_S^{\max}(0)&=\max\{0.0095,0.0350\}=0.0350,\\
+    \tau_S^{\max}(1)&=\max\{0.8550,0.0495\}=0.8550.
+  \end{aligned}
+\]
+对应的回溯表为$b_S(0)=1$、$b_S(1)=0$。在$H=0$时，传感器失灵是较好的报警解释；在$H=1$时，传感器正常反而更有可能。这个选择依赖于尚未确定的$H$，因此此时不能只保留某个全局固定的$s$。
+
+继续消去$H$，对$f=0$比较$0.9\times0.0350=0.0315$与$0.1\times0.8550=0.0855$，故$\tau_H^{\max}(0)=0.0855$、$b_H(0)=1$。对$f=1$比较$0.2\times0.0350=0.0070$与$0.8\times0.8550=0.6840$，故$\tau_H^{\max}(1)=0.6840$、$b_H(1)=1$。消去$F$时再比较
+\[
+  \begin{aligned}
+    p(F=0)\tau_H^{\max}(0)&=0.07695,\\
+    p(F=1)\tau_H^{\max}(1)&=0.06840.
+  \end{aligned}
+\]
+最大值来自$f^\star=0$。逆序查表得到$h^\star=b_H(0)=1$、$s^\star=b_S(1)=0$，故最可能解释为$(F,H,S)=(0,1,0)$。代回原模型，其联合证据权重为$0.9\times0.1\times0.95\times0.9=0.07695$，与消元结果相同；后验概率约为$0.07695/0.19070=0.403513$。
+
+这里“无故障却过热”不是逻辑矛盾，模型明确给它分配了正概率。MPE选择的是一组完整状态，其后验概率约为$0.404$，而不是声称这组状态确定发生。也不能把$\tau_t^{\max}$按表项总和归一化后称为边缘概率：这些表保存的是最佳完成配置的权重，不是所有完成配置的概率总和。
+
+算法~\ref{alg:pgm-elimination-mpe}以有限离散状态为前提。连续变量可以在最大值存在且局部优化能够精确完成时使用同类思想。对正定高斯核，式~\eqref{eq:pgm-elimination-complete-square}表明局部最优值为$\bm{y}^\star=\bm{J}_{B,B}^{-1}(\bm{h}_B-\bm{J}_{B,A}\bm{z})$，回溯对象是这个仿射函数；二次项与一次项的更新仍是Schur补，但最大化不产生积分中的$(b/2)\log(2\pi)-(1/2)\log|\bm{J}_{B,B}|$。一般连续密度未必有可达到的最大值，而且密度众数依赖坐标参数化，不能把它直接解释成单点事件的最大概率。
+
+\subsection{MAP变量消除}
+\label{sec:pgm-elimination-map}
+
+如果诊断只要求选择故障状态，过热和传感器状态并不需要共同作答，那么完整解释的最大值就不是目标。此时应把未要求回答的变量边缘化，再比较剩余配置。\term{边缘最大后验推断}（marginal maximum a posteriori inference, marginal MAP）寻找部分目标变量的联合后验众数：它对其他未观测变量的各种解释求和，而不是只保留其中最有利的一种。令$M\subseteq V\setminus O$为MAP目标集合，$R=V\setminus(O\cup M)$，则
+\begin{equation}
+  \bm{x}_M^\star
+  \in\argmax_{\bm{x}_M}\sum_{\bm{x}_R}
+       F_{\bm{e}}(\bm{x}_M,\bm{x}_R).
+  \label{eq:pgm-elimination-map-objective}
+\end{equation}
+MPE是$M=V\setminus O$、$R=\varnothing$时的特殊情形。术语“MAP”在不同文献中有时也包含MPE；本节用“边缘MAP”明确表示同时含求和与最大化的查询。
+
+边缘MAP不能随意把每个变量的聚合运算交换位置。表~\ref{tab:pgm-elimination-map-counterexample}给出一个二元目标变量$X$与一个二元隐藏变量$Y$的人工联合分布，无额外证据。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{cccc}
+    \toprule
+    $x$ & $p(x,Y=0)$ & $p(x,Y=1)$ & $\sum_y p(x,y)$\\
+    \midrule
+    $0$ & $0.40$ & $0.05$ & $0.45$\\
+    $1$ & $0.28$ & $0.27$ & $0.55$\\
+    \bottomrule
+  \end{tabular}
+  \caption{求和与最大化不可交换的反例。边缘MAP在累加每行后选择$X=1$；MPE选择概率最大的单元格$(X,Y)=(0,0)$，其$X$分量并非边缘MAP答案。}
+  \label{tab:pgm-elimination-map-counterexample}
+\end{table}
+
+正确的运算为$\max_x\sum_y p(x,y)=\max\{0.45,0.55\}=0.55$，选择$x^\star=1$。交换运算后却得到$\sum_y\max_x p(x,y)=0.40+0.27=0.67$。后一计算在$Y=0$时选择$X=0$，在$Y=1$时选择$X=1$，允许答案随那个本应被边缘化的未知变量改变。它把两个不相容的目标状态的收益加在一起，不能恢复成一个具有该概率的固定$x$。同一表还说明，先求MPE再丢弃不关心的分量也可能选错：MPE的$X=0$，边缘MAP的$X=1$。
+
+对任意有限非负表$f(x,y)$，这一关系可写为
+\begin{equation}
+  \max_x\sum_y f(x,y)
+  \leq \sum_y\max_x f(x,y).
+  \label{eq:pgm-elimination-sum-max-bound}
+\end{equation}
+证明只需固定左边的一个最优$x^\star$：对每个$y$都有$f(x^\star,y)\leq\max_x f(x,y)$，逐项相加即得不等式。等号成立当且仅当存在同一个$x^\star$，对所有$y$都达到该列的最大值；因为各项差值非负，总差为零就要求每项差都为零。表~\ref{tab:pgm-elimination-map-counterexample}的两列没有共同的最大化状态，因此不等式严格成立。
+
+一个通用且保证正确的顺序是：先消去$R$中所有要求和的变量，再消去$M$中所有要最大化的变量。求和阶段完全沿用算法~\ref{alg:pgm-elimination-marginal}的桶操作，但不需要在两个阶段之间归一化或强制合并成一张完整的$M$表；保留剩余因子分解即可。最大化阶段采用算法~\ref{alg:pgm-elimination-mpe}的局部最大值和回溯表，逆序恢复的只有$M$内的变量。$R$已经被边缘化，没有一组必须恢复的“正确隐藏状态”。
+
+这条顺序规则是一般保证，不是说每一对求和、最大化在每个具体问题里都绝对不能交换。若当前目标分解为$f(x)g(y,\bm{z})$，非负性允许$\max_x$与$\sum_y$在这两个独立部分上交换；共同最大化状态等数值结构也可能带来例外。但若只根据任意非负因子的作用域生成通用算法，不能在没有检查的情况下假定这些条件成立。错误换序有时能给出式~\eqref{eq:pgm-elimination-sum-max-bound}意义上的上界，却不再是精确MAP答案。边缘MAP的顺序约束及其计算困难可参见Park与Darwiche的分析\scite{pgm-elimination-park2004}
+
+在报警例中，若MAP目标为$F$，则对$S,H$求和后比较$g_F(0)=0.11745$和$g_F(1)=0.07325$，选择$F=0$。若目标改为$(F,S)$，则应先对$H$求和，得到表~\ref{tab:pgm-elimination-joint-query}。随后先最大化$F$：在$s=0$时保留$0.084645$并记录$b_F(0)=0$，在$s=1$时保留$0.032805$并记录$b_F(1)=0$。再最大化$S$得到$s^\star=0$，逆序查表恢复$f^\star=b_F(0)=0$。这里只恢复目标$(F,S)$，不为已经求和的$H$指定状态。
+
+这些答案在本例中恰与MPE的相应分量一致，表~\ref{tab:pgm-elimination-map-counterexample}说明这种一致不是一般性质。查询集合不仅影响输出，还限制了哪些消元顺序可用；即使原图很稀疏，受限顺序也可能产生大因子。
+
+\section{算法分析}
+\label{sec:pgm-elimination-analysis}
+
+\subsection{算法正确性}
+\label{sec:pgm-elimination-correctness}
+
+局部公式看起来合理，还需要证明连续多次替换不会丢失全局信息。关键是一个逐步保持的等式：当前因子乘积已经包含被消去变量的全部聚合结果。令$I_t=\{i_1,\ldots,i_t\}$、$I_0=\varnothing$，用$P^{(t)}=\prod_{\psi\in\mathcal{F}^{(t)}}\psi$表示第$t$步之后当前因子的乘积。
+
+\begin{theorem}[同类消元的不变式]
+  \label{thm:pgm-elimination-invariant}
+  设$U=V\setminus O$为有限非观测节点集，$X_i$的状态空间为$\mathcal{X}_i$；对$A\subseteq U$记$\mathcal{X}_A=\prod_{i\in A}\mathcal{X}_i$，空指标集采用单点空间。令$\pi=(i_1,\ldots,i_k)$为$U$中互异节点的消元序列，并令$I_0=\varnothing$、$I_t=\{i_1,\ldots,i_t\}$。初始因子多重集$\mathcal{F}^{(0)}$中的因子均取有限非负值，其乘积为$F_{\bm{e}}$。第$t$步令$\mathcal{B}_t=\{\psi\in\mathcal{F}^{(t-1)}:i_t\in\operatorname{scope}(\psi)\}$、$N_t=(\bigcup_{\psi\in\mathcal{B}_t}\operatorname{scope}(\psi))\setminus\{i_t\}$和$\phi_t=\prod_{\psi\in\mathcal{B}_t}\psi$，以对$X_{i_t}$精确求和、积分或最大化所得的新因子替换$\mathcal{B}_t$，并保留所有标量因子。记$\mathcal{F}^{(t)}$为更新后的因子多重集，$P^{(t)}=\prod_{\psi\in\mathcal{F}^{(t)}}\psi$。
+
+  若每个变量的状态空间有限非空，则对每个$t=0,\ldots,k$，求和消元满足
+  \[
+    P^{(t)}(\bm{x}_{(V\setminus O)\setminus I_t})
+    =\sum_{\bm{x}_{I_t}}F_{\bm{e}}(\bm{x}_{V\setminus O}).
+  \]
+  对积分消元，设每个$(\mathcal{X}_i,\mathcal{A}_i)$带有$\sigma$有限基准测度$\mu_i$，各因子非负可测；对$A\subseteq U$记$\mu_A=\bigotimes_{i\in A}\mu_i$，空指标集采用单位测度。要求对每个$t=1,\ldots,k$，局部输出
+  \[
+    \tau_t(\bm{x}_{N_t})
+      =\int_{\mathcal{X}_{i_t}}
+         \phi_t(x_{i_t},\bm{x}_{N_t})\,\mathrm{d}\mu_{i_t}(x_{i_t})
+  \]
+  对$\mu_{N_t}$几乎处处的$\bm{x}_{N_t}$有限。此时对每个$t=0,\ldots,k$，积分消元满足
+  \[
+    P^{(t)}(\bm{x}_{(V\setminus O)\setminus I_t})
+    =\int_{\mathcal{X}_{I_t}}
+       F_{\bm{e}}(\bm{x}_{V\setminus O})\,
+       \mathrm{d}\mu_{I_t}(\bm{x}_{I_t})
+  \]
+  对$\mu_{U\setminus I_t}$几乎处处成立。若要将$F_{\bm e}$归一化为概率密度，还须有
+  \[
+    0<Z_{\bm e}\mathrel{:=}
+      \int_{\mathcal{X}_U}F_{\bm e}(\bm{x}_U)\,
+      \mathrm{d}\mu_U(\bm{x}_U)<\infty.
+  \]
+
+  对纯最大化消元，设各变量状态空间非空，并要求对每个$t=1,\ldots,k$及每个$\bm{x}_{N_t}\in\mathcal{X}_{N_t}$，
+  \[
+    \varnothing\neq
+    \argmax_{x_{i_t}\in\mathcal{X}_{i_t}}
+      \phi_t(x_{i_t},\bm{x}_{N_t}),
+    \qquad
+    \tau_t^{\max}(\bm{x}_{N_t})
+      \mathrel{:=}\max_{x_{i_t}\in\mathcal{X}_{i_t}}
+        \phi_t(x_{i_t},\bm{x}_{N_t})<\infty.
+  \]
+  此时对每个$t=0,\ldots,k$及每个剩余配置，均有
+  \[
+    P^{(t)}(\bm{x}_{(V\setminus O)\setminus I_t})
+    =\max_{\bm{x}_{I_t}\in\mathcal{X}_{I_t}}
+       F_{\bm{e}}(\bm{x}_{V\setminus O}).
+  \]
+\end{theorem}
+
+\begin{proof}
+  初始$t=0$时没有消去变量，当前乘积就是$F_{\bm{e}}$，等式成立。假设$t-1$步后成立。把当前乘积分成桶外部分$\rho_t$与桶内部分$\phi_t$，即$P^{(t-1)}=\rho_t\phi_t$。因为收集了所有含有$X_{i_t}$的因子，$\rho_t$与$x_{i_t}$无关。求和消元于是给出
+  \[
+    \begin{aligned}
+      P^{(t)}
+      &=\rho_t\sum_{x_{i_t}}\phi_t\\
+      &=\sum_{x_{i_t}}P^{(t-1)}\\
+      &=\sum_{x_{i_t}}\sum_{\bm{x}_{I_{t-1}}}F_{\bm{e}}
+       =\sum_{\bm{x}_{I_t}}F_{\bm{e}}.
+    \end{aligned}
+  \]
+  第一行正是算法执行的因子替换；第二行使用分配律；第三行代入归纳假设，并合并有限求和。因此不变式对$t$也成立。
+
+  积分情形中，与积分变量无关的有限乘数仍可提出积分号，非负可测性允许按Tonelli定理合并迭代积分；定理中的逐步有限性条件保证更新因子及所得等式在相应剩余变量的乘积测度下几乎处处取有限值。纯最大化情形中，由于$\rho_t\geq0$，有$\rho_t\max_{x_{i_t}}\phi_t=\max_{x_{i_t}}(\rho_t\phi_t)$。将归纳假设代入，再利用同类最大化可合并为联合最大化，即得相应不变式。若某个桶外乘积为零，两边均为零，不要求严格正性。
+\end{proof}
+
+边缘查询在$I_k=R$时终止，不变式直接给出$P^{(k)}=g_Q$，再除以$Z_{\bm{e}}$就得到式~\eqref{eq:pgm-elimination-marginal-query}。MPE消去全部$U$后，不变式给出标量$v^\star=\max_{\bm{x}_U}F_{\bm{e}}$。要证明回溯恢复的配置也达到这个值，需要利用保存的选择：对已经确定的后续变量，$b_t(\bm{x}_{N_t}^\star)$使局部乘积等于$\tau_t(\bm{x}_{N_t}^\star)$；乘上桶外部分后，消元前后的乘积在这个扩展配置上相等。从最终标量开始逆序重复此步骤，就得到$F_{\bm{e}}(\bm{x}_U^\star)=v^\star$。这证明了得分和配置两种输出，而不只是证明算法能找到某个局部最大值。
+
+混合求和与最大化时，不能把不变式含混地写成“对已消元变量做聚合”而省略运算的嵌套顺序。对于先求和、后最大化的边缘MAP，在求和阶段仍有$P^{(t)}=\sum_{\bm{x}_{I_t}}F_{\bm{e}}$。全部$R$消去后，令$J_s\subseteq M$表示又消去了$s$个最大化变量，则
+\begin{equation}
+  P^{(|R|+s)}
+  =\max_{\bm{x}_{J_s}}\sum_{\bm{x}_R}F_{\bm{e}}.
+  \label{eq:pgm-elimination-map-invariant}
+\end{equation}
+这是在求和阶段产物上继续应用纯最大化不变式。终止时$J_s=M$，得到式~\eqref{eq:pgm-elimination-map-objective}的最优得分；最大化阶段的逆序回溯给出达到它的目标配置。任意交错顺序保持的是实际执行的嵌套算子表达式，不保证该表达式仍等于原来的MAP目标。
+
+上述证明讨论的是精确代数运算。实数加法在浮点表示下不严格结合，不同消元顺序可能累积不同舍入误差；连乘可能下溢，病态矩阵求解可能放大误差。离散表格的逐项穷尽和高斯的解析积分使算法在数学上精确，但不保证机器输出与实数答案逐位相同，也不保证近乎并列的最优配置在舍入后仍有相同次序。数值稳定性因此需要单独处理。
+
+\subsection{消元顺序与计算复杂度}
+\label{sec:pgm-elimination-complexity}
+
+不变式保证了合法顺序都能给出正确答案，却没有说每个顺序同样便宜。仍以报警后的$F,H,S$为例：按$S,H$消元，两个桶的作用域依次是$\{S,H\}$与$\{H,F\}$；若先消去$H$，就必须把$p(h\mid f)$与$\ell_A(h,s)$合并，生成关于$(f,s)$的因子。后一个顺序在第一步便访问了三元表，原始因子数量完全没有变化。决定主要开销的是桶中作用域的并集，而不只是因子的个数。
+
+为了在真正计算数值前预测这种增长，可以将当前因子转成一张无向图：同一因子作用域中的节点两两相连，得到\term{原始交互图}（primal graph），它记录哪些变量必须在同一个局部函数中共同出现。这里使用的是吸收证据后实际因子的作用域，而不是直接使用原有向图的骨架。一个条件概率因子会使其节点和父节点共同构成团；证据约简以后，再依据剩余作用域建图。
+
+消去节点$i$时，设它在当前图中的邻居集合为$N(i)$。桶的乘积涉及$\{i\}\cup N(i)$，消去$i$后生成一个作用域为$N(i)$的因子。因此要把$N(i)$中的节点两两连通，再删除$i$；原来不存在而新增的边称为\term{填充边}（fill edge）。这些边记录算法产生的潜在共同依赖，不能一概当成统计依赖的证明，因为特殊参数可能使某些项抵消或允许进一步分解。保留全部填充边所形成的图称为该顺序的\term{诱导图}（induced graph）。
+
+\begin{definition}[诱导宽度与树宽]
+  \label{def:pgm-elimination-treewidth}
+  对无向交互图$\mathcal{G}$的一条完整消元顺序$\pi$，令$N_t$为消去第$t$个节点之前、已经加入前面填充边后的剩余邻居集合。该顺序的\term{诱导宽度}（induced width）是
+  \[
+    w(\pi)=\max_t|N_t|.
+  \]
+  图的\term{树宽}（treewidth）定义为所有完整消元顺序中的最小诱导宽度：
+  \[
+    \operatorname{tw}(\mathcal{G})=\min_\pi w(\pi).
+  \]
+  宽度不包含本步被消去的节点，所以最大桶作用域的大小为$w(\pi)+1$。
+\end{definition}
+
+树宽衡量能否安排一条顺序，使每次只需让少量剩余变量共同参与计算。树或森林可以反复消去叶节点，只要至少有一条边，其树宽就是$1$；完全图有$d$个节点，无论从何处开始，第一步都有$d-1$个剩余邻居，所以树宽为$d-1$。节点数很大但接近树状的模型可能容易消元；节点数较少但作用域高度重叠的模型也可能难以消元。
+
+离散表格的代价可以精确地对应到作用域。令$r_i=|D_i|$，并定义
+\[
+  D(A)=\prod_{i\in A}r_i,\qquad D(\varnothing)=1.
+\]
+这个$D(A)$是作用域$A$的状态组合数，不是节点集合。设第$t$桶含有$c_t$个因子，作用域并集为$U_t=\{i_t\}\cup N_t$。按稠密表格直接对齐、相乘和聚合，需要$O(c_tD(U_t))$次标量操作；结果因子有$D(N_t)$项。若把乘积$\phi_t$完整物化，还需要$D(U_t)$项工作存储。若逐个枚举$\bm{x}_{N_t}$并在$x_{i_t}$上累加或取最大值，可以不保存完整乘积，将本步新增表格存储降为$D(N_t)$项，但输入因子和其他未处理因子仍须存放。
+
+当所有基数至多为$r$、因子数$m=O(d)$，且采用宽度为$w$的完整顺序时，总运算量的常用上界为
+\begin{equation}
+  T=O(d\,r^{w+1}).
+  \label{eq:pgm-elimination-discrete-time}
+\end{equation}
+每个因子至多被某个桶消耗一次，而每次消元新增一个因子，因此全部桶所处理的因子出现次数为$O(m+d)$；若不假设$m=O(d)$，可将式中的$d$替换为$m+d$。这里采用每次标量运算代价为常数的算术模型，未计入精确有理数运算可能增长的位数。峰值临时乘积大小为$O(r^{w+1})$；新生成因子及MPE回溯表的总大小可上界为$O(d\,r^w)$，实际同时存活的部分可能更少。报告总空间时还必须加上输入因子的存储，不能将“单个输出因子的大小”误写为整个算法的空间。
+
+对于保留$Q$的边缘查询，诱导过程只执行到$R$消完。若还要求物化一张完整的查询表，最终输出需要$D(Q)$项，即使剩余因子还能分解也不能省掉这笔输出代价。设消元阶段最大$|N_t|$为$w_R$，为空时取$w_R=0$；令
+\[
+  \bar w=\max\{w_R,|Q|-1,0\}.
+\]
+在上述基数条件下，消元加上最终表格乘积可用$O((m+d)r^{\bar w+1})$上界，输出空间另有$D(Q)$项。也可以在分析前把$Q$补成团，并将它们安排在顺序末尾，得到与显式联合输出相适应的宽度指标。普通树宽优化允许消去所有变量，而查询保留约束不允许提前消去$Q$，两者不是同一个优化问题。
+
+选择顺序时，\term{最小度启发式}（min-degree）在当前诱导图中优先消去剩余邻居最少的节点；\term{最小填充启发式}（min-fill）则优先消去需要新增填充边最少的节点。两者都必须在每步添加填充边之后重新评估，不能只根据原图度数排一次序。最小度直接控制当前桶的变量数量，最小填充试图限制后续图的变密，但两种局部选择都不保证全局最优。一般图上的最小树宽排序问题是NP难的，实践中因而常使用启发式排序，再根据估计的中间表格规模决定是否执行精确消元\scite{pgm-koller2009}
+
+当变量基数差异较大，单看邻居数量会误判。一个只含三个大基数变量的桶，可能比含五个二元变量的桶大得多。加权启发式可比较$\sum_{i\in U_t}\log r_i$，这等于表格规模的对数；也可对新增边$(i,j)$按$r_ir_j$加权，以近似衡量填充代价。这样的权重是计算成本的代理量，不是概率权重。MAP排序还要在当前允许消去的变量中选择候选，不能让一个低度目标变量提前越过未完成的求和阶段。
+
+高斯因子虽然也会产生填充，但没有$r^{|U_t|}$张不同取值的表项。令一次块消元涉及$b$维被消去变量与$a$维保留变量。对齐并相加$c_t$个稠密规范形式因子，保守代价为$O(c_t(a+b)^2)$。实现式~\eqref{eq:pgm-elimination-schur}时，不显式构造逆矩阵：对$\bm{J}_{B,B}$做Cholesky分解需$O(b^3)$，求解$\bm{J}_{B,B}\bm{W}=\bm{J}_{B,A}$需$O(b^2a)$，形成$\bm{J}_{A,B}\bm{W}$需$O(a^2b)$；一次项和常数项的更新不超过这些主要量级。因此核心块消元的算术代价为
+\begin{equation}
+  T_{\mathrm{Gauss}}
+  =O(b^3+b^2a+ba^2),\qquad
+  S_{\mathrm{Gauss}}=O((a+b)^2).
+  \label{eq:pgm-elimination-gaussian-cost}
+\end{equation}
+若逐个消去标量变量，$b=1$，每步对$a$个邻居做二次规模更新，典型总消元代价为$O(\sum_t(|N_t|+1)^2)$，另加输入装配成本。对一个总维度为$q$的稠密高斯系统，整体分解是$O(q^3)$时间、$O(q^2)$存储，而不是对连续变量套用“无穷大状态数”的指数公式。块维度不等时，应比较实际的$a,b$，不能只数图节点。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    比较项 & 离散稠密表格 & 单个高斯规范形式\\
+    \midrule
+    作用域的表示 & 每种联合状态一项 & 二次项矩阵、一次项向量、常数\\
+    合并因子 & 坐标对齐后逐项乘 & 坐标对齐后参数相加\\
+    边缘消元 & 对被消去状态求和 & 配方积分与Schur补\\
+    主要规模 & 基数乘积$D(U_t)$ & 矩阵块维度$a,b$\\
+    填充的后果 & 新表可能指数增大 & 更多非零块与矩阵运算\\
+    \bottomrule
+  \end{tabularx}
+  \caption{相同消元结构在两种因子表示下的不同代价。右列只适用于单个可归一化高斯核，不涵盖消元时分量数量增长的高斯混合。}
+  \label{tab:pgm-elimination-representation-cost}
+\end{table}
+
+边缘MAP还需要一个区别于普通树宽的指标。令$\Pi_{R\prec M}$为所有先排列$R$、后排列$M$的完整消元顺序，其中各组内部顺序任意。定义这类查询的\term{受约束树宽}（constrained treewidth）为
+\begin{equation}
+  w_{\mathrm{c}}(\mathcal{G};R,M)
+  =\min_{\pi\in\Pi_{R\prec M}}w(\pi).
+  \label{eq:pgm-elimination-constrained-width}
+\end{equation}
+给定合法顺序的$w(\pi)$相应称为受约束诱导宽度。由于可选顺序减少，$w_{\mathrm{c}}\geq\operatorname{tw}(\mathcal{G})$。这里采用保证任意非负因子正确的两阶段顺序，不把依赖特定数值的可交换性计入指标；它刻画的是这类受约束表格消元的结构开销，不是所有MAP算法的时间下界。
+
+对选定的合法顺序，式~\eqref{eq:pgm-elimination-discrete-time}中的$w$应取该顺序的诱导宽度。只有采用最佳合法顺序时，才可将其换成$w_{\mathrm{c}}$，得到$O((m+d)r^{w_{\mathrm{c}}+1})$的运算上界；启发式找到的顺序可能更宽。这正是受约束树宽与离散表格复杂度的联系。
+
+一个星形图即可说明差距可以任意大。设中心为$X_0$，有$k$个叶节点$X_1,\ldots,X_k$，联合分解为$p(x_0)\prod_{j=1}^k p(x_j\mid x_0)$，所有变量均为二元。纯求和或MPE可以依次消去叶节点，每一步只有一个邻居，故普通树宽为$1$。若MAP目标恰为全部叶节点，中心属于求和集合，则两阶段算法必须先消去中心：
+\begin{equation}
+  g(x_1,\ldots,x_k)
+  =\sum_{x_0}p(x_0)\prod_{j=1}^{k}p(x_j\mid x_0).
+  \label{eq:pgm-elimination-star-map}
+\end{equation}
+中心的全部$k$个邻居随之组成团，受约束树宽为$k$。显式输出$g$需$2^k$项，中心桶的联合枚举需访问$2^{k+1}$个状态组合，即便原始输入只有$O(k)$张常数大小的表。图~\ref{fig:pgm-elimination-constrained-star}给出$k=4$的情形。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-elimination-constrained-star.tex}
+  \caption{边缘MAP引起的填充，图中$k=4$。左侧中心$X_0$要求和，四个叶节点要共同最大化；右侧消去中心后，叶节点由虚线填充边连成团。若是MPE，则可以先消叶节点，此时不产生这些填充边。}
+  \label{fig:pgm-elimination-constrained-star}
+\end{figure}
+
+这不是说星形模型的每组数值都必须付出同样代价。例如某些因子可能使式~\eqref{eq:pgm-elimination-star-map}再次分解，其他算法也可能利用特殊结构。但只依赖作用域、按稠密表格执行通用消元时，普通树宽为$1$不足以给边缘MAP提供小开销保证。受约束宽度与普通宽度之间的差距，是边缘MAP相对于纯边缘推断和MPE更难处理的一项具体原因\scite{pgm-elimination-park2004}
+
+\subsection{实现与适用边界}
+\label{sec:pgm-elimination-implementation}
+
+离散实现除了保存数值，还必须保存变量轴、状态编码和作用域。转置后再广播相乘，或采用带变量名的对齐操作，可以避免“表格形状相同但坐标含义不同”的静默错误。若因子由确定性约束产生，许多配置的权重为零，可只存储非零项；这种稀疏存储只有在消元后的因子仍稀疏时才有优势。求和可能让原来分散的支持集合合并，大量填充也会使中间因子变稠密，因此应在执行前估计峰值作用域，并在运行时监测实际非零项数量。
+
+高斯实现通常利用\term{稀疏Cholesky分解}（sparse Cholesky factorization），即把稀疏正定精度矩阵分解为三角因子，并只存储原有非零项及消元产生的填充项。图排序决定哪些位置会出现填充，数值阶段再计算这些位置的系数。多次处理同一稀疏结构时可以复用排序和符号分析；只有当矩阵数值也不变时，才能原样复用数值分解。式~\eqref{eq:pgm-elimination-schur}中的逆记号服务于推导，程序中应使用三角方程求解，并由分解对角线计算$\log|\bm{J}_{B,B}|$。
+
+概率连乘在模型稍大时就可能下溢。把非负因子转到\term{对数域}（log domain），即存储$\log\psi$而不是$\psi$，可将乘积变成加法；零权重用$-\infty$表示。MPE的局部更新变成“求和后取最大值”，回溯索引不变。边缘消元则不能把求和直接改为最大化，而要使用稳定的对数求和指数运算：
+\begin{equation}
+  \log\sum_i\exp a_i
+  =a_{\max}+\log\sum_i\exp(a_i-a_{\max}),
+  \qquad a_{\max}=\max_i a_i.
+  \label{eq:pgm-elimination-logsumexp}
+\end{equation}
+减去最大项避免指数上溢，使至少一个指数项为$1$。若所有$a_i=-\infty$，应直接返回$-\infty$，不能计算$-\infty-(-\infty)$。若最终所有查询状态的权重均为零，则应报告证据不相容，不应静默返回均匀分布。
+
+中间归一化也是一种尺度控制，但只能除以不依赖该因子变量取值的正常数。若第$t$步将$\tau_t$替换为$\widehat{\tau}_t=\tau_t/s_t$，其中$s_t>0$，并令$C_t=\prod_{j=1}^t s_j$，则正确的不变式变成
+\[
+  C_t\prod_{\psi\in\widehat{\mathcal{F}}^{(t)}}\psi
+  =\text{原始函数按已执行顺序聚合后的结果}.
+\]
+实现中记录$\log C_t=\sum_{j=1}^t\log s_j$即可。最终计算条件分布时全局尺度抵消；计算证据权重或最优配置的绝对得分时则须补回。若被消元产生的是标量因子，也只能按这个规则处理，不能不加记录地忽略它。
+
+退化高斯需要另外区分数学问题与数值问题。若完整精度矩阵只是半正定，并且仍把式~\eqref{eq:pgm-elimination-gaussian-canonical}当作整个欧氏空间上的普通密度，它通常无法归一化；沿无二次约束的方向，积分会发散。若模型实际表示限制在低维仿射子空间上的退化高斯，则需要显式描述支持集并在相应子空间上积分，不能简单将逆换成伪逆、行列式换成伪行列式后继续使用同一个密度公式。若理论矩阵正定但数值上接近奇异，应检查条件数、尺度和分解残差。人为加入对角扰动会改变模型，应说明扰动大小及其影响，不能将它称为完全等价的精确推断。
+
+精确VE适合因子分解已知、查询明确、且中间作用域可控的情形。离散高树宽或大的受约束宽度会让表格消元超出内存；单个高斯模型没有同样的状态数指数增长，却也可能因巨大矩阵块和填充而承担高昂的多项式代价。若资源不足以维持全部相关信息，第~\ref{chap:pgm-variational}章和第~\ref{chap:pgm-sampling}章将通过不同方式引入近似。
+
+另一类开销来自重复查询。对同一个模型先问$F$，再问$S$，每次从头消元可能重复构造许多相同的中间因子。若证据和模型允许共享这些计算，可以把局部汇总结果缓存起来，让后续查询直接读取或组合。第~\ref{chap:pgm-junction-tree}章的消息传递与团树方法正是围绕这种组织方式展开。它们能够复用计算，但不会仅凭缓存就消除由大作用域带来的困难。
+
+\section{本章小结}
+\label{sec:pgm-elimination-summary}
+
+报警后的故障概率不要求先列出完整联合分布。把证据代入局部因子后，分配律允许逐个收集、相乘和边缘化非查询变量；当前因子乘积等于原始函数对已消去变量的聚合结果，这个不变式保证了终止时的答案。数值例子中的$p(F=1\mid A=1)\approx0.384111$由全部可能解释共同贡献，而MPE给出的$(F,H,S)=(0,1,0)$只是一组联合最优解释，二者承担不同任务。
+
+查询语义决定消元算子，也决定哪些信息必须保留。边缘概率累加所有状态，不做最优配置回溯；MPE采用纯最大化并保存局部选择，逆序恢复完整配置；边缘MAP先对非目标变量求和，再对目标变量最大化，这两类运算通常不可交换。由此产生的受约束树宽可能远大于普通树宽，即使原图是一棵树，也不保证通用边缘MAP表格消元便宜。
+
+消元顺序决定中间作用域，因子表示决定该作用域的存储和运算代价。离散表格的大小是变量基数的乘积，因此受诱导宽度控制而指数增长；高斯规范形式则通过矩阵参数相加和Schur补完成解析消元，代价由实际块维度及填充模式决定。这些结构判断，加上归一化条件与数值稳定性检查，才构成选择精确推断方法的依据。中间因子可承受时，VE提供直接且可验证的答案；多次查询需要进一步复用这些结果，而不可承受的大作用域则要求利用额外结构或接受明确的近似。

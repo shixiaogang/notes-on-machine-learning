@@ -1,0 +1,843 @@
+\chapter{无向图模型}
+\label{chap:pgm-undirected}
+
+相邻像素的标签通常倾向于一致，但只凭这种相容关系，并不能指定哪个像素先生成、哪个像素后生成。第~\ref{chap:pgm-directed}章用有向边组织条件分布；当建模依据是变量之间对称的局部相互作用时，可以先不规定生成顺序，直接问：观察哪些变量以后，两组变量之间就不再提供额外信息？
+
+这个问题有两个互相联系的方面。图上的路径说明信息可能沿哪些连接传递，条件独立性说明给定观测后分布怎样简化；要把这样的语义变成可计算的模型，还需要把联合分布写成局部函数的乘积。本章先建立无向图的三种Markov性质，再证明局部乘积与图分离之间的关系。两者并非无条件等价：零概率配置可能使条件独立性无法约束某些局部组合，而连续变量还要求密度可以归一化。这些条件决定了从图到分布、从分布到图的推理是否成立。
+
+\section{无向图模型的定义}
+\label{sec:pgm-undirected-definition}
+
+考虑四个相邻区域的二值标签，用$X_1,\ldots,X_4$表示其状态。假设区域之间的直接相互作用沿一个环连接，即$1$与$2$、$2$与$3$、$3$与$4$、$4$与$1$相邻。这里的环不是时间上的循环，而是空间邻接关系。这个人工构造的小模型将贯穿本章：我们会用它检查分离关系、计算条件概率，并检验严格正性假设的作用。
+
+\term{无向图}（undirected graph）用没有箭头的边记录对称连接。本章只考虑有限简单无向图$\mathcal{G}=(V,E)$，其中$V=\{1,\ldots,d\}$是节点集合，$E$是不同节点组成的无序对的集合，不含自环或重边。若$\{i,j\}\in E$，就称$i$与$j$相邻；节点$i$的\term{邻居集合}（neighborhood）记为
+\[
+  N(i)=\{j\in V:\{i,j\}\in E\}.
+\]
+每个节点$i$对应一个标量随机变量$X_i$，其取值记为$x_i$。对节点集合$A\subseteq V$，$\bm{X}_A$表示这些节点对应的随机向量，$\bm{x}_A$表示其取值。图的节点集合与随机变量的状态空间是不同对象，例如$1\in V$是节点编号，而$x_1=0$是一次状态取值。
+
+从$i$到$j$的\term{路径}（path）是一个从$i$开始、在$j$结束、相邻节点之间有边且节点不重复的序列。\term{连通分量}（connected component）是不能再扩大的连通节点集合，其中任意两个节点之间都存在路径。只保留节点集合$D$以及两端都在$D$内的原有边，得到\term{诱导子图}（induced subgraph）$\mathcal{G}[D]$。后面检测条件独立性时，会在删除观测节点后的诱导子图中检查连通性。
+
+局部相互作用也可以同时涉及两个以上变量。\term{团}（clique）是一个非空节点集合，其中任意两个不同节点都相邻；单节点集合也算团。\term{极大团}（maximal clique）是不能再加入节点而仍保持为团的集合。“极大”表示不能继续扩张，不表示它的节点数在全图中最多。图~\ref{fig:pgm-undirected-cliques}左侧的环有四个二节点极大团，没有三节点团；右侧的两个三角形则分别形成极大团$\{1,2,3\}$与$\{3,4,5\}$。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-undirected-cliques.tex}
+  \caption{两种无向连接。左图的极大团是四条边，四节点形成环不等于形成团；右图的两个三角形分别是极大团，共享节点$3$。线段没有方向，节点编号对应随机变量下标。}
+  \label{fig:pgm-undirected-cliques}
+\end{figure}
+
+\term{无向图模型}（undirected graphical model）也称\term{Markov随机场}（Markov random field, MRF）或Markov网络。它把图上的阻断关系解释为分布中的条件独立性：当一组观测节点阻断两侧之间的所有路径时，给定这些观测，两侧变量就相互独立。第~\ref{sec:pgm-undirected-global-independence}节将把这条全局语义写成正式定义。
+
+图只规定分布必须满足哪些独立性，没有规定局部函数的形式。对同一张图，可以构造许多不同分布。无向边允许相邻变量存在直接概率相互作用，但有边并不强迫它们在所有参数下都依赖；缺边所表达的独立性才是必须满足的约束。模型也可能具有图中没有表现出来的额外独立性。因此，不能把无向边自动读成因果作用，更不能凭它指定干预后的分布。这里采用的图分离与Markov语义与无向图模型的标准表述一致\scite{pgm-lauritzen1996}
+
+\section{无向图的局部独立性}
+\label{sec:pgm-undirected-local-independence}
+
+直接核查所有节点集合之间的独立性很繁琐。可以先把视野缩小到两个节点，或一个节点与其周围变量的关系。这得到两种容易从图上读出的条件独立性要求；它们与全局要求何时等价，需要单独证明。
+
+\subsection{成对Markov性质}
+\label{sec:pgm-undirected-pairwise}
+
+若$i$与$j$之间没有边，图所承诺的并不是二者边缘独立。其他节点仍可能连接它们，未观测的中间变量也可能造成相关。成对约束把其余节点全部作为条件，排除这些间接联系。
+
+\begin{definition}[成对Markov性质]
+  \label{def:pgm-undirected-pairwise}
+  联合分布$p$相对于$\mathcal{G}$满足\term{成对Markov性质}（pairwise Markov property），是指对每一对不同且不相邻的节点$i,j$，都有
+  \begin{equation}
+    X_i\perp X_j\mid\bm{X}_{V\setminus\{i,j\}}.
+    \label{eq:pgm-undirected-pairwise}
+  \end{equation}
+\end{definition}
+
+四节点环缺少$\{1,3\}$和$\{2,4\}$两条边，所以成对性质恰好要求
+\[
+  X_1\perp X_3\mid(X_2,X_4),
+  \qquad
+  X_2\perp X_4\mid(X_1,X_3).
+\]
+第一个条件必须同时给定$X_2$与$X_4$。只给定$X_2$仍保留路径$1-4-3$，不能由这张图推出$X_1\perp X_3\mid X_2$。
+
+在离散情形，条件独立性只要求对满足$p(\bm{x}_{V\setminus\{i,j\}})>0$的条件配置，二元条件概率能够分成两个条件边缘概率的乘积。概率为零的条件事件不需要、通常也不能用概率比定义条件分布。连续情形则使用条件密度或正则条件分布，等式按条件变量分布几乎处处成立；不能用“单点事件有正概率”作为连续变量的前提。
+
+成对性质逐一检查缺边，便于列出约束，却没有直接说明两个较大变量集合之间是否独立。尤其要小心：条件越多不意味着独立性越强，从多个给定大量变量的成对结论中删去部分条件，并不是条件独立性的一般运算规则。
+
+\subsection{局部Markov性质}
+\label{sec:pgm-undirected-local}
+
+对单个节点$i$而言，任何通向远处节点的路径都必须先经过它的某个邻居。因此，如果图分离确实对应条件独立性，给定全部邻居就应足以屏蔽图中其余变量。
+
+\begin{definition}[局部Markov性质]
+  \label{def:pgm-undirected-local}
+  联合分布$p$相对于$\mathcal{G}$满足\term{局部Markov性质}（local Markov property），是指对每个$i\in V$，都有
+  \begin{equation}
+    X_i\perp\bm{X}_{V\setminus(\{i\}\cup N(i))}
+       \mid\bm{X}_{N(i)}.
+    \label{eq:pgm-undirected-local}
+  \end{equation}
+\end{definition}
+
+能够在给定后使$X_i$与其他变量独立的节点集合称为它的\term{Markov毯}（Markov blanket），即对预测$X_i$而言已经包含其他变量所能提供的信息的集合。只要分布满足相对于图的局部Markov性质，邻居集合$N(i)$就是图结构保证的一个Markov毯。图~\ref{fig:pgm-undirected-markov-blanket}把这项保证画成三层：从$i$通向任一远端非邻居的路径，离开$i$后的第一个节点必定属于$N(i)$。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-undirected-markov-blanket.tex}
+  \caption{无向图中节点$i$的结构性Markov毯。双边框大圆表示中心节点$i$，单边框小圆表示邻居$n_1,n_2,n_3$，方形表示远端非邻居。图中所有线段都是现存的无向边，统一使用实线；由于$i$不与方形节点直接相连，从$i$通向远端节点的路径都先经过$N(i)$。}
+  \label{fig:pgm-undirected-markov-blanket}
+\end{figure}
+
+在相应条件分布有定义时，这项屏蔽关系还可以写成
+\begin{equation}
+  p(x_i\mid\bm{x}_{V\setminus\{i\}})
+  =p(x_i\mid\bm{x}_{N(i)}).
+  \label{eq:pgm-undirected-blanket}
+\end{equation}
+这是邻居集合的充分性，不是固定分布$p$下的最小性保证。若某条边的参数实际上不产生依赖，删去对应邻居后仍可能构成Markov毯；图中的环也不妨碍这项结构保证，因为每条离开$i$的路径仍要先经过邻居。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-undirected-markov-counterexamples.tex}
+  \caption{两种不满足严格正性的反例图。左侧空图用于说明成对Markov性质不蕴含局部Markov性质；右侧两条不相连的边用于说明局部与成对Markov性质都不蕴含全局Markov性质。两例都令各节点变量等于同一个公平二值变量$U$。}
+  \label{fig:pgm-undirected-markov-counterexamples}
+\end{figure}
+
+\begin{example}[成对性质不蕴含局部性质]
+  \label{ex:pgm-undirected-pairwise-not-local}
+  考虑图~\ref{fig:pgm-undirected-markov-counterexamples}左侧的三节点空图。令$U$服从公平的Bernoulli分布，并令
+  \[
+    X_1=X_2=X_3=U.
+  \]
+  空图中的三对节点都不相邻，所以成对性质需要逐项检查
+  \[
+    X_1\perp X_2\mid X_3,\qquad
+    X_1\perp X_3\mid X_2,\qquad
+    X_2\perp X_3\mid X_1.
+  \]
+  对第一项，任取$u,a,b\in\{0,1\}$，在正概率条件事件$X_3=u$下，
+  \[
+    \begin{aligned}
+      p(X_1=a,X_2=b\mid X_3=u)
+      &=\mathbf{1}\{a=u\}\mathbf{1}\{b=u\}\\
+      &=p(X_1=a\mid X_3=u)p(X_2=b\mid X_3=u).
+    \end{aligned}
+  \]
+  将$(X_1,X_2;X_3)$依次换成$(X_1,X_3;X_2)$和$(X_2,X_3;X_1)$，同一等式分别验证其余两项。因此该分布满足全部成对Markov约束。
+
+  空图中$N(1)=\varnothing$，节点$1$的局部性质却要求$X_1\perp(X_2,X_3)$。实际有
+  \[
+    p\bigl(X_1=0,(X_2,X_3)=(0,0)\bigr)=\tfrac12
+    \neq
+    p(X_1=0)p\bigl((X_2,X_3)=(0,0)\bigr)=\tfrac14.
+  \]
+  仅这一项失败就足以说明局部性质不成立。该反例的联合分布只在$(0,0,0)$与$(1,1,1)$上为正；条件变量消除了成对约束中的随机性，却没有消除不加条件时三个变量共享的依赖。
+\end{example}
+
+\begin{theorem}[局部Markov性质蕴含成对Markov性质]
+  \label{thm:pgm-undirected-local-to-pairwise}
+  设$\mathcal{G}=(V,E)$为有限简单无向图，$p$为节点随机变量$\bm{X}=(X_i)_{i\in V}$的任意联合分布。若$p$相对于$\mathcal{G}$满足局部Markov性质，则它满足成对Markov性质；该结论不要求$p$严格为正。
+\end{theorem}
+
+\begin{proof}
+固定任意不相邻节点$i,j$，记$R=V\setminus(\{i\}\cup N(i))$，则$j\in R$。局部性质给出
+\[
+  X_i\perp\bm{X}_R\mid\bm{X}_{N(i)}.
+\]
+将$R$直接写成$\{j\}\cup(R\setminus\{j\})$，对上述独立性应用弱并性质，得到
+\[
+  X_i\perp X_j
+  \mid\bigl(\bm{X}_{N(i)},\bm{X}_{R\setminus\{j\}}\bigr).
+\]
+右侧条件变量的节点集合正是$V\setminus\{i,j\}$，因此这就是节点$i,j$对应的成对Markov约束。由于$i,j$是任意不相邻节点，所有成对约束都成立。
+\end{proof}
+
+局部性质同时约束所有非邻居，但只给定邻居；成对性质只约束一个非邻居，却把其余节点全部作为条件。四节点环中每个节点只有一个非邻居，所以两种表述在这个特例中重合。在更大的图上，区别就很实质。例如链$1-2-3-4$上，节点$1$的局部性质要求$X_1\perp(X_3,X_4)\mid X_2$，不是仅分别要求$X_1\perp X_3\mid(X_2,X_4)$和$X_1\perp X_4\mid(X_2,X_3)$。
+
+\section{无向图的全局独立性}
+\label{sec:pgm-undirected-global-independence}
+
+局部视角告诉我们怎样屏蔽一个节点，但推断任务往往涉及两组变量。比如在图~\ref{fig:pgm-undirected-cliques}右侧，观察共享节点$3$以后，左侧区域$\{1,2\}$与右侧区域$\{4,5\}$之间还需要联合推断吗？回答这类问题，需要直接检查集合之间的路径。
+
+\subsection{全局Markov性质}
+\label{sec:pgm-undirected-global}
+
+\term{全局Markov性质}（global Markov property）把所有路径阻断关系同时转成概率约束。与成对和局部性质相比，它允许两端都是节点集合，条件集合也只需阻断两端之间的路径。
+
+\Needspace{14\baselineskip}
+\begin{definition}[全局Markov性质]
+  \label{def:pgm-undirected-model}
+  设$p$为$\bm{X}=(X_1,\ldots,X_d)^{\top}$的联合分布。若对任意两两不交的节点集合$A,B,S\subseteq V$，只要从任意$a\in A$到任意$b\in B$的每条路径都经过$S$中的节点，就有
+  \begin{equation}
+    \bm{X}_A\perp\bm{X}_B\mid\bm{X}_S,
+    \label{eq:pgm-undirected-global}
+  \end{equation}
+  则称$p$相对于$\mathcal{G}$满足全局Markov性质，$(\mathcal{G},p)$构成一个无向图模型。
+\end{definition}
+
+定义要求的是“路径被阻断就有独立性”，不要求反向成立。如果图中仍有路径，只能说图没有保证相应独立性，不能立即断言两端变量必然相关。在两个三角形共享节点$3$的图中，每条从$\{1,2\}$到$\{4,5\}$的路径都经过$3$，所以全局性质给出
+\[
+  (X_1,X_2)\perp(X_4,X_5)\mid X_3.
+\]
+给定$X_3$后，联合条件分布分成左右两个二元分布；它没有要求$X_1$与$X_2$独立，也没有要求$X_4$与$X_5$独立。
+
+全局性质允许$A\cup B\cup S\neq V$。若只查询$X_1$与$X_5$，$X_2,X_4$可以既不被查询也不被观测，结论$X_1\perp X_5\mid X_3$仍由同一路径阻断条件保证。证明某个分布族满足全局性质时，必须把这些未查询变量消去，不能只证明三个集合覆盖全部节点的特殊情形。
+
+\begin{theorem}[全局Markov性质蕴含局部与成对Markov性质]
+  \label{thm:pgm-undirected-global-implications}
+  设$\mathcal{G}=(V,E)$为有限简单无向图，$p$为节点随机变量$\bm{X}=(X_i)_{i\in V}$的任意联合分布。若$p$相对于$\mathcal{G}$满足全局Markov性质，则它同时满足局部与成对Markov性质。换言之，不附加严格正性时总有
+  \begin{equation}
+    \text{全局Markov}
+    \ \Longrightarrow\ \text{局部Markov}
+    \ \Longrightarrow\ \text{成对Markov}.
+    \label{eq:pgm-undirected-implication}
+  \end{equation}
+\end{theorem}
+
+\begin{proof}
+固定$i\in V$。从$i$到任一非邻居的路径离开$i$时，必先进入$N(i)$中的某个节点。因此$N(i)$阻断$\{i\}$与$V\setminus(\{i\}\cup N(i))$之间的每条路径。把这三个集合代入全局Markov性质，得到
+\[
+  X_i\perp\bm{X}_{V\setminus(\{i\}\cup N(i))}
+  \mid\bm{X}_{N(i)},
+\]
+即节点$i$的局部Markov性质。该结论对每个$i$都成立，所以$p$满足局部性质；再应用定理~\ref{thm:pgm-undirected-local-to-pairwise}，得到成对性质。
+\end{proof}
+
+式~\eqref{eq:pgm-undirected-implication}的反向箭头都可能在退化分布上失效。图~\ref{fig:pgm-undirected-markov-counterexamples}右侧给出一个同时检验局部、成对和全局性质的例子。
+
+\begin{example}[局部、成对均不蕴含全局]
+  \label{ex:pgm-undirected-local-not-global}
+  考虑边集$E=\{\{1,2\},\{3,4\}\}$，并令
+  \[
+    X_1=X_2=X_3=X_4=U,
+    \qquad U\sim\operatorname{Bernoulli}(\tfrac12).
+  \]
+  局部性质需要逐项验证
+  \[
+  \begin{aligned}
+    X_1&\perp(X_3,X_4)\mid X_2,&
+    X_2&\perp(X_3,X_4)\mid X_1,\\
+    X_3&\perp(X_1,X_2)\mid X_4,&
+    X_4&\perp(X_1,X_2)\mid X_3.
+  \end{aligned}
+  \]
+  以第一项为例，对任意$u,a,r_3,r_4\in\{0,1\}$，
+  \[
+  \begin{aligned}
+    &p(X_1=a,X_3=r_3,X_4=r_4\mid X_2=u)\\
+    &\quad=\mathbf{1}\{a=u\}
+            \mathbf{1}\{r_3=u,r_4=u\}\\
+    &\quad=p(X_1=a\mid X_2=u)
+            p(X_3=r_3,X_4=r_4\mid X_2=u).
+  \end{aligned}
+  \]
+  第二、第三和第四项分别把条件变量换成$X_1,X_4,X_3$，并把单节点端点换成$X_2,X_3,X_4$；在每个正概率条件事件下，完全相同的指标函数分解成立。因此四项局部约束全部成立。
+
+  成对性质要检查的四条缺边是$\{1,3\}$、$\{1,4\}$、$\{2,3\}$与$\{2,4\}$，相应约束为
+  \[
+  \begin{gathered}
+    X_1\perp X_3\mid(X_2,X_4),\qquad
+    X_1\perp X_4\mid(X_2,X_3),\\
+    X_2\perp X_3\mid(X_1,X_4),\qquad
+    X_2\perp X_4\mid(X_1,X_3).
+  \end{gathered}
+  \]
+  对任一缺边$\{i,j\}$，条件变量只有取共同值$(u,u)$时概率为正，并且
+  \[
+    p(X_i=a,X_j=b\mid\bm{X}_{V\setminus\{i,j\}}=(u,u))
+    =\mathbf{1}\{a=u\}\mathbf{1}\{b=u\}.
+  \]
+  右侧正好是两个条件边缘概率的乘积，所以列出的四项成对约束也全部成立。
+
+  但空集阻断两条不相连边之间的所有路径，全局性质因而要求$(X_1,X_2)\perp(X_3,X_4)$。这个要求失败，因为
+  \[
+    p(X_1=0,X_3=0)=\tfrac12
+    \neq p(X_1=0)p(X_3=0)=\tfrac14.
+  \]
+  若两个向量独立，其分量$X_1$与$X_3$也应独立，故上式足以否定全局性质。
+\end{example}
+
+要沿反方向从许多成对约束恢复集合之间的独立性，需要把分别位于条件集合中的变量合并到同一个端点。\term{交集性质}（intersection property）保证这种合并：两条独立性若分别把对方的端点放在条件中，就可以同时移出这两部分条件并合并端点。它不对任意分布成立，下面先在严格正有限离散情形中证明。
+
+\begin{lemma}[严格正分布的交集性质]
+  \label{lem:pgm-undirected-intersection}
+  设$I$为有限索引集，每个$i\in I$对应取值于有限非空状态空间$\mathcal{X}_i$的随机变量$X_i$。令$p$为$\bm{X}=(X_i)_{i\in I}$在乘积状态空间$\mathcal{X}=\prod_{i\in I}\mathcal{X}_i$上的联合质量函数，且$p(\bm{x})>0$对所有$\bm{x}\in\mathcal{X}$成立。对两两不交的索引集$A,B,C,D\subseteq I$，若
+  \[
+    \bm{X}_A\perp\bm{X}_B\mid(\bm{X}_C,\bm{X}_D),
+    \qquad
+    \bm{X}_A\perp\bm{X}_D\mid(\bm{X}_C,\bm{X}_B),
+  \]
+  则
+  \[
+    \bm{X}_A\perp(\bm{X}_B,\bm{X}_D)\mid\bm{X}_C.
+  \]
+\end{lemma}
+
+\begin{proof}
+严格正性保证以下每个条件概率都有定义。对任意取值$\bm{a},\bm{b},\bm{c},\bm{d}$，两个前提分别给出
+\[
+  p(\bm{a}\mid\bm{b},\bm{c},\bm{d})
+  =p(\bm{a}\mid\bm{c},\bm{d}),
+  \qquad
+  p(\bm{a}\mid\bm{b},\bm{c},\bm{d})
+  =p(\bm{a}\mid\bm{b},\bm{c}).
+\]
+因此$p(\bm{a}\mid\bm{c},\bm{d})=p(\bm{a}\mid\bm{b},\bm{c})$对每个$\bm{b},\bm{d}$成立。固定任意基准值$\bm{b}^{\circ}$，右侧等于$q(\bm{a},\bm{c})=p(\bm{a}\mid\bm{b}^{\circ},\bm{c})$，不再依赖$\bm{b}$或$\bm{d}$。对$(\bm{b},\bm{d})$关于$p(\bm{b},\bm{d}\mid\bm{c})$求和可得$q(\bm{a},\bm{c})=p(\bm{a}\mid\bm{c})$，故$p(\bm{a}\mid\bm{b},\bm{c},\bm{d})=p(\bm{a}\mid\bm{c})$，这正是所需的条件独立性。
+\end{proof}
+
+为了看清交集性质怎样合并集合，先记录一个可重复使用的步骤。设$A,C,Y\subseteq V$两两不交，且非空集合$Y=\{y_1,\ldots,y_m\}$。若对每个$y_k$都有$\bm{X}_A\perp X_{y_k}\mid(\bm{X}_C,\bm{X}_{Y\setminus\{y_k\}})$，令$D_0=\varnothing$、$D_k=\{y_1,\ldots,y_k\}$、$T_k=Y\setminus D_k$。当$k=1$时，原前提直接给出$\bm{X}_A\perp\bm{X}_{D_1}\mid(\bm{X}_C,\bm{X}_{T_1})$。对$k\geq2$，若已经得到$\bm{X}_A\perp\bm{X}_{D_{k-1}}\mid(\bm{X}_C,X_{y_k},\bm{X}_{T_k})$，而$y_k$对应的原前提写成$\bm{X}_A\perp X_{y_k}\mid(\bm{X}_C,\bm{X}_{D_{k-1}},\bm{X}_{T_k})$，应用交集性质便得到$\bm{X}_A\perp\bm{X}_{D_k}\mid(\bm{X}_C,\bm{X}_{T_k})$。逐个合并到$T_m=\varnothing$，最终得到$\bm{X}_A\perp\bm{X}_Y\mid\bm{X}_C$。
+
+\begin{theorem}[严格正条件下三种Markov性质等价]
+  \label{thm:pgm-undirected-markov-equivalence}
+  设$\mathcal{G}=(V,E)$为有限简单无向图，每个节点$i\in V$对应取值于有限非空状态空间$\mathcal{X}_i$的随机变量$X_i$。令$p$为$\bm{X}=(X_i)_{i\in V}$在乘积状态空间$\mathcal{X}=\prod_{i\in V}\mathcal{X}_i$上的联合质量函数，并且$p(\bm{x})>0$对所有$\bm{x}\in\mathcal{X}$成立。则$p$相对于$\mathcal{G}$的成对、局部与全局Markov性质等价。
+\end{theorem}
+
+\begin{proof}
+定理~\ref{thm:pgm-undirected-global-implications}已经证明“全局$\Rightarrow$局部$\Rightarrow$成对”，只需证明成对性质蕴含全局性质。取满足全局性质定义中路径阻断条件的非空集合$A,B$与条件集合$S$。令$U$为$\mathcal{G}[V\setminus S]$中所有与$A$相交的连通分量之并，并令$W=V\setminus(S\cup U)$。路径阻断条件保证$A\subseteq U$、$B\subseteq W$，而$U$与$W$之间没有边。
+
+固定$u\in U$。对每个$w\in W$，成对性质给出
+\[
+  X_u\perp X_w
+  \mid
+  \bigl(\bm{X}_S,\bm{X}_{U\setminus\{u\}},
+        \bm{X}_{W\setminus\{w\}}\bigr).
+\]
+在上一段的集合合并步骤中取$Y=W$、条件基集$C=S\cup(U\setminus\{u\})$，逐个合并$W$中的节点，得到
+\[
+  X_u\perp\bm{X}_W
+  \mid\bigl(\bm{X}_S,\bm{X}_{U\setminus\{u\}}\bigr).
+\]
+对每个$u\in U$都成立。利用条件独立性的对称性把它写成$\bm{X}_W\perp X_u\mid(\bm{X}_S,\bm{X}_{U\setminus\{u\}})$，再取$Y=U$、条件基集$C=S$进行第二轮合并，得到$\bm{X}_W\perp\bm{X}_U\mid\bm{X}_S$。再次使用对称性与分解性质，便有$\bm{X}_A\perp\bm{X}_B\mid\bm{X}_S$，所以任意满足路径阻断条件的三个集合都对应所需的条件独立性。
+\end{proof}
+
+两个反例解释了严格正性的作用。三节点空图只在两个完整配置上取正概率，两条不相连边的图也只在$(0,0,0,0)$与$(1,1,1,1)$上取正概率；交集引理所需的其他配置全部缺失。严格正性不是定义三种Markov性质的前提，而是恢复逆向蕴含的一项充分条件。
+
+\subsection{图分离的定义}
+\label{sec:pgm-undirected-separation}
+
+\term{图分离}（graph separation）描述的是纯粹的图结构事实，还没有涉及概率。对两两不交的$A,B,S\subseteq V$，若从任意$a\in A$到任意$b\in B$的每条路径都包含$S$中的节点，就称$S$在$\mathcal{G}$中分离$A$与$B$。这里$S$称为分离集；它不必是最小分离集，也不必包含图上所有其余节点。若$A$与$B$原本就位于不同连通分量，空集也能分离它们。
+
+无向图没有箭头，因而不需要区分第~\ref{chap:pgm-directed}章中的碰撞节点和非碰撞节点。条件集合中的节点直接阻断经过它的路径，不存在“观测碰撞节点反而打开路径”的图判据。但这不意味着可以忽略多条路径：只阻断其中一条，仍不足以形成分离。
+
+图~\ref{fig:pgm-undirected-separation}展示了四节点环的两种条件集合。$S=\{2\}$阻断$1-2-3$，却保留$1-4-3$；$S=\{2,4\}$才分离$\{1\}$与$\{3\}$。图分离对条件集合具有单调性：在不加入$A$、$B$节点的前提下，继续删除节点不会创造新路径。这个单调性属于图判据，不能替代一般概率分布中的条件独立性推理。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-undirected-separation.tex}
+  \caption{删除条件节点以检测分离。方形节点属于$S$，虚线边随节点一同删除，实线边保留。左侧删除$2$后仍有路径$1-4-3$；右侧同时删除$2,4$后，$1$与$3$处于不同连通分量。}
+  \label{fig:pgm-undirected-separation}
+\end{figure}
+
+\subsection{图分离的检测}
+\label{sec:pgm-undirected-separation-test}
+
+检测分离不必枚举路径。构造$\mathcal{G}[V\setminus S]$，从$A$中的所有节点同时进行广度优先搜索；若能够访问$B$中的任意节点，$S$就不是分离集，否则就是。搜索过程中只沿未删除的节点与边扩张，因而访问到的恰好是与$A$有剩余路径连接的节点。这也证明了该检测方法的正确性。采用邻接表与标记数组时，一次查询的最坏时间为$O(d+|E|)$，额外空间为$O(d)$。图上的查询可以很快完成，并不代表相应的概率数值也容易计算。
+
+\subsection{图分离的可靠性与模型类完备性}
+\label{sec:pgm-undirected-separation-soundness-completeness}
+
+图分离给出的是结构判据。要说明这个判据恰好能表达什么，需要区分两个方向：\term{可靠性}（soundness）要求图判定为分离时，模型类中的每个分布都满足相应条件独立性；\term{完备性}（completeness）要求图判定为不分离时，模型类中至少存在一个分布使相应条件独立性失败。完备性是模型类层面的存在性结论，不保证任意固定参数都产生依赖。
+
+\begin{example}[不分离不强迫固定分布相关]
+  \label{ex:pgm-undirected-fixed-distribution-extra-independence}
+  考虑节点集$V=\{1,2\}$、边集$E=\{\{1,2\}\}$的无向图，并令$X_1,X_2\in\{-1,+1\}$。在唯一的二节点团上取常数边势
+  \[
+    \psi_{\{1,2\}}(x_1,x_2)=1.
+  \]
+  此时配分函数$Z=4$，所以四个配置都满足$p(x_1,x_2)=1/4$，分布处处严格为正。两个边缘分布都均匀，因而对任意$x_1,x_2$都有
+  \[
+    p(x_1,x_2)=\frac14
+    =\frac12\cdot\frac12
+    =p(x_1)p(x_2),
+  \]
+  即$X_1\perp X_2$。空集不能分离由单边直接连接的端点，但这个固定分布仍然独立。因此，该例否定的是“不分离会使每个固定分布都相关”的反向保证，并不否定模型类完备性；后者只要求在同一模型类中至少存在一个分布使这项未分离查询不独立。
+\end{example}
+
+\begin{theorem}[团因子分解分布上的分离可靠性]
+  \label{thm:pgm-undirected-factorization-to-global}
+  设$\mathcal{G}=(V,E)$为有限简单无向图，节点$i\in V$取值于可测空间$(\mathcal{X}_i,\mathcal{A}_i)$，其上给定$\sigma$有限基准测度$\mu_i$；记$\mathcal{X}=\prod_{i\in V}\mathcal{X}_i$及$\mu=\bigotimes_{i\in V}\mu_i$，有限离散情形取计数测度。令$\mathcal{C}$为$\mathcal{G}$的有限团族，且对每个$C\in\mathcal{C}$，$\psi_C:\mathcal{X}_C\to[0,\infty)$是可测函数，其中$\mathcal{X}_C=\prod_{i\in C}\mathcal{X}_i$。若$p$相对于$\mu$的密度满足
+  \[
+    \begin{aligned}
+      p(\bm{x})
+      &=\frac{1}{Z}\prod_{C\in\mathcal{C}}\psi_C(\bm{x}_C)
+        &&\text{$\mu$几乎处处},\\
+      Z
+      &=\int_{\mathcal{X}}\prod_{C\in\mathcal{C}}
+        \psi_C(\bm{x}_C)\,\mathrm{d}\mu(\bm{x}),
+        &&0<Z<\infty,
+    \end{aligned}
+  \]
+  则对任意两两不交且$A,B$非空的$A,B,S\subseteq V$，若$S$在$\mathcal{G}$中分离$A$与$B$，就有
+  \[
+    \bm{X}_A\perp\bm{X}_B\mid\bm{X}_S.
+  \]
+  势函数可以取零，不要求$p$严格为正。
+\end{theorem}
+
+这个结论的证明需要把分离集两侧的团势分别归一化，并消去不属于$A\cup B\cup S$的变量。为避免在定义势函数之前重复技术细节，第~\ref{sec:pgm-undirected-factorization-to-markov}节在给出因子分解的精确定义后证明定理~\ref{thm:pgm-undirected-factorization-to-global}。
+
+\Needspace{14\baselineskip}
+\begin{theorem}[严格正二值成对势模型类中的分离完备性]
+  \label{thm:pgm-undirected-separation-completeness}
+  设$\mathcal{G}=(V,E)$为有限简单无向图，每个节点$i\in V$对应二值随机变量$X_i\in\{-1,+1\}$，且$A,B,S\subseteq V$两两不交、$A,B$非空。若$S$在$\mathcal{G}$中不分离$A$与$B$，则存在一个严格正且按$\mathcal{G}$分解的成对势模型
+  \[
+    p(\bm{x})=\frac{1}{Z}
+      \prod_{\{i,j\}\in E}\psi_{\{i,j\}}(x_i,x_j),
+    \qquad \psi_{\{i,j\}}(x_i,x_j)>0,
+  \]
+  使$\bm{X}_A\not\perp\bm{X}_B\mid\bm{X}_S$。
+\end{theorem}
+
+\begin{proof}
+因为$S$不分离$A$与$B$，存在一条完全避开$S$的简单路径
+\[
+  v_0-v_1-\cdots-v_m,
+  \qquad v_0\in A,\quad v_m\in B.
+\]
+取任意$J\neq0$。对路径上的边设
+\[
+  \psi_{\{v_{r-1},v_r\}}(x_{v_{r-1}},x_{v_r})
+  =\exp(Jx_{v_{r-1}}x_{v_r}),
+  \qquad r=1,\ldots,m,
+\]
+其余所有边势均取常数$1$。每个势都严格为正，有限状态空间又保证$0<Z<\infty$，所以这确实定义了所要求的模型。
+
+所有非恒定势都位于选定路径上。即使图中还有连接路径节点与路径外节点的边，这些边势也已被设为常数；因此完整分布分成路径分布与路径外均匀分布的乘积。对路径外变量求和只产生常数因子，给定同样位于路径外的$\bm{X}_S$也不会改变路径上的联合分布。特别地，对每个$\bm{s}$都有
+\[
+  p(x_{v_0},\ldots,x_{v_m}\mid\bm{s})
+  =\frac12\prod_{r=1}^{m}
+    \frac{\exp(Jx_{v_{r-1}}x_{v_r})}{2\cosh J}.
+\]
+
+令$\rho=\tanh J\neq0$。上式把路径写成初始状态均匀的二状态Markov链，其一步条件均值为
+\[
+  \mathbb{E}[X_{v_r}\mid X_{v_{r-1}}]
+  =\rho X_{v_{r-1}}.
+\]
+逐步取条件期望可得
+\[
+  \mathbb{E}[X_{v_0}X_{v_m}\mid\bm{X}_S=\bm{s}]
+  =\rho^m\neq0,
+  \qquad
+  \mathbb{E}[X_{v_0}\mid\bm{s}]
+  =\mathbb{E}[X_{v_m}\mid\bm{s}]=0.
+\]
+所以路径端点在给定$\bm{X}_S$后仍然依赖。若$\bm{X}_A\perp\bm{X}_B\mid\bm{X}_S$成立，条件独立性的分解性质会推出$X_{v_0}\perp X_{v_m}\mid\bm{X}_S$，与上式矛盾。这个构造只证明不分离时存在一个见证分布；把$J$取为零就会得到额外独立性，说明不分离本身并不强迫每个模型都相关。
+\end{proof}
+
+\section{无向图中的因子分解}
+\label{sec:pgm-undirected-factorization}
+
+独立性说明哪些信息可以忽略，还没有给出配置的概率。要建立具体分布，可以为局部变量组合赋予非负权重，再把这些权重合成为全局概率。关键问题有两个：什么样的局部组合符合图结构，以及合成后的函数是否真的能够归一化。
+
+\subsection{因子分解的定义}
+\label{sec:pgm-undirected-factorization-definition}
+
+\term{势函数}（potential function）为一组变量的每种配置给出相容程度，而不是为某个变量单独给出条件概率。设$\mathcal{C}$为图中团的一个族，$\psi_C(\bm{x}_C)$是定义在团$C$上的有限非负函数。若存在$0<Z<\infty$使
+\begin{equation}
+  p(\bm{x})=\frac{1}{Z}\prod_{C\in\mathcal{C}}\psi_C(\bm{x}_C),
+  \label{eq:pgm-undirected-factorization}
+\end{equation}
+就称$p$按照$\mathcal{G}$进行团因子分解。势函数的自变量只能属于相应的团，但可以不实际依赖团内的每个变量。
+
+对于离散变量，\term{配分函数}（partition function）是所有配置权重的总和，即把相容分数变成概率所需的全局归一化常数：
+\begin{equation}
+  Z=\sum_{\bm{x}\in\mathcal{X}}\prod_{C\in\mathcal{C}}\psi_C(\bm{x}_C),
+  \qquad
+  \mathcal{X}=\prod_{i\in V}\mathcal{X}_i.
+  \label{eq:pgm-undirected-partition}
+\end{equation}
+在有限状态空间上，有限势函数保证$Z$有限，但仍须排除所有配置权重都为零的情形。若状态空间可数无限，则还必须检查级数收敛。每个$\psi_C$无需对自己的变量求和为$1$；把势函数各自归一化也不能免去全局的$Z$，因为不同团通常共享变量。
+
+任意团都包含于某个极大团。把一个小团的势乘入包含它的某个极大团势，就能得到仅以极大团为索引的分解，不改变联合分布。每个小团只需分配一次，不能在所有包含它的极大团中重复相乘。因而“按团分解”与“按极大团分解”描述同一分布族，差别在于局部参数如何组织。三节点团上的一般势却不能总被单点势和成对势替代；团所允许的高阶相互作用是真正的表达能力。
+
+当势严格为正时，可以把乘积改写为指数形式。令$\varepsilon_C=-\log\psi_C$，并定义\term{能量函数}（energy function）$E(\bm{x})=\sum_C\varepsilon_C(\bm{x}_C)$，便有
+\[
+  p(\bm{x})=Z^{-1}\exp[-E(\bm{x})].
+\]
+能量越低，对应的未归一化权重越大。若某个势为零，可以用$\varepsilon_C=+\infty$表达被禁止的配置，但涉及对数差分的证明不能再把这些无穷值当成普通实数运算。
+
+对于连续变量，需要先指定密度相对于什么测度定义。本章连续例子使用各坐标空间上的$\sigma$有限测度$\mu_i$及其乘积测度$\mu=\bigotimes_{i\in V}\mu_i$；$\sigma$有限是指状态空间可以被可数个有限测度的集合覆盖，实数变量通常采用的Lebesgue测度就满足这一点。势须可测，乘积须满足
+\begin{equation}
+  0<Z=\int_{\mathcal{X}}\prod_{C\in\mathcal{C}}
+       \psi_C(\bm{x}_C)\,\mathrm{d}\mu(\bm{x})<\infty.
+  \label{eq:pgm-undirected-continuous-partition}
+\end{equation}
+式~\eqref{eq:pgm-undirected-factorization}此时才是归一化密度。单个势可以不可积，多个势的乘积仍可能可积；反过来，势处处为正也不能保证积分有限，例如$\mathbb{R}^d$上的常数势乘积。这些区别在高斯参数化中会具体表现为精度矩阵的正定性要求。
+
+\begin{example}[四节点环上的相容分数]
+  \label{ex:pgm-undirected-cycle}
+  令$X_i\in\{0,1\}$，四条边上的势相同：
+  \[
+    \psi_{\{i,j\}}(x_i,x_j)=
+    \begin{cases}
+      2,&x_i=x_j,\\
+      1,&x_i\neq x_j.
+    \end{cases}
+  \]
+  每条相同状态的边把配置权重乘以$2$。图~\ref{fig:pgm-undirected-factorization-example}以$\bm{x}=(0,0,1,1)$为例，逐条读取四个边势，先得到未归一化权重$4$，再除以$Z=82$得到概率$2/41$。沿环一周，状态改变的次数必须为偶数，所以相同边数只能为$4,2,0$。表~\ref{tab:pgm-undirected-cycle-weights}按这三种情况汇总全部$16$个配置的权重。
+  因而$Z=32+48+2=82$，另有$p(0,0,0,0)=16/82=8/41$和$p(0,1,0,1)=1/82$。这些数值来自人为指定的势，不是实测统计。
+\end{example}
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-undirected-factorization-example.tex}
+  \caption{四节点环上单个配置$\bm{x}=(0,0,1,1)$的概率计算。边标签逐条给出势值；相乘得到未归一化权重$4$，再除以全部$16$个配置共同确定的配分函数$Z=82$，得到概率$2/41$。}
+  \label{fig:pgm-undirected-factorization-example}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{crrr}
+    \toprule
+    相同边数 & 配置数 & 单个权重 & 总权重 \\
+    \midrule
+    $4$ & $2$ & $16$ & $32$ \\
+    $2$ & $12$ & $4$ & $48$ \\
+    $0$ & $2$ & $1$ & $2$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{四节点二值环的配置权重。相同状态的边贡献势值$2$，不同状态的边贡献$1$；总权重之和为配分函数$82$。}
+  \label{tab:pgm-undirected-cycle-weights}
+\end{table}
+
+\subsection{从因子分解到条件独立性}
+\label{sec:pgm-undirected-factorization-to-markov}
+
+定理~\ref{thm:pgm-undirected-factorization-to-global}已经陈述团分解上的分离可靠性。现在补全证明：关键不是分别检查每条缺边，而是利用删除$S$后的连通分量，把所有团因子分到分离集的两侧。
+
+\begin{proof}[定理~\ref{thm:pgm-undirected-factorization-to-global}的证明]
+取被$S$分离的两两不交集合$A,B,S$，只需考虑$A,B$均非空的情形。令$U$为$\mathcal{G}[V\setminus S]$中所有与$A$相交的连通分量的并，令$W=V\setminus(S\cup U)$。于是$A\subseteq U$、$B\subseteq W$，并且$U$与$W$之间没有边。
+
+任何团都不能同时包含$U$与$W$中的节点，否则团内这两个节点之间必须有边，与二者没有边矛盾。因此，每个团或者完全位于$S$，或者除$S$外的节点全部落在$U$，或者全部落在$W$。将三类势分别相乘，可以写成
+\begin{equation}
+  p(\bm{u},\bm{w},\bm{s})
+  =Z^{-1}h(\bm{s})f(\bm{u},\bm{s})g(\bm{w},\bm{s}),
+  \label{eq:pgm-undirected-separated-factors}
+\end{equation}
+其中$\bm{u},\bm{w},\bm{s}$分别是$\bm{X}_U,\bm{X}_W,\bm{X}_S$的取值，空乘积取$1$。
+
+在离散情况下，令$F(\bm{s})=\sum_{\bm{u}}f(\bm{u},\bm{s})$、$G(\bm{s})=\sum_{\bm{w}}g(\bm{w},\bm{s})$；连续情况下把这两个和换成相应乘积测度下的积分。只考虑$p_S(\bm{s})$有限且严格为正的条件取值：离散时它们包括全部正概率条件事件，连续时它们承载全部$\bm{X}_S$概率。此时$h(\bm{s})$必为正，否则式~\eqref{eq:pgm-undirected-separated-factors}在该条件下恒为零。非负性允许用Tonelli定理交换积分并分离乘积，得到
+\[
+  p_S(\bm{s})=Z^{-1}h(\bm{s})F(\bm{s})G(\bm{s}).
+\]
+若$F(\bm{s})$或$G(\bm{s})$为零，联合积分就为零；若其中一个无穷而另一个为正，联合积分就无穷。因此在上述条件取值上，$F(\bm{s})$与$G(\bm{s})$均有限且严格为正，可以归一化为
+\begin{equation}
+  p(\bm{u},\bm{w}\mid\bm{s})
+  =\frac{f(\bm{u},\bm{s})}{F(\bm{s})}
+   \frac{g(\bm{w},\bm{s})}{G(\bm{s})}.
+  \label{eq:pgm-undirected-conditional-product}
+\end{equation}
+右侧两个函数各自归一化，所以$\bm{X}_U\perp\bm{X}_W\mid\bm{X}_S$。
+
+还需处理未查询变量。分别对$U\setminus A$与$W\setminus B$的变量求和或积分，式~\eqref{eq:pgm-undirected-conditional-product}仍分成一个只含$\bm{x}_A,\bm{s}$的函数与一个只含$\bm{x}_B,\bm{s}$的函数，两者就是对应的条件边缘分布。因此$\bm{X}_A\perp\bm{X}_B\mid\bm{X}_S$，证明了任意分离关系所要求的独立性。
+\end{proof}
+
+证明只在实际有概率质量或密度的条件取值上归一化，没有除以某个可能为零的团势，也没有取对数。因此允许结构性零概率；结合定理~\ref{thm:pgm-undirected-global-implications}，团分解同时蕴含局部和成对性质。这里从因子分解直接推出全局性质，没有调用Hammersley--Clifford逆向结论，后面的等价证明因而不会形成循环。
+
+在示例~\ref{ex:pgm-undirected-cycle}中，固定$X_2=x_2,X_4=x_4$，四个边势恰好分为
+\[
+  \begin{aligned}
+    f(x_1)&=\psi_{\{1,2\}}(x_1,x_2)\psi_{\{1,4\}}(x_1,x_4),\\
+    g(x_3)&=\psi_{\{2,3\}}(x_2,x_3)\psi_{\{3,4\}}(x_3,x_4).
+  \end{aligned}
+\]
+当$x_2=x_4=0$时，$f(0)=g(0)=4$，$f(1)=g(1)=1$，所以
+\[
+  p(x_1,x_3\mid0,0)
+  =\frac{1}{25}
+    \begin{pmatrix}16&4\\4&1\end{pmatrix}_{x_1+1,x_3+1}.
+\]
+矩阵的行、列分别按$0,1$排列，其条件边缘均为$(4/5,1/5)$，外积正好得到该矩阵。当$x_2=0,x_4=1$时，$f$与$g$的两种取值都为$2$，条件联合分布变成四个$1/4$。邻居的取值改变了两端的条件概率，却没有改变给定邻居后的独立性。
+
+\subsection{从条件独立性到因子分解}
+\label{sec:pgm-undirected-hammersley-clifford}
+
+逆向问题更强：仅知道缺边所要求的条件独立性，能否找出一组团势，精确重建整个联合分布？下述证明采用Gill笔记中的基准配置构造，把对数概率拆成局部项，再证明非团项消失\scite{pgm-undirected-gill2011}
+
+\term{Hammersley--Clifford定理}回答了有限离散严格正分布下的问题。这里严格正是指对完整笛卡尔积$\mathcal{X}=\prod_i\mathcal{X}_i$中的每个配置都有$p(\bm{x})>0$，而不是只对已经保留的支持集说概率为正。定理~\ref{thm:pgm-undirected-markov-equivalence}已经处理三种Markov性质之间的关系，下面只需把其中任一种性质与团因子分解联系起来。
+
+\begin{theorem}[有限离散Hammersley--Clifford定理]
+  \label{thm:pgm-undirected-hammersley-clifford}
+  设$\mathcal{G}=(V,E)$为有限简单无向图，每个节点$i\in V$对应取值于有限非空状态空间$\mathcal{X}_i$的随机变量$X_i$。令$p$为$\bm{X}=(X_i)_{i\in V}$在乘积状态空间$\mathcal{X}=\prod_{i\in V}\mathcal{X}_i$上的联合质量函数，并且$p(\bm{x})>0$对所有$\bm{x}\in\mathcal{X}$成立。则以下四个条件等价：$p$满足相对于$\mathcal{G}$的全局Markov性质；$p$满足相对于$\mathcal{G}$的局部Markov性质；$p$满足相对于$\mathcal{G}$的成对Markov性质；$p$能按$\mathcal{G}$的团分解。分解中的势可以全部取为严格正值。
+\end{theorem}
+
+\begin{proof}
+由定理~\ref{thm:pgm-undirected-factorization-to-global}，团分解蕴含全局Markov性质；由定理~\ref{thm:pgm-undirected-markov-equivalence}，三种Markov性质在当前条件下等价。因此只需从成对性质构造团分解。任取基准配置$\bm{x}^{\circ}\in\mathcal{X}$，对每个$D\subseteq V$定义
+\[
+  \bm{x}^{D}=(\bm{x}_D,\bm{x}^{\circ}_{V\setminus D}),
+  \qquad
+  L_D(\bm{x}_D)=\log p(\bm{x}^{D}).
+\]
+也就是说，仅让$D$中的坐标使用当前值，其余坐标固定在基准值。严格正性保证所有这些对数都是有限实数。
+
+对每个$D\subseteq V$构造
+\begin{equation}
+  \phi_D(\bm{x}_D)
+  =\sum_{B\subseteq D}(-1)^{|D|-|B|}L_B(\bm{x}_B).
+  \label{eq:pgm-undirected-mobius}
+\end{equation}
+其中$\phi_{\varnothing}=\log p(\bm{x}^{\circ})$。这个交替加减式称为基准配置上的\term{Möbius分解}（Möbius decomposition）：它从$D$的联合变化中减去所有更小子集已经解释的部分。例如
+\[
+  \begin{aligned}
+    \phi_{\{i\}}&=L_{\{i\}}-L_{\varnothing},\\
+    \phi_{\{i,j\}}
+      &=L_{\{i,j\}}-L_{\{i\}}-L_{\{j\}}+L_{\varnothing}.
+  \end{aligned}
+\]
+
+这组局部项确实可以重建对数概率。对所有$D$求和并交换有限求和次序，有
+\begin{align}
+  \sum_{D\subseteq V}\phi_D(\bm{x}_D)
+  &=\sum_{B\subseteq V}L_B(\bm{x}_B)
+      \sum_{D:\,B\subseteq D\subseteq V}(-1)^{|D|-|B|}
+      \notag\\
+  &=L_V(\bm{x}_V)=\log p(\bm{x}).
+  \label{eq:pgm-undirected-mobius-inversion}
+\end{align}
+第二个等号的理由是：固定$B$后，内层系数为$(1-1)^{|V\setminus B|}$；当$B\neq V$时为零，当$B=V$时唯一一项为$1$。因而除了完整配置的对数概率，其他项恰好抵消。
+
+接下来利用成对Markov性质证明：若非空子集$D$不是团，则$\phi_D$恒为零。取$D$中一对不相邻节点$i,j$，记$R=V\setminus\{i,j\}$。给定任意$\bm{x}_R$，条件独立性使二元条件概率成为外积，故对任意$a,a'\in\mathcal{X}_i$和$b,b'\in\mathcal{X}_j$，
+\begin{equation}
+  \begin{aligned}
+    &p(a,b,\bm{x}_R)p(a',b',\bm{x}_R)\\
+    &\qquad=p(a,b',\bm{x}_R)p(a',b,\bm{x}_R).
+  \end{aligned}
+  \label{eq:pgm-undirected-rectangle}
+\end{equation}
+这里已把共同的条件归一化因子消去。取$a=x_i,a'=x_i^{\circ},b=x_j,b'=x_j^{\circ}$，再令$R$中某个子集$B$使用当前值、其余使用基准值，取对数得到
+\[
+  L_{B\cup\{i,j\}}-L_{B\cup\{i\}}
+  -L_{B\cup\{j\}}+L_B=0.
+\]
+它表达的是：在其他坐标固定后，同时改变两个非邻居，不会产生超出分别改变二者的额外交互项。
+
+令$T=D\setminus\{i,j\}$，把式~\eqref{eq:pgm-undirected-mobius}中的子集按是否包含$i,j$分为四组，便有
+\begin{equation}
+  \begin{aligned}
+    \phi_D
+    =\sum_{B\subseteq T}(-1)^{|T|-|B|}
+      \bigl(&L_{B\cup\{i,j\}}-L_{B\cup\{i\}}\\
+            &-L_{B\cup\{j\}}+L_B\bigr)=0.
+  \end{aligned}
+  \label{eq:pgm-undirected-nonclique-vanishes}
+\end{equation}
+括号中的每一项组合都为零，所以任何包含非邻接对的交互项都消失，而不只是二阶项消失。
+
+记$\mathcal{C}_{\mathrm{all}}$为所有非空团组成的族。将剩下的团函数指数化，令$\psi_C=\exp(\phi_C)>0$，由式~\eqref{eq:pgm-undirected-mobius-inversion}得到
+\[
+  p(\bm{x})
+  =\exp(\phi_{\varnothing})
+     \prod_{C\in\mathcal{C}_{\mathrm{all}}}\psi_C(\bm{x}_C).
+\]
+对$\bm{x}$求和可知，乘积的配分函数为$Z=\exp(-\phi_{\varnothing})$，有限且严格为正。再把小团势并入极大团即可得到所需分解。
+\end{proof}
+
+证明中，Möbius恒等式只是有限集合上的代数；图结构通过“非团项为零”进入。严格正性承担了两个具体任务：保证每个其余变量配置都能作为条件，保证矩形等式可以取有限对数。它是这里统一得到逆向结论的充分条件，不是所有可分解分布都必须满足的条件。
+
+\begin{example}[满足全局Markov性质却不能团分解]
+  \label{ex:pgm-undirected-zero-support}
+  仍使用四节点环，但改用以下人工构造的分布。取相互独立的公平二值变量$U,V$，令
+  \[
+    X_1=U,\quad X_2=V,\quad
+    X_3=U\mathbin{\oplus}V,\quad X_4=U,
+  \]
+  其中$\oplus$为模$2$加法。表~\ref{tab:pgm-undirected-zero-support}给出四个正概率配置，其他配置概率均为零。
+\end{example}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{ccccc}
+    \toprule
+    $x_1$ & $x_2$ & $x_3$ & $x_4$ & 概率 \\
+    \midrule
+    $0$ & $0$ & $0$ & $0$ & $1/4$ \\
+    $0$ & $1$ & $1$ & $0$ & $1/4$ \\
+    $1$ & $0$ & $1$ & $1$ & $1/4$ \\
+    $1$ & $1$ & $0$ & $1$ & $1/4$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{四节点环上不满足严格正性的分布。任意一对对角节点的取值均能确定整行，但边上的局部取值不足以刻画这个全局支持集。}
+  \label{tab:pgm-undirected-zero-support}
+\end{table}
+
+给定$(X_2,X_4)$就确定$(U,V)$，所以$X_1$与$X_3$在此条件下都是常量，二者条件独立。给定$(X_1,X_3)$同样确定$(U,V)$，所以$X_2\perp X_4\mid(X_1,X_3)$。在四节点环上，删除一个节点仍然连通；两组非空节点要被分离，只能是两个对角节点被另外两个对角节点分离。因此刚才两个条件独立性覆盖全部非平凡分离，该分布满足全局Markov性质，也满足局部和成对性质。
+
+假设它能够按四条边分解；单点势可以先并入边势。考察被禁止的配置$\bm{y}=(0,0,1,0)$。它在边$\{1,2\}$上的局部取值$(0,0)$出现于正概率配置$(0,0,0,0)$，在边$\{2,3\}$上的$(0,1)$出现于$(1,0,1,1)$，在边$\{3,4\}$上的$(1,0)$出现于$(0,1,1,0)$，在边$\{1,4\}$上的$(0,0)$又出现于$(0,0,0,0)$。正概率配置中的每个边势值都必须严格为正，因此$\bm{y}$的四个边势值也都为正，分解会推出$p(\bm{y})>0$，与定义矛盾。
+
+这个反例不仅表明对数证明无法处理零值，而且直接排除了任何非负团势分解。独立性成立是因为条件变量已经把未观测变量完全确定；团势却只能看到局部投影，无法禁止一个在每条边上都曾被允许、但整体上被禁止的组合。与此同时，某些零概率分布当然可以分解，例如直接用边势$\mathbf{1}\{x_i=x_j\}$施加相等约束。不能把“逆向结论可能失效”误写成“有零值就一定不能分解”。
+
+连续密度的逆向结论需要说明测度与所采用的密度版本。仅有$p>0$几乎处处时，任意固定的坐标截面都可能落在可随意修改的零测集上；直接在该截面取$L_D$并沿用上面的逐点证明，论证就不完整。一般可测空间上的版本需要用测度论处理这些例外集合，不能把每个“几乎处处”直接删去\scite{pgm-lauritzen1996}
+
+一个足以直接使用的连续版本如下：令$\mathcal{X}=\prod_i I_i$，每个$I_i$是非空开区间，基准测度为Lebesgue乘积测度；设$p$是其上的连续、处处严格正、积分为$1$的密度。若$p$满足成对Markov性质，则存在连续严格正的团势，使其团乘积等于$p$乘以一个有限正数。其证明只需补上离散证明没有遇到的一步：条件独立性使式~\eqref{eq:pgm-undirected-rectangle}对$(a,a',b,b',\bm{x}_R)$几乎处处成立；两侧之差是开乘积域上的连续函数，如果某一点不为零，就会在一个有正测度的邻域内不为零，产生矛盾。因此矩形等式处处成立，可以任选域内基准配置，再逐式应用有限节点集合上的Möbius分解。所得团乘积与$p$成正比例，其积分有限性由$p$的归一化保证。
+
+这里连续性是一组方便核验的充分条件，不声称它是所有可测版本的必要条件。若还希望对$\log p$求混合偏导，则须进一步要求相应可微性，例如二阶连续可微；若预先选定一族光滑或神经参数化势，仍须单独检查其乘积可积。分解定理保证存在合适的团函数，不保证任意给出的团函数、任意参数或任意函数空间限制都定义合法密度。
+
+\section{局部参数化}
+\label{sec:pgm-undirected-local-parameterization}
+
+因子分解确定了局部函数应当依附于哪些团，但没有规定这些函数怎样表示。离散模型与连续模型需要不同的参数化，同时都必须满足全局可归一化条件。
+
+\subsection{离散变量的局部参数化}
+\label{sec:pgm-undirected-discrete-parameterization}
+
+等价定理给出了可分解性，实际建模还需要选择怎样表示每个势。单点势$\psi_{\{i\}}(x_i)$表达某个状态自身的偏好，成对势$\psi_{\{i,j\}}(x_i,x_j)$表达两个状态的相容关系，高阶团势则表达多个变量共同取值时的额外作用。若每个变量有$q$个状态，一个一般的$k$节点团势表需要存储$q^k$个值，因此高阶表达能力伴随局部存储成本。
+
+对严格正势，可以选取团内特征$f_{C,r}(\bm{x}_C)$，用它们线性表示对数势。特征可以是“两个状态相同”的指示函数，也可以是某个具体团配置的指示函数：
+\[
+  \log\psi_C(\bm{x}_C;\bm{\theta})
+  =\sum_r\theta_{C,r}f_{C,r}(\bm{x}_C).
+\]
+把全部特征与系数分别组成向量$\bm{f}(\bm{x})$与$\bm{\theta}$，得到\term{对数线性模型}（log-linear model），即对数概率由特征的线性组合与归一化项组成：
+\begin{equation}
+  \begin{aligned}
+    p_{\bm{\theta}}(\bm{x})
+      &=\exp\{\bm{\theta}^{\top}\bm{f}(\bm{x})-A(\bm{\theta})\},\\
+    A(\bm{\theta})
+      &=\log\sum_{\bm{x}}
+          \exp\{\bm{\theta}^{\top}\bm{f}(\bm{x})\}.
+  \end{aligned}
+  \label{eq:pgm-undirected-exponential-family}
+\end{equation}
+这也是一个\term{指数族}（exponential family）：参数通过特征内积进入指数，$A=\log Z$统一保证归一化。若为每个团配置设置指示特征，就能表示任意严格正团势；采用更少的共享特征则是在图约束之外进一步限制模型族\scite{pgm-wainwright2008}
+
+例如\term{Ising模型}使用$x_i\in\{-1,+1\}$，把状态自身的偏好与相邻状态的乘积写入对数权重：
+\begin{equation}
+  p(\bm{x})=\frac{1}{Z}
+  \exp\left\{\sum_i h_i x_i+
+             \sum_{\{i,j\}\in E}J_{i,j}x_i x_j\right\}.
+  \label{eq:pgm-undirected-ising}
+\end{equation}
+$h_i>0$偏向$+1$，$J_{i,j}>0$偏向两个状态相同，$J_{i,j}<0$偏向不同；它们表达相容分数，不是边缘概率。示例~\ref{ex:pgm-undirected-cycle}中的状态用$s_i=2x_i-1$换成$\{-1,+1\}$后，有
+\[
+  \psi_{\{i,j\}}(x_i,x_j)
+  =\sqrt{2}\exp\left\{\frac{\log2}{2}s_i s_j\right\}.
+\]
+四个$\sqrt{2}$的乘积是常数，能够并入$Z$；所以该教学分布正是零单点偏好、耦合$J_{i,j}=(\log2)/2$的Ising环。
+
+\term{Potts模型}允许$x_i\in\{1,\ldots,q\}$，常用成对势为
+\[
+  \psi_{\{i,j\}}(x_i,x_j)
+  =\exp\{J_{i,j}\mathbf{1}\{x_i=x_j\}\}.
+\]
+它奖励或惩罚相同类别，不要求类别编号具有数值距离。高阶特征可以表达成对项之外的偏好，例如对三个取值为$\{-1,+1\}$的变量，在三节点团上加入对数势$\lambda x_i x_j x_k$，就能奖励乘积为正或为负的配置。若图中没有该团，直接加入这样的势一般就改变了图的独立性承诺。Ising、Potts及其他能量模型的具体建模与计算将在第~\ref{chap:pgm-energy-models}章展开。
+
+局部参数并不意味着学习可以完全局部进行。对$n$个完整、独立同分布样本向量$\bm{x}_1,\ldots,\bm{x}_n$，令$\overline{\bm{f}}=n^{-1}\sum_{k=1}^n\bm{f}(\bm{x}_k)$，平均对数似然及其梯度为
+\begin{equation}
+  \begin{aligned}
+    \ell(\bm{\theta})
+      &=\bm{\theta}^{\top}\overline{\bm{f}}-A(\bm{\theta}),\\
+    \nabla_{\bm{\theta}}\ell(\bm{\theta})
+      &=\overline{\bm{f}}
+        -\mathbb{E}_{p_{\bm{\theta}}}[\bm{f}(\bm{X})].
+  \end{aligned}
+  \label{eq:pgm-undirected-learning-gradient}
+\end{equation}
+第二式由对有限和中的指数逐项求导得到。数据给出经验特征平均，参数更新还要计算当前联合分布下的特征平均，因此学习反复调用推断。直接枚举$q^d$个配置需要随节点数指数增长的计算；树结构可以通过局部消息计算，而一般含环图的代价取决于消元产生的中间因子。第~\ref{chap:pgm-elimination}章与第~\ref{chap:pgm-parameter-learning}章分别展开推断与参数估计，这里已经能看到配分函数如何把二者联系起来。
+
+\subsection{连续变量的局部参数化}
+\label{sec:pgm-undirected-continuous-parameterization}
+
+连续变量也可以用局部相容关系建模，但参数不能任意选择。最直接的例子是二次能量：它既允许精确计算，又能清楚展示“局部势为正”与“全局密度存在”的区别。\term{高斯Markov随机场}（Gaussian Markov random field, GMRF）是以无向图描述条件独立性的联合高斯分布。本节讨论$\mathbb{R}^d$上相对于Lebesgue测度的非退化情形，设
+\begin{equation}
+  \begin{aligned}
+    p(\bm{x})&=Z^{-1}
+      \exp\left\{-\tfrac12\bm{x}^{\top}\bm{Q}\bm{x}
+                   +\bm{h}^{\top}\bm{x}\right\},\\
+    \bm{Q}&=\bm{Q}^{\top}\succ0.
+  \end{aligned}
+  \label{eq:pgm-undirected-gaussian}
+\end{equation}
+其中$\bm{Q}$是\term{精度矩阵}（precision matrix），即协方差矩阵的逆；$\bm{h}\in\mathbb{R}^d$是线性项系数。配方得到均值$\bm{m}=\bm{Q}^{-1}\bm{h}$与协方差$\bm{\Sigma}=\bm{Q}^{-1}$，并给出
+\begin{equation}
+  Z=(2\pi)^{d/2}\det(\bm{Q})^{-1/2}
+     \exp\left\{\tfrac12\bm{h}^{\top}\bm{Q}^{-1}\bm{h}\right\}.
+  \label{eq:pgm-undirected-gaussian-partition}
+\end{equation}
+这说明正定性足以保证有限归一化。它也对这种全空间二次能量是必要的：沿$\bm{Q}$的特征向量作正交坐标变换后，若某个特征值为负，对应方向的指数按正二次项增长；若特征值为零，沿该方向只剩线性指数或常数，两者在整条实轴上都不可积。
+
+图结构来自二次型的展开：
+\[
+  \begin{aligned}
+    &-\tfrac12\bm{x}^{\top}\bm{Q}\bm{x}+\bm{h}^{\top}\bm{x}\\
+    &\qquad=\sum_i\left(-\tfrac12 Q_{i,i}x_i^2+h_i x_i\right)
+             -\sum_{i<j}Q_{i,j}x_i x_j.
+  \end{aligned}
+\]
+这里$Q_{i,j}$为$\bm{Q}$的第$(i,j)$个元素。单点项定义单点势，非零的交叉项定义边势$\exp(-Q_{i,j}x_i x_j)$。这个边势本身未必可积，也不是二元概率密度；要求可积的是全部势的乘积。若所有缺边均满足$Q_{i,j}=0$，就得到了图上的团分解。
+
+在高斯情形，精度零元与给定其余变量后的独立性还是双向关系：
+\begin{equation}
+  Q_{i,j}=0
+  \quad\Longleftrightarrow\quad
+  X_i\perp X_j\mid\bm{X}_{V\setminus\{i,j\}},
+  \qquad i\neq j.
+  \label{eq:pgm-undirected-precision-independence}
+\end{equation}
+为看清逆向，固定其余变量后，$(X_i,X_j)$的条件分布仍为高斯，其精度是主子矩阵
+\[
+  \begin{pmatrix}Q_{i,i}&Q_{i,j}\\Q_{i,j}&Q_{j,j}\end{pmatrix}.
+\]
+正定性保证$Q_{i,i}Q_{j,j}-Q_{i,j}^2>0$。将这个$2\times2$矩阵求逆，条件协方差的非对角元素为
+\[
+  -\frac{Q_{i,j}}{Q_{i,i}Q_{j,j}-Q_{i,j}^2}.
+\]
+联合高斯的两个分量独立当且仅当协方差为零，所以得到式~\eqref{eq:pgm-undirected-precision-independence}。注意，$\Sigma_{i,j}=0$刻画的是边缘独立性，$Q_{i,j}=0$刻画的是给定其余全部变量后的条件独立性；不能用稀疏协方差替代稀疏精度。
+
+固定除$i$外的坐标并对$x_i$配方，还得到局部条件分布
+\begin{equation}
+  X_i\mid\bm{x}_{V\setminus\{i\}}
+  \sim\mathcal{N}\left(
+    \frac{h_i-\sum_{j\neq i}Q_{i,j}x_j}{Q_{i,i}},
+    \frac{1}{Q_{i,i}}\right).
+  \label{eq:pgm-undirected-gaussian-conditional}
+\end{equation}
+非邻居的系数为零，所以条件均值只依赖邻居。这一公式也揭示了从局部条件分布反推联合分布的约束。若给出条件方差$1/\tau_i$与条件均值$\alpha_i+\sum_{j\neq i}\beta_{i,j}x_j$，则必须有$Q_{i,i}=\tau_i$、$Q_{i,j}=-\tau_i\beta_{i,j}$以及$h_i=\tau_i\alpha_i$，因此至少要求$\tau_i\beta_{i,j}=\tau_j\beta_{j,i}$使$\bm{Q}$对称，还要要求整个$\bm{Q}$正定。仅有所有$\tau_i>0$并不足够；若不满足兼容条件，这些逐点看来合法的高斯条件分布可能不属于任何所要求的联合高斯分布\scite{pgm-undirected-rue2005}
+
+四节点环的一个可核验高斯实例是$\bm{h}=\bm{0}$及
+\[
+  \bm{Q}=
+  \begin{pmatrix}
+    3&-1&0&-1\\
+    -1&3&-1&0\\
+    0&-1&3&-1\\
+    -1&0&-1&3
+  \end{pmatrix}.
+\]
+若$\bm{L}$是该环的图Laplacian矩阵，即对角为节点度数、相邻处为$-1$、其余为$0$，则$\bm{Q}=\bm{I}+\bm{L}$。对任意非零$\bm{v}$，
+\[
+  \bm{v}^{\top}\bm{Q}\bm{v}
+  =\sum_i v_i^2+\sum_{\{i,j\}\in E}(v_i-v_j)^2>0,
+\]
+所以它确实定义合法密度。其逆矩阵为
+\[
+  \bm{\Sigma}=\frac{1}{15}
+  \begin{pmatrix}
+    7&3&2&3\\
+    3&7&3&2\\
+    2&3&7&3\\
+    3&2&3&7
+  \end{pmatrix}.
+\]
+$Q_{1,3}=0$而$\Sigma_{1,3}=2/15$：两个对角节点边缘相关，但给定另外两个节点后独立。节点$1$的条件均值是$(x_2+x_4)/3$，条件方差是$1/3$，与$x_3$无关。这与离散环例子具有相同的图语义，但局部概率形式不同。
+
+若把上例的$\bm{Q}$换成$\bm{L}$，令$\bm{1}$为全$1$向量，则$\bm{L}\bm{1}=\bm{0}$，能量对所有坐标同时平移不变，积分沿常数方向发散。奇异的半正定精度不能定义$\mathbb{R}^d$上的非退化归一化高斯密度。所谓\term{内蕴高斯Markov随机场}（intrinsic GMRF）使用的是这类未完全归一化的模型；可以通过约束到适当子空间并指定该子空间上的测度来构造概率分布，或在适当条件下与似然结合得到可归一化的后验，但都不是把奇异精度直接代入式~\eqref{eq:pgm-undirected-gaussian-partition}。退化高斯在子空间上的条件独立性也不能无条件沿用上述逆矩阵判据。
+
+势函数还可以随外部输入变化。若$\bm{x}$是已知输入、$\bm{y}$是需要预测的输出，\term{条件Markov网络}（conditional Markov network）直接定义
+\begin{equation}
+  p_{\bm{\theta}}(\bm{y}\mid\bm{x})
+  =\frac{1}{Z_{\bm{\theta}}(\bm{x})}
+    \prod_{C\in\mathcal{C}}
+    \psi_C(\bm{y}_C;\bm{x},\bm{\theta}).
+  \label{eq:pgm-undirected-conditional-network}
+\end{equation}
+此时图的节点对应输出变量，$\bm{x}$作为固定条件可以进入每个势；归一化只对$\bm{y}$求和或积分，并要求每个被使用的输入下$0<Z_{\bm{\theta}}(\bm{x})<\infty$。模型没有由此定义输入的联合分布。输出可以离散也可以连续，若采用高斯输出，就要保证相应$\bm{Q}(\bm{x})$对每个允许输入均对称正定。条件随机场等具体形式见第~\ref{chap:pgm-energy-models}章。
+
+局部参数化的边界现在可以明确说明。改变一个势通常会改变$Z$，因而改变多个配置乃至远处变量的边缘概率；“参数放在局部”不等于“分布变化局限于局部”。不同势也可能表示同一分布：乘以一个正常数可被$Z$吸收，而两个共享节点的团之间可以把一个正函数乘入一侧、除到另一侧，使总乘积保持不变。因此参数唯一性需要额外约定，不能由图本身保证。
+
+计算成本同样取决于全局组织方式。高阶团增大局部状态表，环则可能使消元产生更大的中间团；并非一出现环就无法精确计算，四节点环仍可直接核算，但大图的中间因子可能远大于原始势。高斯模型把求和积分化成线性方程求解与行列式计算，稠密情形通常需要$O(d^3)$量级运算，稀疏图能否节省代价仍取决于消元时的填充。无论选择离散表格、二次能量还是输入依赖势，都要同时考虑表达能力、归一化条件与推断成本。
+
+\section{本章小结}
+\label{sec:pgm-undirected-summary}
+
+无向图用条件节点是否阻断路径来承诺独立性。全局、局部与成对Markov性质分别约束集合分离、邻居Markov毯和缺边；一般分布中可靠的蕴含方向是全局到局部再到成对。团因子分解把分离集两侧的函数分别归一化，因此即使存在零概率配置，也仍能推出全局Markov性质。
+
+对有限离散严格正分布，Möbius分解与成对独立性使非团交互项消失，从而得到Hammersley--Clifford逆向结论；零支持反例说明缺少严格正性时该方向可能失效，连续密度还须处理测度、密度版本与可积性。势函数与配分函数共同定义分布，离散和高斯参数也必须满足各自的合法性条件；图语义相同不代表参数化或计算代价相同。第~\ref{chap:pgm-representations}章将据此比较有向图、无向图和因子图的转换边界。

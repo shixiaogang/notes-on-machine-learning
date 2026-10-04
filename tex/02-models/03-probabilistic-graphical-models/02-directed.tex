@@ -1,0 +1,622 @@
+\chapter{有向图模型}
+\label{chap:pgm-directed}
+
+设备报警以后，故障的可能性通常会上升；但若随后发现报警传感器已经失灵，对故障的怀疑又可能减弱。同样是增加一条观测，为什么有时可以隔断变量之间的联系，有时反而会建立联系？回答这个问题，需要同时说明图上的箭头约定了哪些概率关系，以及这些关系在条件化以后怎样改变。
+
+本章沿用第~\ref{chap:pgm-overview}章的设备故障问题，但把建模假设写得更精确。图规定一个变量在给定哪些变量以后，可以不再依赖其余已出现的变量；局部与全局独立性分别考察一个节点的邻域和连接两组节点的所有路径；因子分解则把这些独立性变为联合分布的乘积表示，局部参数化进一步说明怎样用条件概率表或连续条件分布记录每个因子。这里以一个固定顺序下的独立性假设定义模型，陈述它与乘积分解描述同一模型类的结论；全局性质蕴含局部性质的证明随命题给出，其余跨表示证明集中放在第~\ref{sec:pgm-representations-directed-proofs}节。
+
+\section{有向图模型的定义}
+\label{sec:pgm-directed-definition}
+
+设设备有四个二值随机变量：$F$表示故障，$H$表示过热，$A$表示报警，$S$表示传感器失灵，取值$1$表示相应状态出现。图~\ref{fig:pgm-directed-device}只保留$F\to H\to A\leftarrow S$三条箭头。这个选择表达一种简化：预测过热时只使用故障状态，预测报警时只使用过热和传感器状态。它是用于讲解的人工模型，并不是从真实设备统计中验证得到的结构。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-directed-device.tex}
+  \caption{设备故障的有向图。箭头给出局部条件分布允许使用的输入；$F$与$S$是没有父节点的根节点。下方列出两个合法拓扑序，它们改变书写顺序，但没有改变图。}
+  \label{fig:pgm-directed-device}
+\end{figure}
+
+为准确描述这种结构，称$\mathcal{G}=(V,E)$为\term{有向图}（directed graph），其中$V$是有限节点集合，$E$由有序节点对组成；$(i,j)\in E$写作$i\to j$。一条\term{有向路径}（directed path）沿着箭头依次前进，例如$F\to H\to A$。若沿箭头走若干步能回到出发节点，就形成有向环。不含任何有向环的图称为\term{有向无环图}（directed acyclic graph）：依赖关系不能沿箭头绕回自身。本部分如无特殊说明，“有向图”均指没有有向环的图；讨论有环情形时会单独指出。本章不允许自环。
+
+对节点$i$，直接指向它的节点组成\term{父节点}（parent）集合$\operatorname{pa}(i)$，它直接指向的节点组成\term{子节点}（child）集合$\operatorname{ch}(i)$。沿一条长度至少为一的有向路径能够到达$i$的节点称为其\term{祖先}（ancestor），记为$\operatorname{an}(i)$；从$i$沿这样的路径可达的节点称为其\term{后代}（descendant），记为$\operatorname{de}(i)$。这两个集合都不含$i$本身。例如，$\operatorname{pa}(A)=\{H,S\}$、$\operatorname{an}(A)=\{F,H,S\}$，而$\operatorname{de}(S)=\{A\}$。例子中用变量名同时标记对应的节点；一般公式仍区分节点集合$A\subseteq V$与随机向量$\bm{X}_A$。
+
+要按顺序指定变量的条件分布，必须保证所需的父节点已经出现。\term{拓扑序}（topological order）就是让每条箭头都从排在前面的节点指向后面的节点的排列。每个有限有向图都至少存在一个拓扑序，但不一定唯一；图~\ref{fig:pgm-directed-device}中的$F,S,H,A$和$S,F,H,A$都合法。
+
+现在固定一个拓扑序，并按该顺序将节点重新标记为$1,\ldots,d$。节点$i$的\term{前驱集合}（predecessor set）是$\operatorname{pre}(i)=\{1,\ldots,i-1\}$，即在这个固定排列中已经出现的所有节点。父节点必属于前驱，但前驱未必是祖先；两个没有任何路径相连的节点也可以一前一后出现。图的概率假设需要区分“先出现”和“直接作为输入”。
+
+\begin{definition}[有序Markov假设与有向图模型]
+  \label{def:pgm-directed-ordered}
+  给定有向图$\mathcal{G}$及一个固定拓扑序，若联合分布$p$对每个$i\in V$满足
+  \begin{equation}
+    X_i\perp
+    \bm{X}_{\operatorname{pre}(i)\setminus\operatorname{pa}(i)}
+    \mid\bm{X}_{\operatorname{pa}(i)},
+    \label{eq:pgm-directed-ordered}
+  \end{equation}
+  则称它满足该顺序下的\term{有序Markov假设}（ordered Markov assumption）。\term{有向图模型}（directed graphical model）是有向图及其节点随机变量的联合分布，其中该联合分布满足上述假设。文献中传统上也称这类模型为\term{贝叶斯网络}（Bayesian network）；本书统一使用“有向图模型”。
+\end{definition}
+
+式~\eqref{eq:pgm-directed-ordered}的意思是：父节点的取值一旦给定，其余前驱不再提供预测$X_i$所需的信息。这是对整个条件分布的限制，不只是均值不变或相关系数为零。根节点的父集为空，条件化随之省去；前驱也为空时，独立性陈述没有额外内容。对固定顺序$F,S,H,A$，非平凡假设具体为
+\[
+  S\perp F,\qquad H\perp S\mid F,\qquad A\perp F\mid(H,S).
+\]
+单凭这个定义，不能不加论证地换一个拓扑序再调用新的有序假设。只有结合有序性质与因子分解的等价关系，才能推出模型类与所选合法拓扑序无关；完整证明见第~\ref{sec:pgm-representations-directed-proofs}节。
+
+本章用$p$同时表示离散概率质量函数和连续密度。离散情形中，条件分布只在条件事件具有正概率时由联合分布唯一确定；在零质量条件配置上可以任取归一化版本，不能把不存在的条件概率比值当成已定义的数。连续情形假定存在相对于乘积基准测度的联合密度；条件密度等式按条件变量的边缘分布几乎处处理解，不同条件分布版本只能在该边缘分布的零测集上修改。后文证明以有限离散变量的求和写出，密度情形将求和换为积分；非负因子允许按Tonelli定理交换积分次序。本章不要求联合分布严格为正。
+
+有向边表示局部条件分布中允许存在的直接概率依赖，不保证某个特定参数下这种依赖一定非零。箭头也不自动表示因果：用$F$预测$H$的分布，与主动改变$F$会如何改变$H$，是不同问题。因果解释需要额外建模假设，第~\ref{chap:pgm-structure-learning}章再讨论这些假设和识别边界。
+
+\section{有向图的局部独立性}
+\label{sec:pgm-directed-local}
+
+前驱集合依赖排列，图上还存在一个不依赖排列的对象：节点的非后代。记
+\[
+  \operatorname{nd}(i)=V\setminus\bigl(\{i\}\cup\operatorname{de}(i)\bigr).
+\]
+该集合不含节点自身，但包含父节点。一个节点的父节点不能是它的后代，否则会出现有向环。
+
+\begin{definition}[局部Markov性质]
+  \label{def:pgm-directed-local-markov}
+  分布$p$满足有向图$\mathcal{G}$的\term{局部Markov性质}（local Markov property），是指对每个节点$i$，
+  \begin{equation}
+    X_i\perp
+    \bm{X}_{\operatorname{nd}(i)\setminus\operatorname{pa}(i)}
+    \mid\bm{X}_{\operatorname{pa}(i)}.
+    \label{eq:pgm-directed-local-markov}
+  \end{equation}
+\end{definition}
+
+这条性质说，给定父节点后，只要另一个节点不是后代，它就不能再提供关于$X_i$的信息。它没有声称父节点能屏蔽后代：设备故障模型中，知道$F$并不能使$H$与报警$A$独立，因为报警仍提供关于过热的观测线索。
+
+任何合法拓扑序的前驱都是非后代。因此，局部性质通过删去独立性陈述中不需要的变量，可以推出固定顺序下的有序性质；反向却不能仅靠集合包含关系得到。例如，顺序$F,S,H,A$中，$S$的有序性质只写出$S\perp F$，局部性质则写出$S\perp(F,H)$。后者还包含排在$S$之后、但不是$S$后代的$H$。从因子分解推出更大的非后代集合需要祖先边缘化，证明见第~\ref{sec:pgm-representations-directed-proofs}节。
+
+若问题变为“给定哪些变量，就能屏蔽图中所有其他变量”，仅有父节点通常不够。\term{Markov毯}（Markov blanket）是一组这样的屏蔽变量。有向图为节点$i$给出一个标准的图上Markov毯：
+\begin{equation}
+  \begin{aligned}
+    \operatorname{mb}(i)
+    ={}&\operatorname{pa}(i)\cup\operatorname{ch}(i)\\
+       &{}\cup\bigcup_{j\in\operatorname{ch}(i)}
+           \bigl(\operatorname{pa}(j)\setminus\{i\}\bigr).
+  \end{aligned}
+  \label{eq:pgm-directed-blanket}
+\end{equation}
+它由父节点、子节点及子节点的其他父节点组成。图~\ref{fig:pgm-directed-markov-blanket}用$P,C,U$分别标出这三类节点。加入子节点，是因为它们会反映$X_i$；再加入子节点的其他父节点，是因为一旦给定子节点，原本在该子节点处相撞的路径可能打开。毯外节点$O$虽然可以间接影响毯内变量，但在给定整张毯以后不再提供关于$X_i$的额外信息。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-directed-markov-blanket.tex}
+  \caption{有向图中节点$X_i$的Markov毯。青色节点构成$\operatorname{mb}(i)$：$P_1,P_2$是父节点，$C_1,C_2$是子节点，$U_1,U_2$是子节点的其他父节点；虚线节点$O$位于毯外。}
+  \label{fig:pgm-directed-markov-blanket}
+\end{figure}
+
+\begin{theorem}[有向图中的Markov毯]
+  \label{thm:pgm-directed-markov-blanket}
+  设$\mathcal{G}=(V,E)$为有限有向无环图，$p$为节点随机变量$\bm{X}=(X_i)_{i\in V}$的联合分布，且$(\mathcal{G},p)$构成有向图模型。则对每个节点$i\in V$，
+  \[
+    X_i\perp
+    \bm{X}_{V\setminus(\{i\}\cup\operatorname{mb}(i))}
+    \mid\bm{X}_{\operatorname{mb}(i)}.
+  \]
+\end{theorem}
+
+设备模型中$\operatorname{mb}(H)=\{F,A,S\}$，所以虽无$H$与$S$之间的直接边，$S$仍属于$H$的毯。特定分布中可能因参数冗余而存在更小的屏蔽集合，因此式~\eqref{eq:pgm-directed-blanket}给出的是由图结构保证的毯，不保证对每一个具体分布都是最小集合。定理~\ref{thm:pgm-directed-markov-blanket}的证明见第~\ref{sec:pgm-representations-directed-proofs}节。
+
+\section{有向图的全局独立性}
+\label{sec:pgm-directed-global}
+
+局部Markov性质只考察一个节点与非后代，全局Markov性质则同时考察任意两组节点之间的所有路径，因此覆盖的独立性查询更广。在有向图中，全局Markov性质蕴含局部Markov性质，局部性质又蕴含任一固定拓扑序下的有序Markov性质；本节建立全局判断规则并证明这两个蕴含，第~\ref{sec:pgm-directed-ci-to-factor}节再陈述四种表述的等价结论。
+
+\subsection{两个变量之间的四种基本关系}
+\label{sec:pgm-directed-motifs}
+
+局部Markov性质围绕单个节点及其邻域建立屏蔽关系，而全局独立性需要检查连接两组节点的所有路径。进入一般定义以前，先看一条短路径上的四种基本关系。图~\ref{fig:pgm-directed-motifs}判断的是图对所有相容分布保证的独立性；“路径可以传递依赖”不等于任何参数下都实际存在依赖。下面的三节点结论以图中只有所画边为前提。在大图中，它们只说明这一条路径是否被阻断，别的路径仍须检查。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-directed-motifs.tex}
+  \caption{四种基本关系。链和分叉中的中间节点$Z$被给定后阻断该路径；碰撞结构则相反，$Z$及其后代均未给定时路径阻断。直接连接没有内部节点，不能靠给定其他节点阻断这条边。}
+  \label{fig:pgm-directed-motifs}
+\end{figure}
+
+直接连接$X\to Y$没有中间节点。因此，图本身不保证$X\perp Y$；若所选局部分布恰好满足$p(y\mid x)=p(y)$，边存在而依赖仍会消失。第~\ref{sec:pgm-directed-sound-complete}节将给出具体参数，并借此区分模型类完备性与单个分布中的实际依赖。
+
+链式关系$X\to Z\to Y$表示$X$通过中间变量$Z$关联到$Y$。对顺序$X,Z,Y$，有序假设直接给出$Y\perp X\mid Z$。等价的分解为$p(x,z,y)=p(x)p(z\mid x)p(y\mid z)$，其一般证明见第~\ref{sec:pgm-representations-directed-proofs}节；在$p(z)>0$时，它给出
+\[
+  p(x,y\mid z)=p(x\mid z)p(y\mid z).
+\]
+不观测$Z$时，要把不同$z$对应的分布混合起来，这种混合通常保留$X$与$Y$之间的联系。反向画成$X\leftarrow Z\leftarrow Y$时，条件独立结论相同；判断依赖不要求沿箭头从左走到右。
+
+共同原因结构$X\leftarrow Z\to Y$又称分叉。两端共享$Z$，所以不观测$Z$时可能相关；给定$Z$以后，图保证$X\perp Y\mid Z$。例如，令$Z$等概率取$0$或$1$，给定$Z$后$X,Y$独立，而且两者取$1$的概率在$Z=1$时均为$0.9$，在$Z=0$时均为$0.1$。于是$p(X=1)=p(Y=1)=0.5$，但$p(X=1,Y=1)=(0.9^2+0.1^2)/2=0.41\ne0.25$。相关来自混合不同$Z$状态，而不是给定$Z$后仍有剩余关联。
+
+共同结果结构$X\to Z\leftarrow Y$又称碰撞结构，两条箭头在中间节点相遇。此时根节点独立，分解写成$p(x)p(y)p(z\mid x,y)$。对$z$求和得到$p(x,y)=p(x)p(y)$；固定$z$后，因子$p(z\mid x,y)$却可能把两端耦合起来。例如，让$X,Y$为独立公平二值变量，并定义$Z=1$当且仅当至少一个输入为$1$。已知$Z=1$时，$p(X=1\mid Z=1)=2/3$；再知道$Y=1$，这个概率降为$1/2$。$Y$已经可以解释共同结果，因而降低了对$X$的需求。这种现象称为\term{解释消除}（explaining away），即对一个共同结果的不同解释在观测后发生竞争。但竞争方向取决于参数，不能把“观测碰撞节点”直接翻译成“必然负相关”。
+
+若碰撞节点的后代被观测，观测也可能间接提供关于碰撞节点的信息，因此路径可能被打开。例如，在$X\to Z\leftarrow Y$后接$Z\to D$并令$D=Z$，观测$D$等价于观测$Z$；若$D$是有噪声的测量，影响强弱还取决于噪声水平。图只保证在碰撞节点及其所有后代均未被给定时，这条路径被阻断。这里的“共同原因”和“共同结果”用于辨认箭头形状，不是赋予概率图因果语义。
+
+\subsection{d-分离的定义}
+\label{sec:pgm-directed-d-separation}
+
+要判断两组变量之间的独立性，局部邻域还不够。即使一条路径已被观测阻断，另一条路径仍可能连接两端。此处的\term{路径}（path）是忽略箭头方向后，由相邻且互不重复的节点组成的序列；只有明确说“有向路径”时，才要求沿箭头行进。
+
+在一条路径上，若某个内部节点$c$两侧的边都指向它，即出现$\cdots\to c\leftarrow\cdots$，则称$c$是该路径的\term{碰撞节点}（collider），否则称为非碰撞节点。碰撞是相对于路径而言的，同一个节点在一条路径上可能是碰撞节点，在另一条路径上则不是。对节点集$T$，记$\operatorname{an}(T)=\bigcup_{i\in T}\operatorname{an}(i)$，并记$\operatorname{an}^{+}(T)=T\cup\operatorname{an}(T)$。
+
+\begin{definition}[活跃路径与d-分离]
+  \label{def:pgm-directed-d-separation}
+  设$A,B,S\subseteq V$两两不交，且$A,B$非空。一条连接$A$中节点与$B$中节点的路径在给定$S$时\term{活跃}（active），当且仅当它的每个内部非碰撞节点都不属于$S$，且每个内部碰撞节点都属于$\operatorname{an}^{+}(S)$。后一个条件等价于碰撞节点自身或至少一个后代在$S$中。
+
+  若不存在这样的活跃路径，就称$A$与$B$被$S$ \term{d-分离}（d-separated），记作$A\perp_{\mathcal{G}} B\mid S$；否则称为d-连接。
+\end{definition}
+
+图~\ref{fig:pgm-directed-active-path}把两个条件同时画在设备路径上。给定碰撞节点$A$会打开路径，但给定非碰撞节点$H$会阻断路径；两种作用同时出现时，阻断仍然成立。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-directed-active-path.tex}
+  \caption{活跃路径与d-分离。上图只给定碰撞节点$A$，路径$F\to H\to A\leftarrow S$活跃；下图再给定非碰撞节点$H$，唯一的路径被阻断，因而$F\perp_{\mathcal{G}}S\mid(H,A)$。橙色节点表示给定变量，青色实线表示活跃路径，灰色虚线表示被阻断的路径。}
+  \label{fig:pgm-directed-active-path}
+\end{figure}
+
+下标$\mathcal{G}$提示这是图上的判断，而$\bm{X}_A\perp\bm{X}_B\mid\bm{X}_S$是分布中的条件独立。将二者连接起来的\term{全局Markov性质}（global Markov property）要求：对每个两两不交的查询$(A,B,S)$，图中的d-分离都蕴含分布中的相应条件独立。第~\ref{sec:pgm-directed-sound-complete}节会明确，这个蕴含对哪些分布成立。
+
+\begin{lemma}[全局Markov性质蕴含局部Markov性质]
+  \label{lem:pgm-representations-global-to-local}
+  设$\mathcal{G}=(V,E)$为有限有向无环图，$p$为节点随机变量$\bm{X}=(X_i)_{i\in V}$的联合分布。若$p$满足$\mathcal{G}$的全局Markov性质，则$p$也满足该图的局部Markov性质，并进一步满足任一固定拓扑序下的有序Markov性质。
+\end{lemma}
+
+\begin{proof}[引理~\ref{lem:pgm-representations-global-to-local}的证明]
+固定节点$i$，考虑$i$到任一非父非后代节点的路径。若路径从$i$的父节点一侧进入$i$，该父节点是路径内部的非碰撞节点，给定$\operatorname{pa}(i)$便会阻断路径。若路径从$i$的出边开始，则它不可能一直顺着箭头抵达非后代；第一次不能继续沿箭头前进的转折处必为碰撞节点，而且是$i$的后代。该碰撞节点及其后代都不可能属于$\operatorname{pa}(i)$，否则会形成有向环，所以给定父集不会打开它。每条路径都被阻断，因而
+\[
+  i\perp_{\mathcal G}
+  \operatorname{nd}(i)\setminus\operatorname{pa}(i)
+  \mid\operatorname{pa}(i).
+\]
+全局Markov性质据此给出局部Markov性质。任一合法拓扑序中的前驱都是非后代，再从局部独立陈述中边缘化其余非后代，就得到该顺序下的有序Markov性质。
+\end{proof}
+
+设备图中，$F$与$S$之间只有$F\to H\to A\leftarrow S$这一条路径。不给定任何节点时，$A$是未打开的碰撞节点，所以图保证$F\perp S$。给定报警$A$后，$H$仍是未观测的非碰撞节点，而$A$已打开，路径活跃；再给定$H$，路径又在$H$处阻断，因此图保证$F\perp S\mid(H,A)$。如果在图上另加子节点$A\to D$，只观测$D$也会打开$A$，无需直接观测$A$。
+
+这里的条件集合$S$表示“这些变量被给定”，不表示把它们的值设为$1$。d-分离保证一个完整的条件独立陈述，即对允许的条件取值几乎处处成立。某些参数可能只在特定取值下出现额外独立性，那是分布的上下文性质，并不改变图上的d-分离判断。
+
+\subsection{d-分离的可靠性与特定场景下的完备性}
+\label{sec:pgm-directed-sound-complete}
+
+图没有记录条件概率表中的具体数值，所以需要区分两类问题：图中读出的独立性是否对每个相容分布都成立，以及图中没有分离的查询是否至少能在某个相容分布中表现为依赖。记$\mathcal{M}(\mathcal{G})$为定义~\ref{def:pgm-directed-ordered}给出的有向图模型所包含的分布类；第~\ref{sec:pgm-directed-factorization}节将陈述它与按$\mathcal{G}$分解的分布类等价，证明见第~\ref{sec:pgm-representations-directed-proofs}节。
+
+\begin{theorem}[d-分离的可靠性]
+  \label{thm:pgm-directed-soundness}
+  设$\mathcal{G}=(V,E)$为有限有向无环图，$A,B,S\subseteq V$两两不交且$A,B$非空。对每个$p\in\mathcal{M}(\mathcal{G})$，
+  \begin{equation}
+    A\perp_{\mathcal{G}}B\mid S
+    \quad\Longrightarrow\quad
+    \bm{X}_A\perp_p\bm{X}_B\mid\bm{X}_S.
+    \label{eq:pgm-directed-soundness}
+  \end{equation}
+\end{theorem}
+
+\begin{example}[未分离但独立的固定分布]
+  \label{ex:pgm-directed-unseparated-independent}
+  考虑只有一条边$X\to Y$的有向图，并令$X,Y\in\{0,1\}$。取$p(X=0)=p(X=1)=1/2$；对每个$x\in\{0,1\}$，取$p(Y=1\mid X=x)=1/3$和$p(Y=0\mid X=x)=2/3$。由于$X,Y$直接相邻，空集不能d-分离它们。另一方面，边缘化$X$得到$p(Y=1)=1/3$和$p(Y=0)=2/3$，而对所有$x,y\in\{0,1\}$，
+  \[
+    p(X=x,Y=y)
+    =
+    p(X=x)p(Y=y)
+    =
+    \begin{cases}
+      1/6,&y=1,\\
+      1/3,&y=0.
+    \end{cases}
+  \]
+  因此，这个固定分布满足$X\perp Y$，尽管图中$X$与$Y$未被d-分离。
+\end{example}
+
+示例~\ref{ex:pgm-directed-unseparated-independent}只否定固定分布上的反向保证，即不能由图中未分离推出已经选定的相容分布必然不独立。它不否定严格正有限离散模型类和非退化线性高斯模型类中的存在性完备性：对每个未分离查询，后者只要求分别存在至少一个相容分布使相应条件独立不成立。这种较弱的反向结论称为\term{模型类完备性}，也就是图没有把整个模型类都无法实现的依赖错误地排除。
+
+第一个是\term{严格正有限离散模型}：每个变量只取有限多个状态，而且每个完整状态配置的联合概率都大于$0$。固定每个节点的状态空间$\mathcal{X}_i$，其中$|\mathcal{X}_i|\geq2$，记$\mathcal{M}_{\mathrm{disc}}^{+}(\mathcal{G})$为所有严格为正且按$\mathcal{G}$分解的联合质量函数。第二个是\term{非退化线性高斯模型}：每个节点由父节点的线性函数加独立高斯噪声生成，正噪声方差保证联合高斯分布不集中在低维子空间上。记$\mathcal{M}_{\mathrm{LG}}(\mathcal{G})$为所有由方程
+\[
+  X_i=a_i+\sum_{j\in\operatorname{pa}(i)}b_{i,j}X_j+\varepsilon_i
+\]
+定义的分布，其中边系数$b_{i,j}$可取任意实数，噪声$\varepsilon_i$相互独立且满足$\varepsilon_i\sim\mathcal{N}(0,\sigma_i^2)$、$\sigma_i^2>0$。
+
+\Needspace{14\baselineskip}
+\begin{theorem}[d-分离在特定模型类中的完备性]
+  \label{thm:pgm-directed-completeness}
+  设$\mathcal{G}=(V,E)$为有限有向无环图，$A,B,S\subseteq V$两两不交且$A,B$非空。若
+  \[
+    A\not\perp_{\mathcal{G}}B\mid S,
+  \]
+  则分别存在$p_{\mathrm{disc}}\in\mathcal{M}_{\mathrm{disc}}^{+}(\mathcal{G})$与$p_{\mathrm{LG}}\in\mathcal{M}_{\mathrm{LG}}(\mathcal{G})$，使
+  \begin{equation}
+    \bm{X}_A\not\perp_{p_{\mathrm{disc}}}\bm{X}_B\mid\bm{X}_S,
+    \qquad
+    \bm{X}_A\not\perp_{p_{\mathrm{LG}}}\bm{X}_B\mid\bm{X}_S.
+    \label{eq:pgm-directed-completeness}
+  \end{equation}
+\end{theorem}
+
+可靠性与模型类完备性的量词并不对称。可靠性要求图中的每项分离对所有相容分布成立；模型类完备性只要求每项未分离查询至少存在一个不独立的相容分布，而且不同查询可以由不同分布见证。它不声称每个相容分布都在该查询上表现为依赖，因此与前面的固定分布反例并不矛盾。两个定理的证明统一放在第~\ref{sec:pgm-representations-directed-proofs}节。
+
+从一个固定分布中的条件独立反推图结构时，上述额外独立性会造成歧义。为排除这种歧义，需要另加\term{忠实性}（faithfulness）：固定分布中的每项条件独立都必须能由图中的d-分离解释。
+
+\begin{definition}[忠实性]
+  \label{def:pgm-directed-faithfulness}
+  设$p\in\mathcal{M}(\mathcal{G})$。若对每组两两不交且$A,B$非空的$A,B,S\subseteq V$都有
+  \[
+    \bm{X}_A\perp_p\bm{X}_B\mid\bm{X}_S
+    \quad\Longrightarrow\quad
+    A\perp_{\mathcal{G}}B\mid S,
+  \]
+  就称$p$对$\mathcal{G}$是\term{忠实的}（faithful）。结合可靠性，这等价于分布中的条件独立与图中的d-分离对所有查询逐项相同。
+\end{definition}
+
+忠实性不是有向图模型定义的一部分，也不由因子分解自动保证。固定确定性关系、强制参数共享或参数恰好抵消，都可能产生图中没有记录的额外独立性；结构学习若要把观察到的独立性解释为缺边，就必须另外说明为何可以采用忠实性假设。
+
+\subsection{d-分离的检测}
+\label{sec:pgm-directed-d-separation-testing}
+
+d-分离的定义给出了逐条路径的判据，但大图中的路径数可能随图规模迅速增长。实际检测可以直接在有向图上传播有限种到达状态，也可以把当前查询转换为无向图上的连通性问题。
+
+\begingroup
+% tufte-book禁用subsubsection；本节局部沿用其支持的第三级paragraph样式。
+\let\subsubsection\paragraph
+
+\subsubsection{Bayes--ball算法}
+\label{sec:pgm-directed-bayes-ball}
+
+在小图上，最可靠的起步方法是列出路径，逐个标记内部节点的角色，然后检查条件集合。设备图对$F,S$的查询可以汇总为表~\ref{tab:pgm-directed-path-tests}。这张表显示，增加观测既可能打开也可能关闭路径，因此不能采用“观测越多，独立性越多”的单调直觉。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    给定节点 & 路径上的检查 & 图的结论 \\
+    \midrule
+    $\varnothing$ & 碰撞节点$A$未打开 & $F$与$S$分离 \\
+    $\{H\}$ & 非碰撞节点$H$阻断 & $F$与$S$分离 \\
+    $\{A\}$ & $A$打开，$H$未阻断 & $F$与$S$连接 \\
+    $\{H,A\}$ & $A$虽打开，$H$仍阻断 & $F$与$S$分离 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{在$F\to H\to A\leftarrow S$上逐项检查。表中的“连接”只是否定图保证的独立性，不声称任意参数下都不独立。}
+  \label{tab:pgm-directed-path-tests}
+\end{table}
+\FloatBarrier
+
+大图可能有指数多条路径，逐条枚举并不合适。\term{Bayes--ball算法}（Bayes-ball algorithm）不保存整条路径，而是记录“到达哪个节点、从哪一侧到达”这两个信息；相同状态只处理一次，重复路径因而合并。算法~\ref{alg:pgm-directed-bayes-ball}给出只检测d-分离的版本，不利用已知确定性关系额外剪枝，也不计算后验概率。状态$(i,\uparrow)$表示从$i$的子节点一侧到达$i$，状态$(i,\downarrow)$表示从父节点一侧到达$i$。
+
+\begin{algorithm}[Bayes--ball的d-分离检测]
+  \label{alg:pgm-directed-bayes-ball}
+  \begin{algorithmic}[1]
+    \Require 有向图$\mathcal{G}=(V,E)$，两两不交的$A,B,S\subseteq V$，且$A,B$非空
+    \Ensure “d-连接”或“d-分离”
+    \State $R\gets\operatorname{an}^{+}(S)$
+    \State 队列$Q\gets\{(a,\uparrow):a\in A\}$
+    \State 已处理状态集$M\gets\varnothing$
+    \While{$Q$非空}
+      \State 从$Q$取出$(i,\delta)$
+      \If{$(i,\delta)\in M$}
+        \State 转到下一轮循环
+      \EndIf
+      \State $M\gets M\cup\{(i,\delta)\}$
+      \If{$i\in B$}
+        \State \Return d-连接
+      \EndIf
+      \If{$\delta=\uparrow$且$i\notin S$}
+        \State 向$Q$加入$\{(j,\uparrow):j\in\operatorname{pa}(i)\}$
+        \State 向$Q$加入$\{(j,\downarrow):j\in\operatorname{ch}(i)\}$
+      \ElsIf{$\delta=\downarrow$}
+        \If{$i\notin S$}
+          \State 向$Q$加入$\{(j,\downarrow):j\in\operatorname{ch}(i)\}$
+        \EndIf
+        \If{$i\in R$}
+          \State 向$Q$加入$\{(j,\uparrow):j\in\operatorname{pa}(i)\}$
+        \EndIf
+      \EndIf
+    \EndWhile
+    \State \Return d-分离
+  \end{algorithmic}
+\end{algorithm}
+
+从起点使用子侧状态，使搜索能够同时沿入边和出边离开起点。从子侧到达$i$时，只有$i\notin S$才能穿过这个非碰撞位置；此时搜索既可走向父节点，也可走向子节点。从父侧到达$i$时，继续走向子节点同样要求$i\notin S$；转向另一个父节点则在$i$处形成碰撞，所以只要求$i\in R$，也就是$i$自身或其后代被观测。后两个条件彼此独立，可能同时成立。伪码正好实现了活跃路径定义中的两类判断。
+
+对查询$F\perp S\mid A$，$R=\{F,H,A,S\}$。搜索从$F$到$H$，再从父侧到达$A$；$A$虽然被观测，但它属于$R$，搜索仍会转向父节点$S$，于是检测到活跃路径。若条件集合改为$\{H,A\}$，从父侧到达$H$后不能向子节点$A$传播，搜索无法抵达$S$。这里必须记录到达方向，仅用一个“访问过节点”标记会错误合并不同传播状态。
+
+求$R$只需从$S$逆着箭头遍历祖先。主循环中每个节点至多处理两个到达状态，每条边只被这些状态扫描常数次，所以总时间和存储量均为$O(|V|+|E|)$\scite{pgm-directed-shachter1998}
+
+\subsubsection{祖先道德图检测}
+\label{sec:pgm-directed-ancestral-moral-test}
+\label{sec:pgm-directed-undirected-test}
+
+除了直接在有向图上运行Bayes--ball，还可以使用\term{祖先道德图检测}：先保留查询节点$A\cup B\cup S$及其全部祖先，把每个共同子节点的父节点两两相连并去掉箭头方向，再删除条件节点$S$并检查$A$与$B$是否连通。转换必须依赖查询，不能简单地把原图箭头全部擦掉；第~\ref{sec:pgm-representations-ancestral-moralization}节将在比较有向图与无向图时正式定义祖先图和道德图，证明这一检测与d-分离等价，并讨论计算代价。这里的两种方法都只回答结构上的分离查询，不能代替后验概率的数值计算。
+
+\endgroup
+
+\section{有向图中的因子分解}
+\label{sec:pgm-directed-factorization}
+
+\subsection{因子分解的定义}
+\label{sec:pgm-directed-factor-definition}
+
+独立性告诉我们哪些信息可以省去，而存储和计算联合分布需要一个具体表达式。\term{有向因子分解}（directed factorization）把联合分布写成每个节点给定父节点的局部分布之积。局部项不是任意非负函数；对每个父节点配置，它必须是关于当前节点的归一化条件分布。
+
+\begin{definition}[按有向图分解]
+  \label{def:pgm-directed-factorization}
+  给定有限有向图$\mathcal{G}=(V,E)$，其中$V=\{1,\ldots,d\}$。节点$i$取值于可测空间$(\mathcal{X}_i,\mathcal{A}_i)$，其上指定$\sigma$有限基准测度$\mu_i$；记$(\mathcal{X},\mathcal{A})=(\prod_{i\in V}\mathcal{X}_i,\bigotimes_{i\in V}\mathcal{A}_i)$及$\mu=\bigotimes_{i\in V}\mu_i$。设联合分布$p$对$\mu$绝对连续，并仍用$p(\bm{x})$表示其可测密度。对每个节点$i$，选定局部条件质量函数或条件密度版本
+  \[
+    q_i:
+    \mathcal{X}_i\times
+    \prod_{j\in\operatorname{pa}(i)}\mathcal{X}_j
+    \longrightarrow[0,\infty).
+  \]
+  要求$q_i$关于相应乘积$\sigma$代数可测，并对每个父节点配置$\bm{x}_{\operatorname{pa}(i)}$满足
+  \[
+    \int_{\mathcal{X}_i}
+    q_i(x_i\mid\bm{x}_{\operatorname{pa}(i)})\,\mathrm{d}\mu_i(x_i)=1.
+  \]
+  若
+  \begin{equation}
+    p(\bm{x})=\prod_{i=1}^{d}
+      q_i(x_i\mid\bm{x}_{\operatorname{pa}(i)})
+      \qquad\text{$\mu$几乎处处},
+    \label{eq:pgm-directed-factorization}
+  \end{equation}
+  就称$p$按有向图$\mathcal{G}$分解。父集为空时，对应因子$q_i(x_i)$是归一化的边缘质量函数或密度。有限离散变量情形取$\mathcal{A}_i=2^{\mathcal{X}_i}$和计数测度$\mu_i$，上述积分即求和，$p$与$q_i$均为概率质量函数，式~\eqref{eq:pgm-directed-factorization}对每个完整配置$\bm{x}$逐点成立；零质量父配置采用本章约定的归一化条件质量函数版本。连续变量情形中，$q_i$是相对于已指定$\mu_i$的条件密度版本，式~\eqref{eq:pgm-directed-factorization}相对于已定义的乘积测度$\mu$几乎处处成立；在零测集上改变密度版本不改变所表示的分布。
+\end{definition}
+
+上述定义从已经给定的联合分布$p$出发，判断它能否写成局部条件分布的乘积。实际建模时，顺序往往相反：先为每个节点指定一个局部条件函数，此时还没有另外给出联合分布。下面的引理保证两件事：每个局部条件函数按当前节点归一化时，无环图上的乘积是合法联合分布；对包含自身全部祖先的节点子集边缘化掉其余节点后，所得边缘分布仍保持这些节点上的局部分解。引理同时写明这两项保证所需的状态空间、基准测度、可测性和局部归一化条件。
+
+\begin{lemma}[局部归一化与祖先边缘化]
+  \label{lem:pgm-directed-normalization}
+  设$\mathcal{G}=(V,E)$为有限有向无环图，$V=\{1,\ldots,d\}$。节点$i$取值于可测空间$(\mathcal{X}_i,\mathcal{A}_i)$，其上给定$\sigma$有限基准测度$\mu_i$；有限离散变量取计数测度。对每个节点$i$，设局部函数
+  \[
+    q_i:
+    \mathcal{X}_i\times
+    \prod_{j\in\operatorname{pa}(i)}\mathcal{X}_j
+    \longrightarrow[0,\infty)
+  \]
+  关于相应乘积$\sigma$代数可测，并对每个父节点配置满足
+  \[
+    \int_{\mathcal{X}_i}
+    q_i(x_i\mid\bm{x}_{\operatorname{pa}(i)})\,\mathrm{d}\mu_i(x_i)=1.
+  \]
+  相对于乘积测度$\mu=\bigotimes_{i\in V}\mu_i$定义
+  \[
+    q(\bm{x})=\prod_{i\in V}
+    q_i(x_i\mid\bm{x}_{\operatorname{pa}(i)}).
+  \]
+  则$q$归一化，因而是某个联合分布$p$的密度。更一般地，若$W\subseteq V$包含其中每个节点的全部祖先，则$p$关于$\mu_W=\bigotimes_{i\in W}\mu_i$的边缘密度满足
+  \begin{equation}
+    p(\bm{x}_W)=
+    \prod_{i\in W}q_i(x_i\mid\bm{x}_{\operatorname{pa}(i)}).
+    \label{eq:pgm-directed-ancestral-marginal}
+  \end{equation}
+  该等式对$\mu_W$几乎处处成立；有限离散情形中则对每个$\bm{x}_W$逐点成立。
+\end{lemma}
+
+引理~\ref{lem:pgm-directed-normalization}的证明见第~\ref{sec:pgm-representations-directed-proofs}节。如果允许有向环，这个结论一般不成立。例如，在二值环$X\to Y\to X$上令$q_X(x\mid y)=\mathbf{1}\{x=y\}$、$q_Y(y\mid x)=\mathbf{1}\{y=x\}$，每个条件表都已归一化，但乘积在$(0,0)$和$(1,1)$上都等于$1$，总和为$2$。有向无环结构保证可以从末端消元；存在有向环时，这一消元论证不再适用，局部归一化也不足以保证乘积归一化。
+
+设备图的分解为
+\begin{equation}
+  p(f,h,a,s)=p(f)p(s)p(h\mid f)p(a\mid h,s).
+  \label{eq:pgm-directed-device-factor}
+\end{equation}
+采用第~\ref{sec:pgm-directed-discrete}节将完整列出的教学参数，一个具体配置的联合概率为
+\begin{equation}
+  \begin{aligned}
+    &p(F=1,H=1,A=1,S=0)\\
+    &\quad=p(F=1)p(S=0)p(H=1\mid F=1)
+      p(A=1\mid H=1,S=0)\\
+    &\quad=0.1\times0.95\times0.8\times0.9
+      =0.0684.
+  \end{aligned}
+  \label{eq:pgm-directed-device-configuration}
+\end{equation}
+这个例子展示了分解的直接用途：联合表中的一个表项不必单独存储，可以从四个局部表项相乘得到。分解还可以简化边缘化。例如，边缘化报警和传感器得到
+\[
+  \begin{aligned}
+    p(f,h)
+    &=p(f)p(h\mid f)
+      \sum_s p(s)\sum_a p(a\mid h,s)\\
+    &=p(f)p(h\mid f).
+  \end{aligned}
+\]
+这个消元顺序利用了局部归一化。直接把所有变量对任意顺序求和仍会得到同一答案，但中间函数可能更大；第~\ref{chap:pgm-elimination}章将系统讨论这一计算差异。
+
+\subsection{从因子分解到条件独立性}
+\label{sec:pgm-directed-factor-to-ci}
+
+从分解读取局部独立性时，必须先去掉后代。若直接在全联合分布中寻找含$x_i$的项，子节点因子也会包含$x_i$，不能只保留$i$自己的因子。
+
+\begin{theorem}[分解蕴含局部与有序Markov性质]
+  \label{thm:pgm-directed-factor-local}
+  设$\mathcal{G}=(V,E)$为有限有向无环图，$p$为节点随机变量$\bm{X}=(X_i)_{i\in V}$的联合分布。若$p$按$\mathcal{G}$分解，则$p$满足该图的局部Markov性质，并满足该图任一固定拓扑序下的有序Markov性质。
+\end{theorem}
+
+定理~\ref{thm:pgm-directed-factor-local}给出了分解到局部与有序Markov性质的方向。分解还蕴含全局Markov性质，这正是定理~\ref{thm:pgm-directed-soundness}的可靠性结论；这些证明统一放在第~\ref{sec:pgm-representations-directed-proofs}节。
+
+\subsection{从条件独立性到因子分解}
+\label{sec:pgm-directed-ci-to-factor}
+
+现在回到模型最初给出的固定拓扑序。概率链式法则对任意联合分布成立，而有序假设恰好告诉我们怎样缩短每个条件项。
+
+\begin{theorem}[有序假设导出有向分解]
+  \label{thm:pgm-directed-ordered-factor}
+  设$\mathcal{G}=(V,E)$为有限有向无环图，$p$为节点随机变量$\bm{X}=(X_i)_{i\in V}$的联合分布，并采用定义~\ref{def:pgm-directed-factorization}中的有限离散质量函数或连续密度设定。若$p$满足$\mathcal{G}$的某一个固定拓扑序下的有序Markov假设，则$p$按$\mathcal{G}$分解。
+\end{theorem}
+
+定理~\ref{thm:pgm-directed-factor-local}与定理~\ref{thm:pgm-directed-ordered-factor}闭合有序性质、因子分解与局部性质；结合d-分离可靠性以及全局性质蕴含局部性质，得到
+\begin{equation}
+  \begin{aligned}
+    \text{固定拓扑序的有序性质}
+      &\Longleftrightarrow \text{按有向图分解}\\
+      &\Longleftrightarrow \text{局部Markov性质}\\
+      &\Longleftrightarrow \text{全局Markov性质}.
+  \end{aligned}
+  \label{eq:pgm-directed-equivalence}
+\end{equation}
+因而定义时只需选定一个拓扑序；由它得到分解，再由分解得到任一合法拓扑序的有序性质。这个等价关系不要求无向图分解定理中常见的严格正性条件；引理~\ref{lem:pgm-representations-global-to-local}已经证明全局性质到局部性质的方向，其余方向的证明见第~\ref{sec:pgm-representations-directed-proofs}节。
+
+式~\eqref{eq:pgm-directed-equivalence}讨论给定分布是否属于图模型类，不包含定理~\ref{thm:pgm-directed-completeness}的模型类完备性。后者需要为每个未分离查询构造至少一个不独立的相容分布，其证明也放在第~\ref{sec:pgm-representations-directed-proofs}节。
+
+\section{局部参数化}
+\label{sec:pgm-directed-local-parameterization}
+
+因子分解确定了联合分布由哪些局部条件分布相乘得到，但还没有规定这些局部分布怎样表示、估计和采样。本节分别讨论离散变量与连续变量的常用参数化；它们改变局部因子的数值形式，不改变前面建立的图分解语义。
+
+\subsection{离散变量}
+\label{sec:pgm-directed-discrete}
+
+结构和概率语义确定以后，还要选择怎样记录局部分布。若$X_i$有$r_i$个状态，父节点共有$c_i=\prod_{j\in\operatorname{pa}(i)}r_j$种配置，\term{条件概率表}（conditional probability table, CPT）就为每个父配置存储一个长度$r_i$的概率向量。每行非负且和为$1$，所以一个不受额外约束的表有$c_i(r_i-1)$个自由参数。整张网络的参数自由度为
+\begin{equation}
+  m=\sum_{i=1}^{d}(r_i-1)
+       \prod_{j\in\operatorname{pa}(i)}r_j.
+  \label{eq:pgm-directed-cpt-size}
+\end{equation}
+若所有变量最多有$r$个状态、每个节点最多有$k$个父节点，存储完整条件表需要$O(dr^{k+1})$空间。只限制节点数而不限制父集大小，不能保证紧凑表示。
+
+设备模型的所有变量都为二值。两个根节点各需一个参数，$H$有两个父配置，$A$有四个父配置，因此共需$1+1+2+4=8$个参数，而完全不受约束的四变量联合表需要$2^4-1=15$个参数。取以下人工教学数值：
+\[
+  \begin{aligned}
+    p(F=1)&=0.1,& p(S=1)&=0.05,\\
+    p(H=1\mid F=1)&=0.8,&
+    p(H=1\mid F=0)&=0.1.
+  \end{aligned}
+\]
+报警表如表~\ref{tab:pgm-directed-alarm-cpt}所示，取$0$的概率由每行余数给出。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}ccrr@{}}
+    \toprule
+    $h$ & $s$ & $p(A=1\mid h,s)$ & $p(A=0\mid h,s)$ \\
+    \midrule
+    $0$ & $0$ & $0.01$ & $0.99$ \\
+    $1$ & $0$ & $0.90$ & $0.10$ \\
+    $0$ & $1$ & $0.70$ & $0.30$ \\
+    $1$ & $1$ & $0.99$ & $0.01$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{人工构造的报警条件概率表。每个固定$(h,s)$对应一个归一化二值分布，不表示真实设备的测量频率。}
+  \label{tab:pgm-directed-alarm-cpt}
+\end{table}
+
+这些数值可以检验章首提出的观测现象。由局部表，
+\[
+  \begin{aligned}
+    p(H=1)&=0.1\times0.8+0.9\times0.1=0.17,\\
+    p(A=1\mid H=1)&=0.95\times0.9+0.05\times0.99=0.9045,\\
+    p(A=1\mid H=0)&=0.95\times0.01+0.05\times0.7=0.0445,\\
+    p(A=1)&=0.17\times0.9045+0.83\times0.0445=0.1907.
+  \end{aligned}
+\]
+报警后过热的概率为$0.153765/0.1907\approx0.8063$；如果再获知传感器失灵，则
+\[
+  p(H=1\mid A=1,S=1)
+    =\frac{0.17\times0.99}
+      {0.17\times0.99+0.83\times0.7}
+    \approx0.2246.
+\]
+再对未观测的过热状态边缘化，可比较故障的两个后验概率：
+\[
+  \begin{aligned}
+    p(F=1\mid A=1)&=\frac{0.07325}{0.1907}\approx0.3841,\\
+    p(F=1\mid A=1,S=1)&=\frac{0.0932}{0.7493}\approx0.1244.
+  \end{aligned}
+\]
+这些数值展示了同一组参数下的解释消除，图结构则说明为什么这种依赖在给定报警后才被允许。
+
+若有$n$个独立同分布的完整样本$\{\bm{x}_{\ell}\}_{\ell=1}^{n}$，图固定，各局部表参数之间没有共享约束，则对数似然按节点和父配置分开。记$N_{i,a,k}$为父配置等于$a$且$X_i=k$的样本数，$N_{i,a}=\sum_kN_{i,a,k}$，$\theta_{i,a,k}$为对应的条件概率，可得
+\[
+  \begin{aligned}
+    \ell(\bm{\theta})
+       &=\sum_i\sum_a\sum_kN_{i,a,k}\log\theta_{i,a,k},\\
+    \widehat{\theta}_{i,a,k}&=\frac{N_{i,a,k}}{N_{i,a}}.
+  \end{aligned}
+\]
+后一式对$N_{i,a}>0$成立，可由每行概率和为$1$的约束下求极大值得到；$N_{i,a}=0$时数据没有识别该行，不能把$0/0$当成估计值。正伪计数$\alpha_{i,a,k}$给出平滑估计$(N_{i,a,k}+\alpha_{i,a,k})/(N_{i,a}+\sum_k\alpha_{i,a,k})$，它在Dirichlet先验下是后验均值。缺失变量、潜变量及共享参数会改变求解方式，第~\ref{chap:pgm-parameter-learning}章进一步处理。
+
+完整CPT的规模取决于父集与状态数，也取决于局部结构。\term{参数共享}（parameter sharing）让不同条件配置或不同节点复用同一组参数，用更少自由度表达已知对称性，但共享会约束原来的模型类。一个\term{确定性节点}（deterministic node）则由父节点唯一决定，离散局部分布写成$p(x_i\mid\bm{x}_{\operatorname{pa}(i)})=\mathbf{1}\{x_i=g_i(\bm{x}_{\operatorname{pa}(i)})\}$。它允许零概率配置，不影响有向分解的可靠性，却可能产生额外独立性。
+
+若某个父节点只在特定条件下影响子节点，就可以采用\term{上下文特定参数化}（context-specific parameterization），即按部分父节点的取值选择较小的条件表或决策树。例如，另构造一个报警模型，使传感器失灵时$p(A=1\mid H=h,S=1)=0.8$对所有$h$相同，而$S=0$时保留对$H$的依赖。这表示$A\perp H\mid S=1$，但不能推出$A\perp H\mid S$，也不能删除全图中的$H\to A$。利用相同行、确定性规则或树状局部结构可以压缩存储；是否降低推断代价，还取决于算法是否保持这些结构。
+
+分解紧凑也不意味着任意推断都容易。评价一个完整配置只需查每个局部表并相乘；条件推断却通常需要对未观测变量求和，朴素枚举的规模随隐藏变量数指数增长。图上的d-分离检测是线性时间问题，而概率推断的复杂度由消元时产生的中间作用域决定，两者不可混淆。
+
+\subsection{连续变量}
+\label{sec:pgm-directed-continuous}
+
+连续节点不能用有限CPT枚举所有父取值。一种可直接计算的选择是\term{线性高斯条件分布}（linear Gaussian conditional distribution）：父节点决定条件均值的线性部分，剩余不确定性用高斯噪声表示。对每个节点指定
+\begin{equation}
+  \begin{aligned}
+    p(x_i\mid\bm{x}_{\operatorname{pa}(i)})
+      &=\mathcal N\left(
+        x_i;\,a_i+\sum_{j\in\operatorname{pa}(i)}b_{i,j}x_j,\,
+        \sigma_i^2\right),\\
+    \sigma_i^2&>0.
+  \end{aligned}
+  \label{eq:pgm-directed-linear-gaussian}
+\end{equation}
+其中$a_i$是截距，$b_{i,j}$是回归系数，$\sigma_i^2$是条件噪声方差。等价地，可以用相互独立的$\varepsilon_i\sim\mathcal N(0,\sigma_i^2)$写成线性方程。独立噪声是这个生成表示的一部分；若任意让不同节点的噪声相关，就不能继续声称同一组父集已经描述全部依赖。
+
+把全部节点联立为$\bm X=\bm a+\bm B\bm X+\bm\varepsilon$，记$\bm D=\operatorname{diag}(\sigma_1^2,\ldots,\sigma_d^2)$，得到
+\[
+  \begin{aligned}
+    \bm{\mu}&=(\bm I-\bm B)^{-1}\bm a,\\
+    \bm{\Sigma}&=(\bm I-\bm B)^{-1}
+      \bm D\bigl((\bm I-\bm B)^{-1}\bigr)^{\top}.
+  \end{aligned}
+\]
+严格下三角的$\bm B$使$\bm I-\bm B$总可逆，正噪声方差又保证$\bm\Sigma$正定。因此，这组局部高斯分布构成非退化联合高斯分布，不需要另求配分函数。节点$i$只需$|\operatorname{pa}(i)|+2$个参数，故完整参数数目为$|E|+2d$。
+
+例如，令$X_1\sim\mathcal N(0,1)$，$X_2=2X_1+\varepsilon_2$，$X_3=-X_2+\varepsilon_3$，其中$\varepsilon_2,\varepsilon_3$为独立标准高斯噪声且独立于$X_1$。链$1\to2\to3$给出
+\[
+  \bm\Sigma=
+  \begin{pmatrix}
+    1&2&-2\\
+    2&5&-5\\
+    -2&-5&6
+  \end{pmatrix}.
+\]
+两端边缘协方差为$-2$，但给定$X_2$后为$-2-2(1/5)(-5)=0$，符合链的d-分离。这里从零条件协方差推出条件独立依赖联合高斯性，一般非高斯分布不能只靠协方差检验独立。
+
+在完整样本、固定图和互不共享参数的条件下，式~\eqref{eq:pgm-directed-linear-gaussian}的极大似然估计就是逐节点对父变量作带截距的最小二乘回归，残差平方和除以$n$得到噪声方差估计。设计矩阵满列秩时回归系数唯一；秩不足时需要约束或正则化。若残差完全为零且仍允许$\sigma_i^2$趋向零，非退化高斯模型内的似然可能没有有限最大值，不能把这种退化略去。线性均值与恒定条件方差也可能无法描述非线性、异方差或多峰数据，此时可以换局部分布，有向图的分解语义本身不变。
+
+实际任务还可能混合离散状态与连续测量。\term{条件线性高斯模型}（conditional linear Gaussian model, CLG）为每一种离散父配置设置一套线性高斯参数。记$D_i$与$C_i$分别为连续节点$i$的离散父集和连续父集。固定离散父配置$\bm X_{D_i}=\bm u$时，局部分布与条件均值为
+\[
+  \begin{aligned}
+    p(x_i\mid\bm u,\bm{x}_{C_i})
+      &=\mathcal N\bigl(
+        x_i;\,\mu_i(\bm u,\bm x_{C_i}),\sigma_{i,\bm u}^2\bigr),\\
+    \mu_i(\bm u,\bm x_{C_i})
+      &=a_{i,\bm u}+\bm b_{i,\bm u}^{\top}\bm{x}_{C_i}.
+  \end{aligned}
+\]
+标准CLG要求离散节点只有离散父节点，而连续节点可以有两类父节点；每个固定离散配置内的噪声方差为正，且不随连续父取值改变。这样，给定全部离散变量后，连续变量的联合分布是高斯分布。对离散变量求和后，则通常得到高斯混合，而不是单个高斯。若允许连续父节点指向采用逻辑回归条件分布的离散节点，仍能得到合法有向图模型，但已经超出这里的标准CLG类。它的推断不能直接套用“给定离散状态即高斯”的封闭计算规则；相关模型范围可参见Koller与Friedman教材的第5章\scite{pgm-koller2009}
+
+离散父配置多时，CLG参数同样会膨胀。每个连续节点的自由参数数目为$\bigl(\prod_{j\in D_i}r_j\bigr)(|C_i|+2)$，所以高斯局部分布并未自动消除离散组合的指数规模。高斯条件化可以用线性代数计算，但对许多未知离散配置求和仍可能需要指数多个混合分量。
+
+局部分布还有一个直接用途：生成完整样本。\term{祖先采样}（ancestral sampling）按拓扑序取样，保证采样一个节点时，它的所有父节点值已经生成。
+\begin{algorithm}[有向图上的祖先采样]
+  \label{alg:pgm-directed-ancestral-sampling}
+  \begin{algorithmic}[1]
+    \Require 一个有向图、归一化局部条件分布及拓扑序$1,\ldots,d$
+    \Ensure 一个来自联合分布$p$的完整样本$\bm{x}$
+    \For{$i=1,\ldots,d$}
+      \State 读取已生成的父取值$\bm{x}_{\operatorname{pa}(i)}$
+      \State 从$p(x_i\mid\bm{x}_{\operatorname{pa}(i)})$采样$x_i$
+    \EndFor
+    \State \Return $\bm{x}$
+  \end{algorithmic}
+\end{algorithm}
+由式~\eqref{eq:pgm-directed-factorization}，算法输出服从各局部条件分布共同定义的联合分布。拓扑排序需$O(d+|E|)$时间；一次完整采样的实际成本为拓扑遍历加上各节点局部采样成本。若表行选择和局部采样均可常数时间完成，就是线性遍历；线性高斯节点计算条件均值共需$O(d+|E|)$时间。不能对任意复杂局部分布都默认常数采样成本。
+
+例如，在设备模型的顺序$F,S,H,A$下，依次取四个独立均匀数$0.08$、$0.40$、$0.60$和$0.85$。对二值节点，均匀数小于当前取$1$的概率时置$1$，否则置$0$。这次采样得到$F=1$、$S=0$、$H=1$、$A=1$，其联合概率就是式~\eqref{eq:pgm-directed-device-configuration}计算的$0.0684$。若目标是给定$A=1$后采样故障，就不能跳过报警采样而强行把$A$固定为$1$，仍按先验生成其父节点；那样不会得到后验分布。可以对完整样本拒绝不符合证据者，或使用第~\ref{chap:pgm-sampling}章的条件采样方法。祖先采样描述的是联合分布的一种概率生成顺序，不自动等于物理世界的因果生成机制。
+
+\section{本章小结}
+\label{sec:pgm-directed-summary}
+
+章首的报警问题包含两种不同的概率操作。给定链上的中间变量，可以屏蔽两端的联系；给定共同结果或其后代，却可能让原来独立的解释相互关联。d-分离把这个差异推广到所有路径，判断依据是路径内部节点的角色以及条件集合，而不只是箭头能否从一端指向另一端。
+
+有向图模型的定义只要求一个固定拓扑序下的有序Markov假设。链式法则把它转换为局部条件分布之积；祖先边缘化再从乘积分解导出局部独立性，d-分离的可靠性则导出全局独立性。反过来，全局性质包含局部性质，局部性质又包含固定顺序的有序性质，四种表述因此等价。这个闭合关系说明，图结构既能筛选相容分布，也能指导归一化、采样和计算；本章给出全局性质蕴含局部性质的图论证明，其余跨表示证明见第~\ref{sec:pgm-representations-directed-proofs}节。
+
+图没有记录参数数值。可靠性保证所有相容分布遵守图中的d-分离，完备性只保证每个未分离查询都能在充分丰富的模型类中找到不独立的反例；特定参数的抵消、确定性或上下文限制仍可能产生额外独立性。离散条件表和连续条件分布把模型变为可用的数值对象，但局部表示紧凑、结构检测容易，都不保证条件推断容易。
+
+本章的乘积由归一化局部分布和无环顺序共同保证合法。若相互作用更适合用没有方向的邻接关系描述，就不能继续依靠末端节点逐项归一化。第~\ref{chap:pgm-undirected}章将从无向分离出发，讨论相应的全局归一化、因子分解及其成立条件。

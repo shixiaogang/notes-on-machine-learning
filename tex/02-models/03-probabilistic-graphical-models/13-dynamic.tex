@@ -1,0 +1,669 @@
+\chapter{动态有向模型与状态空间模型}
+\label{chap:pgm-dynamic}
+
+一台设备连续两次报警，与只在某个时刻报警，提供的信息并不相同。设备状态通常不会在相邻时刻完全重置，传感器却可能偶尔误报。要判断设备现在是否异常，需要把历史判断和新观测合起来；要事后追查故障从何时开始，还需要让后来的证据反过来修正早先的判断。这里的核心问题是：怎样表示随时间演化的不确定性，又怎样避免每收到一个观测就从头处理整个历史？
+
+第~\ref{chap:pgm-directed}章的有向分解给出模型的组织方式，第~\ref{chap:pgm-elimination}章与第~\ref{chap:pgm-junction-tree}章的消元和消息传递给出计算基础。本章把这些工具放到时间轴上：共同表示说明哪些信息必须跨时刻传递，离散状态与连续状态则决定传递的信息能否用有限概率表或高斯参数精确保存。状态不可见时，推断得到的后验统计量又会成为参数学习的输入。
+
+本章的时间可以是物理采样时刻，也可以是有明确前后关系的序列位置；它描述任务或系统本身的状态演化。第~\ref{chap:pgm-energy-models}章的序列条件随机场直接建模给定观测后的标签分布；它虽然也利用序列结构，关注的却是条件预测，而非任务或系统状态本身的演化。第~\ref{chap:pgm-generative}章的扩散模型沿人为设定的噪声过程构造生成分布，其时间含义也与设备运行时间不同。
+
+\section{动态有向模型的共同形式}
+\label{sec:pgm-dynamic-common}
+
+若把每个时刻的依赖都画成一张独立的有向图，就会重复大量相同结构。\term{动态有向图模型}（dynamic Bayesian network, DBN）用一个可重复展开的有向图模板描述序列中的依赖：同一时刻内部可以有依赖，相邻时刻之间也可以有依赖。它是组织动态模型的共同表示，不是与隐马尔可夫模型、状态空间模型并列的另一种特定分布。
+
+设第$t$个\term{时间切片}（time slice）包含随机向量$\bm{Y}_t=(Y_{t,1},\ldots,Y_{t,d})^\top$，即在同一时刻需要描述的$d$个变量，其中一些可见，另一些隐藏。为简化表示，先假设跨切片的边只从$t-1$指向$t$。令$\operatorname{pa}^{-}(i)$表示上一切片中指向当前节点$i$的节点索引集，$\operatorname{pa}^{0}(i)$表示当前切片内部的父节点索引集，则转移模板写成
+\begin{equation}
+  p(\bm{y}_t\mid\bm{y}_{t-1})
+  =\prod_{i=1}^{d}
+    p\bigl(y_{t,i}\mid
+      \bm{y}_{t-1,\operatorname{pa}^{-}(i)},
+      \bm{y}_{t,\operatorname{pa}^{0}(i)}\bigr).
+  \label{eq:pgm-dynamic-two-slice}
+\end{equation}
+切片内的图必须无环。按时间排序，再按每个切片内部的拓扑序排序，就得到展开图的拓扑序，因此任意有限长度$T$的展开都是有向图。初始切片需要另给分布$p(\bm{y}_1)$；只有转移模板还不能确定整条序列的分布。\term{两切片动态有向图模型}（two-slice temporal Bayesian network, 2TBN）描述的正是式~\eqref{eq:pgm-dynamic-two-slice}中的这段重复结构。
+
+最常用的简化是把所有影响未来的内部信息集中为潜状态$\bm{z}_t$，并用$\bm{x}_t$表示观测。状态是模型为了描述未来而保留的变量，不一定等于某个直接可测的物理量。假设给定$\bm{z}_{t-1}$后，$\bm{z}_t$不再依赖更早的状态；给定全部状态后，各时刻观测条件独立，且$\bm{x}_t$只依赖$\bm{z}_t$。由此得到\term{状态空间模型}（state space model, SSM），即用状态转移与观测产生两个局部机制描述序列：
+\begin{equation}
+  \begin{aligned}
+    p(\bm{z}_{1:T},\bm{x}_{1:T})
+      &=p(\bm{z}_1)p(\bm{x}_1\mid\bm{z}_1)\\
+      &\quad{}\times\prod_{t=2}^{T}
+        p(\bm{z}_t\mid\bm{z}_{t-1})
+        p(\bm{x}_t\mid\bm{z}_t).
+  \end{aligned}
+  \label{eq:pgm-dynamic-state-space}
+\end{equation}
+这与第~\ref{sec:pgm-sampling-smc}节为粒子滤波引入的联合分解相同，仍以$\bm{z}_t$表示潜状态、$\bm{x}_t$表示观测；本章进一步研究哪些分布能精确递推，以及怎样学习转移和观测参数。本章用$p$统一表示概率质量函数或相对于相应测度的密度；离散状态下的积分应改成求和。小写粗体在分布表达式中表示状态与观测向量，标量离散模型则明确使用随机变量$Z_t,X_t$及其取值$z_t,x_t$。图~\ref{fig:pgm-dynamic-template}把这一模板展开为三个时刻；每个潜状态承担两种作用，一种是影响当前观测，另一种是向未来传递信息。一般DBN还可以包含观测间的边或更复杂的切片内依赖，因而式~\eqref{eq:pgm-dynamic-state-space}只是它的重要特例。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-dynamic-template}
+  \caption{状态空间模型的有限展开。空心节点表示潜状态，填色节点表示观测；竖直虚线区分时间切片。消去过去后，当前潜状态上的后验分布是继续预测所需的信息，图中箭头表示生成依赖而不是推断只能进行的方向。}
+  \label{fig:pgm-dynamic-template}
+\end{figure}
+
+“只依赖上一步”与“过程没有长期记忆”不能画等号。\term{Markov假设}（Markov assumption）约束的是给定所选状态后的条件分布；状态本身可以包含历史。若原始状态满足$r$阶依赖$p(\bm{z}_t\mid\bm{z}_{t-r:t-1})$，把最近$r$个状态拼成扩充状态，就能改写为一阶模型，但状态空间随之扩大。观测过程也未必是一阶Markov过程，因为观测只间接反映状态，整个观测历史仍可能改变当前状态的后验。
+
+另一组容易混淆的条件是转移机制不变与分布不变。\term{时间齐次性}（time homogeneity）要求转移核不随$t$改变；\term{参数共享}（parameter sharing）要求多个位置复用同一组参数，既可以作用于转移，也可以作用于观测。即使共享参数，若条件分布还显式依赖时间或已知外部输入，其数值也未必时间齐次。\term{严格平稳性}（strict stationarity）则要求任意有限组时刻的联合分布在整体平移后不变。齐次Markov链还需要从平稳分布初始化，才能得到平稳过程。例如，每次都按同一个规则升温的设备仍可从冷启动逐渐进入热状态，其转移参数不变，边缘分布却在变化。
+
+序列能够递推处理，原因不只是图画成了一条链，而是过去与未来之间存在有限的\term{时间接口}（temporal interface）：在一个时间分界处，所有跨界依赖必须经过的变量集合。对一阶状态空间模型，给定$\bm{z}_t$即可分开更早的变量与未来变量。对一般DBN，可取当前切片中具有下一切片子节点的变量作为接口，并在消元时保留它们的联合分布。接口包含多个变量时，只保存各自边缘通常不够，因为过去证据可能使它们相关。离散接口的联合状态数、连续接口的后验表达形式，才是递推是否廉价的关键；这与第~\ref{chap:pgm-elimination}章的诱导宽度问题一致。DBN的图模板、接口与精确推断之间的关系可参见Koller和Friedman的论述\scite{pgm-koller2009}
+
+在同一个模型上，不同任务使用的证据范围不同。\term{预测}（prediction）计算$p(\bm{z}_{t+h}\mid\bm{x}_{1:t})$或$p(\bm{x}_{t+h}\mid\bm{x}_{1:t})$，其中$h\geq1$；它回答尚未观测的未来可能怎样。\term{滤波}（filtering）计算$p(\bm{z}_t\mid\bm{x}_{1:t})$，只用当前及过去的信息判断当前状态。\term{平滑}（smoothing）计算$p(\bm{z}_t\mid\bm{x}_{1:T})$，其中$t<T$，允许后来的观测修正早先的判断。固定间隔平滑在长度为$T$的整段数据上工作，固定滞后平滑则只等待预定的若干步未来观测。
+
+若任务必须输出一条完整解释，还可以求\term{最可能状态序列}（most probable state sequence），即最大化$p(\bm{z}_{1:T}\mid\bm{x}_{1:T})$的整条路径。所有潜状态都被最大化时，这是第~\ref{chap:pgm-elimination}章的MPE查询；若只最大化部分状态而对其余状态积分或求和，则变成边缘MAP问题。逐时刻选择平滑边缘中概率最大的状态，优化的是各位置的错误数，不一般等于整条路径的联合最优解。连续状态下最大化的是所选坐标与基准测度下的后验密度，而不是某一点的正概率。
+
+这些查询共享同一个递推起点。记$f_{t-1}(\bm{z}_{t-1})=p(\bm{z}_{t-1}\mid\bm{x}_{1:t-1})$，先对旧状态边缘化，再用当前观测做Bayes更新，得到
+\begin{equation}
+  \begin{aligned}
+    f_t^{-}(\bm{z}_t)
+      &=\int p(\bm{z}_t\mid\bm{z}_{t-1})
+        f_{t-1}(\bm{z}_{t-1})\,\mathrm{d}\bm{z}_{t-1},\\
+    c_t
+      &=\int p(\bm{x}_t\mid\bm{z}_t)
+        f_t^{-}(\bm{z}_t)\,\mathrm{d}\bm{z}_t,\\
+    f_t(\bm{z}_t)
+      &=\frac{p(\bm{x}_t\mid\bm{z}_t)
+        f_t^{-}(\bm{z}_t)}{c_t}.
+  \end{aligned}
+  \label{eq:pgm-dynamic-bayes-filter}
+\end{equation}
+初始化为$f_1^{-}=p(\bm{z}_1)$，且要求每个$c_t$有限并大于零。这里$c_t=p(\bm{x}_t\mid\bm{x}_{1:t-1})$是一步预测观测的概率或密度，所以$\log p(\bm{x}_{1:T})=\sum_{t=1}^{T}\log c_t$。递推不仅给出状态后验，也直接给出训练与模型比较所需的观测似然。接下来的模型差别，正是这些积分能否精确计算，以及计算结果是否仍能用固定大小的对象表示。
+
+\section{离散状态演化模型}
+\label{sec:pgm-dynamic-discrete}
+
+先考虑状态可以直接读出的设备，例如每次巡检都能可靠记录设备处于正常或异常状态。令$Z_t\in\{1,\ldots,K\}$，初始概率为$\pi_i=p(Z_1=i)$，齐次转移矩阵$\bm{A}\in\mathbb{R}^{K\times K}$的元素为
+\[
+  a_{i,j}=p(Z_t=j\mid Z_{t-1}=i),\qquad
+  a_{i,j}\geq0,\quad \sum_{j=1}^{K}a_{i,j}=1.
+\]
+每一行描述从一个当前状态出发，下一时刻如何分配概率。满足$p(z_t\mid z_{1:t-1})=p(z_t\mid z_{t-1})$的过程称为\term{Markov链}（Markov chain）。本节先讨论有限状态、离散时间、齐次的情形，初始概率向量$\bm{\pi}$取列向量形式。
+
+令$\bm{q}_t$为$Z_t$的概率列向量，对中间状态求和便得到$\bm{q}_{t+1}=\bm{A}^{\top}\bm{q}_t$；反复应用这一关系得到
+\begin{equation}
+  \bm{q}_{t+h}=(\bm{A}^{\top})^h\bm{q}_t,\qquad
+  p(Z_{t+h}=j\mid Z_t=i)=(\bm{A}^h)_{i,j}.
+  \label{eq:pgm-dynamic-markov-prediction}
+\end{equation}
+矩阵幂并不是额外的概率假设：两步转移的元素$\sum_k a_{i,k}a_{k,j}$枚举了所有中间状态，$h$步形式由归纳得到。
+
+\begin{example}[两状态设备的多步预测]
+  \label{ex:pgm-dynamic-markov}
+  以下另设一组人工教学参数，状态$1$表示正常，状态$2$表示异常。这不是四节点报警模型的时间展开；与例~\ref{ex:pgm-sampling-filter}相比，状态编号和初始分布也不同，后面的发射参数将独立给定：
+  \[
+    \bm{\pi}=\begin{pmatrix}0.8\\0.2\end{pmatrix},\qquad
+    \bm{A}=
+    \begin{pmatrix}0.9&0.1\\0.2&0.8\end{pmatrix}.
+  \]
+  若当前确定正常，下一步异常概率为$0.1$，两步后异常概率为$0.9\times0.1+0.1\times0.8=0.17$。若当前异常概率为$u_t$，则
+  \[
+    u_{t+1}=0.1(1-u_t)+0.8u_t=0.1+0.7u_t.
+  \]
+  因而$u_{t+h}=1/3+0.7^h(u_t-1/3)$。初始信息随预测步数增加逐渐减弱，异常概率趋向$1/3$，并不趋向转移矩阵中的任意单个元素。
+\end{example}
+
+不随转移改变的分布$\bm{\pi}_{\star}$称为\term{平稳分布}（stationary distribution），满足$\bm{A}^{\top}\bm{\pi}_{\star}=\bm{\pi}_{\star}$且分量非负、总和为$1$。例~\ref{ex:pgm-dynamic-markov}中，它是$(2/3,1/3)^\top$。有限链若\term{不可约}（irreducible），即任意两个状态之间都有正概率的有限步路径，则平稳分布唯一；再加\term{非周期性}（aperiodicity），即返回某状态的可能步数的最大公约数为$1$，从任意初始分布出发的$\bm{q}_t$都会收敛到$\bm{\pi}_{\star}$。这里的\term{遍历性}（ergodicity）需要结合所指结论理解：有限不可约链的时间平均满足遍历大数定律，而逐步分布收敛还需要排除周期。
+
+这一条件差别可以直接检验。转移矩阵$\bigl(\begin{smallmatrix}0&1\\1&0\end{smallmatrix}\bigr)$具有唯一平稳分布$(1/2,1/2)^\top$，但从状态$1$开始，逐步分布一直交替，不能收敛；每个状态的长期出现频率却趋向$1/2$。若$\bm{A}$为单位矩阵，各状态均吸收，平稳分布又不唯一。一般有限链结论来自不可约随机矩阵的谱与遍历理论，第~\ref{chap:pgm-sampling}章已在Markov链采样背景下说明相关条件；本章不把它们推广为任意连续状态过程的无条件结论。
+
+状态全部可见时，参数学习退化为计数。令$n_{i,j}$为训练序列中$i\to j$的转移次数，完整数据转移对数似然为$\sum_{i,j}n_{i,j}\log a_{i,j}$。在每行总和为$1$的约束下求极值得到$\widehat a_{i,j}=n_{i,j}/\sum_k n_{i,k}$。若一行从未被访问，这一行不能由数据估计；可使用先验或保留原值，但不能把$0/0$当成估计。多条独立序列应各自计数，不能把一条序列的结尾与另一条的开头当作真实转移。初始分布同样由各序列首状态估计，而非由全部状态出现频率估计。
+
+实际设备的内部状态通常不可直接读取，只能看到报警或温度等输出。为此，在Markov链下方加入观测层：\term{隐马尔可夫模型}（hidden Markov model, HMM）用一个不可见的有限状态链生成观测，每个状态拥有自己的\term{发射分布}（emission distribution），即该状态下会产生哪些观测。记$b_j(x)=p(x\mid Z_t=j)$为该条件分布在$x$处的概率质量或密度，则
+\begin{equation}
+  p(z_{1:T},x_{1:T})
+    =\pi_{z_1}b_{z_1}(x_1)
+      \prod_{t=2}^{T}a_{z_{t-1},z_t}b_{z_t}(x_t).
+  \label{eq:pgm-dynamic-hmm}
+\end{equation}
+“离散”限定的是隐藏状态，不要求观测离散：报警可以用Bernoulli分布，温度可以用状态相关的高斯密度。对照第~\ref{chap:pgm-static-directed}章的混合模型，HMM增加的是相邻潜类别之间的依赖；各时刻不再独立抽取混合成分。
+
+若枚举全部状态路径，求$p(x_{1:T})$需要处理$K^T$个配置。链式分解允许把所有具有同一末状态的前缀合并。定义未归一化前向消息$\alpha_t(j)=p(x_{1:t},Z_t=j)$，从
+\[
+  \alpha_t(j)
+    =b_j(x_t)\sum_i
+      p(x_{1:t-1},Z_{t-1}=i)a_{i,j}
+\]
+得到递推
+\begin{equation}
+  \begin{aligned}
+    \alpha_1(j)&=\pi_jb_j(x_1),\\
+    \alpha_t(j)&=b_j(x_t)\sum_{i=1}^{K}
+      \alpha_{t-1}(i)a_{i,j},\\
+    p(x_{1:T})&=\sum_j\alpha_T(j).
+  \end{aligned}
+  \label{eq:pgm-dynamic-forward}
+\end{equation}
+推导中的求和消去了$Z_{t-1}$，而更早状态已经包含在$\alpha_{t-1}$中。初始式直接成立，递推式保持$\alpha_t$的概率含义，因此也给出了算法正确性的归纳论证。滤波概率就是$\alpha_t(j)/\sum_i\alpha_t(i)$。
+
+事后判断早期状态还需要把未来观测的影响传回来。定义后向消息$\beta_t(i)=p(x_{t+1:T}\mid Z_t=i)$；未来为空时$\beta_T(i)=1$。对下一状态求和得到
+\begin{equation}
+  \begin{aligned}
+    \beta_t(i)&=\sum_{j=1}^{K}
+      a_{i,j}b_j(x_{t+1})\beta_{t+1}(j),\\
+    \gamma_t(i)&:=p(Z_t=i\mid x_{1:T})
+      =\frac{\alpha_t(i)\beta_t(i)}{L},\\
+    \xi_t(i,j)&:=p(Z_t=i,Z_{t+1}=j\mid x_{1:T})\\
+      &=\frac{\alpha_t(i)a_{i,j}b_j(x_{t+1})
+        \beta_{t+1}(j)}{L},
+  \end{aligned}
+  \label{eq:pgm-dynamic-backward}
+\end{equation}
+其中$L=p(x_{1:T})>0$。给定$Z_t$后，过去观测与未来观测条件独立，所以$\alpha_t\beta_t$恰好组合了互不重叠的两部分证据。这就是\term{前向--后向算法}（forward--backward algorithm）：前向消去过去，后向压缩未来，再在目标时刻相遇。$\gamma_t$适合单时刻平滑，$\xi_t$保留相邻状态的联合后验，是学习转移参数所需的量。
+
+长序列直接相乘容易数值下溢。可每步归一化，令$\widehat\alpha_t(j)=p(Z_t=j\mid x_{1:t})$，以未归一化更新的总和作为$c_t$。后向也要匹配这一缩放：取$\widehat\beta_T=1$，递推时将$\sum_j a_{i,j}b_j(x_{t+1})\widehat\beta_{t+1}(j)$除以$c_{t+1}$。于是$\gamma_t(i)=\widehat\alpha_t(i)\widehat\beta_t(i)$，而$\xi_t$的缩放分母为$c_{t+1}$。也可在对数域使用稳定的对数求和计算。若$c_t=0$，模型认为当前观测前缀不可能，此时不能继续除法，更不能用任意均匀后验掩盖模型与数据的冲突。
+
+\begin{algorithm}[缩放的HMM前向--后向递推]
+  \label{alg:pgm-dynamic-forward-backward}
+  \begin{algorithmic}[1]
+    \Require $\bm{\pi},\bm{A},b_j$与观测$x_{1:T}$，$T\geq1$
+    \Ensure 似然对数、平滑概率$\gamma_t$与成对概率$\xi_t$
+    \State $u_1(j)\gets\pi_jb_j(x_1)$，$c_1\gets\sum_j u_1(j)$
+    \State 若$c_1=0$，报告观测不在模型支撑内并终止
+    \State $\widehat\alpha_1(j)\gets u_1(j)/c_1$
+    \For{$t=2,\ldots,T$}
+      \State $u_t(j)\gets b_j(x_t)\sum_i\widehat\alpha_{t-1}(i)a_{i,j}$
+      \State $c_t\gets\sum_j u_t(j)$；若$c_t=0$则报告并终止
+      \State $\widehat\alpha_t(j)\gets u_t(j)/c_t$
+    \EndFor
+    \State $\widehat\beta_T(i)\gets1$，$\gamma_T(i)\gets\widehat\alpha_T(i)$
+    \For{$t=T-1,\ldots,1$}
+      \State $\widehat\beta_t(i)\gets
+        \sum_j a_{i,j}b_j(x_{t+1})\widehat\beta_{t+1}(j)/c_{t+1}$
+      \State $\gamma_t(i)\gets\widehat\alpha_t(i)\widehat\beta_t(i)$
+      \State $\xi_t(i,j)\gets
+        \widehat\alpha_t(i)a_{i,j}b_j(x_{t+1})
+        \widehat\beta_{t+1}(j)/c_{t+1}$
+    \EndFor
+    \State 返回$\sum_t\log c_t$及上述后验统计量
+  \end{algorithmic}
+\end{algorithm}
+
+算法~\ref{alg:pgm-dynamic-forward-backward}对密集转移矩阵的时间复杂度为$O(TK^2)$，另加发射概率求值成本。只做在线滤波时，消息工作内存为$O(K)$；保存全部前向消息再做平滑需$O(TK)$内存。若只为EM累计转移计数，$\xi_t$可以边算边累加，无须保存$T$张$K\times K$表。稀疏转移可以只遍历允许的边，但状态数增大仍会增加代价。
+
+\begin{example}[报警证据怎样改变过去的判断]
+  \label{ex:pgm-dynamic-hmm}
+  沿用例~\ref{ex:pgm-dynamic-markov}的$\bm{\pi}$和$\bm{A}$，令$X_t=1$表示报警，设$b_1(1)=0.1$、$b_2(1)=0.7$。这两个概率同样只是教学设定。对观测$x_{1:3}=(0,1,1)$，前向消息依次为
+  \[
+    \begin{aligned}
+      \bm{\alpha}_1&=(0.72,0.06)^\top,\\
+      \bm{\alpha}_2&=(0.066,0.084)^\top,\\
+      \bm{\alpha}_3&=(0.00762,0.05166)^\top.
+    \end{aligned}
+  \]
+  例如第二步正常状态的权重为$(0.72\times0.9+0.06\times0.2)\times0.1=0.066$。总似然为$0.05928$；后向消息为$\bm{\beta}_3=(1,1)^\top$、$\bm{\beta}_2=(0.16,0.58)^\top$和$\bm{\beta}_1=(0.055,0.328)^\top$。因此，第一个时刻的异常滤波概率为$0.06/0.78\approx0.0769$，异常平滑概率却为$0.06\times0.328/0.05928\approx0.3320$。后来的连续报警，使“此前已经异常但暂未报警”成为更可信的解释。
+\end{example}
+
+表~\ref{tab:pgm-dynamic-hmm-example}汇总同一组数据上的判断。平滑利用更多证据，不保证每次都把某个指定状态的概率推向同一方向；本例的方向来自两次报警与异常状态的较高持续概率。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{ccrr}
+    \toprule
+    时刻$t$ & 报警$x_t$ & 异常滤波概率 & 异常平滑概率 \\
+    \midrule
+    $1$ & $0$ & $0.076923$ & $0.331984$ \\
+    $2$ & $1$ & $0.560000$ & $0.821862$ \\
+    $3$ & $1$ & $0.871457$ & $0.871457$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{人工设备模型的后验比较。滤波列只使用截至该时刻的观测，平滑列均使用$x_{1:3}$；末时刻两者相同。}
+  \label{tab:pgm-dynamic-hmm-example}
+\end{table}
+
+若需要整条路径的联合最优解，把前向递推中的求和替换成最大值还不够，还要记录每次最大值来自哪个前驱。定义$\delta_t(j)$为所有以$j$结尾的路径中最大的联合概率$p(z_{1:t},x_{1:t})$，得到\term{Viterbi算法}（Viterbi algorithm），它保留每个末状态下的最优前缀：
+\begin{equation}
+  \begin{aligned}
+    \delta_1(j)&=\pi_jb_j(x_1),\\
+    \delta_t(j)&=b_j(x_t)\max_i
+      \{\delta_{t-1}(i)a_{i,j}\},\\
+    \psi_t(j)&\in\argmax_i
+      \{\delta_{t-1}(i)a_{i,j}\}.
+  \end{aligned}
+  \label{eq:pgm-dynamic-viterbi}
+\end{equation}
+选$z_T^\star\in\argmax_j\delta_T(j)$，再按$z_t^\star=\psi_{t+1}(z_{t+1}^\star)$回溯即可。若存在平局，可以固定选择最小状态索引。正确性来自最优子结构：在末状态固定时，后续因子对所有前缀完全相同，替换成更优前缀不会损失未来的最优值。时间复杂度仍为$O(TK^2)$，常规回溯表占$O(TK)$；实现宜使用对数得分并把不允许的转移记为$-\infty$。
+
+对例~\ref{ex:pgm-dynamic-hmm}，Viterbi路径为$(1,2,2)$，联合概率是$0.8\times0.9\times0.1\times0.7\times0.8\times0.7=0.028224$，条件于观测后的路径概率约为$0.4761$。这只是所有路径中概率最高的一条，不表示每个时刻都已确定。逐位置最优与路径最优的差别也可用一个两时刻分布检验：设$(1,1),(1,2),(2,1),(2,2)$的概率分别为$0.40,0.25,0.01,0.34$，则第一个位置的边缘最优是$1$，第二个是$2$，组合$(1,2)$的概率却低于联合最优$(1,1)$。该分布可由初始分布$(0.65,0.35)$及对应条件转移实现，因此这一差别确实会发生在Markov模型中。
+
+隐藏状态不可见后，直接计数不再可行，但可以用后验期望计数替代实际计数。\term{Baum--Welch算法}（Baum--Welch algorithm）就是HMM上的EM：E步用前向--后向算法计算当前参数下的$\gamma_t,\xi_t$，M步把这些软计数代入完整数据似然的极大化。令当前迭代参数为$\bm{\theta}^{(k)}$，完整数据对数似然由初始项、转移项和发射项组成，其条件期望为
+\begin{equation}
+  \begin{aligned}
+    \mathcal{Q}(\bm{\theta}\mid\bm{\theta}^{(k)})
+      &=\sum_i\gamma_1(i)\log\pi_i\\
+      &\quad{}+\sum_{t=1}^{T-1}\sum_{i,j}
+        \xi_t(i,j)\log a_{i,j}\\
+      &\quad{}+\sum_{t=1}^{T}\sum_j
+        \gamma_t(j)\log b_j(x_t).
+  \end{aligned}
+  \label{eq:pgm-dynamic-hmm-em-objective}
+\end{equation}
+右侧后验权重全部用旧参数计算，M步只改变对数中的候选参数。对$a_{i,j}$加入每行归一化约束，拉格朗日一阶条件给出$a_{i,j}\propto\sum_t\xi_t(i,j)$；利用$\sum_j\xi_t(i,j)=\gamma_t(i)$便得到
+\begin{equation}
+  \begin{aligned}
+    \pi_i^{(k+1)}&=\gamma_1(i),\\
+    a_{i,j}^{(k+1)}
+      &=\frac{\sum_{t=1}^{T-1}\xi_t(i,j)}
+        {\sum_{t=1}^{T-1}\gamma_t(i)},\\
+    b_j^{(k+1)}(v)
+      &=\frac{\sum_{t=1}^{T}
+        \gamma_t(j)\mathbf{1}\{x_t=v\}}
+        {\sum_{t=1}^{T}\gamma_t(j)}.
+  \end{aligned}
+  \label{eq:pgm-dynamic-baum-welch}
+\end{equation}
+最后一行适用于有限字母表上的类别发射。若发射为高斯分布，均值改为$\sum_t\gamma_t(j)\bm{x}_t/\sum_t\gamma_t(j)$，协方差改为围绕更新后均值的加权残差二阶矩。多条序列的各项统计量分别计算再相加，初始概率则对各序列的$\gamma_1$取平均。
+
+本例中，$\xi_1(1,2)=0.72\times0.1\times0.7\times0.58/0.05928\approx0.493117$，$\xi_2(1,2)\approx0.077935$。一次M步把$a_{1,2}$更新为$(0.493117+0.077935)/(0.668016+0.178138)\approx0.674880$；两个状态的报警概率更新为$0.314642$与$0.836082$。短序列上参数变化很大，说明“似然提高”不能代替参数估计可靠性的判断。实际训练通常从多组合理初值开始，以似然相对增量和迭代上限共同停止，并用独立序列或时间上隔离的验证段选择模型。
+
+第~\ref{chap:pgm-parameter-learning}章的EM单调性结论适用于精确E步和提高$\mathcal Q$的M步，但只保证观测似然不下降，不保证全局最优、状态语义正确或测试预测改善。分母为零意味着当前后验从不访问该状态，相应参数无法用该轮软计数确定。正的初始化、结构约束及先验可减少某些退化，但不能使无信息的数据突然识别全部状态。
+
+隐藏状态的编号本身没有意义。同时置换$\bm{\pi}$、$\bm{A}$的行列及各发射分布，观测似然保持不变，这称为\term{标签交换}（label switching），即多个编号方式表示同一个观测模型。相似发射分布还会使不同状态难以区分；若所有状态的发射分布完全相同，且观测只按式~\eqref{eq:pgm-dynamic-hmm}产生，则观测分布甚至不含转移矩阵的信息。状态数$K$因此不能只按训练似然选择：更大的$K$可能把一个状态拆成多个近似副本，或用额外状态补偿持续时间模型的错误。验证预测似然、可解释的持续时间和足够的状态占用，比单看训练分数更有帮助；潜变量模型的常规信息准则还受到奇异性与可识别性条件的限制。HMM的推断、学习及模型选择可结合Murphy的教材进一步阅读\scite{pgm-murphy2012}
+
+HMM的扩展可以按究竟放宽了什么假设来理解。如果下一状态确实依赖最近$r$个状态，就得到\term{高阶HMM}（higher-order HMM）。将$(Z_{t-r+1},\ldots,Z_t)$作为新状态可继续使用动态规划。每个扩充状态只有$K$个合法后继，利用移位结构时转移计算为$O(TK^{r+1})$，而不是把$K^r$个扩充状态之间全当成可连接的稠密图；内存中的状态数仍为$K^r$。代价增加来自保留了更长历史，而不是算法名称改变。
+
+即使下一状态只依赖当前状态，设备保持某种工况的时长也未必符合HMM的隐含假设。若进入状态$i$后每步以概率$a_{i,i}<1$继续停留，则连续停留时长$D$服从
+\begin{equation}
+  p(D=\ell\mid i)=(a_{i,i})^{\ell-1}(1-a_{i,i}),
+  \qquad
+  \mathbb{E}[D\mid i]=\frac{1}{1-a_{i,i}}.
+  \label{eq:pgm-dynamic-geometric-duration}
+\end{equation}
+这是从$\ell-1$次自转移后接一次离开直接得到的\term{几何持续时间}（geometric duration）：已经待了多久，不会改变下一步离开的概率。本例正常状态的平均持续时间为$10$步；若真实设备通常至少运行$5$步才可能退出某工况，单一自转移概率就无法表达这种规律。
+
+\term{显式持续时间模型}（explicit-duration model）为每个状态另给持续时间分布$g_j(\ell)$；相应的\term{隐半Markov模型}（hidden semi-Markov model, HSMM）在片段边界上转移，在片段内部保持同一状态。令边界转移概率为$\widetilde a_{i,j}$，通常约束$\widetilde a_{j,j}=0$以免同一状态的相邻片段难以区分。若一个状态$j$片段长$\ell$且结束于$t$，其条件观测似然为$B_j(t,\ell)=\prod_{s=t-\ell+1}^{t}b_j(x_s)$。设序列从一个新片段开始，且$g_j$在$\{1,\ldots,D_{\max}\}$上归一化。记$F_t(j)$为观测前缀与“一个$j$片段恰在$t$结束”的联合概率，$G_s(j)$为前$s$步观测与下一片段进入$j$的联合权重，则
+\begin{equation}
+  \begin{aligned}
+    G_0(j)&=\pi_j,\\
+    G_s(j)&=\sum_{i\ne j}
+      F_s(i)\widetilde a_{i,j},\qquad s\geq1,\\
+    F_t(j)&=\sum_{\ell=1}^{\min(t,D_{\max})}
+      g_j(\ell)B_j(t,\ell)G_{t-\ell}(j).
+  \end{aligned}
+  \label{eq:pgm-dynamic-hsmm}
+\end{equation}
+这一递推同时枚举最后一个片段的长度和前一片段状态。若采样在固定$T$处停止而不保证片段结束，最后一段属于右删失数据。令$\overline g_j(\ell)=p(D\geq\ell\mid j)$，则整体似然应按
+\[
+  p(x_{1:T})=\sum_j\sum_{\ell=1}^{\min(T,D_{\max})}
+    \overline g_j(\ell)B_j(T,\ell)G_{T-\ell}(j)
+\]
+计算，而不是强行要求恰在$T$退出。若序列也从片段中途开始，初始剩余时长分布还要单独建模。预计算片段发射概率、缓存$G_s(j)$后，式~\eqref{eq:pgm-dynamic-hsmm}的常规成本可由朴素的$O(TD_{\max}K^2)$降为$O(TK^2+TD_{\max}K)$；这依赖这里的发射独立性与持续时间不依赖前驱状态的设定。无限支撑的持续时间若直接截断，还会增加截断误差。EM仍使用后验期望计数，但统计对象变为片段、边界转移和持续时间。
+
+另一种困难不是记忆长度，而是一个状态标签需要同时编码多个过程。例如，设备本体的健康状态与传感器的工作状态可能各有自己的持续规律。\term{因子HMM}（factorial HMM）把隐藏状态拆成多条链，令$Z_{t,m}$为第$m$条链的状态，$m=1,\ldots,M$，并设
+\begin{equation}
+  \begin{aligned}
+    p(\bm{z}_t\mid\bm{z}_{t-1})
+      &=\prod_{m=1}^{M}
+        p(z_{t,m}\mid z_{t-1,m}),\\
+    p(\bm{x}_t\mid\bm{z}_t)
+      &=p(\bm{x}_t\mid z_{t,1},\ldots,z_{t,M}).
+  \end{aligned}
+  \label{eq:pgm-dynamic-factorial}
+\end{equation}
+不同链在先验转移中分开，观测却可以由它们共同产生。因此，观测一个共同结果之后，各链通常在后验中相关，不能分别运行独立HMM就得到精确解。每链$K$个状态时，联合接口有$K^M$种配置；利用转移的乘积结构可将一步预测按各维收缩，成本约为$O(MK^{M+1})$，仍对链数呈指数增长。结构化变分可保留每条链内部的时间相关性而近似链间依赖，也可使用采样估计E步。因子HMM及这一后验耦合问题由Ghahramani和Jordan作了系统分析\scite{pgm-dynamic-ghahramani1997}
+
+\section{连续与混合状态演化模型}
+\label{sec:pgm-dynamic-continuous}
+
+只用正常、异常两个状态，可以判断工况，却不能细致追踪温度偏移或位置。若把这些连续量离散成许多格子，HMM的状态数会迅速增大。另一条精确路线是保留连续状态，同时选择在预测和条件化后仍保持相同形式的分布族。\term{线性高斯状态空间模型}（linear Gaussian state space model, LGSSM）假设状态与观测通过线性映射联系，随机扰动为高斯，因此整个有限序列具有联合高斯分布。
+
+令潜状态$\bm{z}_t\in\mathbb{R}^{q}$、观测$\bm{x}_t\in\mathbb{R}^{p}$。齐次、无外部输入的基本模型为
+\begin{equation}
+  \begin{aligned}
+    \bm{z}_1&\sim\mathcal{N}(\bm{m}_0,\bm{P}_0),\\
+    \bm{z}_t&=\bm{A}\bm{z}_{t-1}+\bm{\varepsilon}_t,
+      &\bm{\varepsilon}_t&\sim\mathcal{N}(\bm{0},\bm{Q}),\\
+    \bm{x}_t&=\bm{C}\bm{z}_t+\bm{\eta}_t,
+      &\bm{\eta}_t&\sim\mathcal{N}(\bm{0},\bm{R}).
+  \end{aligned}
+  \label{eq:pgm-dynamic-lgssm}
+\end{equation}
+其中$\bm{A}\in\mathbb{R}^{q\times q}$、$\bm{C}\in\mathbb{R}^{p\times q}$，$\bm{Q}$和$\bm{R}$分别是状态噪声、观测噪声协方差，所有噪声跨时刻相互独立，并与初始状态独立。这里$\bm{A}$重新表示线性转移矩阵，不是上一节的概率转移表，不要求行和为$1$。为使用下面的密度与逆矩阵表达，先取$\bm{P}_0,\bm{Q},\bm{R}$正定；退化高斯需要单独处理其支撑子空间。已知控制量$\bm{u}_t$可通过$\bm{B}\bm{u}_t$加入状态方程，时变矩阵也不破坏线性高斯递推，只是不再满足齐次参数假设。
+
+记$\bm{m}_{t\mid s}=\mathbb{E}[\bm{z}_t\mid\bm{x}_{1:s}]$，$\bm{P}_{t\mid s}=\operatorname{Cov}(\bm{z}_t\mid\bm{x}_{1:s})$。\term{Kalman滤波}（Kalman filtering）用这两个量精确表示滤波后验；它不仅平滑一条数值曲线，还追踪曲线的不确定性。假设上一滤波后验为$\mathcal{N}(\bm{m}_{t-1\mid t-1},\bm{P}_{t-1\mid t-1})$，线性变换与独立高斯噪声之和仍是高斯，所以预测为
+\begin{equation}
+  \begin{aligned}
+    \bm{m}_{t\mid t-1}&=\bm{A}\bm{m}_{t-1\mid t-1},\\
+    \bm{P}_{t\mid t-1}
+      &=\bm{A}\bm{P}_{t-1\mid t-1}\bm{A}^{\top}
+        +\bm{Q}.
+  \end{aligned}
+  \label{eq:pgm-dynamic-kalman-predict}
+\end{equation}
+在$t=1$直接取$\bm{m}_{1\mid0}=\bm{m}_0$、$\bm{P}_{1\mid0}=\bm{P}_0$，不额外执行一次状态转移。预测协方差中的第一项传播已有不确定性，第二项加入这一步新产生的过程噪声。
+
+观测怎样校正预测，可以从联合高斯的条件分布直接推导。给定旧观测$\bm{x}_{1:t-1}$，把状态与新观测的联合均值、协方差分别记为$\bm\mu_t,\bm\Sigma_t$，则
+\begin{equation}
+  \begin{aligned}
+    \begin{pmatrix}\bm{z}_t\\\bm{x}_t\end{pmatrix}
+      \mathrel{\Big|}\bm{x}_{1:t-1}
+      &\sim\mathcal{N}(\bm\mu_t,\bm\Sigma_t),\\
+    \bm\mu_t&=
+      \begin{pmatrix}
+        \bm{m}_{t\mid t-1}\\
+        \bm{C}\bm{m}_{t\mid t-1}
+      \end{pmatrix},\\
+    \bm\Sigma_t&=
+      \begin{pmatrix}
+        \bm{P}_{t\mid t-1}&\bm{P}_{t\mid t-1}\bm{C}^{\top}\\
+        \bm{C}\bm{P}_{t\mid t-1}&\bm{S}_t
+      \end{pmatrix},
+  \end{aligned}
+  \label{eq:pgm-dynamic-kalman-joint}
+\end{equation}
+其中$\bm{S}_t=\bm{C}\bm{P}_{t\mid t-1}\bm{C}^{\top}+\bm{R}$。对这个二次型配方，相当于第~\ref{chap:pgm-elimination}章的高斯条件化，得到
+\begin{equation}
+  \begin{aligned}
+    \bm{e}_t&=\bm{x}_t-\bm{C}\bm{m}_{t\mid t-1},\\
+    \bm{K}_t&=\bm{P}_{t\mid t-1}\bm{C}^{\top}\bm{S}_t^{-1},\\
+    \bm{m}_{t\mid t}
+      &=\bm{m}_{t\mid t-1}+\bm{K}_t\bm{e}_t,\\
+    \bm{P}_{t\mid t}
+      &=\bm{P}_{t\mid t-1}
+        -\bm{K}_t\bm{S}_t\bm{K}_t^{\top}.
+  \end{aligned}
+  \label{eq:pgm-dynamic-kalman-update}
+\end{equation}
+$\bm{e}_t$称为\term{新息}（innovation），即实际观测与预测观测之差；$\bm{K}_t$称为\term{Kalman增益}（Kalman gain），决定这段差异应有多少被解释为状态修正。它把状态与观测的预测交叉协方差乘以新息协方差的逆，因而不是人为固定的平滑系数。
+
+标量、$\bm{C}=1$时，增益为$K_t=P_{t\mid t-1}/(P_{t\mid t-1}+R)$。预测越不确定，观测对后验均值影响越大；观测噪声越大，更新越依赖预测。在当前线性高斯假设下，条件协方差不依赖实际观测数值，且被减去的$\bm{K}_t\bm{S}_t\bm{K}_t^\top$半正定，所以一次观测更新不会增加协方差。不过，下一步预测还会加入$\bm{Q}$，不能据此声称滤波方差随时间单调下降。
+
+线性高斯性在每一步都保持，初始分布又是高斯，因此式~\eqref{eq:pgm-dynamic-kalman-predict}与式~\eqref{eq:pgm-dynamic-kalman-update}的归纳应用证明了滤波的精确性。若只有线性与二阶矩条件而没有高斯性，同样形式可在相应条件下给出最佳线性均方估计，但不再一般等于完整后验或所有估计器中的条件均值。这一区别决定了能否把一个均值和协方差解释为全部不确定性。
+
+计算时不应显式形成$\bm{S}_t^{-1}$，而应通过Cholesky分解等方法解线性方程。为了减轻浮点消减导致的非对称或负方差，可以使用等价的Joseph协方差形式
+\begin{equation}
+  \begin{aligned}
+    \bm{P}_{t\mid t}
+      &=(\bm{I}-\bm{K}_t\bm{C})
+        \bm{P}_{t\mid t-1}
+        (\bm{I}-\bm{K}_t\bm{C})^\top\\
+      &\quad{}+\bm{K}_t\bm{R}\bm{K}_t^\top,
+  \end{aligned}
+  \label{eq:pgm-dynamic-joseph}
+\end{equation}
+或直接传播协方差的平方根因子。若某个时刻完全没有观测且缺失机制可忽略，就只做预测；若只有部分坐标缺失，就用实际观测对应的$\bm{C}$行和$\bm{R}$子矩阵更新。缺失是否可忽略仍需第~\ref{chap:pgm-parameter-learning}章的条件，不能默认传感器恰在极端状态时失灵也不影响推断。
+
+Kalman滤波还提供每一步的预测观测密度$\mathcal N(\bm{x}_t;\bm{C}\bm{m}_{t\mid t-1},\bm{S}_t)$。因此观测对数似然为
+\begin{equation}
+  \log p(\bm{x}_{1:T})
+    =-\frac12\sum_{t=1}^{T}
+      \left[
+        p\log(2\pi)+\log|\bm{S}_t|
+        +\bm{e}_t^\top\bm{S}_t^{-1}\bm{e}_t
+      \right].
+  \label{eq:pgm-dynamic-kalman-likelihood}
+\end{equation}
+这使参数选择和预测误差处在同一个概率口径中。完整观测、密集矩阵的常规每步代价为$O(q^3+p^3+q^2p+qp^2)$；在线状态存储为$O(q^2)$，若还计入观测工作空间，则需保存大小约为$p^2+pq$的矩阵。固定维度时，序列总成本对$T$线性。
+
+回看早期状态时，新观测也需要沿时间反向传递。\term{Rauch--Tung--Striebel平滑}（Rauch--Tung--Striebel smoothing, RTS smoothing）在前向滤波后，利用相邻状态之间的条件高斯关系反向更新。给定$\bm{x}_{1:t}$，$\bm{z}_t$与$\bm{z}_{t+1}$的交叉协方差为$\bm{P}_{t\mid t}\bm{A}^{\top}$，所以定义
+\[
+  \bm{J}_t=\bm{P}_{t\mid t}\bm{A}^{\top}
+    \bm{P}_{t+1\mid t}^{-1}.
+\]
+条件分布$p(\bm{z}_t\mid\bm{z}_{t+1},\bm{x}_{1:t})$的均值为
+\[
+  \bm{m}_{t\mid t}
+    +\bm{J}_t(\bm{z}_{t+1}-\bm{m}_{t+1\mid t}),
+\]
+协方差为$\bm{P}_{t\mid t}-\bm{J}_t\bm{P}_{t+1\mid t}\bm{J}_t^\top$。给定下一状态后，更晚观测不再为当前状态提供额外信息；把上面的条件分布按$p(\bm{z}_{t+1}\mid\bm{x}_{1:T})$积分，用全期望与全协方差公式得到
+\begin{equation}
+  \begin{aligned}
+    \bm{m}_{t\mid T}
+      &=\bm{m}_{t\mid t}
+        +\bm{J}_t(\bm{m}_{t+1\mid T}
+          -\bm{m}_{t+1\mid t}),\\
+    \bm{P}_{t\mid T}
+      &=\bm{P}_{t\mid t}
+        +\bm{J}_t(\bm{P}_{t+1\mid T}
+          -\bm{P}_{t+1\mid t})\bm{J}_t^\top.
+  \end{aligned}
+  \label{eq:pgm-dynamic-rts}
+\end{equation}
+从$t=T$处的滤波结果开始，依次取$t=T-1,\ldots,1$。平滑不是把观测倒序再运行一次原来的滤波器，因为逆向条件转移依赖前向滤波分布，并不一般等于原来的状态转移。保存前向均值、协方差与预测量后，常规平滑需$O(Tq^2)$存储和$O(Tq^3)$的额外密集矩阵计算。
+
+参数学习还需要相邻状态的联合矩。由同一个条件均值表达，残差与$\bm{z}_{t+1}$条件不相关，得到
+\begin{equation}
+  \begin{aligned}
+    \bm{P}_{t,t-1\mid T}
+      &:=\operatorname{Cov}(\bm{z}_t,\bm{z}_{t-1}
+        \mid\bm{x}_{1:T})\\
+      &=\bm{P}_{t\mid T}\bm{J}_{t-1}^{\top},
+      \qquad t=2,\ldots,T.
+  \end{aligned}
+  \label{eq:pgm-dynamic-lag-covariance}
+\end{equation}
+这个方向不能颠倒：$\bm{J}_{t-1}\bm{P}_{t\mid T}$对应的是$\operatorname{Cov}(\bm{z}_{t-1},\bm{z}_{t}\mid\bm{x}_{1:T})$。滞后一阶协方差一般不为零；仅把相邻平滑均值相乘，会遗漏学习动态关系所需的不确定性。
+
+\begin{example}[温度偏移的滤波、平滑与二阶矩]
+  \label{ex:pgm-dynamic-kalman}
+  用另一个人工模型追踪设备的温度偏移，温度单位记为摄氏度。设$Z_1\sim\mathcal{N}(0,1)$、$Z_2=Z_1+\varepsilon_2$、$X_t=Z_t+\eta_t$，过程噪声和观测噪声均独立服从$\mathcal{N}(0,1)$，方差单位为摄氏度平方。给定$x_1=1,x_2=2$，第一次滤波得到$K_1=1/2$、$m_{1\mid1}=0.5$、$P_{1\mid1}=0.5$。第二次预测为$m_{2\mid1}=0.5$、$P_{2\mid1}=1.5$，故$K_2=1.5/2.5=0.6$，更新得到
+  \[
+    m_{2\mid2}=0.5+0.6(2-0.5)=1.4,\qquad
+    P_{2\mid2}=0.6.
+  \]
+  平滑增益$J_1=0.5/1.5=1/3$，于是
+  \[
+    \begin{aligned}
+      m_{1\mid2}&=0.5+(1/3)(1.4-0.5)=0.8,\\
+      P_{1\mid2}&=0.5+(1/3)^2(0.6-1.5)=0.4,\\
+      P_{2,1\mid2}&=0.6/3=0.2.
+    \end{aligned}
+  \]
+  第二次观测把第一次的状态均值从$0.5$调到$0.8$，而不是直接改成第二次的读数$2$。两个状态的联合平滑协方差为$\bigl(\begin{smallmatrix}0.4&0.2\\0.2&0.6\end{smallmatrix}\bigr)$，保留了相邻状态共享的不确定性。
+\end{example}
+
+图~\ref{fig:pgm-dynamic-gaussian}画出例~\ref{ex:pgm-dynamic-kalman}第二时刻的三个密度。观测似然的位置偏向$2$，预测密度的位置偏向$0.5$，二者乘积归一化后的均值为$1.4$；较窄的后验反映独立信息的结合，而不是随意缩小误差条。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-dynamic-gaussian-update}
+  \caption{标量Kalman更新的可复算密度。蓝色实线为预测$\mathcal{N}(0.5,1.5)$，灰色虚线为对状态归一化后的似然$\mathcal{N}(2,1)$，青色粗线为后验$\mathcal{N}(1.4,0.6)$。横轴是温度偏移，纵轴是密度；本例观测矩阵为$1$，似然才可直接画成同一坐标下的归一化密度。}
+  \label{fig:pgm-dynamic-gaussian}
+\end{figure}
+
+若线性映射与噪声方差未知，只求状态均值还没有完成建模。线性高斯模型的EM与Baum--Welch具有相同结构：E步计算完整数据对数似然所需的后验统计量，M步拟合局部条件分布。不过，离散模型需要期望计数，连续模型需要期望的一阶与二阶矩。记当前参数下
+\begin{equation}
+  \begin{aligned}
+    \overline{\bm{z}}_t&=\bm{m}_{t\mid T},\\
+    \bm{M}_t
+      &:=\mathbb{E}[\bm{z}_t\bm{z}_t^\top\mid\bm{x}_{1:T}]
+        =\bm{P}_{t\mid T}
+          +\overline{\bm{z}}_t\overline{\bm{z}}_t^\top,\\
+    \bm{M}_{t,t-1}
+      &:=\mathbb{E}[\bm{z}_t\bm{z}_{t-1}^\top\mid\bm{x}_{1:T}]\\
+      &=\bm{P}_{t,t-1\mid T}
+          +\overline{\bm{z}}_t\overline{\bm{z}}_{t-1}^\top.
+  \end{aligned}
+  \label{eq:pgm-dynamic-em-moments}
+\end{equation}
+全部期望都来自同一组旧参数，不能在一次M步内部改变这些统计量。线性系统EM的完整数据似然与这些充分统计量可参见Ghahramani和Hinton的推导\scite{pgm-dynamic-ghahramani1996}
+
+为说明更新从何而来，令转移残差为$\bm r_t(\bm A)=\bm z_t-\bm A\bm z_{t-1}$，展开它的期望外积：
+\begin{equation}
+  \begin{aligned}
+    \bm{E}_t(\bm{A})
+      &:=\mathbb{E}\bigl[
+        \bm r_t(\bm A)\bm r_t(\bm A)^\top
+        \mid\bm{x}_{1:T}\bigr]\\
+      &=\bm{M}_t-\bm{A}\bm{M}_{t,t-1}^{\top}
+        -\bm{M}_{t,t-1}\bm{A}^{\top}\\
+      &\quad{}+\bm{A}\bm{M}_{t-1}\bm{A}^{\top}.
+  \end{aligned}
+  \label{eq:pgm-dynamic-transition-residual}
+\end{equation}
+观测残差$\bm{D}_t(\bm{C})$同理为
+\[
+  \begin{aligned}
+    \bm{D}_t(\bm{C})
+      &=\bm{x}_t\bm{x}_t^\top
+        -\bm{C}\overline{\bm{z}}_t\bm{x}_t^\top
+        -\bm{x}_t\overline{\bm{z}}_t^\top\bm{C}^\top\\
+      &\quad{}+\bm{C}\bm{M}_t\bm{C}^\top.
+  \end{aligned}
+\]
+除去初始分布项和与参数无关的常数，EM的辅助目标为
+\begin{equation}
+  \begin{aligned}
+    \mathcal Q
+      &=-\frac{T-1}{2}\log|\bm Q|
+        -\frac12\sum_{t=2}^{T}
+          \operatorname{tr}\{\bm Q^{-1}\bm E_t(\bm A)\}\\
+      &\quad{}-\frac{T}{2}\log|\bm R|
+        -\frac12\sum_{t=1}^{T}
+          \operatorname{tr}\{\bm R^{-1}\bm D_t(\bm C)\}\\
+      &\quad{}+\text{初始项}+\text{常数}.
+  \end{aligned}
+  \label{eq:pgm-dynamic-lgssm-q}
+\end{equation}
+这表明M步是一组使用后验二阶矩的线性回归与协方差估计，不是简单地把平滑均值当成无误差的训练标签。
+
+在$T\geq2$、完整观测且相关二阶矩和可逆时，对$\bm A$求导得到正规方程
+\[
+  \bm A^{(k+1)}\sum_{t=2}^{T}\bm M_{t-1}
+    =\sum_{t=2}^{T}\bm M_{t,t-1}.
+\]
+观测回归有同样形式，因此
+\begin{equation}
+  \begin{aligned}
+    \bm A^{(k+1)}
+      &=\left(\sum_{t=2}^{T}\bm M_{t,t-1}\right)
+        \left(\sum_{t=2}^{T}\bm M_{t-1}\right)^{-1},\\
+    \bm C^{(k+1)}
+      &=\left(\sum_{t=1}^{T}
+        \bm x_t\overline{\bm z}_t^\top\right)
+        \left(\sum_{t=1}^{T}\bm M_t\right)^{-1},\\
+    \bm Q^{(k+1)}
+      &=\frac{1}{T-1}\sum_{t=2}^{T}
+        \bm E_t(\bm A^{(k+1)}),\\
+    \bm R^{(k+1)}
+      &=\frac{1}{T}\sum_{t=1}^{T}
+        \bm D_t(\bm C^{(k+1)}).
+  \end{aligned}
+  \label{eq:pgm-dynamic-lgssm-m-step}
+\end{equation}
+协方差更新可由对$\bm Q^{-1}$或$\bm R^{-1}$求导得到：例如转移项的一阶条件是$(T-1)\bm Q=\sum_t\bm E_t$。初始参数的无约束更新为$\bm m_0^{(k+1)}=\overline{\bm z}_1$、$\bm P_0^{(k+1)}=\bm P_{1\mid T}$。有$n$条独立序列时，$\bm m_0^{(k+1)}$改为各序列初始平滑均值的平均，$\bm P_0^{(k+1)}$则平均“初始平滑协方差加初始均值相对总体均值的外积”；转移项的分母为$\sum_{\ell=1}^{n}(T_\ell-1)$，观测项的分母为$\sum_{\ell=1}^{n}T_\ell$。这避免把不同序列之间的初始差异丢掉。
+
+例~\ref{ex:pgm-dynamic-kalman}给出$M_1=0.4+0.8^2=1.04$、$M_2=0.6+1.4^2=2.56$和$M_{2,1}=0.2+1.4\times0.8=1.32$。从旧参数$A=C=Q=R=1$进行一次无约束M步，可得
+\[
+  \begin{aligned}
+    A^{(k+1)}&=1.32/1.04=33/26,\\
+    C^{(k+1)}&=(1\times0.8+2\times1.4)/(1.04+2.56)=1,\\
+    Q^{(k+1)}&=2.56-1.32^2/1.04=23/26,\\
+    R^{(k+1)}&=(1^2+2^2-3.6)/2=0.7.
+  \end{aligned}
+\]
+初始均值与方差更新为$0.8$和$0.4$。这里$A^{(k+1)}>1$不违背EM，因为这次极大化没有施加稳定性约束，两个观测也不足以可靠识别全部系统参数。若建模目标要求稳定动力学，就应明确限制$\bm A$的谱半径，使用对应的约束M步，而不是先做无约束更新再假定它稳定。
+
+每轮EM包含一次滤波和平滑，再累计矩，固定维度时仍对总序列长度线性。可使用似然增量和迭代上限停止，保留多组初值并检查观测预测。若二阶矩和奇异，线性映射可能没有唯一估计；若协方差估计落在退化边界，则普通正定密度公式失效。协方差下界、先验、已知噪声结构或固定部分参数都可能必要，但它们改变了无约束最大似然问题，必须相应调整目标与更新。
+
+连续潜状态还有比标签交换更广的坐标不确定性。对任意可逆矩阵$\bm H$，令$\widetilde{\bm z}_t=\bm H\bm z_t$，同时取$\widetilde{\bm A}=\bm H\bm A\bm H^{-1}$、$\widetilde{\bm C}=\bm C\bm H^{-1}$、$\widetilde{\bm Q}=\bm H\bm Q\bm H^\top$并变换初始分布，观测分布不变。因此，学得的某个状态坐标不能自动解释为“温度”或“磨损程度”；这些语义需要测量关系或其他约束。若有非零方向始终不被$\bm C,\bm C\bm A,\ldots$看到，观测还难以约束该方向。滤波公式能执行、潜状态可识别、长期误差有界，是三个不同问题。
+
+单一线性动态也可能过于严格：设备可能在升温、恒温、冷却等模式之间切换，每个模式内部近似线性，但整体不是同一个线性系统。\term{切换线性动态系统}（switching linear dynamical system, SLDS）加入离散模式$S_t\in\{1,\ldots,L\}$，用模式选择连续状态的转移与观测机制。这里$S_t$是新引入的模式变量，不是四节点例中表示传感器失灵的$S$。一个常见形式为
+\begin{equation}
+  \begin{aligned}
+    p(s_t\mid s_{t-1})&=\omega_{s_{t-1},s_t},\\
+    \bm z_t\mid\bm z_{t-1},s_t
+      &\sim\mathcal N(\bm A_{s_t}\bm z_{t-1},\bm Q_{s_t}),\\
+    \bm x_t\mid\bm z_t,s_t
+      &\sim\mathcal N(\bm C_{s_t}\bm z_t,\bm R_{s_t}),
+  \end{aligned}
+  \label{eq:pgm-dynamic-switching}
+\end{equation}
+并另给$p(s_1)$及条件高斯初始分布$p(\bm z_1\mid s_1)=\mathcal N(\bm z_1;\bm m_{0,s_1},\bm P_{0,s_1})$，沿上述局部条件分布生成序列。图~\ref{fig:pgm-dynamic-switching}展示离散模式如何影响连续状态；模式本身也是潜在的，所以不能仅凭当前读数先硬选一个模式再宣称得到精确滤波。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/pgm-dynamic-switching}
+  \caption{切换线性动态系统的三层展开。方形节点为离散模式，空心圆为连续状态，填色圆为观测。给定完整模式路径后，连续部分可用Kalman递推；只给定当前模式不足以合并具有不同历史的所有高斯分量。}
+  \label{fig:pgm-dynamic-switching}
+\end{figure}
+
+给定一条模式历史$s_{1:t}$，连续状态条件后验仍为高斯；但不同模式历史通常产生不同均值和协方差。因此，精确滤波一般是最多包含$L^t$个分量的高斯混合，而不是每种当前模式只维护一个高斯就足够。合并分量、剪枝或限制每种模式的混合数能够控制成本，却都引入近似。参数学习可以把模式转移的期望计数与各模式下的连续二阶矩组合成EM，但其E步正是上述混合推断问题；切换模式越复杂，学习越依赖近似后验的质量。
+
+如果设备动力学本来就是非线性的，或者噪声包含离群点、偏斜和离散跳变，则需要更一般的状态空间模型。加性噪声下可写为
+\begin{equation}
+  \bm z_t=f_t(\bm z_{t-1})+\bm\varepsilon_t,\qquad
+  \bm x_t=h_t(\bm z_t)+\bm\eta_t.
+  \label{eq:pgm-dynamic-nonlinear}
+\end{equation}
+也可以直接指定非高斯转移密度与观测密度，而不要求存在这种加性表示。共同的Bayes递推式~\eqref{eq:pgm-dynamic-bayes-filter}仍成立；变化的是后验不再通常落在单个高斯族中。选择近似方法时，应分清近似的是动力学函数、积分中的矩，还是整个状态路径后验。
+
+\term{扩展Kalman滤波}（extended Kalman filter, EKF）在当前估计附近对非线性函数作一阶线性化，再使用高斯递推。对加性高斯噪声，令$\bm F_t$为$f_t$在$\bm m_{t-1\mid t-1}$处的Jacobian，令$\bm H_t$为$h_t$在预测均值处的Jacobian，则
+\[
+  \begin{aligned}
+    \bm m_{t\mid t-1}&\approx f_t(\bm m_{t-1\mid t-1}),\\
+    \bm P_{t\mid t-1}
+      &\approx\bm F_t\bm P_{t-1\mid t-1}\bm F_t^\top+\bm Q_t,\\
+    \bm S_t&\approx\bm H_t\bm P_{t\mid t-1}\bm H_t^\top+\bm R_t.
+  \end{aligned}
+\]
+更新中的预测观测改用$h_t(\bm m_{t\mid t-1})$，增益则使用$\bm P_{t\mid t-1}\bm H_t^\top\bm S_t^{-1}$。EKF近似了局部函数以及由此导出的矩，适合函数可微且后验集中于线性化有效区域的情况。初值偏离、强曲率或多峰后验会使这一局部近似失效。
+
+\term{无迹变换}（unscented transform, UT）不求导数，而是选择少量确定性代表点，让它们通过非线性函数，再从变换后的点估计均值与协方差。给定$q$维高斯近似$\mathcal N(\bm m,\bm P)$，取$\bm L\bm L^\top=\bm P$、$\kappa>0$，一种简单的$2q+1$点规则是
+\[
+  \begin{aligned}
+    \bm\chi_0&=\bm m,&w_0&=\frac{\kappa}{q+\kappa},\\
+    \bm\chi_i&=\bm m+\sqrt{q+\kappa}\bm L_{:,i},
+      &w_i&=\frac{1}{2(q+\kappa)},\\
+    \bm\chi_{q+i}&=\bm m-\sqrt{q+\kappa}\bm L_{:,i},
+      &w_{q+i}&=\frac{1}{2(q+\kappa)},
+  \end{aligned}
+\]
+其中$i=1,\ldots,q$。这些点的加权均值和协方差恰好为$\bm m,\bm P$。经过函数$f$后，用$\widehat{\bm\mu}=\sum_iw_i f(\bm\chi_i)$及$\sum_iw_i(f(\bm\chi_i)-\widehat{\bm\mu})(f(\bm\chi_i)-\widehat{\bm\mu})^\top$近似变换后的矩。将这一积分规则用于预测状态、预测观测及其交叉协方差，再作高斯条件化，就得到\term{无迹Kalman滤波}（unscented Kalman filter, UKF）。
+
+例如$Z\sim\mathcal N(0,1)$、$f(Z)=Z^2$时，EKF在$0$处的函数值和导数均为$0$，预测均值与方差都会给成$0$，而精确值为$1$和$2$。取$q=1,\kappa=2$，上述点为$0,\sqrt3,-\sqrt3$、权重为$2/3,1/6,1/6$，变换后得到$0,3,3$，恰好恢复均值$1$和方差$2$。这个结果只说明该积分规则在这个例子中捕捉到了曲率，不能据此推断任意非线性函数都精确。UT通常只近似有限阶矩，UKF还把后验压缩成单个高斯，因而同样无法忠实保留相互分离的多个峰。EKF、UT及其平滑扩展的系统条件与算法可参见Särkkä和Svensson的教材\scite{pgm-dynamic-sarkka2023}
+
+当任务是整段状态重建或参数学习，\term{变分状态估计}（variational state estimation）可以直接选择一个便于计算的路径分布$q_{\bm\phi}(\bm z_{1:T})$，最大化第~\ref{chap:pgm-variational}章的证据下界。在线性或局部二次近似下，保留相邻时刻相关性的结构化高斯族往往比逐时刻独立近似更合适；切换系统也可以令近似分布包含一个离散模式链与一个连续状态链。它近似的是联合后验的依赖或分布形状，而不只是把某个Jacobian换成数值积分。优化下界方便与参数学习结合，但下界提高不等于精确似然提高，过窄的近似族还可能漏掉后验分支。
+
+若后验明显多峰，用单个均值与协方差描述会掩盖不同解释。\term{粒子滤波}（particle filtering）以一组带权状态样本近似滤波分布，使不同粒子保留不同可能状态。设粒子数为$n$，第$i$个粒子记作$\bm z_{t,i}$，从$q_t(\bm z_t\mid\bm z_{t-1,i},\bm x_t)$提议后，在未重采样的一步中更新
+\[
+  w_{t,i}\propto w_{t-1,i}
+    \frac{p(\bm x_t\mid\bm z_{t,i})
+      p(\bm z_{t,i}\mid\bm z_{t-1,i})}
+      {q_t(\bm z_{t,i}\mid\bm z_{t-1,i},\bm x_t)}.
+\]
+若先按旧权重重采样了祖先，则新权重不再重复乘旧祖先权重。式~\eqref{eq:pgm-sampling-sis-weight}已推导序贯重要性权重，算法~\ref{alg:pgm-sampling-bootstrap}给出了包含重采样的自举滤波；这里的作用是指出它们适合替代难以闭合的连续积分。转移先验提议可以简化权重，但观测很集中时，大部分粒子可能落在低似然区域。每步约为$n$次转移与似然求值加重采样成本，粒子数必须随问题难度增加，并非固定$n$就能保证高维或长时间下准确。
+
+对式~\eqref{eq:pgm-dynamic-switching}还可以只抽样模式路径，每个粒子内部用精确Kalman滤波处理连续状态，这就是第~\ref{chap:pgm-sampling}章的Rao--Blackwell化粒子方法在本章模型上的实例。它利用的是“给定模式历史后条件线性高斯”，而不是假设整体后验高斯。在线滤波准确也不自动保证长路径平滑准确，因为重采样会使许多粒子共享早期祖先；离线平滑和EM应使用专门的粒子平滑或其他路径后验方法。数值方法的选择最终取决于需要保留哪种不确定性，以及允许支付多少计算成本。
+
+\section{模型比较}
+\label{sec:pgm-dynamic-comparison}
+
+这些模型共享时间上的有向分解，却不共享同一种状态表示。比较时需要同时确定：状态是否可见，隐藏状态是有限集合还是连续空间，转移依赖哪些历史，以及当前任务使用多长范围的证据。表~\ref{tab:pgm-dynamic-models}将这些条件放在同一口径下。DBN不列为一个与HMM竞争的模型行，因为它是各行都可以使用的表示框架。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{25mm}p{23mm}p{29mm}p{27mm}X@{}}
+    \toprule
+    模型 & 状态可见性与空间 & 转移假设 & 常见查询 & 推断与学习 \\
+    \midrule
+    有限Markov链 & 可见、离散 & 当前状态决定下一状态 & 多步预测、长期分布 & 矩阵递推；可见转移计数 \\
+    HMM & 隐藏、离散 & 一阶链，几何停留时间 & 滤波、平滑、整条路径 & 前向--后向、Viterbi；Baum--Welch \\
+    高阶HMM与HSMM & 隐藏、离散或分段状态 & 更长历史或显式持续时间 & 路径与片段边界 & 扩充状态或片段动态规划；期望计数 \\
+    因子HMM & 多条隐藏离散链 & 先验转移分开，观测耦合 & 联合滤波与平滑 & 联合表可精确但指数增长；变分或采样 \\
+    线性高斯模型 & 隐藏、连续 & 线性转移与独立高斯噪声 & 状态分布、预测密度 & Kalman滤波、RTS平滑；二阶矩EM \\
+    切换线性系统 & 隐藏、离散与连续混合 & 模式选择线性动态 & 模式与连续状态联合查询 & 高斯混合枚举一般指数增长；混合约简或条件粒子方法 \\
+    一般状态空间模型 & 隐藏、连续或混合 & 非线性、非高斯等 & 滤波、平滑及预测风险 & 局部线性化、矩近似、变分或粒子方法 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{按状态与转移假设比较动态有向模型。所有行都需另给初始分布；线性高斯模型的解析结论要求初始状态也为高斯。表中的近似方法不存在与模型名称一一对应的唯一选择。}
+  \label{tab:pgm-dynamic-models}
+\end{table*}
+
+有限状态动态规划和Kalman递推为何都能对序列长度做到线性？共同原因是每一步把整个过去压缩成大小不随时间增长的精确消息。前者保存$K$个状态概率，后者保存一个均值向量和一个协方差矩阵。有限接口本身还不够：因子HMM的接口虽不随时间增加，却可能有$K^M$种联合配置；切换系统的连续混合分量又会随模式历史增加。复杂度必须同时观察时间长度、接口维度和消息的表示复杂度。
+
+查询目标也会改变所需算法。在线控制只能使用当前及过去观测，不能把平滑结果当作实时滤波的性能；事后检修可以等待未来观测，通常更适合平滑。若代价按每个时刻是否判错计算，离散平滑边缘的逐时刻最优决策有直接意义；若必须选择一条满足转移限制的整体解释，就需要路径优化。连续联合高斯后验的均值同时也是其联合密度众数，而混合后验的平均值可能落在各分量之间的低密度区域，不能把这种特殊一致性推广到切换模型。
+
+模型偏差与推断误差应分开诊断。HMM精确前向--后向算出的后验，仍可能受到错误持续时间或过少状态的影响；EKF的误差则既可能来自动力学不合适，也可能来自局部线性化。对同一任务比较方法时，应固定训练与测试时间边界，报告一步或多步预测对数密度、状态误差与计算成本，并检查不确定性是否与观测相容。任意随机打乱时间点，或把平滑时用到的未来观测泄漏给预测器，都会改变原本要评估的问题。
+
+参数共享减少了自由参数，在共享假设合理时有助于降低估计所需的数据量，却也限制了适应变化的能力。若运行环境发生变化，继续用旧的齐次参数可能系统性失配；加入已知输入、时变参数或模式切换可以表达这种变化，但增加状态或参数后又需要更多信息来识别。建模选择应从哪些依赖确有必要开始，再检查相应后验能否以可承受的成本表示，而不是先选一种熟悉的滤波器，再假定系统满足它的全部条件。
+
+\section{本章小结}
+\label{sec:pgm-dynamic-summary}
+
+连续到来的观测之所以可以递推处理，是因为动态有向分解把过去对未来的影响集中到一个时间接口上。DBN描述这一依赖模板；一阶Markov性说明给定状态后哪些历史可以不再显式保留，时间齐次与参数共享说明局部机制是否复用，平稳性则描述整个过程的分布是否随时间平移而改变。这些条件各自约束不同对象，不能相互替代。
+
+对有限隐藏状态，前向--后向算法精确累加路径，Viterbi算法保留并回溯最优路径，Baum--Welch再把平滑后验变成期望计数。对连续线性高斯状态，预测与条件化保持高斯形式，Kalman滤波和RTS平滑因而只需传播均值、协方差与学习所需的相邻二阶矩。离散与连续算法的联系落在同一件事上：用可复用的局部消息完成全局推断，再用后验统计量学习局部条件分布。
+
+回到设备监测的问题，当前报警判断、事后故障追溯和整段状态解释需要不同的查询；同一数据上的答案可以不同，并不矛盾。状态空间变大、持续时间变复杂或离散模式与连续动态混合后，精确消息可能不再廉价，局部高斯、变分和粒子方法便在不同位置作出近似。明确哪些不确定性被保留、哪些依赖被省略，并把这些选择与实际查询和可用数据联系起来，才使动态模型给出的概率具有可解释的边界。
