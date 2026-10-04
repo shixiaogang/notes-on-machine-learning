@@ -1,0 +1,476 @@
+\chapter{基于人工的知识获取}
+\label{chap:knowledge-acquisition-human}
+
+一批待处理文档已经收集完毕，但人工预算只够阅读其中一部分。此时，“请人来标”还不是一个完整方案：要问什么、以什么形式回答、先问哪些样本、交给谁，以及同一对象值得投入几次判断，都会改变最终得到的知识。只追求标签数量，可能得到大量缺少依据的答案；只挑模型最困惑的样本，又可能把预算消耗在本来就无法判定的材料上。
+
+本章以文档类别判断和证据片段定位为贯穿任务。假设系统需要判断一篇文档是否报告了产品故障，并保留支持判断的原句；材料中既有常见表述，也有稀有故障、专业术语和仅凭当前上下文无法判定的样本。图像中的对象关键点与边界只作为局部标注的辅助例子，不把图像任务中的几何成本直接套到文本任务上。
+
+有限人工资源的使用可以分成五类相互制约的决策。标注任务设计决定人工究竟回答什么；交互方式决定一次操作表达多少信息；样本选择决定先询问哪些对象；标注者选择决定谁能够作答；预算分配决定每种方案执行多少次。后续章节会讨论如何融合多个来源并审计质量，本章只要求每次人工输入的对象、依据、状态和成本可追踪，不预先把人工答案当成无误真值。
+
+\section{标注任务的设计}
+\label{sec:knowledge-acquisition-human-task-design}
+
+下游模型所需的目标通常不能原样交给标注者。例如，“提高故障识别能力”既没有指定判断对象，也没有说明什么证据足以判为故障。任务设计要把这一需求改写成可观察、可回答且可复核的操作，同时为材料不足和规范不足留下明确状态。设计过程不是一次性的文案工作：小规模试行暴露的问题，应返回任务定义、规范或界面重新处理。
+
+\subsection{标注目标的确定}
+\label{sec:knowledge-acquisition-human-task-objective}
+
+一条可执行任务至少包含五个要素：待判断对象、允许使用的依据、向标注者提出的问题、允许的回答空间，以及需要保留的补充记录。对贯穿案例，待判断对象可以是一篇文档，依据限定为正文及给定附件，问题是“作者是否报告了产品故障”，回答空间为“是、否、信息不足、不适用”，补充记录则是支持答案的原句和无法作答的原因。这五项共同决定一条标签的语义；只保存“是”而丢掉任务版本和证据范围，后来便无法判断它回答的是哪个问题。
+
+文档类别与证据片段是相关但不同的输出。前者回答整篇材料属于什么类别，标注者通常需要浏览足以形成整体判断的上下文；后者回答哪一段文字直接支持该判断，需要定位起止边界。类别可以在没有唯一证据句时成立，某个片段也可能只报告现象而不足以支持整篇文档的类别。若训练目标确实同时需要两者，可以先判断类别，再对正类定位证据，并用对象标识把两项记录关联起来；不能把“没有选中片段”自动编码成负类。
+
+要求标注者书写理由还需要说明理由的用途。用于争议复核时，理由可以记录引用位置、采用的条款和缺失信息；用于训练文本生成模型时，还需要规定事实范围、长度和可接受表述。作答后的解释未必完整复现标注者形成判断的心理过程，因此它可以作为可审计的支持材料，却不能在没有额外验证时被称为忠实的因果解释。
+
+复杂任务是否拆分，取决于不同判断是否需要不同证据和能力。把“是否故障、故障部件、严重程度、证据片段”拆成四项，可以让缺少严重程度信息的文档仍贡献前两项知识，也便于把专业判断转交专家；代价是同一文档可能被重复打开，四项结果还要通过稳定的对象标识重新关联。若阅读全文占主要成本，过度拆分未必节省时间；若操作或专业判断占主要成本，拆分则可能避免为所有样本支付最昂贵的步骤。
+
+“无法回答”也要保留原因。本章区分三种状态：材料中没有足够可观察信息，标注者缺少完成判断所需的知识，规范对当前边界情形存在歧义。第一种通常需要补材料，第二种可以转交具备相应能力的人，第三种应先修订规范。把三者都并入正常类别“否”，会把缺失信息伪装成确定知识；只保留一个无原因的“无法判断”，又失去了后续采取不同措施的依据。
+
+\subsection{标注规范的制定}
+\label{sec:knowledge-acquisition-human-guideline}
+
+\term{标注规范}（annotation guideline）把任务目标展开成可以反复应用的判断规则。一个最小规范需要说明目标对象、类别定义、纳入与排除条件、对象边界、判断顺序，以及冲突或证据不足时的去向。类别名称只是索引，不能代替规则；“故障”一词若没有说明是否包含用户误用、转述投诉和尚未确认的怀疑，不同人会自然采用不同边界。大规模检索标注还会受到疲劳、位置和锚定等人因影响，因此规范应连同界面顺序、批次长度和休息条件一起记录\scite{knowledge-acquisition-human-thomas2022crowd}
+
+以“描述自己的经历”和“引用他人的意见”为例，句子“论坛里有人说电池坏了”含有“电池坏了”这一表面线索，却只是在转述。若任务要识别作者亲历的故障报告，规范应要求确认说话者和事件归属，将该句排除；若任务要收集所有被提及的故障主张，它又应纳入。关键词没有改变，改变的是待判断对象与纳入条件。正例展示如何命中规则，反例展示为何排除，边界例则迫使规范说明证据不足、转述和对象归属冲突时怎样处理。
+
+事实任务与主观任务还需要不同的控制方式。事实判断应给出可核查依据及允许查阅的外部资料；偏好、可接受度等主观判断不应被强行压成唯一事实，而应固定评价维度、观察条件和量表含义，并保留个体差异。界面中的随机化和流程约束只能帮助控制已知影响，不能把主观差异或未观察到的偏差自动消除。
+
+表~\ref{tab:knowledge-acquisition-human-guideline-cases}把同一任务的规则落实到四类输入。表中句子均为教学构造，目的不是穷尽语言现象，而是展示同一条规范如何改变判断过程。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begingroup
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabularx}{\linewidth}{@{}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{29mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{27mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{34mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{25mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    教学输入 & 待判断对象 & 适用条款 & 允许答案 & 证据与去向 \\
+    \midrule
+    “我升级后无法开机。” & 作者本人的设备经历 & 明确故障现象且归属于作者 & 是 & 保留整句及文档标识 \\
+    “论坛里有人说电池坏了。” & 作者本人的设备经历 & 转述不计入作者亲历 & 否 & 保留说话者线索，避免只按关键词判断 \\
+    “升级后情况更糟，详见附件。”但附件缺失 & 当前材料能否支持故障判断 & 所需证据不在可见上下文中 & 信息不足 & 记录缺少附件，进入补材料队列 \\
+    一段话同时描述设备与外接配件，代词指向不明 & 哪个对象发生故障 & 对象归属必须唯一或可核查 & 无法裁决 & 记录对象边界歧义，反馈规范负责人 \\
+    \bottomrule
+  \end{tabularx}
+  \endgroup
+  \caption{标注规范怎样落实为可执行判断。各行使用同一文档任务，分别展示普通情形、转述、证据缺失和对象边界不清时，规则如何决定答案、证据与后续去向；少量教学样例不表示已覆盖全部边界。}
+  \label{tab:knowledge-acquisition-human-guideline-cases}
+\end{table*}
+
+规范、界面提示和培训例题应使用同一版本标识。界面中的选项要与规范中的回答空间一一对应，培训反馈要能指出违反了哪条规则。规范从版本$v$更新到$v+1$时，应列出语义发生变化的条款和受影响的样本范围，再决定重标、复核或保留旧版本；否则，同名标签可能对应两套不同标准，直接合并会破坏可比性。
+
+\subsection{标注任务的试标与调整}
+\label{sec:knowledge-acquisition-human-pilot}
+
+\term{试标}（pilot annotation）是在扩大规模前，让拟参与正式工作的人员按完整流程处理一小批样本。试标样本应同时含典型情形、预期难例和已知边界例，记录答案、证据、无法判断原因、阅读时间、操作时间和疑问。它检验的是任务能否执行、哪里会卡住以及成本如何估计；数据集整体质量及其统计不确定性将在第~\ref{chap:knowledge-acquisition-quality}章讨论。
+
+试标中的分歧不能一律解释为人员不够认真。如果多人在同一条款上采用不同理解，问题可能出在规范；若所需证据根本没有展示，增加培训也无济于事；只有规则和信息都充分时，错误执行才直接指向培训、界面或人员准入。讨论难例时应保留每个人的独立初始答案，防止集体讨论后的共识覆盖了分歧来源。
+
+设第一轮试标发现，许多文档引用附件中的检测报告，而界面只展示正文。任务团队补充附件摘要，并将“附件缺失”加入信息不足原因；第二轮中阅读材料变长，单例中位时间也随之上升。这个变化说明任务定义和成本估计必须同步更新。若第一轮刻意集中难例，其耗时不能直接外推生产总量；扩大前还要加入按预计类别、长度和难度构成抽取的样本，并为新出现的问题保留反馈入口。
+
+\section{标注方式的选择}
+\label{sec:knowledge-acquisition-human-interaction}
+
+任务确定之后，还要决定人怎样把知识交给系统。\term{人工交互方式}（human annotation interaction）描述标注者看见什么、执行什么动作以及系统保存什么。输出粒度与交互方式可以组合：上位类别既可以直接选择，也可以通过确认模型建议得到；证据片段既可以从零划定，也可以修改预标边界。比较方式时必须把阅读、判断、录入、模型推理和返工都计入成本，不能把一次点击、一次偏好和一条完整答案当成同等信息量。
+
+\subsection{直接给出答案}
+\label{sec:knowledge-acquisition-human-direct-answer}
+
+\term{直接作答}（direct annotation）让标注者从任务输入直接产生目标输出。固定选项适合类别集合明确的判断，数值输入适合具有单位和量程的测量，边界工具适合片段或区域，开放文本则适合摘要和改写。固定选项必须覆盖合理答案并保留无法判断；开放回答要限定事实范围、长度和可接受变体，否则后续比较会把表达差异误当成知识差异。
+
+对同一篇故障文档，类别选择的完成条件是给出“是、否、信息不足、不适用”之一；证据片段定位要求标出支持判断的最小连续文本，并允许多个不相邻片段；一句话摘要则要求只复述文档内可核查事实。三项任务看到的材料可以相同，但输出空间和验收标准不同。边界任务还要说明重叠、嵌套和最小单位，例如型号名称是否包含其前置品牌，不能等到训练阶段再猜测标注者的边界意图。
+
+直接作答通常经历理解问题、寻找证据、形成判断和录入结果四段。长文档中，寻找证据可能远比点击选项昂贵；短图像中的多边形标注则可能主要耗在精细操作。快捷键和批量录入可以减少重复动作，却不能省略逐例判断。只有理由或证据确实用于训练、审计或争议处理时才设为必填，否则额外字段会增加成本，还可能诱导标注者事后编造看似完整的解释。
+
+\subsection{提供粗粒度或局部标签}
+\label{sec:knowledge-acquisition-human-partial-label}
+
+完整答案过于昂贵时，可以先取得\term{粗粒度标签}（coarse-grained label）或\term{局部标签}（partial annotation）。前者缩小可能答案集合，例如只判断“硬件问题”而不细分电池、电源和主板；后者只判断对象的一部分，例如标出一句关键证据或一个图像关键点。它们提供的是对完整目标的约束，不是自动补全后的完整标签。图像标注中，对象复杂度和输出类型都会改变人工投入，因此成本感知的选样需要同时估计信息与工作量\scite{knowledge-acquisition-human-vijayanarasimhan2009cost}
+
+设完整类别$y$属于细类别集合$Y$，粗标签返回候选集合$S(x)\subseteq Y$并声明$y\in S(x)$。对由位置$j=1,\ldots,\ell$组成的对象，再用$m_j\in\{0,1\}$表示该位置是否经过检查；只有$m_j=1$时才保存局部答案$a_j$。于是已知信息可以写成
+\begin{equation}
+  y\in S(x),
+  \qquad
+  \mathcal{A}_{\mathrm{local}}(x)
+  =\{(j,a_j):m_j=1\}.
+  \label{eq:knowledge-acquisition-human-partial-label}
+\end{equation}
+这里$m_j=0$只表示未知，不能推出该位置属于负类。候选集合也不能任意压成其中一个元素；要使用这些约束训练模型，需要保留父子类别映射、对象标识和已检查范围。
+
+图~\ref{fig:knowledge-acquisition-human-granularity}用同一个几何场景展示三种输出。图像级类别只约束整幅场景，关键点增加一个对象位置，边界又增加已检查对象的几何范围；斜线区域仍是未检查，而不是背景负类。粗标签是否便宜取决于成本落在哪里：若寻找对象已经占去大部分时间，把多边形改成点可能只减少少量录入；若边界描绘最费时，局部标记才可能明显节省成本。按预期信息与人工工作量共同选择查询，比只计算标签个数更接近真实投入。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/knowledge-acquisition-ch02-granularity}
+  \caption{同一对象的粗粒度、局部与完整标注。三个面板共享同一教学场景：（a）只给图像级类别；（b）给对象甲的一个关键点；（c）给所有已检查对象的边界。斜线区域表示尚未检查，不能按负类使用；几何形状仅代表对象，不是真实识别结果，也不编码成本比例。}
+  \label{fig:knowledge-acquisition-human-granularity}
+\end{figure*}
+
+\subsection{比较候选结果}
+\label{sec:knowledge-acquisition-human-comparison}
+
+有些任务容易判断两个现成答案哪个更合适，却很难从空白输入写出理想答案。\term{候选比较}（candidate comparison）可以记录成对偏好、多个候选的排序或按维度评分。成对关系$a\succ_d b$表示在评价维度$d$上偏好$a$而不是$b$；还应允许$a\sim_d b$表示平局，以及$a\parallel_d b$表示依据不足或两者不可比较。相对关系只在给定候选和维度下成立，不是一个未经定义的绝对质量分数。
+
+例如，对“概括故障原因”这一问题，回答甲完整引用诊断证据但较长，回答乙简短却省略限定条件。在“事实准确”维度上甲可能优于乙，在“简洁”维度上次序可能反转。记录至少要关联问题、候选内容、展示位置、评价维度和作答者。若把不同维度混成一个“更好”，后续偏好模型会把无法区分的取舍压成单一方向。
+
+三个以上候选还可能产生平局或循环，如甲优于乙、乙优于丙、丙又优于甲。排序算法或偏好模型可以进一步汇总这些关系，但一次成对判断本身不能推出唯一总序。候选集若没有覆盖理想答案，选出其中较好者也不等于得到正确答案；因此应允许“两者都不合格”和补充问题。展示位置可以随机化或均衡化以检查位置影响，却不能保证消除措辞、长度和背景知识造成的偏差。全比较需要$C(C-1)/2$对，候选多时通常只查询部分关系，并明确哪些顺序仍未确定。
+
+\subsection{确认或修改模型建议}
+\label{sec:knowledge-acquisition-human-model-suggestion}
+
+\term{模型辅助标注}（model-assisted annotation）先给出候选类别、推荐边界或答案草稿，再由人确认、修改或拒绝。它可能减少搜索和录入，但也增加核对、定位错误和撤销错误建议的工作。界面至少要区分确认、局部编辑、完全重写、拒绝、无法判断和未处理；“没有修改”只有在标注者明确提交后才能解释为确认，超时或跳过不能记成认可。Schulz等在两个专家领域的篇章级任务中观察到自动建议改善了标注速度和表现，且在其实验中没有发现值得注意的偏差；这一结果仍限定于所研究的任务、建议模型和界面\scite{knowledge-acquisition-human-schulz2019suggestions}
+
+记录应同时保存模型建议、建议版本、人工操作和最终答案。这样才能知道某个错误是模型提出后被沿用，还是人工独立产生。对于同一文档，可以比较三种条件：从零作答只显示任务材料，候选列表提供多个可选答案，单一预填则把一个答案置于默认位置。预填越具体，潜在节省越大，核对时受到建议影响的风险也越集中。
+
+这类收益必须在具体任务上重新测量。已有结果支持“预标注可能有用”，不支持对任意任务、模型错误率和界面作无条件外推。尤其当建议错误集中在同一类输入时，平均节省时间可能掩盖关键区域的系统性返工。
+
+因此，选择建议界面时要把模型推理成本、人工核对时间、修改时间和最终质量放在同一实验里比较。可在一部分随机样本上保留不展示建议的独立作答，检查默认答案是否改变错误模式；重要争议样本也应保留独立判断。人机共同生成的答案已经受待评模型影响，不能再作为评估同一模型的完全独立参照。
+
+表~\ref{tab:knowledge-acquisition-human-interactions}从输入、动作、输出、未知信息和失效方式比较四种交互。行之间可以组合，例如先让人确认类别建议，再从零标出证据片段；组合后的成本需要重新实测，不能把两行各自的平均时间直接相加。
+
+\begin{table*}[htbp]
+  \centering
+  \footnotesize
+  \begingroup
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\linewidth}{@{}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{20mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{28mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{25mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{29mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{27mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    方式 & 人员看到的输入 & 执行动作 & 保存的知识 & 保留的未知 & 主要成本与特有错误 \\
+    \midrule
+    直接作答 & 文档、问题与完整规范 & 选择类别、定位证据或撰写答案 & 目标答案及其证据、状态 & 未要求的属性与未检查区域 & 阅读与生成成本；开放答案可能遗漏限制 \\
+    粗粒度或局部判断 & 文档与限定的类别层级或局部范围 & 选上位类、候选集、片段或关键点 & 对完整目标的约束与已检查范围 & 细类别、未检查位置和未问属性 & 对象查找仍可能昂贵；遗漏不能误作负类 \\
+    候选比较 & 同一问题的两个或多个候选及评价维度 & 选择偏好、平局、不可比或评分 & 给定候选间的相对关系 & 候选集外答案与未比较关系 & 比较对数随候选增多；位置、措辞和循环偏好 \\
+    确认或修改建议 & 文档、模型建议及必要上下文 & 确认、编辑、重写、拒绝或弃权 & 原建议、人工操作、最终答案与模型版本 & 未独立检查的替代答案 & 生成、核对与返工成本；可能沿用系统性错误 \\
+    \bottomrule
+  \end{tabularx}
+  \endgroup
+  \caption{人工交互方式与所得知识。各行都可用于贯穿的文档任务，但一次操作保存的信息和留下的未知不同；表中的成本项是需要测量的组成，不表示某种方式无条件更快或更好。}
+  \label{tab:knowledge-acquisition-human-interactions}
+\end{table*}
+
+\section{标注样本的选择}
+\label{sec:knowledge-acquisition-human-sample-selection}
+
+即使任务和交互已经固定，预算通常仍不足以覆盖全部候选。\term{主动学习}（active learning）让当前学习系统依据已有知识选择下一批需要人工判断的样本。这里采用池式设定：第$t$轮已有带标集合$L_t$、未标候选池$U_t$和由$L_t$训练得到的模型参数$\bm{\theta}^{(t)}$；选样期间固定模型和可用证据，收到结果后才更新。流式数据只会改变当时可见的候选集合，不构成另一种选样准则。
+
+随机抽样是必要的比较基准，已知类别、来源或时间结构重要时还可使用预先规定的分层抽样。主动选择会改变样本进入已标集合的概率，因而主动得到的标签不能未经校正就当作代表总体的审计样本。图~\ref{fig:knowledge-acquisition-human-query-loop}展示所有准则共用的查询循环：不确定性、代表性或预期收益主要替换其中的“当前选样依据”，无法判断则进入待处理记录，不会伪装成一个新增正确标签。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/knowledge-acquisition-ch02-query-loop}
+  \caption{主动选择样本的查询循环。可用答案进入已标集合，无法判断的样本保留原因但不增加有效标签数；每轮更新候选池、模型和累计成本，再依据预算、覆盖或独立验证决定继续或停止。反馈箭头表示重新计算查询依据，不承诺模型质量必然提高。}
+  \label{fig:knowledge-acquisition-human-query-loop}
+\end{figure}
+
+\subsection{基于不确定性的样本选择}
+\label{sec:knowledge-acquisition-human-uncertainty-selection}
+
+\term{不确定性采样}（uncertainty sampling）优先询问当前模型难以判断的样本。困难可以来自单个预测分布较分散，也可以来自多个候选模型意见不一，这两种依据并不等价。高不确定性还可能由输入损坏、任务歧义或未知类别造成；因此查询分数只确定“值得问”，还需要任务可答性和覆盖条件共同过滤。
+
+\subsubsection{基于预测不确定性的样本选择}
+\label{sec:knowledge-acquisition-human-predictive-uncertainty}
+
+设当前模型对候选$x$给出$C$类分布$p_c(x)=p_{\bm{\theta}^{(t)}}(y=c\mid x)$，并将降序概率记为$p_{(1)}(x)\geq p_{(2)}(x)\geq\cdots\geq p_{(C)}(x)$。最低置信度只看第一名，类别间隔比较前两名，预测熵则使用全部类别。为了让“分数越大越优先查询”的方向一致，定义
+\begin{equation}
+  \begin{aligned}
+    u_{\mathrm{LC}}(x)
+      &=1-p_{(1)}(x),\\
+    u_{\mathrm{M}}(x)
+      &=1-\bigl[p_{(1)}(x)-p_{(2)}(x)\bigr],\\
+    u_{\mathrm{H}}(x)
+      &=-\sum_{c=1}^{C}p_c(x)\log p_c(x),
+  \end{aligned}
+  \label{eq:knowledge-acquisition-human-predictive-uncertainty}
+\end{equation}
+其中约定$0\log0=0$。最低置信度问“第一名是否不够占优”，间隔问“前两名是否难分”，熵问“概率质量是否分散在多个类别”。Lewis与Gale在文本分类中系统使用了顺序式不确定性采样；式~\eqref{eq:knowledge-acquisition-human-predictive-uncertainty}给出适合本章统一比较方向的多分类写法\scite{knowledge-acquisition-human-lewis1994uncertainty}
+
+\begin{example}[三种不确定性分数可能给出不同排序]
+  \label{ex:knowledge-acquisition-human-uncertainty-scores}
+  考察三分类教学分布$\bm{p}^{A}=(0.50,0.49,0.01)$与$\bm{p}^{B}=(0.45,0.30,0.25)$。两者均已归一化。对$A$，最低置信度、间隔分数和自然对数熵依次为$0.50$、$1-(0.50-0.49)=0.99$和$0.742$；对$B$，三者依次为$0.55$、$1-(0.45-0.30)=0.85$和$1.067$。因此类别间隔优先查询$A$，最低置信度和熵优先查询$B$。在二分类中，三种分数都随最大类别概率单调变化，除平局外会给出相同排序；多分类时这种等价关系不再成立。
+\end{example}
+
+若文档要对每个位置$j=1,\ldots,\ell$给出局部标签，可以先得到局部不确定性$h_j$，再选择总和$\sum_jh_j$、平均值$\ell^{-1}\sum_jh_j$或最大值$\max_jh_j$。总和偏向长文档，平均值降低长度影响却可能稀释一个关键难点，最大值则会被单个异常位置主导。标注成本随长度变化时，还可以比较$u(x)/\widehat c(x)$，其中$\widehat c(x)$是预估人工成本；这需要另行验证成本模型，不能把字符数直接当成真实耗时。
+
+概率失准时，$p_c(x)$只反映模型自己的数值判断，不等于真实正确率。高熵文档可能确实靠近模型边界，也可能是缺页、跨语言或规范无法覆盖；相反，模型可能对未知类别高置信地犯错。实际查询应保留随机或分层覆盖，并把“无法判断”反馈给任务设计，而不是持续把同类不可答样本送给人工。
+
+\subsubsection{基于模型分歧的样本选择}
+\label{sec:knowledge-acquisition-human-model-disagreement}
+
+\term{委员会查询}（query by committee, QBC）用多个与当前已标数据相容的候选模型评价同一输入，再优先选择意见分歧的样本。委员会成员可以来自训练子集重采样、不同初始化或后验采样；这些构造分别覆盖数据扰动、优化路径或参数不确定性，含义不能互换。QBC的原始工作以最大分歧原则选取查询，并在特定理论模型下分析其信息收益\scite{knowledge-acquisition-human-seung1992committee}
+
+设委员会有$M$个模型，第$m$个模型输出$p_m(c\mid x)$和硬预测$\widehat y_m(x)$。记类别$c$获得的票数为$v_c(x)=\sum_{m=1}^{M}\mathbb{1}\{\widehat y_m(x)=c\}$，则投票熵为
+\begin{equation}
+  u_{\mathrm{VE}}(x)
+  =-\sum_{c=1}^{C}\frac{v_c(x)}{M}
+    \log\frac{v_c(x)}{M}.
+  \label{eq:knowledge-acquisition-human-vote-entropy}
+\end{equation}
+若要保留成员的完整概率分布，先定义平均分布
+\[
+  \bar p(c\mid x)
+  =\frac{1}{M}\sum_{m=1}^{M}p_m(c\mid x),
+\]
+再计算
+\begin{equation}
+  u_{\mathrm{KL}}(x)
+  =\frac{1}{M}\sum_{m=1}^{M}
+    \sum_{c=1}^{C}p_m(c\mid x)
+    \log\frac{p_m(c\mid x)}{\bar p(c\mid x)}.
+  \label{eq:knowledge-acquisition-human-kl-disagreement}
+\end{equation}
+式~\eqref{eq:knowledge-acquisition-human-kl-disagreement}是各成员到共识分布的平均Kullback--Leibler散度。成员类别空间必须一致，零概率项按极限取零；若某成员把正概率放在共识概率为零的位置，说明数值或类别映射存在错误，因为平均分布在该位置本不应为零。
+
+三个模型都输出$(0.40,0.35,0.25)$附近的分布时，单个预测很不确定，投票却可能全选第一类而使投票熵为零；三个模型分别输出$(0.70,0.20,0.10)$、$(0.20,0.70,0.10)$和$(0.20,0.10,0.70)$时，投票分歧达到最大。若三者都输出$(0.90,0.06,0.04)$，两类指标都较低。这组对照说明，预测分散与模型分歧回答的是不同问题。
+
+委员会的代价包括训练或保存$M$个成员、对每个候选执行$M$次预测，以及新标签到来后刷新成员。随机初始化只探索优化产生的部分差异，不等同于从完整参数后验采样；训练数据和架构相同的成员还可能共享偏差并一致犯错。Settles与Craven在序列标注任务中对包括委员会和预期梯度长度在内的多种策略作过实证比较，但具体排序依赖任务、模型和成本口径，不能据此指定一个普遍最优准则\scite{knowledge-acquisition-human-settles2008analysis}
+
+\subsection{基于代表性与多样性的样本选择}
+\label{sec:knowledge-acquisition-human-representative-diverse-selection}
+
+不确定性关注模型当前哪里犹豫，却没有回答一个标签能覆盖多少相似样本。\term{代表性}（representativeness）强调候选是否位于数据中重要的区域，\term{多样性}（diversity）强调同一批被选样本之间不要重复。两者都依赖表示映射$\bm{\phi}(x)$和距离或相似度；若表示主要编码文档长度、模板或背景，算法会在错误的维度上实现“覆盖”。
+
+给定非负相似度$K(\bm{\phi}(x),\bm{\phi}(z))$，一种局部密度分数为
+\begin{equation}
+  \rho(x)=\frac{1}{|U_t|}
+  \sum_{z\in U_t}K\bigl(\bm{\phi}(x),\bm{\phi}(z)\bigr).
+  \label{eq:knowledge-acquisition-human-density}
+\end{equation}
+高$\rho(x)$表示$x$接近许多候选，但会偏向常见区域。令$X_t=\{x:(x,y)\in L_t\}$表示已标输入集合，批量选择还可以用覆盖目标减少重复：对大小为$b$的批次$B$，求
+\begin{equation}
+  B^\ast\in\argmax_{\substack{B\subseteq U_t\\|B|=b}}
+  \sum_{z\in U_t}
+  \max_{x\in X_t\cup B}
+  K\bigl(\bm{\phi}(x),\bm{\phi}(z)\bigr).
+  \label{eq:knowledge-acquisition-human-coverage}
+\end{equation}
+每加入一个样本，都要相对于当前$X_t\cup B$重新计算新增覆盖；直接取单点密度最高的$b$个候选，可能全部落在同一簇中。
+
+图~\ref{fig:knowledge-acquisition-human-selection-criteria}固定同一二维教学点集比较三种准则。靠近给定边界的点适合不确定性查询，高密度区域中心适合代表性查询，分散在不同区域的一批点体现多样性；右上孤立点可能是稀有类别，也可能只是异常，单凭距离无法判定。图中的坐标只代表某个选定表示，不是样本的真实类别结构。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/knowledge-acquisition-ch02-selection-criteria}
+  \caption{不确定性、代表性与多样性选择的差别。三个面板使用完全相同的人工构造二维点集和坐标范围，空心圆为候选，实心圆为选中样本。（a）选择靠近给定虚线边界的点；（b）选择三个高密度区域的代表点；（c）选择覆盖不同区域的一批点，并保留孤立点作为“距离远不等于必然有用”的反例。坐标不表示真实类别结构或实验性能。}
+  \label{fig:knowledge-acquisition-human-selection-criteria}
+\end{figure*}
+
+代表性与不确定性可以组合，但组合顺序必须明确。例如，先用可答性与密度排除损坏输入和极端孤立点，再按不确定性排序，表示代表性决定基本资格；先筛出高不确定候选，再最大化批内覆盖，则表示不确定性决定资格。任意线性加权还需要处理不同分数的尺度，不能只给两个权重就声称普遍最优。两两距离带来$O(|U_t|^2)$级存储或计算时，可以预筛候选或使用近似近邻，但应检查稀有区域是否因此消失。
+
+\subsection{基于预期收益的样本选择}
+\label{sec:knowledge-acquisition-human-expected-utility-selection}
+
+前两类方法使用当前预测或几何结构作为代理，预期收益方法则直接追问：“如果得到这个标签，模型或任务指标预计会改变多少？”候选标签尚未知晓，所以必须对每个可能标签分别模拟，再按当前标签概率取条件期望。预期误差降低面向目标分布上的表现，预期模型变化面向参数或梯度的改变；前者更接近最终目标但计算昂贵，后者较便宜却只衡量变化幅度。
+
+\subsubsection{基于预期误差降低的样本选择}
+\label{sec:knowledge-acquisition-human-expected-error-reduction}
+
+令训练过程记为$\mathcal{A}$，当前参数为$\bm{\theta}^{(t)}=\mathcal{A}(L_t)$。对候选$x$和假设标签$c$，临时加入该答案并重训得到
+\begin{equation}
+  \bm{\theta}^{x,c}
+  =\mathcal{A}\bigl(L_t\cup\{(x,c)\}\bigr).
+  \label{eq:knowledge-acquisition-human-hypothetical-update}
+\end{equation}
+再用与目标使用场景相符的评估集$E=\{(\bm{z}_j,r_j)\}_{j=1}^{m}$估计风险，
+\begin{equation}
+  \widehat R_E(\bm{\theta})
+  =\frac{1}{m}\sum_{j=1}^{m}
+  \ell\bigl(f_{\bm{\theta}}(\bm{z}_j),r_j\bigr).
+  \label{eq:knowledge-acquisition-human-evaluation-risk}
+\end{equation}
+如果$E$没有真实标签，可以像Roy与McCallum的池式方法那样用当前或临时模型的预测分布估计对数损失或零一损失，但这会额外假设模型概率和候选池足以近似真实评估分布\scite{knowledge-acquisition-human-roy2001error}
+
+在真实标签未知时，候选$x$的期望查询后风险与\term{预期误差降低}（expected error reduction, EER）分数分别为
+\begin{align}
+  \overline R_E(x)
+    &=\sum_{c=1}^{C}
+      p_{\bm{\theta}^{(t)}}(c\mid x)
+      \widehat R_E(\bm{\theta}^{x,c}),
+  \label{eq:knowledge-acquisition-human-expected-future-risk}\\
+  u_{\mathrm{EER}}(x)
+    &=\widehat R_E(\bm{\theta}^{(t)})
+      -\overline R_E(x).
+  \label{eq:knowledge-acquisition-human-expected-error-reduction}
+\end{align}
+查询时最大化$u_{\mathrm{EER}}$，等价于最小化$\overline R_E$。第一项对同一轮所有候选相同，但保留它能让“降低量”的含义清楚；分支权重来自查询前的模型，只是对未知标签分布的估计，不是已经观察到的频率。
+
+\begin{example}[可复算的预期误差降低]
+  \label{ex:knowledge-acquisition-human-expected-error}
+  假设当前评估风险为$0.30$。对候选$x_A$，模型给两类的概率为$0.6$和$0.4$；临时按两种标签更新后，风险估计分别为$0.18$和$0.27$。于是$\overline R_E(x_A)=0.6\times0.18+0.4\times0.27=0.216$，预期降低量为$0.30-0.216=0.084$。对候选$x_B$，两类概率均为$0.5$，分支风险为$0.12$和$0.35$，所以$\overline R_E(x_B)=0.235$，降低量为$0.065$。在这些假设数值下应选$x_A$；它的某个分支并非风险最低，胜出原因是按未知标签概率加权后的整体结果更小。
+\end{example}
+
+图~\ref{fig:knowledge-acquisition-human-expected-utility}把$x_A$的计算画成两条互斥假设分支。每条分支都要临时更新并估计风险，然后才加权汇总；这不是向人工索取两份真实标签。若有$N$个候选和$C$类，朴素实现需要$NC$次临时训练及风险评估。实际可以只检查预筛候选、抽样可能标签、采用增量更新或近似重训，但近似会改变分数，需用实际查询后的独立效果检验。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/knowledge-acquisition-ch02-expected-utility}
+  \caption{标签未知时的预期查询收益。主路径使用例~\ref{ex:knowledge-acquisition-human-expected-error}中的二分类教学数值：两个标签分支是互斥假设，各自临时更新并估计风险，再按当前概率汇总为$0.216$，与当前风险$0.30$比较得到预期降低$0.084$。下方虚线路径表示预期模型变化可改为分别计算各假设标签的梯度范数；不能先把方向相反的梯度平均。}
+  \label{fig:knowledge-acquisition-human-expected-utility}
+\end{figure*}
+
+使用有标签验证集$E$估计查询收益会反复接触这些标签，容易让查询策略针对该集合过拟合，因此最终验收需要另留独立证据。使用无标签池估计风险则依赖当前模型对标签分布的近似，候选池与目标分布偏移时会系统失真。批量查询还会产生收益重叠：分别有用的两个相似文档一起加入时，第二个的增量价值可能很小，单点EER不能直接相加。
+
+\subsubsection{基于预期模型变化的样本选择}
+\label{sec:knowledge-acquisition-human-expected-model-change}
+
+\term{预期模型变化}（expected model change）用参数更新幅度替代未来任务误差。设单样本损失为$\ell(f_{\bm{\theta}}(x),c)$，在当前参数处按假设标签$c$得到梯度
+\begin{equation}
+  \bm{g}_c(x)
+  =\left.
+    \nabla_{\bm{\theta}}
+    \ell(f_{\bm{\theta}}(x),c)
+    \right|_{\bm{\theta}=\bm{\theta}^{(t)}}.
+  \label{eq:knowledge-acquisition-human-hypothetical-gradient}
+\end{equation}
+若采用学习率$\eta>0$的一步梯度更新，$\bm{\theta}^{x,c}\approx\bm{\theta}^{(t)}-\eta\bm{g}_c(x)$，于是\term{预期梯度长度}（expected gradient length, EGL）为
+\begin{equation}
+  u_{\mathrm{EGL}}(x)
+  =\sum_{c=1}^{C}
+    p_{\bm{\theta}^{(t)}}(c\mid x)
+    \lVert\bm{g}_c(x)\rVert_2.
+  \label{eq:knowledge-acquisition-human-expected-gradient-length}
+\end{equation}
+在普通梯度下降的局部近似下，预期一步参数位移为$\eta u_{\mathrm{EGL}}(x)$。Settles与Craven将这一思路用于序列标注，并讨论了对未知标签取期望的计算\scite{knowledge-acquisition-human-settles2008analysis}
+
+式~\eqref{eq:knowledge-acquisition-human-expected-gradient-length}必须先对每个标签取范数，再求期望。若先平均梯度再取范数，得到的是$\lVert\sum_c p(c\mid x)\bm{g}_c(x)\rVert_2$，方向相反的更新会抵消。以二分类Logistic损失为例，若$p(y=1\mid x)=0.5$且增广特征为$\widetilde{\bm{x}}$，两个假设标签的梯度分别为$-0.5\widetilde{\bm{x}}$与$0.5\widetilde{\bm{x}}$。平均梯度为零，而EGL为$0.5\lVert\widetilde{\bm{x}}\rVert_2$；两种次序所衡量的问题不同。
+
+变化大也不保证方向有利。对二分类Logistic模型，可推得$u_{\mathrm{EGL}}(x)=2p(1-p)\lVert\widetilde{\bm{x}}\rVert_2$。一个边界样本若$p=0.5$且特征范数为1，分数是$0.5$；另一个高置信样本若$p=0.9$但异常地具有特征范数10，分数反而是$1.8$。后者的大更新主要来自尺度，未必提供更有价值的知识。特征标准化、梯度裁剪或只考察部分参数都会改变分数含义，应在同一参数化和同一优化状态下比较。
+
+EGL避免为每个分支完整重训和扫描评估集，但仍需为每个候选、每个可能标签反向传播。采用动量、自适应预条件或二阶方法时，实际参数步长由优化器状态共同决定，单纯的欧氏梯度范数只是代理。最终应在独立任务效果上检验这一代理是否有效，而不是把模型变化本身当成目标。
+
+\section{标注者的选择}
+\label{sec:knowledge-acquisition-human-annotator-selection}
+
+同一任务交给不同的人，差别不只在总体正确率。领域知识、语言、工具熟练度、可访问证据和当前负载都会决定一个人能否处理某个样本。本节先建立任务准入，再用历史记录补充能力证据，并把样本需求与人员条件落实为具体匹配；追加多少人次和怎样融合多人答案分别留给第~\ref{sec:knowledge-acquisition-human-budget}节与第~\ref{chap:knowledge-acquisition-fusion}章。
+
+\subsection{基于专业能力的标注者选择}
+\label{sec:knowledge-acquisition-human-expertise-selection}
+
+专业能力应拆成与任务对应的可检查条件。文档任务至少涉及识别目标对象、理解领域概念、查阅允许证据和按规范录入四类能力。领域资历可以支持准入判断，却不自动证明熟悉本任务的边界；反过来，经过训练的普通参与者可以稳定执行规则明确的常见判断，却不应在缺少知识时猜测专业结论。
+
+可以用培训例题和试标分别检查这些能力。例如，普通故障描述只需理解明确规范，受训人员即可处理；涉及电池热失控机理且必须核对技术报告的文档，则要求相应领域知识和资料访问权限。若补充术语表与证据摘要后，普通人员已经能够依据规则作答，就不必仅按身份交给专家；若任务需要对冲突医学证据作专业裁决，培训不能在短期内替代专业判断。
+
+非专家是否可用是任务和聚合条件下的经验问题。Snow等在若干自然语言处理任务上比较了非专家标注与专家标准，并展示多份非专家答案在其研究任务中的可用性；这类结果不能推出任何复杂任务都可由非专家替代，也不能把多数一致当成天然正确\scite{knowledge-acquisition-human-snow2008nonexpert}对于偏好任务，选择目标人群比选择“更专业”的人更重要，因为要测量的是服务对象的判断分布，而不是专家替目标人群作答。
+
+培训、资格试题和规范更新后的再确认都要计入准备成本。旧规范下获得的资格只说明过去任务版本上的表现；类别边界、工具或证据来源发生实质变化时，需要用受影响的样例重新校准。人员也应能选择“缺少知识”，把无法作答暴露出来比强制完成更有价值。
+
+\subsection{基于历史表现的标注者选择}
+\label{sec:knowledge-acquisition-human-history-selection}
+
+历史记录应至少包含标注者、任务类型、答案、参考答案或后续裁决、弃权状态、处理时长和规范版本。总体平均值会混合不同难度和类别，因此选择人员时应优先比较重叠任务，或在可解释的难度组内分别计算。只承接简单样本的人可能拥有更高的表面符合率，却未必更适合困难样本。
+
+设标注者$a$在任务组$g$上完成$n_{a,g}$项，其中与独立参考一致$k_{a,g}$项。比例$\widehat q_{a,g}=k_{a,g}/n_{a,g}$只是该范围内的描述量；$9/10$与$90/100$虽然点估计相同，证据量并不相同。还要并列查看弃权、超时和规范版本，不能用单一综合分数遮住“某类任务可靠、另一类任务缺少证据”的结构。可靠性估计及其统计不确定性将在第~\ref{chap:knowledge-acquisition-quality}章展开。
+
+新加入者、长期没有记录者和任务变化后的旧人员都需要保留判断余地。可以分配少量含已知参考和真实分布难度的校准任务，在积累证据前限制高风险任务量，而不是凭极少结果永久定级。与多数人一致也不等于正确，因为多人可能共享规范误解；参考任务本身若过时或只覆盖常见类别，同样会给出片面的历史表现。
+
+\subsection{基于样本与标注者匹配的任务分配}
+\label{sec:knowledge-acquisition-human-matching}
+
+人员选择最终要落实到逐样本分配。对样本$i$和标注者$a$，令$e_{i,a}\in\{0,1\}$表示语言、领域、权限和任务资格是否满足，$z_{i,a}\in\{0,1\}$表示本轮是否分配。一个基本可行性约束是
+\begin{equation}
+  z_{i,a}\leq e_{i,a},
+  \qquad
+  \sum_a z_{i,a}\geq1,
+  \qquad
+  \sum_i t_{i,a}z_{i,a}\leq H_a,
+  \label{eq:knowledge-acquisition-human-assignment}
+\end{equation}
+其中$t_{i,a}$是预计工时，$H_a$是人员$a$在本轮可用的时间。若允许弃权，第二个约束只保证任务曾被分配，不保证已得到可用答案，所以还要为弃权后的转交设置人员、等待上限和最终未解决状态。
+
+图~\ref{fig:knowledge-acquisition-human-matching}展示逐样本匹配。普通中文文档交给受训通用人员，医疗证据交给医疗专家，英文合同交给双语法律人员；细线表示能力上可承接，粗线表示本轮实际分配，虚线箭头表示通用人员遇到专业难例并弃权后的转交。一个按历史均分排序的名单无法表达这种匹配，也无法表达专家只有一个剩余名额的负载约束。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/knowledge-acquisition-ch02-annotator-matching}
+  \caption{样本需求与标注者能力的匹配。细实线为可承接关系，粗实线为本轮实际分配，带箭头的虚线为无法判断后的转交。领域、语言、难度与可用时间均为假设情景；连线数量不表示人员的真实水平，也不构成总体排名。}
+  \label{fig:knowledge-acquisition-human-matching}
+\end{figure}
+
+任务稳定时，可以预先固定常见样本与专业队列的分工；任务分布变化时，则要根据新答案、弃权和负载动态调整。动态分配仍应给处理较少的人员安排适量校准任务，以更新能力判断；一味把容易任务交给高分人员、困难任务不断后移，会让困难区域长期没有知识，也让人员能力估计产生选择偏差。每次调整应保留依据和版本，便于区分人员变化与任务变化。
+
+\section{标注预算的分配}
+\label{sec:knowledge-acquisition-human-budget}
+
+前面已经形成多个可行行动：标一个新样本、给旧样本追加判断、调用专家、先粗标再细化，或启动下一轮模型更新。预算分配要比较这些完整行动，而不只是比较单价。设行动$k$执行次数为$z_k$，单次费用为$c_k$，固定启动费用为$F(\bm{z})$，对资源$r$消耗工时$t_{k,r}$；一种规划形式是
+\begin{equation}
+  \begin{aligned}
+    \max_{\bm{z}}\quad
+      &\widehat V(\bm{z})\\
+    \text{s.t.}\quad
+      &F(\bm{z})+\sum_k c_k z_k\leq B,\\
+      &\sum_k t_{k,r}z_k\leq H_r
+      \quad\text{对每类受限资源$r$}.
+  \end{aligned}
+  \label{eq:knowledge-acquisition-human-budget-allocation}
+\end{equation}
+这里$\widehat V(\bm{z})$是由任务证据支持的预期信息或任务价值，$B$是费用预算，$H_r$可以是专家工时或交付时限。行动之间可能互补或重叠，固定成本也使价值不必可加，因此“单位费用分数最高”只是一种局部比较，不保证整个组合最优。
+
+\subsection{新增标注与重复标注的预算分配}
+\label{sec:knowledge-acquisition-human-new-versus-repeat}
+
+新增标注扩大对象覆盖，重复标注增加同一对象上的独立证据。设样本$i$得到$r_i$次判断，第$j$次成本为$c_{i,j}$，则逐例标注成本为$\sum_{j=1}^{r_i}c_{i,j}$，总成本再加任务准备、培训和协调等固定项。在相同总人次下，令更多$r_i=1$有利于覆盖；提高少数$r_i$有利于观察分歧和降低某些独立随机错误。哪一种更有价值，取决于类别遗漏、任务歧义、人员能力和下游损失，不能只看平均标签数。
+
+重复标注不保证改进。若多人共享同一条错误规范，增加人数只会复制共性偏差；若作答者能看到前人的答案，也不再是独立判断。Sheng等对有噪声标注的研究表明，重复标注在一些质量与成本条件下可以改善标签和模型，但并非总是如此，并且有选择地给部分对象追加答案通常比无差别重复更值得考虑\scite{knowledge-acquisition-human-sheng2008another}这支持把重复次数作为预算决策，而不是固定为“每例三人”之类的普遍规则。
+
+固定重复次数实现简单，却会把相同投入用于清晰样本和争议样本。自适应方案可以先取得一份或两份独立答案，仅在出现分歧、证据缺失或高风险类别时继续追加，但必须预先设定触发条件、最高人次和停止去向。已经定位到规范缺陷时应先修正规则并重查受影响样本，不能用无限投票掩盖问题。融合多人答案的方法属于第~\ref{chap:knowledge-acquisition-fusion}章，独立审计则属于第~\ref{chap:knowledge-acquisition-quality}章；两部分都要在当前预算中预留资源。
+
+\subsection{普通标注与专家标注的预算分配}
+\label{sec:knowledge-acquisition-human-generalist-versus-expert}
+
+假设普通标注单价为$c_{\mathrm{O}}$、专家单价为$c_{\mathrm{E}}$，处理$n$个样本时，全程专家方案的费用可写为$C_{\mathrm{all}}=F_{\mathrm{E}}+nc_{\mathrm{E}}$。若所有样本先由普通人员处理，再把比例$q$的样本转交专家，并为每次转交支付$c_{\mathrm{X}}$，则
+\begin{equation}
+  C_{\mathrm{route}}
+  =F_{\mathrm{R}}+nc_{\mathrm{O}}
+   qn(c_{\mathrm{E}}+c_{\mathrm{X}}).
+  \label{eq:knowledge-acquisition-human-expert-routing-cost}
+\end{equation}
+专家先制定规范并培训普通人员时，还要加入固定的规范开发与培训成本，且转交比例可能变为$q'$。这些表达式只核算投入；三种方案是否达到同一完成条件，仍需用同一批任务证据验证。
+
+专家工时是独立于费用的约束。若专家处理一例预计需要$t_{\mathrm{E}}$，则路由方案还必须满足$qn t_{\mathrm{E}}\leq H_{\mathrm{E}}$。门槛过低会使专家队列积压，门槛过高则可能迫使普通人员猜测。专家解决一条难例与专家写出一条可复用规则影响的样本数不同，但规则能够覆盖多少后续输入需要试标确认，不能预先把开发成本均摊到所有样本并假定有效。
+
+普通标注和专家复核也可能共享任务定义上的错误。专家身份不能替代明确证据，昂贵来源是否值得使用应由其在当前任务上的增量价值判断。交付时限紧张时，还要显式比较等待专家与先处理其他可答样本的机会成本，而不能只优化账面费用。
+
+\subsection{不同标注粒度与轮次的预算分配}
+\label{sec:knowledge-acquisition-human-granularity-round-budget}
+
+两阶段方案先用较便宜的粗标签缩小范围，再只对仍有价值的对象取得细标签。设第一轮处理$n$个对象，粗标单价为$c_{\mathrm{coarse}}$；第二轮细化$m\leq n$个对象，每次重新打开和恢复上下文的成本为$c_{\mathrm{reopen}}$，细标成本为$c_{\mathrm{fine}}$，则
+\begin{equation}
+  C_{\mathrm{two}}
+  =F_1+F_2+nc_{\mathrm{coarse}}
+   m(c_{\mathrm{reopen}}+c_{\mathrm{fine}}).
+  \label{eq:knowledge-acquisition-human-two-stage-cost}
+\end{equation}
+一次完成全部细标签的费用为$C_{\mathrm{full}}=F_{\mathrm{full}}+nc_{\mathrm{full}}$。两阶段只有在第一轮确实能排除大量无须细化的对象，且重复理解上下文、对象对齐和模型更新成本没有吞掉节省时才占优。
+
+轮次大小也形成取舍。大批量可以摊薄启动、调度和重训成本，却要等整批完成后才能利用反馈；小批量能更早更新选样依据，却增加频繁启动和模型计算。每轮记录投入、对象覆盖、无法判断、独立质量证据和下游效果，区分预算耗尽、覆盖条件满足、验证表现达标和新增收益不足四种停止理由。模型变得更自信只能说明自身分布更集中，不能单独作为停止证据。
+
+表~\ref{tab:knowledge-acquisition-human-fixed-budget}给出预算为120个费用单位的可复算比较。假设普通完整判断每次1单位、专家判断每次4单位、粗判断每次0.5单位、局部细化每次2单位；专家每例12分钟。前三种方案准备成本为20单位，两阶段方案因两轮配置为30单位。数字只演示核算，同额费用并不意味着同等质量或信息价值。
+
+\begin{table*}[htbp]
+  \centering
+  \footnotesize
+  \begingroup
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\linewidth}{@{}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{23mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{17mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{25mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{16mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{19mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{31mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    教学方案 & 新增对象数 & 每对象判断次数 & 专家工时 & 固定准备成本 & 逐例成本核算 & 仍未解决的需求与验证证据 \\
+    \midrule
+    扩大新增覆盖 & 100 & 每例1次普通判断 & 0小时 & 20 & $100\times1=100$；总计120 & 歧义与稀有类别仍需独立审计 \\
+    增加重复判断 & 50 & 每例2次独立普通判断 & 0小时 & 20 & $50\times2\times1=100$；总计120 & 覆盖较窄；需检查分歧是否来自共性规范错误 \\
+    普通标注后转专家 & 80 & 75例1次，5例普通加专家各1次 & 1小时 & 20 & $80\times1+5\times4=100$；总计120 & 转交门槛及专家增量价值需用难例验证 \\
+    粗标后局部细化 & 100 & 100例粗标，其中20例再细化 & 0小时 & 30 & $100\times0.5+20\times2=90$；总计120 & 80例仍无细标签；需核对跨轮对象对应与重开成本 \\
+    \bottomrule
+  \end{tabularx}
+  \endgroup
+  \caption{固定资源下的人工标注方案比较。所有数值和单价均为假设，四行费用都等于120个单位；专家工时不能由费用列替代。末列不填虚构准确率，而是指出每种配置仍需要哪些验证证据。}
+  \label{tab:knowledge-acquisition-human-fixed-budget}
+\end{table*}
+
+样本、人员和预算决策必须联合解释，但各自回答的问题不同。某个文档是否值得获取标签属于第~\ref{sec:knowledge-acquisition-human-sample-selection}节；它适合交给普通人员还是领域专家属于第~\ref{sec:knowledge-acquisition-human-annotator-selection}节；应该请一位专家、两位普通人员，还是把同样预算用于更多对象，则属于本节。把三者压成一个总分会隐藏失败原因，也使成本变化后难以重新配置。
+
+\section{本章小结}
+\label{sec:knowledge-acquisition-human-summary}
+
+有限人工资源的价值不由标签数量单独决定。任务设计规定答案的含义与不可答状态，交互方式决定一次操作表达的约束，样本选择决定询问对象，标注者选择匹配作答能力，预算分配再决定覆盖、重复、专家和轮次各投入多少。只有把这些决定及其版本、证据和成本同时保存，人工输入才是可追踪的知识，而不是一列来源不明的类别。
+
+回到故障文档任务，一个有依据的预算方案可以把规则清楚的常见文档交给受训人员，用分层随机样本保留总体覆盖，以不确定性和代表性挑选补充样本；涉及专业报告的难例转给专家，少数高风险分歧追加独立判断，另留一批不参与选样和调参的样本用于审计。若粗类别已足以排除大量无关文档，再对剩余对象定位证据片段可能节省投入；若阅读全文才是主要成本，两轮打开材料反而可能更贵。
+
+这些安排都依赖当前任务证据，不是通用配方。主动查询分数可能追逐噪声，委员会可能共享偏差，模型建议可能改变人工判断，重复标注也可能复制同一误解。下一步需要把不同人工答案及其他来源放到共同语义下融合，再用独立证据评估和修正质量；本章完成的是让每份候选知识在进入这些步骤之前，已经说明问了什么、问了谁、怎样得到以及付出了多少。
