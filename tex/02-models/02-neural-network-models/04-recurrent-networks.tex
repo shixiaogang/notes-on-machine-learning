@@ -1,0 +1,1281 @@
+\chapter{循环神经网络}
+\label{chap:recurrent-networks}
+
+判断“这部电影并不精彩”的情感时，“精彩”前面的否定不能丢掉；根据设备读数预测下一时刻的温度时，当前数值也不能完全代替此前的变化过程。第~\ref{chap:feedforward-networks}章说明了怎样把一个固定维度的输入变成预测，第~\ref{chap:convolutional-networks}章则利用局部邻域和参数共享处理规则网格。本章面对的问题是：输入陆续到达、序列长度可变时，网络怎样把历史中有用的信息带到当前，又怎样从当前的错误学会调整此前的处理？
+
+这包含三个相互制约的要求。状态必须容纳预测所需的历史，训练必须把损失传到相关参数，计算还要适应整段训练或逐步预测。普通循环网络建立共同基础；储备池、控制门、注意力和结构化状态更新分别改变状态的构造、选择、读取或计算方式。拓扑与深度扩展改变信息的可见范围，理论分析检查优化和泛化所需的条件，应用部分把模型接回完整的数据与预测过程。
+
+\section{循环神经网络概述}
+\label{sec:rnn-overview}
+
+一种直接做法是把最近若干个观测拼成向量，交给前馈网络。这个窗口可以包含顺序，但窗口以外的信息不再参与预测；改变窗口长度还可能改变输入层的参数规模。时间卷积通过共享卷积核改善了这一点，但固定层数和核尺寸仍对应有限的感受野。若希望同一套计算持续处理新输入，就需要一个随着输入更新、能够传递历史影响的内部变量。
+
+这个变量称为\term{隐状态}（hidden state）：它是网络根据已读输入形成的内部表示，不是训练样本直接提供的标签。设输入序列为$\bm{x}_1,\ldots,\bm{x}_T$，其中$\bm{x}_t\in\mathbb{R}^{d}$，长度$T$可以随样本改变。用$\bm{h}^{(t)}\in\mathbb{R}^{m}$表示读完第$t$个输入后的状态，\term{循环神经网络}（recurrent neural network, RNN）通过状态反馈，把前一步的内部表示用于下一步计算：
+\begin{equation}
+  \bm{h}^{(t)}=F_{\bm{\theta}}\!\left(\bm{h}^{(t-1)},\bm{x}_t\right),
+  \qquad t=1,\ldots,T\text{。}
+  \label{eq:rnn-general-recurrence}
+\end{equation}
+这里$F_{\bm{\theta}}$是具有参数$\bm{\theta}$的更新函数，$\bm{h}^{(0)}$是初始状态。下标$t$标识序列中的输入，上标$(t)$标识状态更新的步数；它们在本章按同一步对齐。状态可以记录否定词、近期趋势或别的任务特征，但式\eqref{eq:rnn-general-recurrence}本身没有保证它保存了全部历史。
+
+同一组$\bm{\theta}$在不同时间步复用，称为时间方向的\term{参数共享}（parameter sharing）。因此，延长序列会增加更新次数，却不必增加循环单元的参数量。\term{时间展开}（unrolling through time）则把这些更新依次画成计算图：第$t$步读取已经得到的第$t-1$步状态，展开图沿时间前进，没有要求同一步无限循环求值。图~\ref{fig:rnn-unrolling}将状态反馈和展开图对应起来；展开后的深度随$T$增长，也是长序列训练困难的来源。
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/rnn-unrolling}
+  \caption{状态递推的紧凑表示与时间展开。蓝色节点提供当前输入，紫色方框计算隐状态，青色节点读出预测。展开图中的$F_{\bm{\theta}}$是同一个更新函数的多次调用，参数共享而状态值不同。赭色虚线示意较晚损失沿状态依赖回传梯度；图中只画三个更新步。}
+  \label{fig:rnn-unrolling}
+\end{figure*}
+
+循环网络的发展围绕两件事展开：怎样形成历史表示，以及怎样学到有用的状态更新。Elman在1990年的简单循环网络中，把前一步隐藏活动送回下一步，展示了这种上下文表示如何随序列任务形成。反馈在展开后成为一条时间链，同一参数因而可以作用于不同位置\scite{elman1990}
+
+能够表达历史，并不等于容易学到远距离依赖。Bengio、Simard和Frasconi在1994年分析了梯度学习与长期保留之间的困难：误差经多步状态变换回传时，影响可能迅速衰减或放大。这把研究重点从“网络是否含有反馈”推进到“反馈路径怎样传递信息与梯度”\scite{bengio1994rnn}
+
+1997年的LSTM为持续记忆安排了单独的加性路径，后来加入的遗忘门使网络能够清除不再相关的内容。它改变的是状态内部的信息通路，而不是放弃任务驱动的循环参数学习。2001年的ESN和2002年的LSM则采用另一种分工：先构造通常固定的动态储备池，再学习任务读出。前一条路线让网络学习如何保存，后一条路线先提供历史特征；各自的原始工作和结构差别在第~\ref{sec:rnn-gated}节与第~\ref{sec:rnn-reservoir}节展开。
+
+序列任务也推动了输出组织的变化。2014年，编码器—解码器使用一套循环网络读取源序列，另一套网络生成目标序列；Sutskever等用多层LSTM展示了这种端到端学习方式\scite{sutskever2014seq2seq} 同年的GRU用较少的门组织状态更新。随后，Bahdanau与Luong等的循环注意力模型让每个生成步骤重新读取编码器各位置的表示，减轻全部输入只能挤入同一末状态的限制。控制门改变保存方式，注意力改变读取方式，二者可以同时使用。
+
+较新的状态空间路线还关心整段序列的计算组织。2020年的HiPPO把历史记忆写成在线投影问题；S4利用相应结构矩阵和快速核生成，在递推与卷积之间切换。2023年的Mamba把部分系数改为由输入产生，再通过选择性扫描计算；同年的RWKV以内容权重、时间衰减与定长累积量组织历史。第~\ref{sec:rnn-state-space}节将分别说明这些设计的原始形式。它们没有取消状态递推，而是把状态的构造、访问与计算作为不同问题来处理。
+
+本章按历史经由隐状态传递这一共同机制组织内容：链式循环、树递归、储备池以及基于隐状态递推的状态空间网络都在这里讨论。具体文献可能把状态空间网络单列为一类；这种归并不意味着各模型具有相同的更新函数或训练算法。时间步也不必是物理时间，可以表示词的位置、扫描位置或有向结构中的计算次序。
+
+\section{基础循环神经网络}
+\label{sec:rnn-basic}
+
+要理解各种扩展，先把状态更新、任务输出和梯度计算分清。循环单元决定历史如何压缩，读出方式决定在什么位置预测，损失决定哪些更新受到监督。改变其中一项，并不必然要求另外两项同时改变。
+
+\subsection{网络结构}
+\label{sec:rnn-structure}
+
+普通RNN把前一步状态和当前输入映射到同一个隐藏空间，再逐坐标使用非线性函数。采用列向量约定，令
+\begin{equation}
+  \begin{aligned}
+    \bm{z}^{(t)}&=\bm{U}\bm{x}_t+\bm{W}\bm{h}^{(t-1)}+\bm{b},\\
+    \bm{h}^{(t)}&=\tanh\!\left(\bm{z}^{(t)}\right),\\
+    \bm{a}^{(t)}&=\bm{V}\bm{h}^{(t)}+\bm{c},\qquad
+    \widehat{\bm{y}}_t=g\!\left(\bm{a}^{(t)}\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-basic-cell}
+\end{equation}
+其中$\bm{U}\in\mathbb{R}^{m\times d}$是输入映射，$\bm{W}\in\mathbb{R}^{m\times m}$是状态转移矩阵，$\bm{b}\in\mathbb{R}^{m}$是隐藏偏置；$\bm{V}\in\mathbb{R}^{q\times m}$和$\bm{c}\in\mathbb{R}^{q}$产生$q$维输出得分。$g$按任务选择恒等映射、Sigmoid或Softmax，输出与损失的配合沿用第~\ref{sec:ffn-output-objectives}节。Tanh可替换为其他激活，但梯度和状态范围会随之改变。
+
+这个单元及读出共有$md+m^2+m+qm+q$个参数，忽略逐坐标运算后，一步稠密计算的乘加量为$O(md+m^2+qm)$。长度为$T$的前向计算重复$T$次。固定宽度时，逐步预测只需维护当前状态；完整反向传播通常还要保存沿途的激活，不能把预测的状态存储量直接当成训练的全部存储量。
+
+\subsubsection{序列到分类}
+\label{sec:rnn-sequence-classification}
+
+如果一整段评论只对应一个情感标签，网络应在读完有效输入后输出一次。\term{序列到分类}（sequence classification）把长度可变的输入变成一个类别预测。最直接的读出使用末状态：
+\begin{equation}
+  \bm{p}=\operatorname{softmax}\!\left(\bm{V}\bm{h}^{(T)}+\bm{c}\right),
+  \qquad \ell=-\log p_y\text{，}
+  \label{eq:rnn-classification}
+\end{equation}
+其中类别数为$K$、$q=K$、真实标签为$y\in\{1,\ldots,K\}$。末状态必须把与类别有关的信息带到结尾，所以较早出现的证据也要经过后续更新。
+
+另一种读出对状态聚合，例如用$\overline{\bm{h}}=T^{-1}\sum_{t=1}^{T}\bm{h}^{(t)}$替代末状态。这里聚合的是已含历史的状态，仍然可以体现顺序；但平均会稀释只出现在少数位置的证据。末状态、平均、最大池化和可学习聚合各自保留不同信息，应根据标签依赖的范围比较，而不是仅按实现是否方便选择。
+
+
+图~\ref{fig:rnn-sequence-classification}显示了末状态分类的监督位置：只有读完有效序列后，分类头才形成整段预测。
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-sequence-classification}
+  \caption{序列到分类。三个输入依次更新同一循环单元，末状态产生类别概率$\bm p$。蓝色表示输入，紫色表示隐状态，青色表示任务输出；图中只示意长度为3的序列。}
+  \label{fig:rnn-sequence-classification}
+\end{figure}
+
+\subsubsection{同步序列到序列}
+\label{sec:rnn-aligned-sequences}
+
+若每个词都要预测一个标签，输入位置与输出位置对齐。\term{同步序列到序列}（aligned sequence-to-sequence）在每个有效位置读出：
+\begin{equation}
+  \ell=\frac{1}{T}\sum_{t=1}^{T}
+  \ell_t\!\left(g(\bm{V}\bm{h}^{(t)}+\bm{c}),y_t\right)\text{。}
+  \label{eq:rnn-aligned-loss}
+\end{equation}
+单向状态$\bm{h}^{(t)}$只读取$\bm{x}_1,\ldots,\bm{x}_t$。这适合实时预测，但不能利用尚未到达的词。若任务允许读取整段输入，可以使用第~\ref{sec:rnn-topologies}节的双向结构补充后文信息。
+
+时间预测也可以按位置组织，但要注明输出的时间含义。例如读入$\bm{x}_t$后预测$\bm{x}_{t+1}$，计算索引仍是$t$，目标却是下一步观测。对齐的是输入位置与预测位置的组织方式，不是要求二者表示同一物理时刻。
+
+
+图~\ref{fig:rnn-aligned-sequences}在各位置设置读出；它与末状态分类共享同一种状态递推，但各位置都可以收到监督。
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-aligned-sequences}
+  \caption{同步序列到序列。每个输入位置形成一个隐状态和相应预测。输入位置与预测位置对齐；若用于下一时刻预测，应另将目标移到后一时刻。图中单向状态只读取当前及此前输入。}
+  \label{fig:rnn-aligned-sequences}
+\end{figure}
+
+\subsubsection{异步序列到序列}
+\label{sec:rnn-encoder-decoder}
+
+把一段输入转换为另一段序列时，两者可能长度不同，也没有已知的逐位置对应。\term{编码器—解码器}（encoder--decoder）把读取输入和产生输出分成两套计算：编码器形成上下文，解码器以此为条件生成目标。设目标长度为$S$，目标符号来自大小为$K$的词表；用$\bm{e}(y)$表示符号嵌入，用$\bm{s}^{(j)}$表示解码状态，基本形式为
+\begin{equation}
+  \begin{aligned}
+    \bm{c}_{\mathrm{enc}}&=\bm{h}^{(T)},\qquad
+    \bm{s}^{(0)}=\psi(\bm{c}_{\mathrm{enc}}),\\
+    \bm{s}^{(j)}&=F_{\mathrm{dec}}\!\left(
+      \bm{s}^{(j-1)},\bm{e}(y_{j-1}),\bm{c}_{\mathrm{enc}}\right),\\
+    \bm{p}^{(j)}&=\operatorname{softmax}\!\left(
+      \bm{V}_{\mathrm{dec}}\bm{s}^{(j)}+\bm{b}_{\mathrm{dec}}\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-encoder-decoder}
+\end{equation}
+$\psi$将编码状态映射到解码状态空间，编码器与解码器可以使用不同参数和宽度。起始符号$y_0=\mathrm{BOS}$为第一步提供输入，终止符号$\mathrm{EOS}$表示生成结束。下文把$y_S=\mathrm{EOS}$计入目标序列。
+
+目标序列的条件概率按生成次序分解：
+\begin{equation}
+  \begin{aligned}
+    p_{\bm{\theta}}(y_{1:S}\mid\bm{x}_{1:T})
+      &=\prod_{j=1}^{S}p_{\bm{\theta}}
+        (y_j\mid y_{0:j-1},\bm{x}_{1:T}),\\
+    \ell&=-\sum_{j=1}^{S}\log p^{(j)}_{y_j}\text{。}
+  \end{aligned}
+  \label{eq:rnn-sequence-likelihood}
+\end{equation}
+这里$y_{1:S}$、$\bm{x}_{1:T}$简记相应序列。条件中保留了此前目标，所以概率分解没有假设目标位置互相独立。对损失求和或按$S$平均会改变不同长度样本的权重，训练时应明确采用哪一种。
+
+图~\ref{fig:rnn-encoder-decoder}将读取源序列与生成目标分开。两侧各画三个有效位置以便比较，并不要求实际源序列与目标序列等长。
+\begin{figure*}[t]
+  \centering
+  \input{figures/rnn-encoder-decoder}
+  \caption{异步序列到序列。编码器读取三个源输入，解码器在初态$\bm s^{(0)}$之后生成三个目标。BOS启动生成，此前目标经嵌入反馈到下一步，青色虚线示意这一反馈。训练可使用真实目标，预测使用已生成目标；图中省略每步重复读取的固定上下文。}
+  \label{fig:rnn-encoder-decoder}
+\end{figure*}
+
+\subsection{参数学习}
+\label{sec:rnn-learning}
+
+每次更新都使用相同参数，训练必须把参数在不同时间步的影响加起来。输入和输出映射可沿用第~\ref{sec:ffn-initialization}节的尺度原则。循环矩阵会被重复使用，除了单步方差，还要关注多步乘积：正交初始化可令初始线性变换保持欧氏范数，但激活的导数仍会改变实际传播；它不是长序列可训练性的保证。
+
+独立序列通常从零状态或同一个可学习的初始状态开始。若初始状态可学习，其梯度也由反向传播得到。连续数据流可以延续状态，但批次中的每一行必须继续对应同一条数据流；换成无关样本时需要重置。把上一个测试样本的状态带入下一个独立样本，会改变预测条件。
+
+\subsubsection{随时间反向传播与共享梯度}
+\label{sec:rnn-bptt}
+
+把状态递推展开后，就能使用前馈网络的链式法则。\term{随时间反向传播}（backpropagation through time, BPTT）沿时间展开图从后向前计算导数。以下以式\eqref{eq:rnn-basic-cell}为对象，令单序列目标为$L=\sum_{t=1}^{T}\ell_t$；没有监督的位置取$\ell_t=0$。记$\bm{g}^{(t)}=\partial\ell_t/\partial\bm{a}^{(t)}$，总损失对状态的梯度为$\bm{r}^{(t)}$，对预激活的梯度为$\bm{\delta}^{(t)}$，则
+\begin{equation}
+  \begin{aligned}
+    \bm{r}^{(t)}&=\bm{V}^{\top}\bm{g}^{(t)}
+       +\bm{W}^{\top}\bm{\delta}^{(t+1)},\\
+    \bm{\delta}^{(t)}&=\bm{r}^{(t)}\odot
+      \left(\bm{1}-\bm{h}^{(t)}\odot\bm{h}^{(t)}\right),
+      \qquad \bm{\delta}^{(T+1)}=\bm{0}\text{。}
+  \end{aligned}
+  \label{eq:rnn-backward-recursion}
+\end{equation}
+$\odot$表示逐元素乘法。第一项来自当前读出，第二项来自后续状态；即使当前没有标签，后续损失仍可通过第二项监督这一步。若只在末状态分类，$t<T$的$\bm{g}^{(t)}$均为零，但相应$\bm{\delta}^{(t)}$未必为零。
+
+每次调用都对共享参数产生一个局部贡献，累积后得到
+\begin{equation}
+  \begin{aligned}
+    \nabla_{\bm{U}}L&=\sum_{t=1}^{T}\bm{\delta}^{(t)}\bm{x}_t^{\top},
+    &\nabla_{\bm{W}}L&=\sum_{t=1}^{T}\bm{\delta}^{(t)}
+      (\bm{h}^{(t-1)})^{\top},\\
+    \nabla_{\bm{b}}L&=\sum_{t=1}^{T}\bm{\delta}^{(t)},
+    &\nabla_{\bm{V}}L&=\sum_{t=1}^{T}\bm{g}^{(t)}(\bm{h}^{(t)})^{\top},\\
+    \nabla_{\bm{c}}L&=\sum_{t=1}^{T}\bm{g}^{(t)},
+    &\nabla_{\bm{h}^{(0)}}L&=\bm{W}^{\top}\bm{\delta}^{(1)}\text{。}
+  \end{aligned}
+  \label{eq:rnn-shared-gradients}
+\end{equation}
+这些梯度的形状与相应参数一致。自动微分会完成求和，但理解求和的来源，才能区分“同一参数多次使用”和“每步拥有一套新参数”。若目标按时间平均，相应梯度还需除以有效长度。
+
+\begin{example}[两步递推中的梯度累积]
+  \label{ex:rnn-shared-gradient}
+  为单独观察共享参数，暂用标量线性更新$h^{(t)}=w h^{(t-1)}+x_t$，取$h^{(0)}=0$、$x_1=1$、$x_2=0$、$w=1/2$，末步损失为$L=(h^{(2)})^2/2$。前向计算得到$h^{(1)}=1$、$h^{(2)}=1/2$。末步状态梯度为$1/2$，前一步状态梯度为$w/2=1/4$；参数梯度是
+  \[
+    \frac{\partial L}{\partial w}
+      =\frac14 h^{(0)}+\frac12 h^{(1)}=\frac12\text{。}
+  \]
+  第一步贡献为零，是因为它乘到零初始状态，并非第一步不属于共享计算。若初始状态可学习，其梯度为$w\times1/4=1/8$。
+\end{example}
+
+\subsubsection{截断、裁剪与状态管理}
+\label{sec:rnn-truncation}
+
+长序列的完整展开会占用大量训练存储。\term{截断随时间反向传播}（truncated BPTT）把数据流分成有限长度的片段，在片段边界保留状态数值，却切断对更早计算的求导依赖。这样，当前预测仍可使用此前状态，但当前损失不能跨过边界调整形成该状态的早期计算。截断减小了反向图，并没有把前向记忆自动限制为片段长度；它一般给出完整梯度的有偏近似。
+
+梯度过大时，可以在优化器更新之前使用\term{梯度裁剪}（gradient clipping），把梯度范数限制在阈值内。将全部参数梯度拼成$\bm{g}$，阈值为$\tau>0$，全局范数裁剪写为
+\begin{equation}
+  \widetilde{\bm{g}}=
+  \begin{cases}
+    \bm{g},&\lVert\bm{g}\rVert_2\leq\tau,\\
+    \tau\bm{g}/\lVert\bm{g}\rVert_2,&\lVert\bm{g}\rVert_2>\tau\text{。}
+  \end{cases}
+  \label{eq:rnn-gradient-clipping}
+\end{equation}
+它保持非零梯度的方向并限制步长尺度，有助于避免一次异常梯度导致大幅更新，但不会恢复已经消失的梯度，也没有改变前向状态的稳定性。Pascanu等从状态雅可比乘积分析这两类梯度问题，并研究了裁剪的作用\scite{pascanu2013}
+
+可变长度批次常用填充补齐。\term{掩码}（mask）标记哪些位置是真实数据，使填充位置不参与损失或状态聚合。末状态读出应取每个样本的有效末位置；若继续在填充上更新，状态可能改变。分类时的平均聚合也应除以有效长度，而不是批次中的最大长度。
+
+\subsubsection{教师强制与实际预测}
+\label{sec:rnn-teacher-forcing}
+
+式\eqref{eq:rnn-sequence-likelihood}计算的是给定真实前缀的条件概率。训练时把真实$y_{j-1}$作为第$j$步输入，称为\term{教师强制}（teacher forcing）：用正确前缀让模型学习下一符号的条件分布。预测时没有真实目标，只能反馈此前生成的符号。此前生成错误会改变后续状态，训练与预测遇到的前缀分布由此可能不同。
+
+教师强制仍是所定义条件似然的正确计算方式，前缀分布差异不能自动推出训练目标错误。混合真实符号与模型生成符号会改变训练过程，需要重新说明其目标。无论使用何种训练输入，评估生成质量都应按真实预测过程逐步运行。贪心解码每步选择概率最大的符号；束搜索保留多个候选前缀，但并不保证找到全局概率最大的完整序列。
+
+\subsection{长期依赖问题及解决思路}
+\label{sec:rnn-long-dependencies}
+
+较早的输入能否影响很晚的输出，取决于这种影响经过多次更新后还剩多少。\term{长期依赖}（long-term dependency）指当前任务需要利用相距很多步的信息；相隔多少步算长，要相对于任务和模型的有效记忆尺度判断。
+
+固定输入序列，记一步更新的状态\term{雅可比矩阵}（Jacobian matrix）为$\bm{J}^{(t)}=\partial\bm{h}^{(t)}/\partial\bm{h}^{(t-1)}$，它描述前一步状态的小变化如何影响后一步。链式法则给出
+\begin{equation}
+  \frac{\partial\bm{h}^{(t)}}{\partial\bm{h}^{(s)}}
+    =\bm{J}^{(t)}\bm{J}^{(t-1)}\cdots\bm{J}^{(s+1)},
+    \qquad t>s\text{。}
+  \label{eq:rnn-jacobian-product}
+\end{equation}
+前向的状态敏感度使用这个乘积，反向的损失梯度使用其转置。普通Tanh单元中，$\bm{J}^{(t)}=\bm{D}^{(t)}\bm{W}$，$\bm{D}^{(t)}$的对角元素为$1-(h_i^{(t)})^2$。因此，仅控制$\bm{W}$的特征值还不足以描述全部多步传播。
+
+若所有相关步都有$\lVert\bm{J}^{(t)}\rVert_2\leq r<1$，则乘积范数不超过$r^{t-s}$，早期扰动与沿这条路径回传的梯度都受到指数衰减的上界。\term{梯度消失}（vanishing gradients）使早期参数难以收到有效更新。若某些方向在多步乘积中持续放大，则可能出现\term{梯度爆炸}（exploding gradients）。单步范数大于1并不保证每个方向或每条输入轨迹都爆炸；矩阵方向、激活饱和和输入共同决定实际乘积。
+
+\begin{example}[传播距离与状态保留]
+  \label{ex:rnn-memory-decay}
+  对线性标量递推$h^{(t)}=a h^{(t-1)}+x_t$，若$x_1=1$、后续输入为零且$h^{(0)}=0$，则$h^{(T)}=a^{T-1}$，跨步敏感度也为$a^{T-1}$。取$T=101$，$a=0.9$时为约$2.66\times10^{-5}$，$a=1.1$时为约$1.38\times10^4$。取$a=1$可以保留这个单一信号，却会把多个输入不断相加；保留信息与区分不同历史仍是两个要求。
+\end{example}
+
+要比较解决思路，可以把式\eqref{eq:rnn-jacobian-product}中的两个因素分开：传播路径包含多少次变换，每次变换又怎样放大或衰减。对一条含$\nu$次状态变换的路径，若各步范数不超过$r$，则
+\begin{equation}
+  \left\lVert\bm J_{\nu}\cdots\bm J_1\right\rVert_2
+    \leq\prod_{k=1}^{\nu}\lVert\bm J_k\rVert_2\leq r^{\nu}\text{。}
+  \label{eq:rnn-path-length-rate}
+\end{equation}
+$r$控制逐步变化的尺度，$\nu$控制这种变化重复多少次。这个上界不是每个方向的实际传播系数，但能帮助区分下面几类设计。
+
+\subsubsection{参数约束：控制逐步放大与衰减}
+\label{sec:rnn-parameter-constraints}
+
+若传播方向的增益长期大于1，限制状态变换的范数可以减小指数放大；若增益长期小于1，只把范数压得更小反而会加重消失。保存长期影响需要相关方向的传播系数接近1，同时限制异常放大的方向。因此，“降低底数”主要对应抑制爆炸，缓解消失则要控制衰减，使需要保留的方向不被过度压缩。
+
+更强的条件同时约束最大和最小奇异值。若各步状态雅可比的奇异值均在$[q,r]$内，$q>0$，对任意末端梯度$\bm v$有
+\begin{equation}
+  q^{\nu}\lVert\bm v\rVert_2
+    \leq\left\lVert(\bm J_{\nu}\cdots\bm J_1)^{\top}\bm v\right\rVert_2
+    \leq r^{\nu}\lVert\bm v\rVert_2\text{。}
+  \label{eq:rnn-path-singular-bounds}
+\end{equation}
+使$q$与$r$都接近1，才同时抑制过快衰减与过快放大。普通Tanh单元的$\bm J^{(t)}=\bm D^{(t)}\bm W$还包含激活导数：即使约束$\bm W^{\top}\bm W=\bm I$，饱和的Tanh仍可使$\bm D^{(t)}$接近零。正交或酉矩阵约束保护的是线性部分，必须配合激活、输入尺度和完整雅可比分析\scite{arjovsky2016unitary}
+
+固定储备池是对可训练参数施加更强约束的一种做法。把循环动态参数$\bm\theta_{\mathrm{res}}$固定为$\bm\theta_0$，相当于将其可行集合限制为单点$\{\bm\theta_0\}$，任务训练只优化读出参数。储备池构造还常限制循环矩阵的尺度、连接和泄漏率，以安排状态的稳定性和记忆时间尺度。
+
+但固定参数与控制雅可比是两件事。冻结一个衰减过快的动态，不会让已经丢失的信息重新出现；冻结一个不稳定的动态，也不会自动使它稳定。固定储备池的另一项作用，是训练时不再需要把末端错误沿长时间链传回循环参数，读出只需利用已经生成的状态特征。它绕开了这部分循环参数的长距离信用分配，而不是消除了前向状态中的长期依赖问题。
+
+\subsubsection{跨时间跳跃：减少一条路径的变换次数}
+\label{sec:rnn-temporal-skips}
+
+另一种做法增加从较早状态直接到较晚状态的边，例如
+\begin{equation}
+  \bm h^{(t)}=F_{\bm\theta}(\bm h^{(t-1)},\bm x_t)
+       +\bm S\bm h^{(t-k)},\qquad t\geq k\text{，}
+  \label{eq:rnn-temporal-skip}
+\end{equation}
+其中$k$是跳跃间隔，$\bm S\in\mathbb R^{m\times m}$是直达映射，边界状态另行初始化。从$t-k$到$t$的直接路径只经过$\bm S$。跨越距离$pk$时，沿连续跳跃边的一条路径经过$p$次变换；在$\lVert\bm S\rVert_2\leq r$下，该路径的范数上界为$r^p$，普通逐步路径则可能含$pk$次变换。
+
+在标量教学例子中，同样以$0.9$为路径系数，跨100步的逐步路径为$0.9^{100}\approx2.66\times10^{-5}$，每10步跳一次的路径为$0.9^{10}\approx0.349$。这是新增路径的比较；完整梯度还要对所有路径的贡献求和，不能把整个网络的总导数一概改写成$r^{\nu/k}$。跳跃也需要保存相应旧状态，并可能跳过任务所需的细粒度处理。
+
+跨层残差减少层方向的传播障碍，跨时间跳跃改变时间方向的依赖，二者不能混为一谈。即使某条直达路径系数为1，其他分支和多路径求和仍可能放大梯度，读出也未必能从混合状态中取出目标信息。
+
+\subsubsection{控制门：让保留率随内容改变}
+\label{sec:rnn-gated-memory-path}
+
+固定约束对所有输入使用同一规则，任务却可能只需保存某些内容。控制门把保留系数变成输入相关量。以LSTM的直接记忆路径为例，暂固定门的数值后，从$s$到$t$的逐坐标系数为$\prod_{u=s+1}^{t}f_i^{(u)}$。需要保存时令相应遗忘门接近1，需要覆盖时降低它；输入门再调节新内容写入。门控主要改变逐步保留率与信息通路，通常没有减少时间步数。
+
+门本身也依赖状态，完整雅可比还包含门与候选变化的路径。能建立接近恒等的记忆通路，为训练提供了选择，任务损失仍需学到何时使用它。第~\ref{sec:rnn-lstm}节和第~\ref{sec:rnn-gru}节将把这些路径写成具体单元。
+
+这几类方式可以组合：固定储备池也能加入跳跃连接，门控网络也能约束部分矩阵。比较时应分别检查传播路径、逐步增益、可训练参数范围，以及状态是否保留了读出所需的信息。
+
+\section{基于储备池的循环神经网络}
+\label{sec:rnn-reservoir}
+
+如果难点在于学习复杂的循环动态，可以把构造动态与学习任务输出分开。\term{储备池计算}（reservoir computing）用一个通常固定的动态系统把输入历史转换成丰富状态，再学习从状态到目标的读出。这里的\term{读出}（readout）是任务输出映射：它接收状态特征，计算回归值或类别概率。状态随输入改变，但产生状态的循环参数通常不按当前任务的梯度更新。图~\ref{fig:rnn-reservoir}展示了这一分工。
+
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-reservoir}
+  \caption{储备池计算的参数分工。输入进入固定的循环动态，多个内部单元共同形成随历史变化的状态，可训练读出将状态映射到目标。灰蓝连线表示固定连接，青色箭头表示参与拟合的读出；内部连接只示意结构，不表示某个随机生成样本。ESN使用连续值激活，LSM可由脉冲活动及其滤波响应形成读出特征。}
+  \label{fig:rnn-reservoir}
+\end{figure}
+
+\subsection{ESN}
+\label{sec:rnn-esn}
+
+\term{回声状态网络}（echo state network, ESN）是一种以连续值循环状态提供历史特征的储备池模型，Jaeger的技术报告建立了其基本框架\scite{jaeger2001} 下面采用无输出反馈的泄漏积分版本，避免把真实目标或读出结果再送入储备池。令泄漏率$\alpha\in(0,1]$，更新为
+\begin{equation}
+  \begin{aligned}
+    \widetilde{\bm{h}}^{(t)}&=\tanh\!\left(
+      \bm{W}_{\mathrm{res}}\bm{h}^{(t-1)}
+      +\bm{U}_{\mathrm{res}}\bm{x}_t+\bm{b}_{\mathrm{res}}\right),\\
+    \bm{h}^{(t)}&=(1-\alpha)\bm{h}^{(t-1)}
+       +\alpha\widetilde{\bm{h}}^{(t)}\text{。}
+  \end{aligned}
+  \label{eq:rnn-esn-update}
+\end{equation}
+$\bm{W}_{\mathrm{res}}\in\mathbb{R}^{m\times m}$、$\bm{U}_{\mathrm{res}}\in\mathbb{R}^{m\times d}$和偏置通常构造后固定。较小$\alpha$使每次状态变化较慢，但实际记忆还取决于循环矩阵、输入尺度和非线性响应。稀疏连接、输入缩放、泄漏率和状态维度均是可由验证选择的配置。
+
+训练时先运行储备池，收集特征$\bm{z}_t=[1;\bm{x}_t;\bm{h}^{(t)}]\in\mathbb{R}^{1+d+m}$，分号表示向量拼接。初始若干步可能主要反映人为初态，常丢弃这段\term{洗出期}（washout），即先让系统接受输入、再开始拟合读出。独立序列的洗出和重置规则需一致，不能直接删掉恰好含有分类证据的开头。
+
+对连续值目标，将$N$个有效状态按行堆成$\bm{Z}\in\mathbb{R}^{N\times(1+d+m)}$，相应目标堆成$\bm{Y}\in\mathbb{R}^{N\times q}$。线性读出参数为$\bm{R}\in\mathbb{R}^{(1+d+m)\times q}$，采用平方损失和岭惩罚时
+\begin{equation}
+  \begin{aligned}
+    \bm{R}^{\star}&=\argmin_{\bm{R}}
+      \lVert\bm{Z}\bm{R}-\bm{Y}\rVert_{\mathrm{F}}^2
+      +\lambda\lVert\bm{R}\rVert_{\mathrm{F}}^2,\\
+    \bm{R}^{\star}&=(\bm{Z}^{\top}\bm{Z}+\lambda\bm{I})^{-1}
+      \bm{Z}^{\top}\bm{Y},\qquad \lambda>0\text{。}
+  \end{aligned}
+  \label{eq:rnn-esn-ridge}
+\end{equation}
+这里$\lVert\cdot\rVert_{\mathrm{F}}$是Frobenius范数。公式惩罚了包括截距在内的全部系数；若不惩罚截距，应改用相应对角惩罚矩阵并另查可逆性。实际求解线性方程而不必显式求逆。分类可以使用Softmax读出和交叉熵，但不再具有上述平方损失的解析解。
+
+储备池需要对相同输入历史产生一致状态，而不是长期依赖任选的初态。\term{回声状态性质}（echo state property, ESP）要求在约定的输入与状态范围内，相同持续输入驱动下，初始状态的影响最终消失。对式\eqref{eq:rnn-esn-update}，Tanh是1-Lipschitz，因而两个状态的距离满足
+\begin{equation}
+  \lVert\bm{h}^{(t)}-\bm{h}_{\mathrm{alt}}^{(t)}\rVert_2
+    \leq\left(1-\alpha+\alpha\lVert\bm{W}_{\mathrm{res}}\rVert_2\right)
+      \lVert\bm{h}^{(t-1)}-\bm{h}_{\mathrm{alt}}^{(t-1)}\rVert_2\text{。}
+  \label{eq:rnn-esn-contraction}
+\end{equation}
+这里$\bm{h}^{(t)}$与$\bm{h}_{\mathrm{alt}}^{(t)}$表示初态不同、输入相同的两条轨迹。$\lVert\bm{W}_{\mathrm{res}}\rVert_2<1$给出统一收缩的充分条件，但不是必要条件。实践中按谱半径缩放矩阵，不能把“谱半径小于1”直接当成任意非线性储备池的充分保证；相关反例与更精确条件见Yildiz等的分析\scite{yildiz2012}
+
+初态影响消失也意味着一部分过去影响会衰减，适当的衰减使模型能适应新输入，过快衰减却可能丢掉任务证据。\term{记忆容量}（memory capacity）的一种线性测量方法，是对独立同分布的零均值标量输入分别学习各延迟的线性重构，再累加平方相关系数。在状态为$m$维、读出仅使用状态且采用相应总体最小二乘定义的条件下，总线性记忆容量不超过$m$；这不是对任意非线性任务的准确率保证\scite{jaeger2001memory} 因此，读出易于训练与状态足够有用仍须分别检验。
+
+\subsection{LSM}
+\label{sec:rnn-lsm}
+
+输入也可能由带时间戳的事件构成，如传感器事件或神经脉冲。\term{液态状态机}（liquid state machine, LSM）用动态储备池的瞬时响应表示输入历史，代表性实现是固定的脉冲神经元回路，再学习状态读出。其名称强调利用持续变化的内部活动，不要求系统每次都收敛到一个稳定状态\scite{maass2002}
+
+图~\ref{fig:rnn-lsm}把输入到任务输出的过程分开。输入是事件时，可以直接接入脉冲回路；连续观测则需按约定编码为输入脉冲。编码规则决定观测幅度、变化或时间如何进入回路，不能把脉冲网络的输入理解成未经转换的任意实数序列。
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-lsm}
+  \caption{LSM的输入、动态与读出。输入编码驱动固定的循环脉冲储备池，回路活动形成脉冲列$s_i(\tau)$；因果滤波将这些活动变成当前可读特征$\bm z(\tau)$，任务读出再映射为预测。紫色反馈表示回路动态，青色表示特征到预测的映射。此处只训练任务读出，脉冲编码、回路参数与滤波核按约定固定。}
+  \label{fig:rnn-lsm}
+\end{figure}
+
+回路中的状态比“这个时刻是否发出脉冲”更丰富。例如一个简化的漏积分发放单元可以写为
+\begin{equation}
+  \tau_{\mathrm m}\frac{\mathrm d v_i(\tau)}{\mathrm d\tau}
+    =-(v_i(\tau)-v_{\mathrm{rest}})
+      +I_i(\tau)+\sum_j w_{i,j}(\kappa_{\mathrm{syn}}*s_j)(\tau)\text{，}
+  \label{eq:rnn-lsm-membrane}
+\end{equation}
+其中$v_i$是膜电位，$\tau_{\mathrm m}>0$是泄漏时间常数，$I_i$表示换算到同一电位尺度的外部驱动，$w_{i,j}$是固定连接权重，$\kappa_{\mathrm{syn}}*s_j$是此前脉冲经过突触滤波后的作用。膜电位达到阈值时发出脉冲并重置；这里省略不应期等细节。持续的膜电位、突触响应和反馈活动共同承载输入历史，当前输入停止后，内部影响仍可能延续。
+
+若第$i$个单元在时刻$\tau_{i,k}$发出脉冲，其脉冲列为$s_i(\tau)=\sum_k\delta(\tau-\tau_{i,k})$，$\delta$是Dirac脉冲。直接拿某个瞬间的脉冲值做普通回归不方便，可以用因果滤波核$\kappa_i$形成特征：
+\begin{equation}
+  z_i(\tau)=\int_{-\infty}^{\tau}\kappa_i(\tau-u)s_i(u)\,\mathrm du,
+  \qquad \kappa_i(v)=e^{-v/\tau_i}\mathbf 1_{\{v\geq0\}}\text{。}
+  \label{eq:rnn-lsm-filter}
+\end{equation}
+$\tau_i>0$是特征衰减时间常数，$\mathbf 1$是指示函数。每次脉冲向$z_i$加入一个贡献，此后逐渐衰减。这一步是状态读取：把回路活动整理成有限维、可供后续计算的$\bm z(\tau)$。它未必完整包含膜电位和全部突触变量，因而不能自动重构整个回路。
+
+读出是从这些状态特征到任务预测的映射，作用相当于前馈网络的输出头。读取特征与产生任务答案是两步计算；一个常用读出为
+\begin{equation}
+  \bm a(\tau)=\bm V\bm z(\tau)+\bm b,
+  \qquad\widehat{\bm y}(\tau)=g(\bm a(\tau))\text{，}
+  \label{eq:rnn-lsm-readout}
+\end{equation}
+其中$\bm z\in\mathbb R^m$、$\bm V\in\mathbb R^{q\times m}$。回归可取$g$为恒等映射，分类可取Sigmoid或Softmax；训练样本提供目标，监督$\bm V,\bm b$的学习。读出也可以是更复杂的可训练网络，但如果两种输入历史产生相同的$\bm z$，任何只读取$\bm z$的确定性读出都无法区分它们。
+
+\begin{example}[从脉冲活动到预测]
+  \label{ex:rnn-lsm-readout}
+  假设两个单元均使用时间常数2：第一个在时刻1和3发放，第二个只在时刻2发放。在时刻4，特征为$z_1=e^{-3/2}+e^{-1/2}\approx0.830$、$z_2=e^{-1}\approx0.368$。若教学例子中的回归读出为$\widehat y=2z_1-z_2-0.5$，便得到约$0.791$。脉冲与滤波决定特征，系数$(2,-1)$和偏置决定这些特征怎样形成任务答案；真实训练应由样本估计后者。
+\end{example}
+
+训练时先按实际顺序驱动回路，在约定时刻收集状态特征及对应目标，再拟合读出。平方损失的线性读出可沿用ESN的岭回归，分类读出则使用相应分类目标。独立事件序列需要重置或约定初态，同一连续流可以延续状态；采集特征时仍须遵守预测时的信息范围。
+
+LSM对长期依赖的帮助来自动态特征的时间范围：较慢的突触／滤波响应保留较久的影响，循环反馈还可延长或重组这种影响。过快的衰减会丢掉远期证据，过强反馈可能使无关活动持续，多个历史也可能被压成相同特征。固定回路减少了训练循环参数的困难，但读出能否利用长期历史，取决于特征是否仍可区分任务所需的历史。
+
+ESN主要以连续值激活表示状态，LSM利用脉冲时刻及其动态响应。事件稀疏时可采用事件驱动计算，数字仿真的更新、通信和读出成本仍需计入。脉冲编码、膜电位模型与可塑性学习在后续脉冲神经网络章展开，这里把动态历史表示与监督读出的分工说清。
+
+\section{基于控制门的循环神经网络}
+\label{sec:rnn-gated}
+
+固定动态难以针对任务选择性地保留信息，普通RNN又把已有状态和新输入混合后整体变换。\term{控制门}（gate）是由输入和状态计算的一组系数，用逐元素乘法调节哪些信息保留、写入或输出。Sigmoid将系数限制到$(0,1)$，使门可以连续学习。门不是人工提供的开关标签，它们的参数由最终任务损失监督。
+
+\subsection{LSTM}
+\label{sec:rnn-lstm}
+
+\term{长短期记忆}（long short-term memory, LSTM）把持续保存的记忆和对外输出的隐藏表示分开，通过门调节二者。原始LSTM发表于1997年，常见的遗忘门后来加入；以下讲解带遗忘门、无窥孔连接的常用版本，不能把全部方程都归为原始结构\scite{hochreiter1997}
+
+令$\bm{c}^{(t)}\in\mathbb{R}^{m}$是记忆状态，$\bm{h}^{(t)}\in\mathbb{R}^{m}$是隐藏输出。门均读取$[\bm{x}_t;\bm{h}^{(t-1)}]\in\mathbb{R}^{d+m}$，计算
+\begin{equation}
+  \begin{aligned}
+    \bm{i}^{(t)}&=\operatorname{sigmoid}\!\left(
+      \bm{A}_{\mathrm{i}}[\bm{x}_t;\bm{h}^{(t-1)}]+\bm{b}_{\mathrm{i}}\right),\\
+    \bm{f}^{(t)}&=\operatorname{sigmoid}\!\left(
+      \bm{A}_{\mathrm{f}}[\bm{x}_t;\bm{h}^{(t-1)}]+\bm{b}_{\mathrm{f}}\right),\\
+    \bm{o}^{(t)}&=\operatorname{sigmoid}\!\left(
+      \bm{A}_{\mathrm{o}}[\bm{x}_t;\bm{h}^{(t-1)}]+\bm{b}_{\mathrm{o}}\right),\\
+    \widetilde{\bm{c}}^{(t)}&=\tanh\!\left(
+      \bm{A}_{\mathrm{c}}[\bm{x}_t;\bm{h}^{(t-1)}]+\bm{b}_{\mathrm{c}}\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-lstm-gates}
+\end{equation}
+每个$\bm{A}$属于$\mathbb{R}^{m\times(d+m)}$，每个偏置属于$\mathbb{R}^{m}$。输入门$\bm{i}^{(t)}$决定候选记忆写入多少，遗忘门$\bm{f}^{(t)}$决定旧记忆保留多少，输出门$\bm{o}^{(t)}$决定记忆的变换结果读出多少：
+\begin{equation}
+  \begin{aligned}
+    \bm{c}^{(t)}&=\bm{f}^{(t)}\odot\bm{c}^{(t-1)}
+       +\bm{i}^{(t)}\odot\widetilde{\bm{c}}^{(t)},\\
+    \bm{h}^{(t)}&=\bm{o}^{(t)}\odot\tanh\!\left(\bm{c}^{(t)}\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-lstm-update}
+\end{equation}
+遗忘门名称容易造成误读：门值接近1是保留，接近0才是清除。新旧信息在记忆路径上相加，隐藏输出则经过Tanh和输出门，记忆状态可以保留当前未必需要输出的信息。遗忘门使持续运行的网络能够清除不再相关的旧内容\scite{gers2000}
+
+图~\ref{fig:rnn-lstm-cell}把各门的作用放在同一计算图中。门的系数取决于当前输入和此前状态，因此同一单元可以在不同输入位置采用不同的保留和写入策略。
+
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-lstm-cell}
+  \caption{LSTM更新与任务读出。框外左侧为当前输入$\bm x_t$和旧状态$\bm h^{(t-1)},\bm c^{(t-1)}$，右侧为新状态和预测$\widehat{\bm y}_t=g(\bm V\bm h^{(t)}+\bm c)$。四个门／候选模块各自包含仿射映射；圆形$\odot$与$+$分别表示逐元素乘法和相加。灰色箭头表示数据流，蓝框为组合输入，紫框为状态计算，青框为任务读出。}
+  \label{fig:rnn-lstm-cell}
+\end{figure}
+
+如果暂把门与候选值看作已给定量，记忆路径对旧记忆的直接导数为$\operatorname{diag}(\bm{f}^{(t)})$。沿这条路径从$s$到$t$的系数是各步遗忘门的逐坐标乘积。它不需要在每一步乘一个任意稠密状态矩阵，因此提供了容易保留梯度的路径；但完整状态的雅可比还包含$\bm{h}^{(t-1)}$影响各门和候选记忆的其他路径，不能把直接路径系数当作整个总导数。
+
+\begin{example}[门值决定保留和写入]
+  \label{ex:rnn-lstm-retention}
+  考察一个记忆坐标，假设旧值为$2$，本步遗忘门为$0.9$、输入门为$0.2$、候选值为$0.5$，则新值为$0.9\times2+0.2\times0.5=1.9$。若之后100步不写入且遗忘门都为$0.99$，原值沿直接路径的保留比例为$0.99^{100}\approx0.366$；门值为$0.9$时仅约$2.66\times10^{-5}$。加性记忆路径改善了可选择的传播方式，并不意味着遗忘门小于1时永不衰减。
+\end{example}
+
+长期保留具体发生在记忆路径上。暂固定门值时，沿这条直接路径有
+\begin{equation}
+  \left.\frac{\partial\bm c^{(t)}}{\partial\bm c^{(s)}}\right|_{\mathrm{direct}}
+    =\operatorname{diag}\!\left(\prod_{u=s+1}^{t}\bm f^{(u)}\right)\text{，}
+  \label{eq:rnn-lstm-direct-memory}
+\end{equation}
+乘积按坐标进行。与普通RNN的$\bm D\bm W$相比，它用可学习的保留率替代直接路径上的反复稠密混合；需要保存的坐标可令$\bm f$接近1，并用较小输入门减少后续覆盖。这改变了式\eqref{eq:rnn-path-length-rate}中的逐步增益，通常没有缩短传播步数。
+
+记忆保持与信息读出仍要同时满足。即使直接路径没有明显衰减，过多写入也会覆盖证据；输出门较小或$\tanh(\bm c)$饱和时，任务损失仍可能难以作用于这段记忆。LSTM提供按任务选择保留、写入和读出的机制，完整梯度与预测表现需要对整个状态和读出分析。
+
+训练仍使用BPTT，只需对记忆和隐藏两组状态共同求导。仅计上述单元，参数量为$4m(d+m+1)$，每步稠密仿射计算为$O(m(d+m))$，常数来自四组变换。增大初始遗忘门偏置可使初始保留比例较高，但门饱和也会减小自身的导数；这一选择需与长度和输入尺度匹配。
+
+变体通常改变某条信息通路。\term{窥孔连接}（peephole connections）让门额外读取记忆坐标；耦合输入门与遗忘门可令$\bm{i}^{(t)}=\bm{1}-\bm{f}^{(t)}$，减少一组自由门。这些变体改变了门的依赖或自由度，适合程度需要在具体任务上比较\scite{greff2017}
+
+若希望保留较宽记忆而减少循环映射成本，投影LSTM把记忆输出映射到更小的循环隐藏空间，使记忆宽度和循环宽度分开。它改变参数量与状态依赖，比较时不能再直接使用上述等宽单元的计数\scite{sak2014projection}
+
+\subsection{GRU}
+\label{sec:rnn-gru}
+
+若希望简化状态管理，可以把记忆与隐藏输出合为一组变量。\term{门控循环单元}（gated recurrent unit, GRU）用更新门决定旧状态与候选状态的混合比例，用重置门控制候选计算怎样读取旧状态。这里采用Cho等原始形式的记号：更新门值越大，旧状态保留越多\scite{cho2014}
+
+对同宽状态，方程为
+\begin{equation}
+  \begin{aligned}
+    \bm{z}^{(t)}&=\operatorname{sigmoid}\!\left(
+      \bm{U}_{\mathrm{z}}\bm{x}_t+\bm{W}_{\mathrm{z}}\bm{h}^{(t-1)}
+      +\bm{b}_{\mathrm{z}}\right),\\
+    \bm{r}^{(t)}&=\operatorname{sigmoid}\!\left(
+      \bm{U}_{\mathrm{r}}\bm{x}_t+\bm{W}_{\mathrm{r}}\bm{h}^{(t-1)}
+      +\bm{b}_{\mathrm{r}}\right),\\
+    \widetilde{\bm{h}}^{(t)}&=\tanh\!\left(
+      \bm{U}_{\mathrm{h}}\bm{x}_t
+      +\bm{W}_{\mathrm{h}}(\bm{r}^{(t)}\odot\bm{h}^{(t-1)})
+      +\bm{b}_{\mathrm{h}}\right),\\
+    \bm{h}^{(t)}&=\bm{z}^{(t)}\odot\bm{h}^{(t-1)}
+      +(\bm{1}-\bm{z}^{(t)})\odot\widetilde{\bm{h}}^{(t)}\text{。}
+  \end{aligned}
+  \label{eq:rnn-gru-update}
+\end{equation}
+每组$\bm{U}$、$\bm{W}$和偏置的形状与普通RNN相同。重置门接近零时，候选计算弱化旧状态；更新门接近1时，即使候选发生变化，输出也主要保留旧值。这两个门控制的位置不同，不能把重置旧信息与写入候选当作同一个动作。
+
+图~\ref{fig:rnn-gru-cell}显示了候选分支和保留分支。单独看保留分支，其直接传播系数为$\bm{z}^{(t)}$；完整导数还包含门和候选的变化，边界与LSTM相同。
+
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-gru-cell}
+  \caption{GRU更新与任务读出。左侧输入为$\bm x_t$和旧状态$\bm h^{(t-1)}$，右侧输出为新状态与预测。组合输入将当前输入与旧状态一并送入门和候选模块。门模块作各自的仿射变换，得到重置门与更新门；候选模块先按重置门调节旧状态，再结合当前输入形成候选。门控合并按式\eqref{eq:rnn-gru-update}使用同一个更新门保留旧状态、写入候选，读出$g$另将新状态映射为任务预测。}
+  \label{fig:rnn-gru-cell}
+\end{figure}
+
+GRU的长期保留对应更新门调节的直达分支。在需要延续记忆的坐标上，$\bm z^{(t)}$接近1时，状态更新接近复制旧值，沿保留路径的系数为各步$\bm z$的逐坐标乘积。候选分支的权重$\bm1-\bm z$同时较小，减少无关新输入覆盖已有状态。更新门接近0时则更多采用候选，允许网络改变当前记忆内容。
+
+重置门的作用发生在候选计算中：它决定形成新候选时读取多少旧状态，而不是单独保证旧状态继续保存。重置门接近0、更新门接近1时，网络仍可以保留旧状态；更新门接近0时，即使重置门较大，旧信息也要通过非线性候选重新表达。没有独立记忆状态与输出门，还使GRU的保留内容和当前对外表示耦合得更紧。门接近恒等复制能改善一条梯度路径，门饱和、候选混合及读出仍可能限制长期学习。
+
+在只用一组偏置的上述形式中，GRU单元参数量为$3m(d+m+1)$，少于等宽LSTM的四组变换，也只维护一个$m$维状态。代价是没有独立的记忆状态和输出门，存储与对外表示更直接地耦合。参数更少不能单独推出任务性能更好，应在相近参数预算与预测条件下比较。
+
+文献与软件还存在不同约定：有的把更新门定义为新候选的写入比例，有的把重置门放在$\bm{W}_{\mathrm{h}}\bm{h}^{(t-1)}$之后。前一种可通过交换$\bm{z}$与$1-\bm{z}$对应，后一种一般不能交换矩阵乘法与逐元素乘法，因此并非完全相同的更新。复现时应核对方程、偏置组数和门顺序，不能只核对模型名。
+
+\section{基于注意力的循环神经网络}
+\label{sec:rnn-attention}
+
+在式\eqref{eq:rnn-encoder-decoder}中，全部输入只能经由同一个上下文向量被解码器读取。输入越长，需要同时保存和区分的细节可能越多；即使编码器使用LSTM，固定向量读出仍然要求不同生成步从同一压缩结果中恢复各自所需的信息。可以保留每个输入位置的编码状态，让解码器在生成每个符号时重新选择读取位置。
+
+\subsection{注意力机制}
+\label{sec:rnn-attention-mechanism}
+
+\term{注意力机制}（attention mechanism）根据当前计算需求给一组表示分配权重，再加权聚合：解码器需要的信息改变时，读取的上下文也随之改变。令编码器状态为$\bm{h}_1,\ldots,\bm{h}_T\in\mathbb{R}^{m}$，这里下标表示被保存的位置，$\bm{h}_t=\bm{h}^{(t)}$。对第$j$个解码步，给定查询$\bm{q}^{(j)}\in\mathbb{R}^{r}$，计算
+\begin{equation}
+  \begin{aligned}
+    e_{j,t}&=a(\bm{q}^{(j)},\bm{h}_t),\\
+    \alpha_{j,t}&=\frac{\exp(e_{j,t})}
+       {\sum_{u=1}^{T}\exp(e_{j,u})},\\
+    \bm{c}^{(j)}&=\sum_{t=1}^{T}\alpha_{j,t}\bm{h}_t\text{。}
+  \end{aligned}
+  \label{eq:rnn-attention}
+\end{equation}
+评分函数$a$比较查询与候选表示的相关程度。Softmax使权重非负且总和为1，$\bm{c}^{(j)}$是本步的动态上下文。填充位置应在归一化前排除，不能让不存在的输入分走概率。对很大的得分减去最大值再取指数，不改变权重，却可避免指数溢出。
+
+评分可以通过非线性组合学习，也可以使用内积。\term{加性注意力}（additive attention）先把查询和编码状态投影到同一评分空间，再给出标量：
+\begin{equation}
+  e_{j,t}=\bm{v}_{\mathrm{a}}^{\top}\tanh\!\left(
+     \bm{W}_{\mathrm{q}}\bm{q}^{(j)}
+     +\bm{W}_{\mathrm{h}}\bm{h}_t+\bm{b}_{\mathrm{a}}\right)\text{。}
+  \label{eq:rnn-additive-attention}
+\end{equation}
+设评分空间宽度为$a$，则$\bm{W}_{\mathrm{q}}\in\mathbb{R}^{a\times r}$、$\bm{W}_{\mathrm{h}}\in\mathbb{R}^{a\times m}$、$\bm{v}_{\mathrm{a}},\bm{b}_{\mathrm{a}}\in\mathbb{R}^{a}$。它允许查询和编码状态原本具有不同维度。
+
+\term{点积注意力}（dot-product attention）直接用内积评分，在$r=m$时可取$e_{j,t}=\langle\bm{q}^{(j)},\bm{h}_t\rangle$；一般形式可取$e_{j,t}=(\bm{q}^{(j)})^{\top}\bm{W}_{\mathrm{a}}\bm{h}_t$，其中$\bm{W}_{\mathrm{a}}\in\mathbb{R}^{r\times m}$。点积形式便于批量矩阵计算，加性形式通过额外非线性改变评分函数，两者的适合程度仍由任务和宽度决定。Transformer章会继续讨论缩放、多头和位置编码，这里只需理解评分、归一化和聚合。
+
+\begin{example}[权重与上下文]
+  \label{ex:rnn-attention-context}
+  假设本步对三个位置的得分为$0,\log2,0$，相应状态为$(1,0)^{\top}$、$(0,2)^{\top}$、$(1,1)^{\top}$。归一化权重为$(1/4,1/2,1/4)$，上下文为$(1/2,5/4)^{\top}$。第二个位置贡献较大，但上下文仍混合了三个状态；软权重并不是一次离散选择，也不能仅凭权重大小认定某位置是预测的唯一原因。
+\end{example}
+
+\subsection{网络结构}
+\label{sec:rnn-attentive-architecture}
+
+动态上下文可以参与解码状态更新，也可以在更新后参与输出。Bahdanau等的模型用此前解码状态查询编码表示，先形成$\bm{c}^{(j)}$，再计算本步状态：
+\begin{equation}
+  \begin{aligned}
+    \bm{q}^{(j)}&=\bm{s}^{(j-1)},\\
+    \bm{s}^{(j)}&=F_{\mathrm{dec}}\!\left(
+      \bm{s}^{(j-1)},\bm{e}(y_{j-1}),\bm{c}^{(j)}\right),\\
+    \bm{p}^{(j)}&=G\!\left(\bm{s}^{(j)},\bm{c}^{(j)},\bm{e}(y_{j-1})\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-bahdanau-order}
+\end{equation}
+$G$是输出概率映射，包含所需的可学习变换和归一化。编码器可以双向读取输入，使每个位置的表示同时包含前后上下文；这仍是输入侧的离线读取，不代表解码器可以看到未来目标\scite{bahdanau2015}
+
+Luong等则先计算本步解码状态，再用该状态查询，形成融合后的输出表示：
+\begin{equation}
+  \begin{aligned}
+    \bm{s}^{(j)}&=F_{\mathrm{dec}}\!\left(
+      \bm{s}^{(j-1)},\bm{e}(y_{j-1})\right),\\
+    \bm{q}^{(j)}&=\bm{s}^{(j)},\qquad
+    \widetilde{\bm{s}}^{(j)}=
+       \tanh\!\left(\bm{W}_{\mathrm{c}}[\bm{s}^{(j)};\bm{c}^{(j)}]\right),\\
+    \bm{p}^{(j)}&=\operatorname{softmax}\!\left(
+      \bm{V}_{\mathrm{a}}\widetilde{\bm{s}}^{(j)}+\bm{b}_{\mathrm{a}}\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-luong-order}
+\end{equation}
+其输入馈送变体还把前一步融合表示送入下一步解码。两个模型的关键区别之一是查询产生的时机和上下文进入的路径，不能直接把当前状态查询放进式\eqref{eq:rnn-bahdanau-order}而保留其余依赖不变，否则会形成未说明如何求解的同一步循环\scite{luong2015}
+
+\term{全局注意力}（global attention）对全部有效输入位置评分，生成$S$个符号通常需要$ST$个位置对评分。\term{局部注意力}（local attention）只考虑某个位置附近的窗口，可固定窗口推进方式，也可由状态预测中心。窗口降低了读取范围与评分数量，但可能遗漏远处证据；可学习中心、连续位置权重和边界处理还需明确。局部方法不是全局权重自然变尖后的同义名称。
+
+图~\ref{fig:rnn-attention-paths}采用先查询、后更新的组织方式。保存的编码状态建立了一条从输出直接读取早期位置的路径，减轻了所有细节只能经过编码末状态的限制。它同时需要保存整段编码表示，每个生成步还要执行读取，代价与固定状态读出不同。
+
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-attention-paths}
+  \caption{带注意力的一个解码步。左侧为保存的编码状态$\bm h_{1:T}$、旧解码状态和此前目标的嵌入，右侧为新解码状态和输出概率。查询先用旧解码状态产生权重$\bm\alpha_j=(\alpha_{j,1},\ldots,\alpha_{j,T})$，上下文再进入更新与输出映射；输出映射还可读取目标嵌入。编码状态在各解码步重复读取，图中不重新执行编码器。}
+  \label{fig:rnn-attention-paths}
+\end{figure}
+
+
+注意力对长期依赖的作用，可以从读取路径直接看出。暂固定本步评分和权重时，动态上下文对第$t$个编码状态的直接导数为
+\begin{equation}
+  \left.\frac{\partial\bm c^{(j)}}{\partial\bm h_t}\right|_{\bm\alpha_j\ \mathrm{fixed}}
+       =\alpha_{j,t}\bm I\text{。}
+  \label{eq:rnn-attention-direct-path}
+\end{equation}
+该分支从上下文直接到保存的表示，不再要求第$t$个状态经过其后全部编码状态才能被读取。权重若均匀，系数为$1/T$；若本步评分集中于相关位置，相应系数可以更大。这与普通时间链上的指数连乘具有不同的路径结构。
+
+注意力没有取消编码器中的历史压缩，也没有保证评分一定找到证据。某个输入影响$\bm h_t$之前仍经过编码计算，过早丢失的信息无法靠读取恢复；错误或过度分散的权重也会弱化相关表示。保存各位置状态扩大了可访问范围，代价是随源长度增长的存储和读取。完整导数还包含评分随编码状态变化的分支，下一小节会把它与编码器、解码器的时间梯度合在一起。
+
+\subsection{参数学习}
+\label{sec:rnn-attention-learning}
+
+编码器、评分函数、解码器和输出层可以按式\eqref{eq:rnn-sequence-likelihood}联合学习。软聚合可微，无需为每个目标另给一个位置标签。要理解注意力如何收到监督，暂固定查询并只看一个上下文节点。令$\bm{g}_{\mathrm{c}}^{(j)}=\partial L/\partial\bm{c}^{(j)}$，Softmax导数给出
+\begin{equation}
+  \frac{\partial L}{\partial e_{j,t}}
+    =\alpha_{j,t}\left\langle
+      \bm{g}_{\mathrm{c}}^{(j)},\bm{h}_t-\bm{c}^{(j)}\right\rangle\text{。}
+  \label{eq:rnn-attention-score-gradient}
+\end{equation}
+其来源是$\partial\alpha_{j,u}/\partial e_{j,t}=\alpha_{j,u}(\mathbf{1}_{\{u=t\}}-\alpha_{j,t})$。增加某个得分会提高对应状态的相对权重，并降低其他权重；所以梯度比较的是该状态与当前平均上下文的差异，而不是仅看该状态的绝对值。
+
+对编码状态还存在直接聚合贡献$\alpha_{j,t}\bm{g}_{\mathrm{c}}^{(j)}$，以及该状态改变评分产生的间接贡献。多个解码步的贡献相加后，再沿编码器的时间依赖回传；查询和解码状态也收到评分路径与输出路径的梯度。注意力缩短了部分信息与梯度路径，但编码器和解码器仍有循环依赖，权重过度集中或趋于零也可能削弱某些位置的监督。
+
+\section{状态空间模型}
+\label{sec:rnn-state-space}
+
+门控和注意力改善了信息选择，却没有使任意非线性循环单元的时间依赖自动并行化。另一种设计从状态转移的代数形式入手：让每一步更新能被高效组合，再在状态模块外加入投影、非线性与跨层连接。这里的\term{状态空间模型}（state space model, SSM）指用于神经序列网络的状态更新与读出模块；这个名称在控制和概率建模中还有更广含义，本节不讨论随机状态估计的完整框架。
+
+\subsection{状态空间表示与并行计算基础}
+\label{sec:rnn-ssm-foundations}
+
+对连续输入$\bm{x}(\tau)\in\mathbb{R}^{d}$，线性状态空间表示为
+\begin{equation}
+  \frac{\mathrm{d}\bm{h}(\tau)}{\mathrm{d}\tau}
+    =\bm{A}\bm{h}(\tau)+\bm{B}\bm{x}(\tau),
+  \qquad
+  \bm{y}(\tau)=\bm{C}\bm{h}(\tau)+\bm{D}\bm{x}(\tau)\text{。}
+  \label{eq:rnn-continuous-ssm}
+\end{equation}
+其中$\bm{h}(\tau)\in\mathbb{R}^{m}$，$\bm{A}\in\mathbb{R}^{m\times m}$、$\bm{B}\in\mathbb{R}^{m\times d}$、$\bm{C}\in\mathbb{R}^{q\times m}$、$\bm{D}\in\mathbb{R}^{q\times d}$；$\bm{D}$给出当前输入直达输出的通路。$\tau$表示连续时间，避免与离散步数$t$混淆。此处先固定矩阵和步长，称为\term{线性时不变}（linear time-invariant, LTI）：叠加成立，转移规则也不随时间位置改变。
+
+如果每个采样区间长$\Delta>0$且输入在区间内保持常值，解线性微分方程得到\term{零阶保持离散化}（zero-order hold discretization）：
+\begin{equation}
+  \begin{aligned}
+    \overline{\bm{A}}&=\exp(\Delta\bm{A}),
+    &\overline{\bm{B}}&=\int_0^{\Delta}\exp(u\bm{A})\bm{B}\,\mathrm{d}u,\\
+    \bm{h}^{(t)}&=\overline{\bm{A}}\bm{h}^{(t-1)}
+       +\overline{\bm{B}}\bm{x}_t,
+    &\bm{y}_t&=\bm{C}\bm{h}^{(t)}+\bm{D}\bm{x}_t\text{。}
+  \end{aligned}
+  \label{eq:rnn-ssm-zoh}
+\end{equation}
+$\exp$是矩阵指数。$\bm{A}$可逆时，积分可写为$\bm{A}^{-1}(\exp(\Delta\bm{A})-\bm{I})\bm{B}$；积分形式在不可逆时仍有意义。网络也可以直接学习离散矩阵，不必总从连续方程出发。
+
+在零初始状态、固定离散矩阵下，反复代入递推可得
+\begin{equation}
+  \begin{aligned}
+    \bm{h}^{(t)}&=\sum_{u=1}^{t}
+       \overline{\bm{A}}^{t-u}\overline{\bm{B}}\bm{x}_u,\\
+    \bm{y}_t&=\sum_{k=0}^{t-1}\bm{K}_k\bm{x}_{t-k}
+       +\bm{D}\bm{x}_t,\qquad
+    \bm{K}_k=\bm{C}\overline{\bm{A}}^k\overline{\bm{B}}\text{。}
+  \end{aligned}
+  \label{eq:rnn-ssm-convolution}
+\end{equation}
+$\bm{K}_k\in\mathbb{R}^{q\times d}$是滞后$k$步的响应。它只依赖滞后而不依赖绝对位置，所以输出是一个因果卷积。非零初态还会增加$\bm{C}\overline{\bm{A}}^t\bm{h}^{(0)}$；时间变化或输入相关的系数一般不能并入同一个固定卷积核。
+
+并行计算还有另一条基础。对已知的仿射更新$\bm{h}^{(t)}=\bm{A}_t\bm{h}^{(t-1)}+\bm{b}_t$，用二元组$(\bm{A}_t,\bm{b}_t)$表示一步变换。先执行$P$再执行$Q$的组合定义为
+\begin{equation}
+  (\bm{A}_Q,\bm{b}_Q)\circ(\bm{A}_P,\bm{b}_P)
+   =(\bm{A}_Q\bm{A}_P,
+      \bm{A}_Q\bm{b}_P+\bm{b}_Q)\text{。}
+  \label{eq:rnn-affine-composition}
+\end{equation}
+函数复合满足结合律，因此可以使用\term{关联扫描}（associative scan）：把连续片段的变换先组合，再得到所有前缀变换。它保持原来的时间次序，不要求交换律。图~\ref{fig:rnn-scan}示意组合过程。
+
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-scan}
+  \caption{仿射状态更新的有序组合。四个单步变换先组成两个连续片段，再组成整段；$Q\circ P$表示先执行$P$再执行$Q$。平衡组合树展示的是扫描中的汇总阶段，完整前缀扫描还要把此前片段的结果传给各位置，才能得到每步状态。树形计算可缩短依赖深度，但不改变输入顺序。}
+  \label{fig:rnn-scan}
+\end{figure}
+
+对逐坐标仿射更新，工作高效的扫描可用$O(Tm)$总运算量和$O(\log T)$组合深度得到前缀；稠密矩阵的组合却需要矩阵乘法，不能直接沿用这一成本。普通RNN的非线性组合也通常无法保持固定大小、便于计算的仿射表示。可并行的条件是各步系数可提前取得、组合闭合且足够便宜；若系数必须由尚未计算的旧状态产生，就不能直接预先扫描。
+
+\begin{example}[同一状态模型的递推与卷积]
+  \label{ex:rnn-ssm-equivalence}
+  取标量更新$h^{(t)}=\tfrac12 h^{(t-1)}+x_t$、$y_t=h^{(t)}$、$h^{(0)}=0$，输入为$(1,2,0)$。递推得到$(1,5/2,5/4)$。卷积核为$(1,1/2,1/4,\ldots)$，故第三步输出为$0+\tfrac12\times2+\tfrac14\times1=5/4$。整段训练可以按卷积组织，逐步预测可以按状态组织；相同输出来自相同模型的代数等价，而不是两套分别训练的参数。
+\end{example}
+
+\subsection{HiPPO}
+\label{sec:rnn-hippo}
+
+前述矩阵形式还没有回答状态应保存哪种历史。\term{高阶多项式投影}（high-order polynomial projection operators, HiPPO）把记忆写成一个明确的近似问题：用有限个多项式基函数的系数概括此前输入。相比只保存一个滑动平均，多个系数可以描述历史中的不同变化形态\scite{gu2020hippo}
+
+\subsubsection{投影系数保存什么}
+\label{sec:rnn-hippo-memory}
+
+设标量历史信号为$f(u)$，在当前时刻$\tau$选定历史权重测度$\mu_\tau$和相应正交归一基$p_0(u;\tau),\ldots,p_{m-1}(u;\tau)$。在该测度下平方可积时，投影系数与近似信号为
+\begin{equation}
+  c_i(\tau)=\int f(u)p_i(u;\tau)\,\mathrm{d}\mu_\tau(u),
+  \qquad
+  \widehat f_\tau(u)=\sum_{i=0}^{m-1}c_i(\tau)p_i(u;\tau)\text{。}
+  \label{eq:rnn-hippo-projection}
+\end{equation}
+它在所选$m$维基函数空间中最小化加权平方误差。状态是这些系数，而不是每个历史位置的副本；被权重弱化或超出基函数分辨能力的细节仍可能丢失。
+
+\subsubsection{在线更新与网络组织}
+\label{sec:rnn-hippo-architecture}
+
+例如缩放Legendre版本在$[0,\tau]$上采用均匀权重，将整个历史区间缩放到固定区间上的Legendre多项式。使用从零开始的$i,j\in\{0,\ldots,m-1\}$，其连续系数更新可写为
+\begin{equation}
+  \begin{aligned}
+    \frac{\mathrm{d}\bm{c}(\tau)}{\mathrm{d}\tau}
+      &=-\frac{1}{\tau}\bm{H}\bm{c}(\tau)
+        +\frac{1}{\tau}\bm{b}f(\tau),\qquad \tau>0,\\
+    H_{i,j}&=
+      \begin{cases}
+        \sqrt{(2i+1)(2j+1)},&i>j,\\
+        i+1,&i=j,\\
+        0,&i<j,
+      \end{cases}
+      \qquad b_i=\sqrt{2i+1}\text{。}
+  \end{aligned}
+  \label{eq:rnn-hippo-legs}
+\end{equation}
+随时间变化的$1/\tau$反映历史区间不断扩张，不能直接把这一更新称为固定LTI系统。$m=1$时，$c_0$是整个区间的均值，其导数为$(f(\tau)-c_0(\tau))/\tau$，这给出了系数更新的直观核验。离散实现需选择初始化和离散化，不能在$\tau=0$直接代入。
+
+测度决定“哪些历史值得近似”：固定窗口强调近期区间，指数权重弱化久远输入，随时间扩张的均匀区间覆盖全部过去，但固定阶数的分辨率会受到区间增长影响。HiPPO提供状态构造原则和相应结构矩阵，完整预测网络仍需要输入变换、读出及学习目标。可以固定投影动态、学习前后变换，也可以以结构矩阵初始化后再调整；后者需要重新检查状态是否仍满足原来的投影含义。投影误差的性质不能直接代替任务泛化误差。
+
+
+图~\ref{fig:rnn-hippo}展示了一种把投影记忆接入任务网络的方式。实际观测可先经过可学习映射形成$f(\tau)$；投影更新维护系数，任务读出利用系数产生预测。若输入有多个特征，可以为各通道分别维护一组系数，再混合通道。重构历史使用已选定的基函数，任务读出则由监督目标决定，两者用途不同。
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-hippo}
+  \caption{HiPPO投影记忆与任务网络的一种组合。紫色反馈维护系数状态，青色读出产生任务预测；下方将同一系数与基函数组合，近似重构历史信号。HiPPO本身规定记忆表示及更新，图中的任务读出与输入特征映射可另行学习，并非唯一的HiPPO网络架构。}
+  \label{fig:rnn-hippo}
+\end{figure}
+
+若投影动态固定，任务损失训练输入映射和读出；输入映射可学习时，梯度仍需经过投影递推回到此前输入特征。若进一步训练投影矩阵，模型获得调整动态的自由，也放松了投影所规定的约束。描述模型时应明确哪些参数固定，不能同时宣称任意训练后的矩阵仍严格实现原来的最优投影。
+
+\subsubsection{历史覆盖与长期依赖的边界}
+\label{sec:rnn-hippo-long-memory}
+
+LegS把全部过去放进随时间扩张的区间，没有用一个固定窗口把早期输入直接删除。最低阶系数是均值：在$[0,\tau]$上，$c_0(\tau)=\tau^{-1}\int_0^\tau f(u)\,\mathrm du$。时刻$u$附近面积为$\varepsilon$的窄脉冲，对这个均值的贡献约为$\varepsilon/\tau$，随当前时刻按倒数减弱，而不是按已经经过的更新步数以固定比例反复衰减。
+
+这个性质也可从状态更新看出。对$0<\sigma<\tau$，将$[\sigma,\tau]$间的输入固定，初始系数扰动满足
+\begin{equation}
+  \delta\bm c(\tau)
+    =\exp\!\left[-\bm H\log(\tau/\sigma)\right]\delta\bm c(\sigma)\text{。}
+  \label{eq:rnn-hippo-time-ratio}
+\end{equation}
+因为此区间的齐次更新是$\delta\dot{\bm c}=-\bm H\delta\bm c/\tau$，积分变量是$\log\tau$。与固定矩阵的$\exp(\bm A(\tau-\sigma))$相比，LegS按时间比值组织保留；最低阶模式的系数为$\sigma/\tau$。矩阵的其他模式与范数常数仍需计入，不能由最低阶模式推出所有任务梯度都不衰减。
+
+多个系数提供的不是多个历史位置，而是多个形状特征。取$p_0=1$、$p_1=\sqrt3(2u/\tau-1)$，对线性历史$f(u)=a+bu$，两个系数为
+\begin{equation}
+  c_0=a+\frac{b\tau}{2},\qquad c_1=\frac{b\tau}{2\sqrt3}\text{。}
+  \label{eq:rnn-hippo-linear-example}
+\end{equation}
+代回基函数组合即可精确恢复这条线性函数：第一个系数保存水平，第二个补上趋势。若历史含有很多窄尖峰，两个系数便不足以定位每个尖峰；提高阶数增加分辨能力，也增加状态与计算成本。
+
+因此，HiPPO把长期记忆转为有明确误差准则的在线压缩。它适合考察较长区间上的形状和趋势，固定阶数、有限精度、所选测度与信号变化共同限制可恢复细节。模型若需要精确取回任意久远符号，还需检验相应信息在投影后是否可区分；任务网络的非线性与读出同样可能带来额外学习困难。
+
+\subsection{S4}
+\label{sec:rnn-s4}
+
+利用式\eqref{eq:rnn-ssm-convolution}并行训练，还需要高效产生长度为$T$的卷积核。稠密$m\times m$矩阵逐步计算$\overline{\bm{A}}^k\overline{\bm{B}}$需要重复矩阵向量乘法；直接对某些HiPPO矩阵进行普通对角化又可能数值不稳定。\term{结构化状态空间序列模型}（structured state space sequence model, S4）利用状态矩阵的特殊分解加快递推与核生成\scite{gu2022s4}
+
+\subsubsection{结构矩阵与核生成}
+\label{sec:rnn-s4-structure}
+
+其关键结构之一是\term{对角加低秩}（diagonal plus low-rank, DPLR）：在合适的复数坐标系中写为
+\begin{equation}
+  \bm{A}=\bm{\Lambda}-\bm{P}\bm{Q}^{*}\text{，}
+  \label{eq:rnn-s4-dplr}
+\end{equation}
+其中$\bm{\Lambda}\in\mathbb{C}^{m\times m}$是对角矩阵，$\bm{P},\bm{Q}\in\mathbb{C}^{m\times r}$，秩$r$较小，$*$表示共轭转置。这个坐标系来自正规矩阵加低秩结构的酉变换；正规矩阵$\bm{N}$满足$\bm{N}\bm{N}^{*}=\bm{N}^{*}\bm{N}$，其酉对角化避免任意病态基变换，加入低秩项后的$\bm{A}$则不必正规。输入和输出映射也随坐标一起变换，实际输出可通过共轭配对保持实数。
+
+S4采用的双线性离散化为
+\begin{equation}
+  \begin{aligned}
+    \overline{\bm{A}}&=
+      (\bm{I}-\tfrac{\Delta}{2}\bm{A})^{-1}
+      (\bm{I}+\tfrac{\Delta}{2}\bm{A}),\\
+    \overline{\bm{B}}&=
+      (\bm{I}-\tfrac{\Delta}{2}\bm{A})^{-1}\Delta\bm{B}\text{，}
+  \end{aligned}
+  \label{eq:rnn-s4-bilinear}
+\end{equation}
+需保证逆矩阵存在。DPLR形式使相关逆矩阵作用可以通过对角运算和低秩修正计算；固定秩时，一步递推可达到$O(m)$量级，而不是稠密状态转移的$O(m^2)$。
+
+核生成也利用这套结构。把长度为$T$的核视为一个有限多项式，用几何和恒等式可写为
+\begin{equation}
+  \begin{aligned}
+    \bm{G}_T(z)&=\sum_{k=0}^{T-1}\bm{K}_k z^k\\
+      &=\bm{C}\left[\bm{I}-(z\overline{\bm{A}})^T\right]
+         (\bm{I}-z\overline{\bm{A}})^{-1}\overline{\bm{B}}\text{，}
+  \end{aligned}
+  \label{eq:rnn-s4-generating-function}
+\end{equation}
+第二行适用于所写逆矩阵存在时。这样，逐次计算矩阵幂的问题转为在一组频率点计算矩阵逆的作用。双线性变换和低秩修正又把它转为对角分母求和，出现形如$1/(z_i-\lambda_j)$的\term{Cauchy核}（Cauchy kernel），其中$z_i$是变换后的频率点、$\lambda_j$是对角谱参数。这种结构允许使用专门的快速计算；在相应单位根上取得多项式的值，再用逆FFT恢复各个核系数。有限长度修正保留了截断边界，不能直接用无限序列的频率响应代替它。
+
+得到核后，LTI状态模块可用FFT卷积处理整段序列，单通道卷积的成本为$O(T\log T)$，核生成还有其自身成本。原始S4在相应快速结构算法下给出关于$m+T$的近线性核生成分析；这不意味着任意稠密SSM或任意实际实现都自动达到该复杂度。逐步预测改用同一组离散参数递推，无需保存全部历史输入。
+
+\subsubsection{完整层、训练与逐步预测}
+\label{sec:rnn-s4-architecture}
+
+一个标量SSM只完成一条序列上的线性变换。完整S4层可为$d$个输入通道各设一个$m$维状态模块，得到$\bm y_t\in\mathbb R^d$，再作非线性变换和逐位置通道混合，例如
+\begin{equation}
+  \bm u_t=\bm M\,\phi(\bm y_t)+\bm b_{\mathrm{mix}},
+  \qquad\bm M\in\mathbb R^{d\times d}\text{。}
+  \label{eq:rnn-s4-channel-layer}
+\end{equation}
+$\phi$逐坐标作用，$\bm u_t$是本层输出特征，可送入下一层或任务头。维度匹配时还可以加入跨层残差与归一化。时间模块传播各通道的历史，通道混合再使不同特征相互作用；多个这样的层构成非线性序列网络。
+
+图~\ref{fig:rnn-s4}把同一层的两种计算方式并列。整段输入已经给定时，由结构参数生成因果卷积核，再对各通道计算卷积；逐步预测时，维护各通道状态并直接递推。外部非线性与通道映射相同，切换的是线性状态模块的计算形式。
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-s4}
+  \caption{S4层的整段与逐步计算。两个路径共享同一组离散状态参数及后续通道映射，虚线表示参数供给。零初态时，因果卷积与递推得到相同线性序列输出；非零初态需要补上对应初态响应。图中$\bm u$是层输出特征，任务预测还需相应读出。}
+  \label{fig:rnn-s4}
+\end{figure}
+
+结构参数、输入输出映射、步长与通道映射由任务损失联合学习。卷积路径的反向计算对同一个核参数化求导，而不是另训练一套卷积权重；预测切到递推时，需要使用与训练一致的离散化、因果约定和初始化。整个网络可以非线性，卷积等价只针对满足LTI条件的状态模块。
+
+HiPPO-LegS的$1/\tau$更新与S4中的固定结构动态也应分清。S4借用结构矩阵和初始化思想，使网络可以学习有用的时间响应；它没有在每个时刻完整保留LegS投影语义。DPLR结构首先服务于高效计算，训练后的稳定性与长期响应还要检查参数取值。
+
+\subsubsection{时间尺度与长期依赖}
+\label{sec:rnn-s4-long-memory}
+
+S4保存多久，与离散状态矩阵的模式有关。在可对角化情形下，$\bm K_k=\bm C\overline{\bm A}^k\overline{\bm B}$是多个指数模式的加权组合。某模式的特征值$\bar\lambda_j$满足$0<|\bar\lambda_j|<1$时，其幅度按$|\bar\lambda_j|^k$衰减，相应以步数计的时间尺度为
+\begin{equation}
+  \tau_{\mathrm{steps},j}=-\frac{1}{\log|\bar\lambda_j|}\text{。}
+  \label{eq:rnn-s4-timescale}
+\end{equation}
+幅度经过这个步数约降到原来的$e^{-1}$。接近1的模式保留较久，较小的模式强调近期；复数模式还可表示振荡。不同时间尺度共同形成历史响应，输入映射决定往哪些模式写入，输出映射决定哪些模式参与预测。
+
+对连续特征值$\lambda_j$，双线性离散化给出$\bar\lambda_j=(1+\Delta\lambda_j/2)/(1-\Delta\lambda_j/2)$。左半平面的特征值映入单位圆内，步长又改变离散时间尺度。特征值只描述模式，非正规矩阵的短期放大与数值条件仍需考虑；结构可高效计算，也不代表任意自由参数都稳定。
+
+长期影响在输入输出层面写为$\partial\bm y_t/\partial\bm x_s=\bm K_{t-s}$，$s<t$；当前输入的导数还包含直接项$\bm D$。卷积路径直接计算这个历史响应，训练时不必按普通RNN的非线性单元逐步展开；但同一映射的导数并没有因为改用FFT就变大。若核在相关距离已经衰减，早期证据仍然弱；若读写映射没有利用慢模式，长时间尺度也不会自动转成任务所需的记忆。
+
+S4因而同时改善状态的结构设计和整段计算。固定LTI模块对同一滞后使用同一响应，适合学习多尺度时间关系，却不能在单个模块中按每次输入的内容改写保留率。非线性堆叠扩展了网络表达，按内容选择状态的另一种做法则是下面的Mamba。
+
+\subsection{Mamba}
+\label{sec:rnn-mamba}
+
+固定LTI更新对相同滞后使用相同响应。若输入流中只有某些符号需要保留，而它们出现的位置不固定，仅按滞后衰减便难以直接按内容筛选。\term{Mamba}采用选择性状态空间更新，让部分系数由当前输入产生，改变哪些内容写入、保留或读出。本节采用原始Mamba架构\scite{gu2023mamba}
+
+\subsubsection{选择性状态更新}
+\label{sec:rnn-mamba-selection}
+
+为看清选择性，考察预处理后一个通道的标量输入$x_t$与$m$维状态。固定可学习的连续对角矩阵$\bm A$，由当前输入特征产生$\Delta_t>0$、$\bm B_t\in\mathbb R^m$和$\bm C_t\in\mathbb R^{1\times m}$，采用零阶保持时
+\begin{equation}
+  \begin{aligned}
+    \overline{\bm A}_t&=\exp(\Delta_t\bm A),\\
+    \overline{\bm B}_t&=\int_0^{\Delta_t}\exp(u\bm A)\bm B_t\,\mathrm du,\\
+    \bm h^{(t)}&=\overline{\bm A}_t\bm h^{(t-1)}+\overline{\bm B}_t x_t,\\
+    y_t&=\bm C_t\bm h^{(t)}+D x_t\text{。}
+  \end{aligned}
+  \label{eq:rnn-mamba-selection}
+\end{equation}
+$D$是通道的直接输入系数。输入相关不要求$\bm A$每步重新生成，选择性来自步长、写入和读出映射。多个通道各有状态，并由通道投影组合。
+
+常用参数化令$A_{i,i}=-\exp(a_i)$、$\Delta_t=\operatorname{softplus}(d_t)$，其中$a_i$是参数，$d_t$由输入映射并加入偏置产生。这分别限制连续模式的衰减方向与步长的正值。$\bm B_t$决定输入写入哪些状态坐标，$\bm C_t$决定本步从哪些坐标形成输出。离散化是模型定义的一部分，复现时需核对写入项采用的具体规则。
+
+取标量特例$A=-1$、$B_t=1$、$D=0$，更新成为
+\begin{equation}
+  h^{(t)}=e^{-\Delta_t}h^{(t-1)}+(1-e^{-\Delta_t})x_t\text{。}
+  \label{eq:rnn-mamba-gate-special-case}
+\end{equation}
+小步长主要保留旧状态，大步长更多采用当前输入。这与控制门有明确联系，但完整模块具有多个状态坐标及输入相关的读写映射，不能只用这个标量式代替模型。
+
+\subsubsection{完整模块的两条分支}
+\label{sec:rnn-mamba-architecture}
+
+选择性SSM只负责时间方向的状态计算。图~\ref{fig:rnn-mamba}把它放回完整模块：输入归一化与投影后分成两条支路，一条经过短因果卷积和SiLU，产生送入SSM的特征；另一条经过SiLU形成调制向量。SSM输出与调制向量逐坐标相乘，再经过输出投影和残差相加。
+\begin{figure}[htb]
+  \centering
+  \input{figures/rnn-mamba}
+  \caption{原始Mamba模块的主要计算路径。选择系数由短卷积后的输入特征产生，紫色状态从前一步传入并在右侧更新；另一路特征调制SSM输出，底部直达线完成跨层残差。$\bm u_t$是模块输出，任务预测由后续网络读出。图中省略短卷积缓存、批次维和跨通道广播细节。}
+  \label{fig:rnn-mamba}
+\end{figure}
+
+令归一化输入为$\widetilde{\bm x}_t\in\mathbb R^d$，内部通道数为$d_{\mathrm{in}}$，可将这两条支路写为
+\begin{equation}
+  \begin{aligned}
+    \bm v_t&=\operatorname{SiLU}\!\left(\operatorname{CausalConv}
+                (\bm W_{\mathrm v}\widetilde{\bm x})_t\right),\\
+    \bm z_t&=\operatorname{SiLU}(\bm W_{\mathrm z}\widetilde{\bm x}_t),\\
+    \bm y_t&=\operatorname{SelectiveSSM}(\bm v_{1:t}),\\
+    \bm u_t&=\bm x_t+\bm W_{\mathrm{out}}(\bm y_t\odot\bm z_t)\text{。}
+  \end{aligned}
+  \label{eq:rnn-mamba-block}
+\end{equation}
+$\bm W_{\mathrm v},\bm W_{\mathrm z}\in\mathbb R^{d_{\mathrm{in}}\times d}$，$\bm W_{\mathrm{out}}\in\mathbb R^{d\times d_{\mathrm{in}}}$。各通道的选择系数由$\bm v_t$产生，$\bm y_t,\bm z_t$均为内部通道向量。SiLU调制支路不是限制到$[0,1]$的保留门；决定时间记忆的主要是SSM中的步长与状态参数。短卷积补充局部上下文，残差提供层方向的直达路径，各自作用不同。
+
+\subsubsection{扫描、学习与计算代价}
+\label{sec:rnn-mamba-scan}
+
+输入相关系数使响应依赖具体输入和绝对位置，一般不能继续使用一个固定卷积核。不过，整段输入给定后，各步系数可先从输入计算；状态更新对旧状态仍是仿射的，对角结构又使组合便宜，所以能够使用式\eqref{eq:rnn-affine-composition}的扫描。若系数还依赖尚未算出的旧状态，就不能直接套用这种预先形成各步变换的方式，这也是它与一般LSTM／GRU计算组织的差别。
+
+硬件感知的选择性扫描把离散化与状态更新放在适当存储层次中计算，避免在较慢存储中显式写出所有通道、所有位置的扩展状态；反向时可以重算中间量。扫描与重算改变计算顺序和存储策略，任务损失仍对同一递推求导。输入输出投影、短卷积、选择映射、状态参数与步长参数共同学习，选择哪些输入不是人工指定的必然结果。
+
+设内部通道数为$d_{\mathrm{in}}$、每通道状态宽度为$m$，状态更新工作量为$O(Td_{\mathrm{in}}m)$，逐步持久状态为$O(d_{\mathrm{in}}m)$，还需短卷积和移位缓存。通道投影另有每步$O(dd_{\mathrm{in}})$成本。定长预测状态与高效整段扫描降低了计算负担，训练仍需优化器状态和相应反向信息，不能仅按预测持久状态估算全部训练存储。
+
+\subsubsection{有效时间与长期保留}
+\label{sec:rnn-mamba-long-memory}
+
+固定输入产生的系数，跨步状态扰动沿齐次路径传播为
+\begin{equation}
+  \frac{\partial\bm h^{(t)}}{\partial\bm h^{(s)}}
+    =\exp\!\left(\bm A\sum_{u=s+1}^{t}\Delta_u\right)\text{，}
+  \label{eq:rnn-mamba-memory-product}
+\end{equation}
+因为同一对角矩阵的指数可以相乘后合并。传播尺度由累计的内部步长决定：遇到无关输入时，若模型产生小$\Delta_u$，经过很多位置也可以只积累较少衰减；需要更新时再加大步长，并通过$\bm B_u$写入新内容。这将固定的逐步衰减变成内容相关的“有效经过时间”。
+
+仍用式\eqref{eq:rnn-mamba-gate-special-case}作构造例子：从零状态读入$x_1=1$，取$\Delta_1=\log2$，得到$h^{(1)}=1/2$。其后100步输入为零且步长均为$0.001$，末状态为$(1/2)e^{-0.1}\approx0.452$。这个例子展示小步长如何弱化中间位置的遗忘；真实任务还要学到哪些位置应如此处理，且写入项的大小同时受$\bm B_t$和输入影响。
+
+选择性并不等于显式保存每个历史位置。$\bm C_t$读取的是压缩状态坐标，不能像逐位置注意力那样对任意过去表示重新评分；状态容量、输入干扰与有限精度仍限制可区分历史。系数对输入的导数、层间非线性和调制支路也进入完整梯度。选择机制提供了保留和覆盖的自由，扫描使这种机制便于计算，二者都不是无条件的长期检索保证。
+
+% 完整作者列表较长，保留足够空间容纳本节开头的边注文献。
+\Needspace{105mm}
+\subsection{RWKV}
+\label{sec:rnn-rwkv}
+
+还可以用加权累积状态概括历史。\term{接收门加权键值网络}（receptance weighted key value, RWKV）以时间混合和通道混合构成模块，历史值由内容权重与时间衰减共同累积，再由接收门控制输出。本节采用2023年论文中的RWKV-4形式；后续版本的状态形状和更新可能不同\scite{peng2023rwkv}
+
+\subsubsection{时间混合与加权状态}
+\label{sec:rnn-rwkv-time-mixing}
+
+设时间混合子模块的输入为$\bm{x}_t\in\mathbb{R}^{d}$，在完整层中它已由层归一化得到。时间混合先在当前与前一步输入之间逐坐标混合，再投影为键、值和接收向量：
+\begin{equation}
+  \bm{a}_t=\bm{W}_{\mathrm{a}}\!\left(
+    \bm{\mu}_{\mathrm{a}}\odot\bm{x}_t
+    +(\bm{1}-\bm{\mu}_{\mathrm{a}})\odot\bm{x}_{t-1}\right),
+  \quad \mathrm{a}\in\{\mathrm{k},\mathrm{v},\mathrm{r}\}\text{。}
+  \label{eq:rnn-rwkv-time-mixing}
+\end{equation}
+其中$\bm{\mu}_{\mathrm{a}}\in\mathbb{R}^{d}$是可学习混合系数，$\bm{W}_{\mathrm{a}}\in\mathbb{R}^{d\times d}$；$\bm{k}_t,\bm{v}_t,\bm{r}_t$分别取$\bm{a}_t$的对应结果。序列起始时的前一步输入需按约定初始化。
+
+所有指数、除法和乘积按坐标进行。令非负衰减参数为$\bm{w}\in\mathbb{R}^{d}$，当前项偏置为$\bm{u}\in\mathbb{R}^{d}$，历史分子和分母状态初值为零，则
+\begin{equation}
+  \begin{aligned}
+    \bm{v}_{\mathrm{agg}}^{(t)}&=
+      \frac{\bm{a}^{(t-1)}+e^{\bm{u}+\bm{k}_t}\odot\bm{v}_t}
+           {\bm{b}^{(t-1)}+e^{\bm{u}+\bm{k}_t}},\\
+    \bm{a}^{(t)}&=e^{-\bm{w}}\odot\bm{a}^{(t-1)}
+                    +e^{\bm{k}_t}\odot\bm{v}_t,\\
+    \bm{b}^{(t)}&=e^{-\bm{w}}\odot\bm{b}^{(t-1)}+e^{\bm{k}_t},\\
+    \bm{o}_t&=\bm{W}_{\mathrm{o}}\!\left(
+      \operatorname{sigmoid}(\bm{r}_t)\odot\bm{v}_{\mathrm{agg}}^{(t)}\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-rwkv-recurrence}
+\end{equation}
+输出在历史状态更新前读取旧累积量，并为当前项使用$\bm{u}$；之后写入状态的当前项不包含该偏置。展开分子可见，第$i<t$个位置的权重为$\exp(-(t-1-i)\bm{w}+\bm{k}_i)$。它取决于该位置的键和时间距离，接收门再决定每个通道输出多少，没有对每个历史位置重新计算查询—键点积。
+
+状态递推证明了过去的加权和可以由两个向量维护，不必逐步保存全部键值。直接指数形式容易上溢，实际实现还维护尺度或最大值，使用重缩放保持与上述比值等价。分母在非空步由正指数项保证为正；不能把用于说明的直接公式当成任意数值范围下的稳定实现。
+
+\subsubsection{通道混合与完整残差层}
+\label{sec:rnn-rwkv-architecture}
+
+时间混合负责历史累积，\term{通道混合}（channel mixing）则在当前表示中组合不同特征。它也用当前与前一步输入作混合，但不重复WKV的历史加权和。令相应子模块输入仍记为$\bm x_t\in\mathbb R^d$，可写为
+\begin{equation}
+  \begin{aligned}
+    \bm k'_t&=\bm W'_{\mathrm k}\left(\bm\mu'_{\mathrm k}\odot\bm x_t
+          +(\bm1-\bm\mu'_{\mathrm k})\odot\bm x_{t-1}\right),\\
+    \bm r'_t&=\bm W'_{\mathrm r}\left(\bm\mu'_{\mathrm r}\odot\bm x_t
+          +(\bm1-\bm\mu'_{\mathrm r})\odot\bm x_{t-1}\right),\\
+    \bm o'_t&=\operatorname{sigmoid}(\bm r'_t)\odot
+         \bm W'_{\mathrm v}\left(\operatorname{ReLU}(\bm k'_t)
+                              \odot\operatorname{ReLU}(\bm k'_t)\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-rwkv-channel-mixing}
+\end{equation}
+若内部宽度为$d_{\mathrm{ff}}$，则$\bm W'_{\mathrm k}\in\mathbb R^{d_{\mathrm{ff}}\times d}$、$\bm W'_{\mathrm v}\in\mathbb R^{d\times d_{\mathrm{ff}}}$，$\bm W'_{\mathrm r}\in\mathbb R^{d\times d}$。平方ReLU提供非线性通道变换，接收门调节其输出。混合系数是可学习参数，若没有额外约束，不保证它们一直处于$[0,1]$。
+
+图~\ref{fig:rnn-rwkv}先给出完整残差层，再用虚线把时间混合子模块A与其内部计算对应起来。下方的输出$\bm o_t$就是上方A送入第一个残差加法的量；通道混合B随后处理更新的表示。典型的归一化与残差关系为
+\begin{equation}
+  \begin{aligned}
+    \bm v_t&=\bm x_t+\operatorname{TimeMix}
+                    (\operatorname{LN}_1(\bm x_t)),\\
+    \bm u_t&=\bm v_t+\operatorname{ChannelMix}
+                    (\operatorname{LN}_2(\bm v_t))\text{。}
+  \end{aligned}
+  \label{eq:rnn-rwkv-residual-layer}
+\end{equation}
+LN是逐位置层归一化，状态更新在各子模块内部进行。时间混合与通道混合分别缓存自己的前一步输入，不能把二者简单共用为一份原始词元嵌入。完整生成网络在嵌入之后堆叠这些层，再用归一化和词表投影形成下一词元的概率。
+\begin{figure*}[p]
+  \centering
+  \input{figures/rnn-rwkv}
+  \caption{RWKV-4的完整残差层与时间混合子模块。上方在A、B之前分别归一化，并在各子模块之后作残差相加。下方只展开A，无箭头虚线表示对应关系；$\widetilde{\bm x}_t=\operatorname{LN}_1(\bm x_t)$是归一化后的特征。WKV聚合历史并更新状态，经接收门和输出投影产生$\bm o_t$，回到上方参与第一次残差相加。图中省略数值重缩放状态、移位缓存的保存箭头及B的内部计算。}
+  \label{fig:rnn-rwkv}
+\end{figure*}
+
+训练时，各位置的稠密投影可以批量计算，WKV核心仍处理有序累积；可使用顺序扫描，满足组合条件时也可采用并行前缀计算。投影、混合系数、衰减及门由任务损失共同更新。逐步预测则只延续累积、移位与数值尺度状态。按$d$个通道计，累积核心整段为$O(Td)$、持久状态为$O(d)$，稠密投影另有每步$O(d^2)$或$O(dd_{\mathrm{ff}})$成本；层数、词表与训练反向信息需另外计算。
+
+\subsubsection{归一化权重与长期依赖}
+\label{sec:rnn-rwkv-long-memory}
+
+RWKV没有在累积状态上反复施加普通RNN的稠密非线性变换，旧贡献沿各通道按$e^{-w_i}$保留。较小的$w_i$提供较长时间尺度，较大的值强调近期；内容键再改变各位置写入的权重。对固定键与衰减，某个历史值坐标对当前聚合的直接系数是归一化权重：
+\begin{equation}
+  \frac{\partial v_{\mathrm{agg},j}^{(t)}}{\partial v_{i,j}}
+     =\frac{\exp(-(t-1-i)w_j+k_{i,j})}
+       {b_j^{(t-1)}+\exp(u_j+k_{t,j})},\qquad i<t\text{。}
+  \label{eq:rnn-rwkv-value-gradient}
+\end{equation}
+它取决于内容与时间距离，不是一个任意非线性状态雅可比的连乘。接收门、输出投影以及键的变化仍参与完整任务梯度，不能仅凭这个分支宣称没有梯度消失。
+
+归一化约束了加权聚合的范围，却不取消遗忘。若$w_j>0$，早期权重仍会随距离指数减弱；即使$w_j=0$、所有键相同且当前偏置为零，单个位置的权重也会随位置数按$1/t$稀释。较大内容权重可以让某些位置更突出，但并未建立对每个历史位置重新执行查询的机制。
+
+压缩还会合并不同历史。例如只看一个$w=0$、全部键为零的累积核心，值序列$(1,0,0)$与$(0,1,0)$都产生分子1、分母3。它们的位置不同，两个累积量却相同；只依据这组状态无法区分证据曾出现在哪一步。多通道、移位和深层非线性增加了可用表示，但仍需依据具体任务检查压缩后的可区分性。
+
+RWKV因此用内容加权、可学习衰减和接收门组织可延续的历史，使训练投影便于批量计算、预测状态保持定长。它缓解了一部分普通非线性循环路径的困难，保留范围与检索能力仍由时间尺度、写入权重、层间计算和任务监督共同决定。
+
+表~\ref{tab:rnn-state-models}统一比较上述状态模块。HiPPO是一套状态构造原则，S4、Mamba和RWKV是利用特定结构组织序列计算的网络设计，不能仅按名称把它们当作同一层面的互斥分类。
+
+\begin{table*}[htb]
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{19mm}XXX@{}}
+    \toprule
+    模型或原则 & 历史表示与选择 & 整段计算 & 逐步持久状态 \\
+    \midrule
+    普通RNN & 非线性隐藏状态；全部坐标经共同更新 & 时间递推与BPTT & 单层$m$维状态 \\
+    LSTM／GRU & 门调节保留和写入；LSTM另有记忆状态 & 通常逐步递推 & 等宽LSTM为$2m$，GRU为$m$ \\
+    HiPPO & 基函数系数；测度与阶数决定近似范围 & 取决于所选更新与离散化 & $m$个投影系数 \\
+    S4 & 结构化线性状态；固定时间响应 & LTI模块可用结构核与FFT卷积 & 每通道$m$维状态 \\
+    Mamba & 输入相关步长、写入与读出 & 选择性仿射扫描 & $d$通道共$dm$维状态，另有短卷积缓存 \\
+    RWKV-4 & 内容加权累积、时间衰减与接收门 & 批量投影和加权扫描等 & 两组累积向量及移位、数值尺度缓存 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{历史压缩与计算方式的比较。这里$m$表示状态宽度，$d$表示通道数，均按单层比较；持久状态只计流式预测中需延续的信息，不含参数、输出缓存和反向传播激活。稠密投影、层数与数值实现会改变完整网络的计算和存储。}
+  \label{tab:rnn-state-models}
+\end{table*}
+
+定长状态的代价不随已读长度线性增加，但相同宽度并不意味着相同的信息容量。循环注意力保存各位置编码状态，付出随输入长度增长的存储与读取；压缩状态把这一要求转为历史如何概括。两类模型的取舍应结合任务所需的精确位置访问、预测延迟和输入范围判断。
+
+\section{循环神经网络的扩展}
+\label{sec:rnn-extensions}
+
+此前主要沿一条时间链组织状态。实际任务还会改变两个方向：信息可以沿不同拓扑传递，同一位置也可以经过多层表示变换。前者决定一个状态看得到哪些对象，后者决定状态经过多少层计算，两者应分开描述。
+
+\subsection{支持不同的拓扑结构}
+\label{sec:rnn-topologies}
+
+\subsubsection{双向循环与信息可见范围}
+\label{sec:rnn-bidirectional}
+
+离线词语标注可以利用整段文字，单向状态却只看到当前位置及此前输入。\term{双向循环网络}（bidirectional RNN）分别沿正向和反向读取同一输入，再把同一位置的两组状态组合：
+\begin{equation}
+  \begin{aligned}
+    \overrightarrow{\bm{h}}^{(t)}&=F_{\rightarrow}\!\left(
+       \overrightarrow{\bm{h}}^{(t-1)},\bm{x}_t\right),\\
+    \overleftarrow{\bm{h}}^{(t)}&=F_{\leftarrow}\!\left(
+       \overleftarrow{\bm{h}}^{(t+1)},\bm{x}_t\right),\\
+    \bm{h}_t&=[\overrightarrow{\bm{h}}^{(t)};
+                 \overleftarrow{\bm{h}}^{(t)}]\text{。}
+  \end{aligned}
+  \label{eq:rnn-bidirectional}
+\end{equation}
+两向通常使用不同参数，分别从序列两端的初态开始。反向上标$(t)$仍对齐输入位置，计算次序却是$T,T-1,\ldots,1$。两条链在同一步不必互相反馈，组合后的表示交给读出或下一层。
+
+双向表示能使用后文，前提是后文在预测时已经可见。实时下一步预测若把尚未到达的观测送入反向链，就泄漏了未来信息；整段编码器用于转换任务则可以合法读取完整源序列。结构是否可用取决于预测时的可见信息，而不是任务名称中是否含有“序列”。
+
+\subsubsection{多维与多方向循环}
+\label{sec:rnn-multidimensional}
+
+规则网格中的当前位置可以依赖多个已计算的邻居。\term{多维循环网络}（multi-dimensional RNN）沿网格上的有向顺序组合这些前驱状态。例如二维网格的一个方向可采用
+\begin{equation}
+  \bm{h}_{i,j}=\tanh\!\left(
+     \bm{U}\bm{x}_{i,j}+\bm{W}_1\bm{h}_{i-1,j}
+      +\bm{W}_2\bm{h}_{i,j-1}+\bm{b}\right)\text{。}
+  \label{eq:rnn-multidimensional}
+\end{equation}
+网格边界上的缺失前驱按约定初始化。该方向只读取上方和左方已形成的表示；按$i+j$分组时，同一对角线的节点可并行，而后续对角线依赖此前结果。再以其他角落为起点建立多个方向，就能组合不同象限的上下文\scite{graves2007mdrnn}
+
+这里的多方向不是对同一条序列多跑几次，而是改变前驱关系。梯度沿多个前驱分支回传，对共享参数累积所有位置的贡献。直接把多路记忆相加还会增加状态幅度，门控、归一化和组合规则需随前驱数量设计；一维单元的稳定性不能不加条件地迁移过来。
+
+\subsubsection{树递归与Tree-LSTM}
+\label{sec:rnn-tree}
+
+当输入已有语法树或层次结构时，相邻叶子未必就是最自然的组合对象。\term{树递归网络}（recursive neural network）按树的父子依赖组合状态：先得到子节点表示，再在父节点生成更大子结构的表示。名称中的recursive描述结构递归，与沿时间重复更新的recurrent口径不同，本章把二者都放在隐状态递推的框架下比较。
+
+二叉树可以把左右子状态拼接后变换；子节点数不固定时，可以先求和聚合。\term{树结构长短期记忆}（Tree-LSTM）为每个子节点设置遗忘门，以不同权重组合其记忆。以Child-Sum版本为例，令$C(j)$是节点$j$的子节点索引集合，$\bm{x}_j$是本节点输入，$\bm{h}_j,\bm{c}_j$分别为隐藏和记忆状态，计算
+\begin{equation}
+  \begin{aligned}
+    \overline{\bm{h}}_j&=\sum_{k\in C(j)}\bm{h}_k,\\
+    \bm{i}_j&=\operatorname{sigmoid}\!\left(
+       \bm{U}_{\mathrm{i}}\bm{x}_j+\bm{W}_{\mathrm{i}}\overline{\bm{h}}_j
+       +\bm{b}_{\mathrm{i}}\right),\\
+    \bm{o}_j&=\operatorname{sigmoid}\!\left(
+       \bm{U}_{\mathrm{o}}\bm{x}_j+\bm{W}_{\mathrm{o}}\overline{\bm{h}}_j
+       +\bm{b}_{\mathrm{o}}\right),\\
+    \widetilde{\bm{c}}_j&=\tanh\!\left(
+       \bm{U}_{\mathrm{c}}\bm{x}_j+\bm{W}_{\mathrm{c}}\overline{\bm{h}}_j
+       +\bm{b}_{\mathrm{c}}\right),\\
+    \bm{f}_{j,k}&=\operatorname{sigmoid}\!\left(
+       \bm{U}_{\mathrm{f}}\bm{x}_j+\bm{W}_{\mathrm{f}}\bm{h}_k
+       +\bm{b}_{\mathrm{f}}\right),\qquad k\in C(j),\\
+    \bm{c}_j&=\bm{i}_j\odot\widetilde{\bm{c}}_j
+        +\sum_{k\in C(j)}\bm{f}_{j,k}\odot\bm{c}_k,\\
+    \bm{h}_j&=\bm{o}_j\odot\tanh(\bm{c}_j)\text{。}
+  \end{aligned}
+  \label{eq:rnn-tree-lstm}
+\end{equation}
+叶节点的空和为零，参数形状与等宽链式LSTM相同。求和对孩子的重编号不变，但会弱化孩子次序；若左右位置具有不同语义，采用带位置参数的有序树版本更合适。Tree-LSTM的代表工作分别讨论了这两类结构\scite{tai2015}
+
+图~\ref{fig:rnn-topologies}将依赖范围与计算顺序并列展示。树上的反向传播从父节点回到各孩子，多个损失的贡献在同一节点汇合；共享组合参数的梯度再对所有节点累积。两个叶子经树组合到共同祖先的路径可以短于按词序遍历的路径，但这种优势依赖给定树是否符合任务，还增加了结构取得与处理的要求。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/rnn-topologies}
+  \caption{状态依赖拓扑。左图在同一输入位置组合正向与反向状态；中图由上方、左方前驱形成二维状态，箭头给出一个扫描方向；右图由叶节点向父节点组合子结构。紫色表示隐藏计算，青色节点表示组合读出。图中只表达依赖关系；不同方向、位置或孩子组合是否共享参数，需要由具体模型说明。}
+  \label{fig:rnn-topologies}
+\end{figure*}
+
+\subsection{支持更深的网络}
+\label{sec:rnn-depth}
+
+时间展开的深度由序列长度决定，同一位置的表示变换深度则由层数决定。增加层数既可以让任务学习更多表示变换，也可以仅堆叠固定动态、提供更多历史特征。二者共享层次结构，却训练不同参数。
+
+\subsubsection{堆叠循环网络：学习各层表示与时间动态}
+\label{sec:rnn-stacked-networks}
+
+\term{堆叠循环网络}（stacked RNN）让上层读取下层在相同位置的状态，同时维护自己的历史。设层数为$L$，$\bm h_0^{(t)}=\bm x_t$，则
+\begin{equation}
+  \bm h_{\ell}^{(t)}=F_{\ell}\!\left(\bm h_{\ell}^{(t-1)},
+       \bm h_{\ell-1}^{(t)}\right),\qquad\ell=1,\ldots,L\text{。}
+  \label{eq:rnn-stacked}
+\end{equation}
+上标是时间步，下标$\ell$是层索引。同一层跨步共享参数，不同层通常各用一组参数。单元可选普通RNN、LSTM或GRU；使用LSTM时，各层还维护自己的记忆状态$\bm c_\ell^{(t)}$。
+
+第$t$步先计算底层，再把底层当前表示送到第二层，依次形成顶层表示。因而第二层同时读取“这一位置的底层特征”与“第二层此前形成的历史”，不是只把整段底层末状态当作第二层的单个输入。单向堆叠仍只使用当前及此前输入；增加层数不会自动获得未来信息。
+
+任务损失通常从顶层读出，也可以拼接或加权读取多个层。训练时梯度既沿时间回传，也沿层间依赖回传，各层循环与输入映射都接受任务监督。下层可以形成较局部的表示，上层再组合这些表示，但不同层对应的时间尺度应从实际动态或任务行为中检验，不能仅按层号断言上层必然记得更久。
+
+若第$\ell$层宽度为$m_\ell$、$m_0=d$，普通稠密单元的整段计算量级为
+\begin{equation}
+  O\!\left(T\sum_{\ell=1}^{L}m_\ell(m_{\ell-1}+m_\ell)\right)\text{，}
+  \label{eq:rnn-stacked-cost}
+\end{equation}
+门控单元还增加相应常数。完整反向计算需保存或重算各层各步的激活。层宽、读出范围与训练存储因此都影响深度选择。
+
+\subsubsection{深度储备池计算：堆叠固定动态、学习统一读出}
+\label{sec:rnn-deep-reservoir}
+
+\term{深度储备池计算}（deep reservoir computing）把多个通常固定的储备池按层连接，利用层层动态形成历史特征，再训练任务读出。深度ESN是代表形式，第一层读取外部输入，上层读取下层当前状态\scite{gallicchio2018deepesn}
+
+对泄漏积分单元，可写为
+\begin{equation}
+  \begin{aligned}
+    \bm h_\ell^{(t)}&=(1-\alpha_\ell)\bm h_\ell^{(t-1)}
+      +\alpha_\ell\tanh\!\left(\bm W_\ell\bm h_\ell^{(t-1)}
+               +\bm U_\ell\bm h_{\ell-1}^{(t)}+\bm b_\ell\right),\\
+    \widehat{\bm y}_t&=g\!\left(\bm V
+       [1;\bm x_t;\bm h_1^{(t)};\ldots;\bm h_L^{(t)}]\right)\text{。}
+  \end{aligned}
+  \label{eq:rnn-deep-esn}
+\end{equation}
+$0<\alpha_\ell\leq1$是各层泄漏率，$\bm W_\ell,\bm U_\ell,\bm b_\ell$按构造固定，$\bm V$是可训练读出矩阵；也可以只读部分层。训练先逐步收集拼接特征，再拟合读出，平方损失时仍是一组扩展特征上的岭回归，不需要为固定循环参数执行任务梯度更新。
+
+层叠改变输入经过的动态过滤。在线性标量简化且循环矩阵为零时，$h^{(t)}=(1-\alpha)h^{(t-1)}+\alpha u_t$，记忆按$(1-\alpha)^k$衰减，对$0<\alpha<1$的时间尺度为$-1/\log(1-\alpha)$。这说明不同泄漏率可以提供不同更新速度；真实储备池还包含反馈矩阵、输入驱动与非线性，不能只用泄漏率给整个模型确定唯一记忆长度。
+
+各层也要检查回声状态性质。设相同输入下的两条轨迹距离为$\delta_\ell^{(t)}$，Tanh的Lipschitz性质给出
+\begin{equation}
+  \delta_\ell^{(t)}\leq r_\ell\delta_\ell^{(t-1)}
+       +\alpha_\ell\lVert\bm U_\ell\rVert_2\delta_{\ell-1}^{(t)},
+  \quad r_\ell=1-\alpha_\ell+\alpha_\ell\lVert\bm W_\ell\rVert_2\text{。}
+  \label{eq:rnn-deep-esn-contraction}
+\end{equation}
+外部输入相同时$\delta_0^{(t)}=0$。有限层数、各$r_\ell<1$且层间映射有界时，下层初态差异逐渐消失，上层受其驱动的差异也能衰减。这是充分条件；仅检查某一层或仅按谱半径缩放全部矩阵，不能代替完整层间动态分析。
+
+与可训练堆叠RNN相比，深度储备池减少了循环动态的优化范围，多个层的特征可供同一读出选择；代价是固定状态变换不能按任务梯度重新安排记忆。层数、宽度、连接尺度和泄漏率通常由验证过程选择，测试数据不能参与这种选择。更多固定层可能增加有用时间特征，也可能增加冗余或压缩损失，需要与浅层储备池在相近预算下比较。
+
+\subsubsection{跨层连接与分层读出}
+\label{sec:rnn-depth-connections}
+
+可训练网络与固定储备池都可以改变层间连接。维度相同时，跨层残差可写为$\bm u_\ell^{(t)}=\bm h_{\ell-1}^{(t)}+G_\ell^{(t)}$，其中$G_\ell^{(t)}$是这一层产生的变换结果；维度不同时先投影直达分支。残差为层方向提供较直接的梯度路径，通常没有缩短同一层的时间路径。
+
+分层读出把不同层的状态送到任务头，使监督或读出可以直接使用多个层次的特征；它扩大了读出输入与参数规模。跨时间跳跃、跨层残差和门控可以组合，但应逐条注明连接哪些状态、训练哪些参数。层深、时间尺度与读出范围共同决定表示组织，“更深”不能单独推出“记得更久”。
+
+\section{理论分析}
+\label{sec:rnn-theory}
+
+结构提供了可用的信息路径，仍需考察学习能否改进目标，以及有限训练数据能否支持新序列上的预测。以下分别分析参数优化与预测风险，承接机器学习理论部分的工具；状态递推是否稳定作为影响条件出现，不与参数优化的收敛混为一谈。
+
+\subsection{收敛性}
+\label{sec:rnn-convergence}
+
+有界状态不等于训练会收敛。Tanh保证每个隐藏坐标有界，但状态对参数的导数仍包含多步雅可比乘积。反过来，训练目标下降也不保证输入流上的状态趋于一个常值：持续变化的输入本就可能需要持续变化的状态。
+
+对固定训练集、有限长度序列和确定的初始化规则，完整BPTT给出训练目标$L(\bm{\theta})$的精确梯度。假设在迭代所处区域内$L$可微、梯度为$\beta$-Lipschitz且$L\geq L_{\inf}$，用步长$0<\eta\leq1/\beta$更新。下降引理给出
+\begin{equation}
+  L(\bm{\theta}^{(k+1)})
+    \leq L(\bm{\theta}^{(k)})
+       -\frac{\eta}{2}\lVert\nabla L(\bm{\theta}^{(k)})\rVert_2^2\text{，}
+  \label{eq:rnn-descent}
+\end{equation}
+这里$(k)$是参数更新轮次，与状态时间步$(t)$分开。将$K$次不等式相加得到
+\begin{equation}
+  \frac{1}{K}\sum_{k=0}^{K-1}
+     \lVert\nabla L(\bm{\theta}^{(k)})\rVert_2^2
+     \leq\frac{2\left(L(\bm{\theta}^{(0)})-L_{\inf}\right)}{\eta K}\text{。}
+  \label{eq:rnn-stationarity}
+\end{equation}
+这个结论保证平均平方梯度随迭代次数变小，涉及趋近一阶驻点；它没有保证找到全局最优参数，也没有保证参数序列本身收敛。非光滑激活、随机梯度、裁剪或自适应优化需使用各自的分析条件，不能直接套用这条确定性结论。
+
+循环结构会改变假设中的常数。状态对参数的一阶、二阶敏感度包含跨步传播，长序列与放大动态可能使允许的步长变小。较小梯度也可能来自早期路径消失，而不是目标已经满意；因此，梯度范数与训练误差需要同时解释。正交约束作用于线性部分，门控提供选择性路径，跳跃连接改变传播距离，但都不能单独保证完整非凸训练的全局收敛。
+
+截断BPTT还改变了梯度对象。将所用梯度写成$\widetilde{\bm{g}}=\nabla L+\bm{e}$，误差$\bm{e}$进入下降项$\langle\nabla L,\widetilde{\bm{g}}\rangle$，因而式\eqref{eq:rnn-descent}不再自动成立。若跨步状态雅可比统一收缩且局部导数有界，被切断的远期贡献可由几何尾和控制；当长期保留的路径接近不衰减时，短截断就可能遗漏显著贡献。
+
+这种遗漏不只是代价分析中的常数。若某参数只在首步读入证据时起作用，损失仅在很晚的末步出现，把中间状态断开后，该参数对当前片段损失的梯度可以为零，而完整梯度仍非零。前向状态记住证据，并不能替代跨边界的信用分配。
+
+储备池把循环参数固定后，平方损失读出可转为式\eqref{eq:rnn-esn-ridge}的凸二次问题。$\lambda>0$时该问题具有唯一解，可以直接求解，也可以在适当步长下迭代。这个结论只覆盖给定状态特征的读出优化，不覆盖储备池超参数选择或整个模型的预测质量。结构化状态网络同样需要区分可高效计算梯度与优化目标具有何种收敛保证。
+
+\subsection{泛化能力}
+\label{sec:rnn-generalization}
+
+先明确一个训练样本是什么。对独立评论分类，可以把整段评论及标签视为一个样本；对多个独立设备的数据流，也可以把每条按约定长度取得的序列视为样本。一个序列中有$T$个位置，不代表有$T$个独立训练样本。若只是同一条长流的重叠窗口，样本间相关，独立同分布结论需要相应依赖分析后才能使用。
+
+设$\mathcal{F}$是限定结构、参数范围和输入长度后的预测函数族，$\bm{Z}_1,\ldots,\bm{Z}_n$为独立同分布的完整序列样本；$\bm{Z}$包含输入及相应目标。记有界损失为$\ell(f,\bm{Z})\in[0,1]$，风险为$R(f)=\mathbb{E}[\ell(f,\bm{Z})]$，经验风险为$\widehat R_n(f)=n^{-1}\sum_i\ell(f,\bm{Z}_i)$。对预先固定的有限候选族，Hoeffding不等式与并合界给出，以至少$1-\delta$的概率，
+\begin{equation}
+  \sup_{f\in\mathcal{F}}\left|R(f)-\widehat R_n(f)\right|
+    \leq\sqrt{\frac{\log(2|\mathcal{F}|/\delta)}{2n}}\text{。}
+  \label{eq:rnn-finite-family-bound}
+\end{equation}
+统一界允许模型依据这些训练样本从候选中选择；$n$仍是独立序列数。无界交叉熵不满足这里的$[0,1]$条件，需另加预测概率下界、截断损失或尾部条件，不能直接声称所有训练损失都受这个界控制。
+
+连续参数族不能仅把参数数目填进$|\mathcal{F}|$。可以使用覆盖数、Rademacher复杂度或算法稳定性，具体依赖由任务和约束决定。若在全部允许样本上有一个有限的损失$\varepsilon$-覆盖，式\eqref{eq:rnn-finite-family-bound}可用于覆盖代表，并增加至多$2\varepsilon$的近似项。覆盖规模取决于参数范围及参数变化对输出的影响，循环敏感度由此进入泛化分析。
+
+输入尺度和长度怎样影响敏感度，可以在普通单元上直接计算。假设初态为零、$\lVert\bm{x}_t\rVert_2\leq B_x$，激活为1-Lipschitz且零点取零，$\lVert\bm{W}\rVert_2\leq r$，则
+\begin{equation}
+  \lVert\bm{h}^{(t)}\rVert_2
+    \leq\left(\lVert\bm{U}\rVert_2 B_x+\lVert\bm{b}\rVert_2\right)
+       \sum_{k=0}^{t-1}r^k\text{。}
+  \label{eq:rnn-state-norm-bound}
+\end{equation}
+$r<1$时几何和有统一上界，$r=1$时按$t$增长，$r>1$时该上界可能快速增长。对Tanh还可使用$\sqrt m$的状态上界，取较紧者；状态有界却不意味着参数敏感度同样有界。
+
+固定参数并扰动输入，由逐步Lipschitz性质还能得到
+\begin{equation}
+  \lVert\bm{h}^{(T)}-\widetilde{\bm{h}}^{(T)}\rVert_2
+    \leq\lVert\bm{U}\rVert_2
+      \sum_{t=1}^{T}r^{T-t}\lVert\bm{x}_t-\widetilde{\bm{x}}_t\rVert_2\text{，}
+  \label{eq:rnn-input-sensitivity}
+\end{equation}
+其中两条序列初态相同。读出再乘以输出映射和损失的相应Lipschitz常数。它解释了状态转移范数、输入尺度和长度为何需要进入分析，却只是敏感度控制，不能由$r>1$的松上界断言实际泛化必然较差。
+
+结构也影响允许的函数族。隐状态维度、层数、双向或树状连接、门的参数，以及注意力的评分与读取范围，都会改变复杂度和信息约束。参数共享使参数数目不随长度增加，但共享参数在更长计算中的重复作用仍可能改变复杂度常数。注意力权重归一化约束了固定值向量的聚合范围，评分和编码表示的学习敏感度仍需计入；结构化状态更新减少某些自由度，也可能引入不符合数据的记忆假设。
+
+\term{长度外推}（length extrapolation）考察测试序列超出训练长度范围时的预测。共享参数使网络能够运行在更长输入上，却没有保证其误差保持不变。训练中未见的依赖距离、计数规模、时间尺度和状态饱和都可能改变行为。固定维度的实数状态在无限精度的数学模型中与有限精度实现也不同，不能仅凭状态维度推出无限记忆，或在没有精度假设时断言所有历史存储的绝对上限。
+
+因此，泛化比较应固定预测任务、数据来源、独立样本单位、长度范围和参数预算。训练长度内的测试误差、跨长度表现与跨分布表现是不同问题；某一模型在一种序列任务上的优势，不能自动转移为另一种任务中的一般保证。
+
+\section{常见应用}
+\label{sec:rnn-applications}
+
+应用中的关键是把可见输入、输出含义、训练目标和预测时的状态延续对应起来。以下使用简单任务展示这一过程，具体语言、信号和生成方法留给应用卷。
+
+\subsection{序列分类}
+\label{sec:rnn-application-classification}
+
+以评论情感分类为例，一个样本是整段评论和类别$y$。将离散词元映射为嵌入$\bm{x}_t=\bm{E}_{:,v_t}$，其中$\bm{E}\in\mathbb{R}^{d\times K_{\mathrm{vocab}}}$，$v_t$是词表索引，再用RNN、LSTM或GRU编码。末状态或掩码平均形成整段表示，经Softmax分类头输出概率，训练时对独立评论的交叉熵取平均；嵌入、循环单元和分类头共同更新。
+
+单向编码适合边读边更新状态，但如果目标是整段类别，预测仍需说明何时决定结果。双向编码在读到完整评论后利用前后上下文；使用末位置的双向状态时，不应误以为两向末位置都概括了全段，可分别取正向有效末状态与反向有效首状态，或聚合每个位置的双向表示。评估时保持分词、有效长度和聚合规则一致。
+
+评论中的“并不精彩”提示模型需要组合否定与后续词，而不是只累计正向词频。这个例子说明状态有用的任务原因，不预设某个模型已经学会语言规则。应另留验证样本选择宽度、聚合与停止轮次，再用未参与这些选择的测试样本评价。
+
+\subsection{序列标注与时间预测}
+\label{sec:rnn-application-aligned}
+
+词语标注把每个有效位置的表示送入分类头，按照式\eqref{eq:rnn-aligned-loss}计算交叉熵。离线标注可用双向上下文，流式标注只使用当前已可见输入，或明确约定等待若干后续位置的延迟。逐位置Softmax没有显式约束标签之间的合法组合；如果需要这种约束，应增加相应输出模型，而不能认为循环隐藏状态已经等同于标签结构建模。
+
+以设备温度预测为例，$\bm{x}_t$可包含当前温度、控制量和已知时间间隔，读完这一步后输出下一时刻的温度估计$\widehat x_{t+1}$。有效预测位置集合记为$V$，平方目标为
+\begin{equation}
+  \ell=\frac{1}{|V|}\sum_{t\in V}
+      (\widehat x_{t+1}-x_{t+1})^2\text{。}
+  \label{eq:rnn-forecast-loss}
+\end{equation}
+目标位移必须在构造样本时完成，预测时不能输入待预测值。归一化统计只从训练数据估计，划分沿实际预测时间或按独立设备进行，避免重叠窗口把同一未来观测泄漏到训练与测试两侧。
+
+流式使用时，传入新观测、更新状态、输出预测，再等待下一观测。跨片段可以延续同一设备状态，训练中则按截断长度切断梯度；设备切换、重新启动或大段缺失后的重置规则需要与训练匹配。多步预测若反馈自己生成的数值，误差可能累积；若使用未来外部变量，只能输入预测时确已知道的部分。历史记忆不能弥补未来条件未知造成的信息缺口。
+
+\subsection{序列转换与生成}
+\label{sec:rnn-application-generation}
+
+转换任务给定源序列，生成另一段目标序列。训练流程是编码源输入，给解码器输入BOS和真实目标前缀，以包含EOS的目标计算式\eqref{eq:rnn-sequence-likelihood}，再联合更新全部模块。带注意力时，同时保留有效编码状态及掩码，供各解码步读取。
+
+预测流程中，源编码只需执行一次。解码器从初始状态和BOS开始，输出一个条件分布，按约定策略选择符号，将该符号嵌入送入下一步；遇到EOS或预设最大长度停止。最大长度是计算与输出约束，不能把被截断的结果计为模型自然学会了终止。束搜索需要为不同候选分别维护解码状态，不能将多个前缀错误地共用一份可变状态。
+
+单序列生成也可采用\term{自回归模型}（autoregressive model）：按已有前缀预测下一个符号，再把生成结果反馈为后续输入。源条件可省略或由其他输入提供，循环更新、教师强制和停止条件仍需明确。每步选择最大概率符号不等于整段最优，采样产生的多样性也不等于分布已经可靠；生成评价应对应实际使用的解码策略。
+
+\Needspace{85mm}
+\section{本章小结}
+\label{sec:rnn-summary}
+
+输入陆续到达时，隐状态把此前计算带到当前，参数共享让同一更新规则适应不同长度。状态保留了什么，由更新、读出和任务监督共同决定。普通RNN将这套关系写成非线性递推，时间展开使梯度可以计算，也暴露了跨多步雅可比乘积对长期学习的限制。
+
+围绕同一历史依赖问题，储备池把动态构造与读出学习分开，控制门选择保留和写入，注意力通过保存各位置表示扩大可读取的信息。状态空间路线则利用可组合的状态更新，把部分整段计算改写为卷积或扫描。它们分别改变可训练参数、信息通路和计算形式，常可组合使用；低预测存储量、良好梯度路径与充分记忆并不是同一个性质。
+
+拓扑决定预测时可见哪些输入，深度决定各位置经历怎样的表示变换。双向和多方向读取需要相应输入已经可见，树递归需要给定结构；跨层连接的作用也应与跨时间路径分清。优化下降的条件、独立序列样本数、输入尺度和训练长度范围共同约束学习结论，能执行更长递推不等于已经具备长度外推能力。
+
+把这些模型用于具体任务时，需同时确定输入编码、监督位置、输出概率或数值含义，以及状态何时延续和重置。这样才能回答章首的问题：历史不是因为网络名中含有“循环”就被充分利用，而是经由明确的状态表示和读取机制影响预测，并在适当的学习与数据条件下得到检验。

@@ -21,6 +21,7 @@
 | 黑体标题、`\heiti`、`\term` | 思源黑体 Source Han Sans SC | Source Sans 3 |
 | `\kaishu`、数学陈述、边注和图表注 | 霞鹭文楷 LXGW WenKai | STIX Two Text |
 | 代码 | 霞鹭文楷等宽 LXGW WenKai Mono | Source Code Pro |
+| 图内文字、`\figurefont` | 思源黑体 Source Han Sans SC | Source Sans 3 |
 | 数学公式 | — | STIX2 数学字族 |
 
 中文斜体以霞鹭文楷替代机械倾斜。英文书名和论文标题使用真正的 STIX Two Text Italic。
@@ -35,6 +36,22 @@
 `BookAmber` 赭（A66A25）、`BookMuted` 灰（64717B）、`BookPaper` 浅灰（F3F5F5）、`BookRule` 分隔线（DCE3E5）。
 图中输入、模型、输出、损失分别使用 `FigureInput`、`FigureModel`、`FigureOutput`、`FigureLoss`。
 单张图不重新定义色值。颜色不能是唯一的语义提示。
+神经网络的细密拓扑使用集中定义的专用调色板：`NNInput` 蓝（2687EA）表示输入或前向数据，
+`NNHidden` 紫（9464DA）表示隐藏计算，`NNOutput` 青（12ADA7）表示输出，
+`NNGradient` 深橙（A95B13）表示回传梯度，`NNLine` 灰蓝（8A9CB6）表示普通连接。
+节点采用18%浅色填充和1.1 pt轮廓，普通连接约0.85 pt，主路径约1.2 pt；
+成组模块统一使用浅蓝底板 `NNPanel`，无职责颜色的主路径使用 `NNWire`；
+梯度路径另用虚线，图例保持白底无色块。可复用节点与箭头样式位于 `tex/styles/neural-figures.tex`。
+卷积网络架构使用同一文件中的 `cnn` 样式：用长方体表示特征张量，正面示意空间网格，
+厚度示意通道维，局部卷积块使用所属张量更深的同系色；MLP层用包含圆形神经元的平面方框表示。
+实际张量形状另行标注，空间尺寸写为高乘宽，不用平方简写；同一主路径的层名水平对齐。
+输入、隐藏计算、输出沿用 `NNInput`、`NNHidden`、`NNOutput`，连接、箭头、字体与第19章一致。
+局部卷积块到下一层响应之间使用较浅的清晰虚线；局部块及完整特征长方体均连接彼此相向的左右侧面，四个角点按前后、上下对应。
+残差、门控和密集连接模块用浅色圆角算子框及圆形运算节点突出相加、门控或拼接，跨层线采用圆角折线，分支点处保持连续。算子共用样式在 `tex/styles/neural-operators.tex` 中定义，由 `neural-figures.tex` 引入。
+拼接统一使用青色圆形 `+` 节点，并在图注中说明通道拼接的含义；英文算子名称统一大小写。
+图内只留必要的对象与操作标识，视觉编码、简化条件及解释性文字放入图注。
+主路径尽量单行展开，不折返换行；实际并行分支与跳跃路径另行布线。
+长方体用于表达张量结构，不添加阴影、透视渐变或装饰性立体效果。
 数学环境另用更鲜明的 `BookTheorem` 蓝（2F65B0）及同色系浅蓝 `BookLemma`；
 示例使用 `BookExample` 金黄左线（D3AD38）与 `BookExampleBackground` 浅黄底（FFF8D9）。
 

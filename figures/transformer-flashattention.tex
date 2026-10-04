@@ -1,0 +1,67 @@
+% 原创教学示意：对同一个查询按块计算，保留在线归一化的数值。
+\begin{tikzpicture}[x=1mm,y=1mm,font=\figurefont\footnotesize,text=NNInk,
+  nn flow/.append style={draw=NNWire,rounded corners=1.5mm},
+  nn operator path/.append style={draw=NNWire,rounded corners=1.5mm},
+  module/.style={nn operator,minimum height=10mm,inner sep=2pt},
+  input/.style={module,draw=NNInput,fill=NNInput!18},
+  result/.style={nn transform,inner sep=2pt}]
+  \node[nn heading,anchor=west] at (0,3) {(a) 常规实现：保存完整中间矩阵};
+  \node[nn annotation,anchor=west] at (0,-5) {序列：猫 / 追 / 狗；突出查询“追”对应的第2行};
+  \node[input,minimum width=20mm] (qk) at (11,-28) {$\bm Q,\bm K$};
+  \node[module,minimum width=30mm,minimum height=32mm] (score) at (48,-28) {};
+  \node[module,minimum width=20mm] (softmax) at (81,-28) {Softmax};
+  \node[module,minimum width=30mm,minimum height=32mm] (prob) at (114,-28) {};
+  \node[module,minimum width=28mm] (aggregate) at (152,-28) {矩阵乘法};
+  \node[input,minimum width=12mm,minimum height=8mm] (values) at (152,-9) {$\bm V$};
+  \node[result,minimum width=30mm] (denseout) at (152,-48) {$\bm z_2^{\top}$\\$(1/2,5/4)$};
+  \node at (48,-17) {得分 $\bm S$};
+  \node at (114,-17) {概率 $\bm A$};
+  \foreach \x in {34.5,100.5}{
+    \foreach \r in {0,1,2}{
+      \foreach \c in {0,1,2}{
+        \ifnum\r=1
+          \fill[NNHidden!32] ({\x+9*\c},-22-6*\r) rectangle ++(9,-6);
+        \else
+          \fill[white] ({\x+9*\c},-22-6*\r) rectangle ++(9,-6);
+          \node at ({\x+9*\c+4.5},-25-6*\r) {$\cdot$};
+        \fi
+        \draw[NNLine,line width=.5pt] ({\x+9*\c},-22-6*\r) rectangle ++(9,-6);
+      }
+    }
+  }
+  \foreach \x/\val in {39/0,48/{\log2},57/0}{\node at (\x,-31) {$\val$};}
+  \foreach \x/\val in {105/{1/4},114/{1/2},123/{1/4}}{\node at (\x,-31) {$\val$};}
+  \draw[nn operator path] (qk.east)--(score.west);
+  \draw[nn operator path] (score.east)--(softmax.west);
+  \draw[nn operator path] (softmax.east)--(prob.west);
+  \draw[nn operator path] (prob.east)--(aggregate.west);
+  \draw[nn operator path] (values.south)--(aggregate.north);
+  \draw[nn operator path] (aggregate.south)--(denseout.north);
+  \node[nn annotation] at (81,-50) {$\bm S,\bm A$各存一个 $n\times n$ 矩阵};
+
+  \node[nn heading,anchor=west] at (0,-64) {(b) FlashAttention：分块计算并更新统计};
+  \node[input,minimum width=20mm,minimum height=14mm] (query) at (11,-114)
+    {同一查询\\$\bm q_2$（追）};
+  \node[input,minimum width=44mm,minimum height=23mm] (blockone) at (53,-84)
+    {键值块1：猫 / 追\\得分：$0,\log2$\\值：$(1,0),(0,2)$};
+  \node[input,minimum width=44mm,minimum height=23mm] (blocktwo) at (111,-84)
+    {键值块2：狗\\得分：$0$\\值：$(1,1)$};
+  \node[module,minimum width=44mm,minimum height=23mm] (stateone) at (53,-114)
+    {建立统计\\$m=\log2,\ s=3/2$\\$\bm u^{\top}=(1/2,2)$};
+  \node[module,minimum width=44mm,minimum height=23mm] (statetwo) at (111,-114)
+    {更新统计\\$m'=\log2,\ s'=2$\\$\bm u'^{\top}=(1,5/2)$};
+  \node[result,minimum width=29mm,minimum height=16mm] (result) at (152,-114)
+    {$\bm z_2^{\top}=\bm u'^{\top}/s'$\\$=(1/2,5/4)$};
+  \draw[nn operator path] (query.east)--(stateone.west);
+  \draw[nn operator path] (blockone.south)--(stateone.north);
+  \draw[nn operator path] (blocktwo.south)--(statetwo.north);
+  \draw[nn operator path] (stateone.east)--node[above] {合并} (statetwo.west);
+  \draw[nn operator path] (statetwo.east)--(result.west);
+  % 分支点位于主线直段；弯角仅在远离分支点处，两个去向保持连续。
+  \coordinate (querybranch) at (26,-114);
+  \draw[nn operator path] (querybranch)--(26,-138)--(111,-138)--(statetwo.south);
+  \fill[NNWire] (querybranch) circle[radius=.45mm];
+  \node[nn annotation,anchor=south] at (68,-137) {下一块继续使用 $\bm q_2$};
+  \node[nn annotation,anchor=west] at (0,-149)
+    {块间传递归一化统计 $m,s,\bm u$；不存完整 $\bm S,\bm A$};
+\end{tikzpicture}

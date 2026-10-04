@@ -1,0 +1,1310 @@
+\chapter{卷积神经网络}
+\label{chap:convolutional-networks}
+
+第~\ref{chap:feedforward-networks}章建立了用多层非线性变换学习表示的方法。若输入是一张图像，直接把像素排成向量送入全连接层，这种方法依然能够计算，但图像中相邻像素的关系不会自动体现在连接中。更具体地说，左上角与右下角出现的同一种边缘，需要由不同权重分别识别。怎样让网络利用图像的空间结构，并把在一个位置学到的规则用于其他位置？
+
+本章围绕这个问题考察卷积神经网络。卷积运算规定局部信息如何组合，层与模块的组织决定这些局部结果如何形成整体预测，参数学习则让同一组权重汇集各个位置的训练信号。增加深度后，还需要解释信息与梯度怎样跨层传播，以及结构假设在什么数据条件下有助于泛化。分割与着色两个例子将把这些问题接回具有空间结构的输出。所需的激活函数、损失和链式法则沿用前章，统计分析承接第~\ref{chap:deep-learning-theory}章。
+
+\section{卷积神经网络概述}
+\label{sec:cnn-overview}
+
+设一张彩色图像有$224\times224$个像素，每个像素包含三个颜色数值。展平后，输入维度为$150528$；连接到$1024$个隐藏单元的全连接层，仅权重就有$154140672$个。这个教学计算说明，高维输入会迅速增大连接规模。但连接数只是一个方面：全连接层允许任意两个坐标交互，却没有预先区分相邻像素和相隔很远的像素，也没有要求不同位置用相同方式处理局部图案。
+
+图像中的边缘可以由邻近像素的变化来辨认，而且同一种变化可能出现在许多位置。这使两项约束具有解释价值。\term{局部感受野}（local receptive field）让一个单元只读取输入中的一个邻域，即把一次计算限定在附近的若干位置。\term{参数共享}（parameter sharing）让不同位置使用同一组权重，即将同一种局部识别规则重复应用到整张图像。只使用局部连接而不共享参数，仍然需要为不同位置学习不同规则；两项设计承担不同职责。
+
+\term{卷积神经网络}（convolutional neural network, CNN）把这种共享的局部计算与非线性变换逐层组合，从数据中学习局部特征及其组合。对三个输入通道、$64$个输出通道的$3\times3$卷积层，权重数为$3\times3\times3\times64=1728$，再加$64$个偏置。这个层与前述全连接层的输出组织不同，不能仅按参数量判断谁更有表达能力；它说明的是，卷积参数量可以不随输入图像的高和宽增加，而同一组参数会在更多位置被使用。
+
+共享局部规则带来一种与位置变化有关的性质。\term{平移等变性}（translation equivariance）表示输入移到哪里，输出中的对应响应也移到哪里。\term{平移不变性}（translation invariance）则表示输入平移后，输出本身保持相同。图像分类可能希望物体移动后类别不变，分割却需要轮廓随物体移动，因而需要保留位置对应关系。步长为一的卷积在无限网格上与平移可交换；有限图像的边界、下采样和最终读出会改变这一性质。全局汇聚可以在适当条件下得到不变输出，但卷积层本身并不自动完成这一转换。
+
+这些设计适合具有规则网格、局部相关性和重复模式的数据。图像使用二维邻域，音频波形和时间序列可以使用一维邻域，体数据可以使用三维邻域。时间预测还需限制可读取的位置，避免使用尚未发生的输入。若各坐标只是含义不同的表格字段，交换相邻字段通常会改变含义，同一个局部规则也未必能沿字段排列重复使用。卷积的适用性取决于这些结构是否与任务相符。
+
+局部处理与逐层汇聚的思想早于今天的大规模深度学习。Fukushima于1980年提出的Neocognitron交替组织局部模式检测与汇聚，使高层能够组合低层响应，并容忍一定的位置变化。它借鉴视觉系统的分层处理，但采用的学习机制与今天端到端反向传播的CNN不同；第~\ref{sec:neural-biological-system}节已介绍这条视觉启发线索\scite{fukushima1980}
+到20世纪90年代，LeCun等将可学习卷积、降采样和梯度学习结合，用于手写字符和文档识别。1998年的LeNet-5展示了从像素到类别联合学习的完整系统：局部特征由任务损失训练，而不是先由人工固定。这一时期已经出现多层卷积网络，却还不能据此认为大规模视觉任务的训练条件已经成熟\scite{lecun1998}
+
+卷积结构解决了连接组织问题，深层网络能否有效训练仍是另一道关口。2006年，Hinton、Osindero和Teh提出深度信念网络的逐层学习方法：先学习一层隐表示，再把该表示作为下一层的训练数据，并对整个生成模型作后续微调。\term{逐层预训练}就是先分别为各层寻找有用的初始表示，减少从随机参数同时训练全部层的困难。这项工作为研究深层表示提供了可操作的训练途径，是理解随后深度学习兴起的一项重要进展。它研究的是生成式深层模型，原文的微调采用对比形式的wake--sleep算法，与后来判别式CNN的直接监督训练具有不同的目标和步骤\scite{hinton2006deepbelief}
+
+\Needspace{14\baselineskip}
+另一条路线继续探索直接用监督信号训练卷积网络。GPU能够并行执行大量规则乘加，使更宽、更深的模型获得实际可用的训练速度。Cireșan等在2011年报告了GPU上的可配置卷积网络，并在多个图像识别数据集上研究直接反向传播训练。这说明2012年的突破有此前的计算与训练积累，GPU卷积并非在AlexNet中才首次出现\scite{ciresan2011cnn}
+更大的有标签数据集又让网络可以学习更丰富的视觉变化；模型结构、训练方法、数据规模和计算资源需要同时匹配，单独增加层数并不足以重现这种进展。
+
+2012年，AlexNet在ImageNet大规模图像分类中将五个卷积层、ReLU、GPU训练、数据增强和全连接层中的Dropout组合起来，以监督学习从像素学习类别判别。论文报告的ILSVRC-2012参赛系统取得$15.3\%$的top-5测试错误率，第二名为$26.2\%$；这里的top-5错误指正确类别未进入前五个预测。$15.3\%$对应多个网络的组合，并包含额外ImageNet数据预训练；它衡量的是这套参赛系统，单个网络的误差另有报告。这个结果清楚展示了大规模学习特征相对于当时参赛方案的优势，推动卷积网络成为视觉研究的重要路线。这里的预训练是在更大标签集上的监督训练，与2006年的逐层生成式预训练不同\scite{krizhevsky2012}
+
+此后的架构发展把问题进一步拆开：VGG用连续小核组织深度，GoogLeNet用多分支与通道压缩分配计算，Highway和ResNet为跨层信息提供路径，DenseNet让后层直接复用旧特征。它们将在本章相应小节中展开。把这段历史连起来，CNN的发展既包含“如何利用空间结构”的持续改进，也包含“如何让深层表示学得出来”的训练进展；深度学习的兴起是这些进展与数据、计算条件共同作用的结果。
+
+\section{卷积运算}
+\label{sec:cnn-convolution}
+
+局部规则需要一个明确的计算形式：在每个位置读取哪些输入，每个输入乘什么权重，结果怎样相加。数学卷积提供了这一形式；网络实现则会调整核的方向、边界和采样方式。本节先固定运算含义，再用同一组数值检查这些调整。
+
+\Needspace{14\baselineskip}
+\subsection{卷积的定义}
+\label{sec:cnn-convolution-definition}
+
+在一维信号中，一个时刻的结果可以由周围时刻的输入加权形成。\term{连续卷积}（continuous convolution）用积分累积这些贡献，定义时需要指定输入的定义域、核的方向和积分存在的条件。
+
+\begin{definition}[连续卷积]
+  \label{def:cnn-continuous-convolution}
+  设$d\geq1$，$f,g\in L^1(\mathbb R^d)$，即二者在$\mathbb R^d$上绝对可积。它们的卷积$f*g$定义为
+  \begin{equation}
+    (f*g)(\bm t)=\int_{\mathbb R^d}
+      f(\bm\tau)g(\bm t-\bm\tau)\,\mathrm d\bm\tau\text{，}
+    \label{eq:cnn-continuous-convolution}
+  \end{equation}
+  该积分几乎处处存在，且$f*g\in L^1(\mathbb R^d)$。
+\end{definition}
+
+当$d=1$时，式中$\bm t,\bm\tau$改为标量$t,\tau$，积分范围是整条实数轴。$t$是输出位置，$\tau$遍历输入位置，$g(t-\tau)$给出输入$f(\tau)$在该位置的权重。作为$\tau$的函数，$g(t-\tau)$可由$g(\tau)$翻转后再平移得到。积分将重叠位置上的乘积累积成一个数值；移动$t$便得到整条输出信号。绝对可积条件保证这个定义成立，不要求两个函数处处连续。
+
+\term{离散卷积}（discrete convolution）把积分换成网格上的求和。记$\ell^1(\mathbb Z^d)$为满足$\sum_{\bm i\in\mathbb Z^d}|x_{\bm i}|<\infty$的序列空间，整数向量$\bm i$标识网格位置。
+
+\begin{definition}[离散卷积]
+  \label{def:cnn-discrete-convolution}
+  对$x,k\in\ell^1(\mathbb Z^d)$，其离散卷积为
+  \begin{equation}
+    (x*k)_{\bm i}=\sum_{\bm a\in\mathbb Z^d}
+       x_{\bm a}k_{\bm i-\bm a}
+      =\sum_{\bm a\in\mathbb Z^d}k_{\bm a}x_{\bm i-\bm a}\text{。}
+    \label{eq:cnn-discrete-convolution}
+  \end{equation}
+  所有位置的求和绝对收敛，且$x*k\in\ell^1(\mathbb Z^d)$。$k$称为\term{卷积核}（convolution kernel），它规定不同相对位置的加权方式。
+\end{definition}
+
+一维时把向量索引简写为$i,a$，二维时展开为$(i,j),(a,b)$。若核只有有限个非零元素，每个输出仅需有限次乘加，因而也可对不绝对可和的输入逐点定义。取$k_0=k_1=1/2$、其余为零，有$y_i=(x_i+x_{i-1})/2$：输出是当前值与前一时刻值的平均。核的索引方向决定使用过去还是未来的输入。有限长度输入和核可在定义域外补零，此时完整一维卷积的支撑长度至多为$n_x+n_k-1$；裁去两端所得的短输出是完整卷积的一个选段。
+
+有限信号还可以采用周期边界，此时使用\term{循环卷积}（circular convolution），越过末端的位置会按周期返回原序列。
+\begin{definition}[循环卷积]
+  \label{def:cnn-circular-convolution}
+  对长度为$n$的序列$\bm x,\bm k\in\mathbb R^n$，循环卷积为
+  \begin{equation}
+    (\bm x*_n\bm k)_i=\sum_{a=0}^{n-1}
+      x_a k_{(i-a)\bmod n},\qquad i=0,\ldots,n-1\text{。}
+    \label{eq:cnn-circular-convolution}
+  \end{equation}
+  下标按模$n$返回原序列，等价于先作周期延拓，再在一个周期上求和。
+\end{definition}
+循环卷积保留$n$个输出，越过末端的贡献会回到开头。零延拓的线性卷积则让这些贡献留在更长的输出中。这一区别将直接影响FFT实现的补零与裁剪。
+
+卷积对每个输入分别具有线性性。例如，对标量$\alpha,\beta$及序列$x,z$，
+\begin{equation}
+  (\alpha x+\beta z)*k=\alpha(x*k)+\beta(z*k)\text{。}
+  \label{eq:cnn-convolution-linearity}
+\end{equation}
+在上述绝对可和条件下，卷积还满足交换律$x*k=k*x$和结合律$(x*k)*g=x*(k*g)$。交换律可通过把求和变量$a$改为$i-a$得到；结合律依赖双重求和可以交换次序。有限支撑序列天然满足这些条件。这些性质针对完整的数学卷积，插入裁剪、跨步或非线性后，不能直接沿用。
+
+平移性质同样可以由换元看出。记$(T_r x)_i=x_{i-r}$，即将序列平移整数$r$个位置，则
+\begin{equation}
+  (T_r x)*k=T_r(x*k)\text{。}
+  \label{eq:cnn-convolution-equivariance}
+\end{equation}
+这条等式比较的是同一组核权重下的两个输出，解释了参数共享与平移等变性的联系。多个线性卷积可以合并成一个有效卷积核；网络在层间加入激活，才使这种逐层组合超出单次线性滤波。
+
+这一定义还解释了卷积为什么适合表示共享局部规则。设$L$是定义在有限支撑序列上的线性算子，并满足$L(T_r x)=T_r(Lx)$。令$\delta$为仅在零位置取一的单位脉冲，记$k=L\delta$。任意有限支撑输入都可写成$x=\sum_a x_aT_a\delta$，于是
+\begin{equation}
+  Lx=\sum_a x_aT_a(L\delta)=\sum_a x_aT_a k=x*k\text{。}
+  \label{eq:cnn-lsi-convolution}
+\end{equation}
+换言之，线性性与对所有整数平移的等变性共同确定了卷积形式；$k$就是系统对单位脉冲的响应。这里限制输入为有限支撑，避免无穷级数还需额外连续性假设的问题。有限图像的裁剪和跨步不一定满足同样的平移条件。
+
+卷积的物理意义可以从“输入引起响应，响应随时间展开”来理解。设一个理想化的蓄水装置收到一升水后，当日排出$0.5$升，次日排出$0.3$升，再下一日排出$0.2$升。假设排水量与进水量成正比，而且同一升水在不同日期进入，排水规律只随之平移。核$k=(0.5,0.3,0.2)$就是单位输入的响应：$k_a$表示输入发生后第$a$天释放的比例。某日总排水量则是此前各次进水在这一天产生的贡献之和，即$y_i=\sum_a x_a k_{i-a}$。下标$i-a$表示“距离第$a$天进水已经过去多久”，这正是卷积中相对位置的含义。
+
+例如，令第零天进水$10$升、第一天为零、第二天进水$20$升，其余日期也为零。第零天排出$10\times0.5=5$升，第一天为$10\times0.3=3$升；第二天同时收到两次进水的贡献，为$10\times0.2+20\times0.5=12$升。完整结果为
+\begin{equation}
+  (10,0,20)*(0.5,0.3,0.2)=(5,3,12,6,4)\text{。}
+  \label{eq:cnn-physical-convolution-example}
+\end{equation}
+输出之和仍为$30$升，因为这里的核系数非负且和为一，所有进水最终排出。连续时间中，每个瞬间的输入都贡献一条延迟的响应，累积求和相应变为式\eqref{eq:cnn-continuous-convolution}中的积分。这个例子依赖线性叠加和响应规律不随日期改变；实际装置若溢流或流速随水位变化，就不能直接用一个固定核描述。图像模糊也有类似读法：一个亮点扩散成一小片亮斑，整张图像的模糊结果由各亮点的平移响应叠加形成。CNN沿用这种共享局部响应的结构，但核由训练学习，可以含负权重，不必表示守恒的物理过程。
+
+\subsection{实际应用中的卷积}
+\label{sec:cnn-practical-convolution}
+
+\subsubsection{矩阵卷积：翻转与局部求和}
+\label{sec:cnn-matrix-operation}
+
+二维数据把单个位置扩展为行、列两个索引。本节采用从零开始的空间索引，输入矩阵为$\bm X\in\mathbb R^{h\times w}$，核为$\bm K\in\mathbb R^{k_h\times k_w}$，元素分别记为$x_{i,j}$和$k_{a,b}$。核索引$a,b$也从零开始。完整二维数学卷积写为
+\begin{equation}
+  y_{i,j}=\sum_{a=0}^{k_h-1}\sum_{b=0}^{k_w-1}
+    k_{a,b}x_{i-a,j-b}\text{。}
+  \label{eq:cnn-matrix-convolution}
+\end{equation}
+输入在原矩阵以外如何取值，需要另行约定。若只保留核完全落在输入内的位置，将输出重排成从零开始的索引，相当于先把核旋转$180$度，再在输入上滑动，对每个窗口作逐元素乘积和求和。
+
+用以下教学矩阵固定输入与权重：
+\begin{equation}
+  \bm X=\begin{bmatrix}
+    1&2&3&4\\5&6&7&8\\9&10&11&12\\13&14&15&16
+  \end{bmatrix},\qquad
+  \bm K=\begin{bmatrix}1&0\\0&-1\end{bmatrix}\text{。}
+  \label{eq:cnn-matrix-example}
+\end{equation}
+图~\ref{fig:cnn-kernel-flip}把同一窗口的两种运算并排比较。旋转后的核为$\left[\begin{smallmatrix}-1&0\\0&1\end{smallmatrix}\right]$，左上窗口给出$-1+6=5$。步长为一且不填充时，核有$3\times3$个合法位置，这里的每个数学卷积输出都是$5$。
+
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-kernel-flip}
+  \caption{核的方向改变输出。输入窗口固定为$\left[\begin{smallmatrix}1&2\\5&6\end{smallmatrix}\right]$，核固定为$\left[\begin{smallmatrix}1&0\\0&-1\end{smallmatrix}\right]$。左侧直接逐元素相乘后求和，得到互相关输出$-5$；右侧先把核旋转$180$度，再求和，得到数学卷积输出$5$。$\odot$表示逐元素乘法，$\sum$表示把四个乘积相加。}
+  \label{fig:cnn-kernel-flip}
+\end{figure*}
+\subsubsection{互相关：保留核的方向}
+\label{sec:cnn-correlation-operation}
+
+网络通常省去这次旋转，直接用存储的核权重对窗口求和。这种\term{互相关}（cross-correlation）是按核原有方向匹配局部输入；本章针对实数数据写为
+\begin{equation}
+  y_{i,j}=\sum_{a=0}^{k_h-1}\sum_{b=0}^{k_w-1}
+    k_{a,b}x_{i+a,j+b}\text{。}
+  \label{eq:cnn-cross-correlation}
+\end{equation}
+于是左上窗口得到$1-6=-5$，全部输出构成$3\times3$的常数矩阵，见图~\ref{fig:cnn-sliding-window}。对无方向约束的可学习核，翻转只是参数位置的重新排列，卷积与互相关对应同一类候选映射；对预先给定的核，方向仍会改变结果。深度学习文献和软件通常把这种互相关也称为卷积。下文的网络公式遵循这一惯例，保留“数学卷积”来指明需要翻转的运算。
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-sliding-window}
+  \caption{共享核在二维矩阵上滑动的教学例子。蓝色实线和虚线分别框出相邻的两个$2\times2$输入窗口，紫色矩阵为不翻转的核，青色矩阵为互相关输出。每个输出计算窗口左上数值减去右下数值，因此均为$-5$；两个位置使用同一组权重。}
+  \label{fig:cnn-sliding-window}
+\end{figure*}
+
+\subsubsection{数据填充：确定边界假设}
+\label{sec:cnn-padding-operation}
+
+不填充时，边缘像素参与的窗口较少，输出尺寸也会缩小。\term{数据填充}（padding）在矩阵外补充数值，使核可以覆盖边缘附近的位置。零填充把外部值设为零；复制填充延续最近的边缘值；反射填充按边界镜像取值；循环填充把另一侧的数据接过来。这些方式改变边界假设，不能恢复未观测的图像内容。
+
+对式\eqref{eq:cnn-matrix-example}只在右侧和下侧各补一列、一行零，输出就有$4\times4$个位置：
+\begin{equation}
+  \bm Y=\begin{bmatrix}
+    -5&-5&-5&4\\-5&-5&-5&8\\-5&-5&-5&12\\13&14&15&16
+  \end{bmatrix}\text{。}
+  \label{eq:cnn-padding-example}
+\end{equation}
+最后一列和最后一行改变，是因为核的负权重落到了补零区域。图~\ref{fig:cnn-padding}标出右上和右下两个窗口：相同的核在内部读取真实数值，在边界则读取约定的零。\term{valid填充}表示不添加边界值，\term{same填充}通常表示按输入尺寸和步长选择填充，使输出尺寸达到约定值。步长为一时常取输出与输入等大；偶数核可能需要不对称填充，本例就是这种情况。步长大于一时，有些接口以$\lceil h/s_h\rceil$为目标高度，具体左右分配还需核对所用约定。
+
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-padding}
+  \caption{不对称零填充与边界输出。蓝色框内是原$4\times4$输入，浅橙色区域是右侧、下侧各新增的一列、一行零。橙色实线窗口产生右上输出$4$，虚线窗口产生右下输出$16$，输出矩阵中用相同线型标记对应位置。核为$(1,0;0,-1)$，步长一、空洞率一，计算采用互相关。}
+  \label{fig:cnn-padding}
+\end{figure*}
+\subsubsection{跨步卷积：改变窗口移动间隔}
+\label{sec:cnn-stride-operation}
+
+填充改变可读取的位置，\term{跨步卷积}（strided convolution）则改变输出位置之间的间隔：核每次沿高、宽分别移动$s_h,s_w$个输入位置。在原例中，不填充且$s_h=s_w=2$，只保留窗口起点$(0,0),(0,2),(2,0),(2,2)$，得到$2\times2$的输出，数值仍均为$-5$。图~\ref{fig:cnn-stride}显示，减少的是窗口起点的数量，窗口内部仍读取相邻的四个元素。它同时完成局部变换与下采样；若输入包含较快的空间变化，下采样可能把不同变化混在一起，这就是采样中的混叠问题。
+
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-stride}
+  \caption{跨步改变输出位置的密度。输入、$2\times2$核和无填充设置保持不变，只将高、宽步长从一改为二。每个蓝色圆点标记一个窗口的左上起点，起点分别形成$3\times3$和$2\times2$的网格；实线框只画出第一个窗口。该教学矩阵的所有窗口都得到$-5$，输出值相同不表示读取的位置相同。}
+  \label{fig:cnn-stride}
+\end{figure*}
+\subsubsection{空洞卷积：改变核内采样间隔}
+\label{sec:cnn-dilation-operation}
+
+若希望扩大一个输出所覆盖的区域，又不增加核参数，可以让核内部的采样点隔开。\term{空洞卷积}（dilated convolution）在相邻核元素之间跳过$d_h-1,d_w-1$个输入位置，$d_h,d_w$称为空洞率。原例取$d_h=d_w=2$、步长为一且不填充，左上输出变为$x_{0,0}-x_{2,2}=1-11=-10$，得到$2\times2$的常数输出。四个核位置覆盖$3\times3$区域，却只采样其中四点。图~\ref{fig:cnn-dilation}把权重与这些位置对应起来；图~\ref{fig:cnn-sampling}再并排区分核内采样间隔与窗口移动间隔。重复使用相同空洞率还可能留下未充分交互的网格位置，扩大覆盖范围不等于密集读取其中所有信息。
+
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-dilation}
+  \caption{空洞率二时的实际采样位置。左图紫框标出左上输出读取的四格，蓝色外框标出其$3\times3$覆盖区域；中图把原$2\times2$核权重按采样间隔排开，点号表示跳过的位置。零权重仍是核参数，点号不是新增权重。步长一、无填充时，左上输出为$1-11=-10$，全部输出构成$2\times2$矩阵。}
+  \label{fig:cnn-dilation}
+\end{figure*}
+\subsubsection{统一表达与输出尺寸}
+\label{sec:cnn-shape-operation}
+
+把这些设置合在一起，记上下填充为$p_{\mathrm t},p_{\mathrm b}$、左右填充为$p_{\mathrm l},p_{\mathrm r}$，以$\widetilde x_{i,j}$表示在原坐标外扩展的输入值。互相关计算为
+\begin{equation}
+  y_{i,j}=\sum_{a=0}^{k_h-1}\sum_{b=0}^{k_w-1}
+    k_{a,b}\widetilde x_{is_h-p_{\mathrm t}+ad_h,\,
+                         js_w-p_{\mathrm l}+bd_w}\text{。}
+  \label{eq:cnn-general-correlation}
+\end{equation}
+有效核尺寸为$e_h=d_h(k_h-1)+1$、$e_w=d_w(k_w-1)+1$，要求填充后的输入至少容纳一个窗口。使用只保留完整窗口的取整规则时，输出尺寸为
+\begin{equation}
+  \begin{aligned}
+    h'&=\left\lfloor\frac{h+p_{\mathrm t}+p_{\mathrm b}-e_h}{s_h}\right\rfloor+1,\\
+    w'&=\left\lfloor\frac{w+p_{\mathrm l}+p_{\mathrm r}-e_w}{s_w}\right\rfloor+1\text{。}
+  \end{aligned}
+  \label{eq:cnn-output-size}
+\end{equation}
+分子表示窗口起点可以移动的总距离，除以步长后取整得到可移动的次数，再加上起始窗口。这也解释了为什么同样的输出大小可能来自不同的输入大小：不足一个步长的尾部会被舍去。
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-sampling}
+  \caption{同一个$2\times2$核的三种采样设置。实线框给出一个输出所覆盖的区域，紫点是该窗口实际读取的位置，虚线框表示下一个水平窗口。普通设置与跨步设置的核内邻距均为一，后者将窗口起点移远；空洞设置将核内邻距增为二，窗口起点仍只移动一格。}
+  \label{fig:cnn-sampling}
+\end{figure*}
+
+\subsubsection{转置卷积：把局部贡献分配回去}
+\label{sec:cnn-transpose-operation}
+
+卷积也可以用矩阵表达。固定核与输入、输出形状，把输入和输出展平为$\bm x$和$\bm y$，忽略偏置，有$\bm y=\bm C\bm x$；$\bm C$每行对应一个输出，非零位置表示它读取哪些输入，共享权重在多行重复出现。\term{转置卷积}（transposed convolution）使用这个映射的转置，即对给定$\bm v$计算$\bm C^\top\bm v$，将一个输入值按核权重分配到多个输出位置，并把重叠贡献相加。
+
+取原例第一行$(1,2,3,4)$，用一维核$(1,-1)$说明同样的过程。步长为一且不填充时，
+\begin{equation}
+  \bm C=\begin{bmatrix}
+    1&-1&0&0\\0&1&-1&0\\0&0&1&-1
+  \end{bmatrix},\qquad
+  \bm C^\top\begin{bmatrix}1\\1\\1\end{bmatrix}
+    =\begin{bmatrix}1\\0\\0\\-1\end{bmatrix}\text{。}
+  \label{eq:cnn-transpose-example}
+\end{equation}
+图~\ref{fig:cnn-transpose-scatter}将每个输入产生的贡献分开画出。中间两个位置的贡献相消，表明转置运算需要累加，不能只把数值放大或复制。$\bm C$把四维输入变成三维输出，已丢失某些信息；$\bm C^\top\bm C$也不等于单位矩阵。转置卷积因此不是逆卷积，不能保证还原原输入。作为可学习层时，它可以使用自己的核参数，并不要求与编码器的核绑定。
+
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-transpose-scatter}
+  \caption{转置卷积的分配与累加。输入为$\bm v=(1,1,1)^\top$，核为$(1,-1)$，步长一、无填充。每行分别表示一个输入值对四个输出位置的贡献，紫框圈出两个可能非零的位置；没有贡献的格子记为零。逐列相加得到$(1,0,0,-1)^\top$，中间两格均包含来自不同输入的重叠贡献。}
+  \label{fig:cnn-transpose-scatter}
+\end{figure*}
+在一维对称零填充$p$、步长$s$、空洞率$d$和核长$k$的约定下，转置卷积输入长度$n'$对应的输出长度常写为
+\begin{equation}
+  n_{\mathrm{out}}=(n'-1)s-2p+d(k-1)+1+o,
+  \qquad 0\leq o<s\text{。}
+  \label{eq:cnn-transposed-size}
+\end{equation}
+这里$o$是用于选择目标形状的输出填充量：普通卷积取整后，同一个$n'$可能对应$s$种原输入长度。选择其中一种长度才能确定被转置的完整矩阵。$o$是尺寸约定，不表示把$o$个零作为最终输出值附在末尾。二维情况分别对高、宽应用该式；若使用不对称填充或额外裁剪，应按对应线性映射重新核对。跨步转置卷积可理解为先在输入位置之间插零，再进行适当的滤波与裁剪；不同位置的覆盖次数可能不均匀，需要检查输出中的周期性纹理。卷积尺寸与转置关系的系统说明见Dumoulin和Visin的算术指南\scite{dumoulin2016arithmetic}
+
+\subsection{卷积的实现}
+\label{sec:cnn-implementation}
+
+实现一个卷积映射，既要选择求得输出的计算算法，也要安排数据的存储与读取。下面先按\emph{如何计算局部乘积及其和}展开六条算法路线：直接逐项计算，改写为矩阵乘法，或利用多项式、滤波变换、傅里叶变换及核的低秩结构。矩阵路线中的Strassen属于矩阵乘法的内部算法。节末再简要讨论展开、取数、分块与融合等工程选择，说明同一算法怎样组织实际计算。
+
+以下比较同一个互相关映射，忽略激活；偏置可在累积完成后加入。设小批量含$n_{\mathrm b}$个输入，输入、输出通道数为$c_{\mathrm{in}},c_{\mathrm{out}}$，输出空间尺寸为$h'\times w'$。记
+\[
+  q=k_hk_wc_{\mathrm{in}},\qquad m=n_{\mathrm b}h'w'\text{，}
+\]
+即一个窗口的元素数与全部输出位置数。普通密集卷积需要$c_{\mathrm{out}}qm$次乘加；比较额外存储时，输入、核和最终输出不计入工作区。这里把输入数值与核权重相乘称为\emph{核心乘法}，另行计算固定变换中的加减与常数乘法。减少核心乘法并不自动减少总耗时，后文会同时交代新增的计算与存储。
+
+这些算法有两种不同的出发点。矩阵化汇集原有点积，随后可以改变矩阵乘法的内部算法；变换类算法则先对输入与核作线性组合，用较少的组合乘法恢复输出。后一条路线之所以可行，是因为一个乘积可以同时包含多个原始乘积，后续加减又能消去不需要的项。空间可分离路线还要利用核自身的低秩结构。
+
+\subsubsection{直接计算：逐项求和}
+\label{sec:cnn-direct-implementation}
+
+直接算法在每个输出位置逐项累积窗口中的贡献。将批量索引记为$t$，输入元素为$x_{t,i,j,c}$，$w_{a,b,c,o}$表示核位置$(a,b)$上从输入通道$c$到输出通道$o$的权重。记$u(i,a)=is_h-p_{\mathrm t}+ad_h$、$v(j,b)=js_w-p_{\mathrm l}+bd_w$，即式\eqref{eq:cnn-general-correlation}中的实际读取位置，零填充下的核心步骤如下。
+\Needspace{13\baselineskip}
+\begin{algorithm}[直接多通道互相关]
+  \label{alg:cnn-direct}
+  \begin{algorithmic}[1]
+    \Require 输入$\bm X$、核$\bm W$、偏置$\bm b$及形状、采样设置
+    \Ensure 输出预激活$\bm Z$
+    \For{每个合法的$(t,i,j,o)$}
+      \State $z_{t,i,j,o}\gets b_o$
+      \For{每个核位置$(a,b)$和输入通道$c$}
+        \State 读取扩展输入$\widetilde x_{t,u(i,a),v(j,b),c}$
+        \State $z_{t,i,j,o}\gets z_{t,i,j,o}+w_{a,b,c,o}\widetilde x_{t,u(i,a),v(j,b),c}$
+      \EndFor
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+算法\ref{alg:cnn-direct}的一次外层迭代只负责一个输出。核位置确定空间偏移，输入通道决定读取哪个数值，输出通道决定使用哪组权重；所有贡献加到同一个累积器中，完成后才写出。相邻输出重新使用核，另一个输出通道则使用另一个核，但二者都从同一输入张量取数。
+
+对式\eqref{eq:cnn-matrix-example}的左上输出，顺序计算的四项是$1\times1$、$2\times0$、$5\times0$和$6\times(-1)$，总和为$-5$。零权重是这个例子的特殊取值，普通密集算法仍按四个位置组织计算；只有专门利用零权重结构，才能省去相应乘法。每个窗口含$q$项，一共有$c_{\mathrm{out}}m$个输出，因此乘加量为
+\begin{equation}
+  O\!\left(n_{\mathrm b}h'w'c_{\mathrm{in}}c_{\mathrm{out}}k_hk_w\right)\text{。}
+  \label{eq:cnn-direct-cost}
+\end{equation}
+直接算法逐项保留局部求和结构，额外工作区可以只包含若干累积器，但算术量随核面积、通道数与输出位置数相乘。相邻窗口包含重复输入，并不意味着必须重复从主内存读取；这种复用属于第~\ref{sec:cnn-engineering}节的数据调度问题。判断一种计算算法时，应先固定数学运算及其乘加量，再考察它在具体存储层次中的执行方式。
+
+\subsubsection{矩阵化计算与Strassen递归乘法}
+\label{sec:cnn-matrix-algorithm}
+
+直接算法中的局部点积彼此具有相同长度，可以集中交给\term{通用矩阵乘法}（general matrix multiplication, GEMM）计算。从代数上把每个输入窗口展平成一列，得到$\bm P\in\mathbb R^{q\times m}$；每个输出核展平成一行，得到$\bm W_{\mathrm{loc}}\in\mathbb R^{c_{\mathrm{out}}\times q}$。所有输出写为
+\begin{equation}
+  \bm Z_{\mathrm{col}}=\bm W_{\mathrm{loc}}\bm P+\bm b\bm1_m^\top\text{。}
+  \label{eq:cnn-im2col}
+\end{equation}
+其中$\bm1_m$为$m$维全一向量，计算后将列索引还原为批量和空间索引即可。矩阵的每一列对应一个空间窗口，每一行输出对应一个核；乘积中的第$(o,\ell)$个元素正是第$o$个核与第$\ell$个窗口的点积。多输入通道并不改变这个关系，只是让每个窗口列更长；多输出通道则让核矩阵增加行数。展开的元素顺序必须与核的展平顺序一致；例如先遍历核行、核列，再遍历通道，就不能把核按通道优先展平。
+
+对式\eqref{eq:cnn-matrix-example}，按行优先排列窗口与窗口中的元素，有
+\begin{equation}
+  \bm P=\begin{bmatrix}
+    1&2&3&5&6&7&9&10&11\\
+    2&3&4&6&7&8&10&11&12\\
+    5&6&7&9&10&11&13&14&15\\
+    6&7&8&10&11&12&14&15&16
+  \end{bmatrix}\text{，}
+  \label{eq:cnn-im2col-example}
+\end{equation}
+核行为$(1,0,0,-1)$，矩阵乘积得到九个$-5$。例如前两列分别是$(1,2,5,6)^\top$和$(2,3,6,7)^\top$，同一核行与它们相乘，得到$1-6$与$2-7$，图~\ref{fig:cnn-matrix-algorithm}给出了对应关系。这种矩阵表示没有减少普通算法的$c_{\mathrm{out}}qm$次乘加，却把全部局部点积集中成同一个矩阵乘法。$\bm P$可以是一个用于推导的逻辑矩阵，是否真的复制每个元素，留到第~\ref{sec:cnn-engineering}节讨论。
+
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-matrix-algorithm}
+  \caption{局部点积如何成为矩阵乘法。图中只取前两个相邻窗口，按核行、核列的顺序展平成$\bm P$的两列；核按相同顺序展平成一行。矩阵乘法同时得到这两个窗口的输出，完整计算包含九列。这里画的是代数上的窗口矩阵，是否实际复制全部数值由工程实现决定。}
+  \label{fig:cnn-matrix-algorithm}
+\end{figure*}
+矩阵化之后还可以选择不同的矩阵乘法算法。下面的Strassen改变块乘法数量，它从属于矩阵乘法这条计算路线，与是否显式保存窗口是两个问题。
+
+\paragraph{Strassen递归乘法}
+\label{sec:cnn-strassen}
+
+设$\bm C=\bm A\bm B$，将两个输入矩阵和结果矩阵各按$2\times2$等形状划分，普通算法给出
+\begin{equation}
+  \begin{aligned}
+    \bm C_{1,1}&=\bm A_{1,1}\bm B_{1,1}+\bm A_{1,2}\bm B_{2,1},\\
+    \bm C_{1,2}&=\bm A_{1,1}\bm B_{1,2}+\bm A_{1,2}\bm B_{2,2},\\
+    \bm C_{2,1}&=\bm A_{2,1}\bm B_{1,1}+\bm A_{2,2}\bm B_{2,1},\\
+    \bm C_{2,2}&=\bm A_{2,1}\bm B_{1,2}+\bm A_{2,2}\bm B_{2,2}\text{。}
+  \end{aligned}
+  \label{eq:cnn-classical-block-product}
+\end{equation}
+四个输出各含两次块乘法，共需八次。Strassen算法用七个组合块乘积替代这八次乘法，定义
+\begin{equation}
+  \begin{aligned}
+    \bm M_1&=(\bm A_{1,1}+\bm A_{2,2})(\bm B_{1,1}+\bm B_{2,2}),\\
+    \bm M_2&=(\bm A_{2,1}+\bm A_{2,2})\bm B_{1,1},\\
+    \bm M_3&=\bm A_{1,1}(\bm B_{1,2}-\bm B_{2,2}),\\
+    \bm M_4&=\bm A_{2,2}(\bm B_{2,1}-\bm B_{1,1}),\\
+    \bm M_5&=(\bm A_{1,1}+\bm A_{1,2})\bm B_{2,2},\\
+    \bm M_6&=(\bm A_{2,1}-\bm A_{1,1})(\bm B_{1,1}+\bm B_{1,2}),\\
+    \bm M_7&=(\bm A_{1,2}-\bm A_{2,2})(\bm B_{2,1}+\bm B_{2,2})\text{。}
+  \end{aligned}
+  \label{eq:cnn-strassen-products}
+\end{equation}
+由这些结果恢复输出：
+\begin{equation}
+  \begin{aligned}
+    \bm C_{1,1}&=\bm M_1+\bm M_4-\bm M_5+\bm M_7,\\
+    \bm C_{1,2}&=\bm M_3+\bm M_5,\qquad
+    \bm C_{2,1}=\bm M_2+\bm M_4,\\
+    \bm C_{2,2}&=\bm M_1-\bm M_2+\bm M_3+\bm M_6\text{。}
+  \end{aligned}
+  \label{eq:cnn-strassen-recovery}
+\end{equation}
+这种组合靠的是多余项的抵消，而不是省略某个输入块。以左上输出为例，把四个中间量按左因子归并，有
+\begin{equation}
+  \begin{aligned}
+    \bm M_1+\bm M_4-\bm M_5+\bm M_7
+    ={}&\bm A_{1,1}(\bm B_{1,1}+\bm B_{2,2}-\bm B_{2,2})\\
+       &+\bm A_{1,2}(-\bm B_{2,2}+\bm B_{2,1}+\bm B_{2,2})\\
+       &+\bm A_{2,2}(\bm B_{1,1}+\bm B_{2,2}
+                       +\bm B_{2,1}-\bm B_{1,1}
+                       -\bm B_{2,1}-\bm B_{2,2})\\
+    ={}&\bm A_{1,1}\bm B_{1,1}+\bm A_{1,2}\bm B_{2,1}\text{。}
+  \end{aligned}
+  \label{eq:cnn-strassen-cancellation}
+\end{equation}
+展开过程没有交换左右因子，因而对矩阵块同样成立。其余三个输出也可按式\eqref{eq:cnn-strassen-recovery}验证。核查例子取
+\[
+  \bm A=\begin{bmatrix}1&2\\3&4\end{bmatrix},\qquad
+  \bm B=\begin{bmatrix}5&6\\7&8\end{bmatrix}\text{。}
+\]
+七个中间乘积依次为$65,35,-2,8,24,22,-30$，恢复后的结果是$\left[\begin{smallmatrix}19&22\\43&50\end{smallmatrix}\right]$，与普通乘法一致。
+
+这一层递归将八次块乘法降为七次，块加减却从四次增为十八次，其中十次用于形成乘法输入，八次用于恢复输出。对$n\times n$方阵递归时，每个子问题的边长减半，加减的工作量仍与本层全部元素数成正比，因此$T(n)=7T(n/2)+O(n^2)$，得到$O(n^{\log_2 7})$。指数降低来自每层少一个乘法子问题，额外加减则是所支付的代价\scite{strassen1969}
+
+实现时通常只递归到合适阈值，底层仍调用高效GEMM；奇数尺寸需要拆分尾部或补齐，临时块应复用，某些加减可并入数据打包。卷积可在式\eqref{eq:cnn-im2col}的矩阵乘法阶段接入该算法，但$c_{\mathrm{out}}\times q$与$q\times m$常高度不对称，盲目补成方阵会浪费大量工作。递归、额外加减与写回可能抵消节省；相减还会改变舍入误差的传播。Strassen是可用的矩阵算法路线，不能由渐近指数直接推出它适合每个卷积层。
+
+\subsubsection{Toom--Cook：求值、乘法与插值}
+\label{sec:cnn-toom-cook}
+
+有限序列还可写成多项式$X(z)=\sum_i x_i z^i$、$K(z)=\sum_a k_a z^a$。因为$z^i z^a=z^{i+a}$，乘积中$z^j$的系数正是
+\[
+  c_j=\sum_{i+a=j}x_i k_a\text{，}
+\]
+即完整数学卷积的第$j$个输出。若输入与核分别长$n_x,n_k$，乘积次数至多为$n_x+n_k-2$，需要恢复$n_x+n_k-1$个系数。直接算法逐一形成$n_xn_k$个乘积；另一种办法是先知道乘积多项式在足够多的点上取什么值，再解出系数。Toom--Cook方法将多项式分块，在选定点求值，逐点相乘，再插值恢复乘积；图~\ref{fig:cnn-transform-algorithms}给出这条计算路径。
+
+次数不超过$L-1$的多项式由$L$个不同有限点的值唯一确定：两组候选系数的差若在这$L$个点都为零，就会使次数不超过$L-1$的非零多项式有$L$个根，这不可能。求值等于将系数转换为这些点值，插值则从点值恢复系数。选点固定后，两个转换都是固定的线性运算；原来许多系数间的乘法，被集中到点值的逐项乘法中。
+
+两个一次多项式只需在$0,1,\infty$三个点相乘，其中$\infty$表示取最高次项系数。令$m_0=x_0k_0$、$m_\infty=x_1k_1$、$m_1=(x_0+x_1)(k_0+k_1)$，则
+\begin{equation}
+  (x_0+x_1z)(k_0+k_1z)
+  =m_0+(m_1-m_0-m_\infty)z+m_\infty z^2\text{。}
+  \label{eq:cnn-toom-example}
+\end{equation}
+中间系数本来是$x_0k_1+x_1k_0$，现在通过一次组合乘法减去两端乘积得到。四次数据与核之间的乘法降为三次；这一最小例子也称Karatsuba乘法。例如$\bm x=(1,2)$、$\bm k=(1,-1)$时，三个乘积为$1,0,-2$，恢复得到系数$(1,1,-2)$。
+
+为了连接下一节的小块滤波，考虑长度三与长度二的完整卷积。此时$X(z)=x_0+x_1z+x_2z^2$、$K(z)=k_0+k_1z$，乘积$S(z)=\sum_{j=0}^3c_jz^j$需要四项系数。取$0,1,-1,\infty$，形成
+\begin{equation}
+  \begin{aligned}
+    r_0&=x_0k_0,\qquad r_\infty=x_2k_1,\\
+    r_+&=(x_0+x_1+x_2)(k_0+k_1),\\
+    r_-&=(x_0-x_1+x_2)(k_0-k_1)\text{。}
+  \end{aligned}
+  \label{eq:cnn-toom-three-two-evaluation}
+\end{equation}
+这里$S(1)=c_0+c_1+c_2+c_3$，$S(-1)=c_0-c_1+c_2-c_3$，$S(0)=c_0$，最高次项系数为$c_3$。将正、负一点的值相加或相减，便分别分离偶数次与奇数次系数，得到
+\begin{equation}
+  \begin{aligned}
+    c_0&=r_0, &c_1&=(r_+-r_-)/2-r_\infty,\\
+    c_2&=(r_++r_-)/2-r_0, &c_3&=r_\infty\text{。}
+  \end{aligned}
+  \label{eq:cnn-toom-three-two-recovery}
+\end{equation}
+对$\bm x=(1,2,3)$、$\bm k=(1,-1)$，四个乘积为$r_0=1,r_+=0,r_-=4,r_\infty=-3$，恢复出$(1,1,1,-3)$。六次核心乘法降为四次，但求值与恢复中的加减、除以二仍需执行。$\infty$只是取最高次项的记号，不能把无穷大的浮点数传入计算。
+
+\paragraph{三段分块与递归}
+
+三段分块进一步展示插值过程。对两个二次多项式，在$0,1,-1,2,\infty$求值并相乘，记结果为$r_0,r_1,r_{-1},r_2,r_\infty$。乘积次数至多为四，正好需要五个条件：$c_0,c_4$由两端直接给出；$r_1+r_{-1}$分离偶数次项，$r_1-r_{-1}$给出$c_1+c_3$；再用$r_2$区分这两个奇数次系数。乘积系数$c_0,\ldots,c_4$可按下式恢复：
+\begin{equation}
+  \begin{aligned}
+    c_0&=r_0,\qquad c_4=r_\infty,\\
+    c_2&=(r_1+r_{-1})/2-c_0-c_4,\\
+    v&=(r_1-r_{-1})/2,\\
+    u&=(r_2-c_0-4c_2-16c_4)/2,\\
+    c_3&=(u-v)/3,\qquad c_1=v-c_3\text{。}
+  \end{aligned}
+  \label{eq:cnn-toom-three}
+\end{equation}
+这里$u,v$只是插值中间量。五次求值后的乘法替代九次原始系数乘法，但新增了求值加减、常数乘除和插值。例如$\bm x=(1,2,3)$、$\bm k=(1,-1,2)$的五个点值乘积是$1,12,8,119,6$；式\eqref{eq:cnn-toom-three}先给出$c_2=3,v=2,u=5$，再得到$c_3=1,c_1=1$，完整输出为$(1,1,3,1,6)$。
+
+长序列可以每$\ell$项分为一段，写成$X(z)=X_0(z)+z^\ell X_1(z)+z^{2\ell}X_2(z)$，核也同样分段。把$z^\ell$暂看成外层变量，刚才的五次乘法就变为五个短多项式乘法；每个段内乘积再递归计算。插值后将第$j$个段内结果平移$j\ell$位，并把重叠系数相加。对两条长度相近的序列，三等分递归满足$T(n)=5T(n/3)+O(n)$，理想成本为$O(n^{\log_3 5})$；它不能直接作为长输入与短CNN核的复杂度，因为两者形状并不相近。
+
+实现需选择分块长度和求值点，保存或流式产生求值结果，并把恢复的系数按原位置累加。求值点过大或插值中出现相近量相减，可能放大浮点误差；低精度下尤其要检查变换后的动态范围。数学卷积与网络互相关可通过翻转核及裁剪建立对应，但网络通常只需一小段输出，计算完整多项式乘积可能浪费工作。Toom--Cook解释了“用变换交换乘法与加法”的一般思路，接下来的Winograd则直接面向小块滤波输出。
+
+\subsubsection{Winograd最小滤波：直接恢复小块输出}
+\label{sec:cnn-winograd}
+
+Toom--Cook说明了怎样通过点值恢复完整卷积，但CNN只需要每个小块中的若干合法输出。Winograd最小滤波沿用“变换、相乘、恢复”的结构，将恢复目标改为这些输出。要理解固定变换矩阵从何而来，可以先从多项式余数出发，再把完整卷积算法转置为滤波算法。
+
+\paragraph{多项式余数怎样保留乘积信息}
+
+多项式除以$z-t$的余数是常数$S(t)$；因此在$t$处求值，也可以理解为保留关于$z-t$的余数。\term{多项式中国剩余定理}说明：若若干基多项式两两互素，则关于它们的各个余数共同确定一个关于其乘积的余数。这里的“互素”表示没有共同的非恒定因子；重构结果的次数小于基多项式乘积的次数。这个次数条件保证唯一性，不能只给若干余数而忽略剩余的高次项。
+
+沿用式\eqref{eq:cnn-toom-three-two-evaluation}，选取$z,z-1,z+1$，其乘积为$M(z)=z^3-z$。由于$S$次数至多为三、最高次项系数是$r_\infty$，可写成
+\begin{equation}
+  S(z)=r_\infty M(z)+R(z),\qquad \deg R<3\text{。}
+  \label{eq:cnn-winograd-polynomial-remainder}
+\end{equation}
+在$0,1,-1$处，$M$都为零，故$R$保留$S$在这三点的值$r_0,r_+,r_-$。下面三个二次多项式各自在一个点等于一、在另外两点等于零：
+\[
+  L_0(z)=1-z^2,\quad
+  L_+(z)=(z^2+z)/2,\quad
+  L_-(z)=(z^2-z)/2\text{。}
+\]
+因而余数的具体重构式是
+\begin{equation}
+  R(z)=r_0L_0(z)+r_+L_+(z)+r_-L_-(z)\text{。}
+  \label{eq:cnn-winograd-remainder-reconstruction}
+\end{equation}
+代入并展开$r_\infty(z^3-z)+R(z)$，就得到式\eqref{eq:cnn-toom-three-two-recovery}的四项系数。该例中一次基多项式的余数就是点值，所以余数重构与Toom--Cook插值给出同一个计算过程；选择更一般的基多项式时，余数也可能是低次多项式，而非一个数值。
+
+\paragraph{从完整卷积转为小块滤波}
+
+固定长度三的核$\bm g=(g_0,g_1,g_2)^\top$，将它与长度二的向量$\bm b$作完整数学卷积，可写为$\bm s=\bm H_{\bm g}\bm b$，其中
+\begin{equation}
+  \bm H_{\bm g}=\begin{bmatrix}
+    g_0&0\\g_1&g_0\\g_2&g_1\\0&g_2
+  \end{bmatrix},\qquad
+  \bm H_{\bm g}^\top\bm d=
+  \begin{bmatrix}
+    d_0g_0+d_1g_1+d_2g_2\\
+    d_1g_0+d_2g_1+d_3g_2
+  \end{bmatrix}\text{。}
+  \label{eq:cnn-winograd-filter-transposition}
+\end{equation}
+右侧正是长度四输入$\bm d$经过长度三核产生的两个互相关输出。把前面完整卷积的线性计算图转置，就可将“两个输入、四个完整输出”变为“四个输入、两个合法输出”，核心乘法仍为四次。
+
+更具体地，若完整卷积算法写为$\bm s=\bm R[(\bm E\bm g)\odot(\bm Q\bm b)]$，其中$\bm E,\bm Q$负责求值、$\bm R$负责恢复，则固定核后，整个映射是$\bm R\operatorname{Diag}(\bm E\bm g)\bm Q$。转置后得到
+\[
+  \bm H_{\bm g}^\top\bm d
+    =\bm Q^\top[(\bm E\bm g)\odot(\bm R^\top\bm d)]\text{。}
+\]
+这里$\operatorname{Diag}$把向量放到对角线上；转置只反转线性变换的顺序，逐项乘法仍使用相同的四个核组合。将固定系数$1/2$在数据变换与核变换之间重新分配，就得到下面常用的公式。这也解释了它与前节转置卷积的联系：利用的是线性映射的转置，而不是求逆。
+
+记$F(m,r)$为用$r$个核系数计算$m$个相邻互相关输出，这里的$m$指一个小块的输出数。$F(2,3)$读取$d_0,d_1,d_2,d_3$，核为$g_0,g_1,g_2$，目标是
+\[
+  y_0=d_0g_0+d_1g_1+d_2g_2,\qquad
+  y_1=d_1g_0+d_2g_1+d_3g_2\text{。}
+\]
+直接计算需要六次数据与核的乘法。通过固定变换，计算
+\begin{equation}
+  \begin{aligned}
+    m_1&=(d_0-d_2)g_0,\\
+    m_2&=(d_1+d_2)(g_0+g_1+g_2)/2,\\
+    m_3&=(d_2-d_1)(g_0-g_1+g_2)/2,\\
+    m_4&=(d_1-d_3)g_2,\\
+    y_0&=m_1+m_2+m_3,\qquad y_1=m_2-m_3-m_4\text{，}
+  \end{aligned}
+  \label{eq:cnn-winograd-one-dimensional}
+\end{equation}
+就能用四次核心乘法恢复同样的两个输出。恢复式可以逐项验证：
+\begin{equation}
+  \begin{aligned}
+    m_2+m_3&=d_1g_1+d_2(g_0+g_2),\\
+    m_2-m_3&=d_1(g_0+g_2)+d_2g_1\text{。}
+  \end{aligned}
+  \label{eq:cnn-winograd-recovery-principle}
+\end{equation}
+第一式加上$m_1=(d_0-d_2)g_0$，消去$d_2g_0$，便恢复$y_0$；第二式减去$m_4=(d_1-d_3)g_2$，消去$d_1g_2$，便恢复$y_1$。每个组合乘积同时承担多个原始项，输出恢复负责消去多余项。
+
+图~\ref{fig:cnn-winograd-example}取$\bm d=(1,2,3,4)$、$\bm g=(1,2,3)$，得到$\bm m=(-2,15,1,-6)$，再恢复$(14,20)$；直接计算也给出$1+4+9=14$和$2+6+12=20$。输入变换需要四次加减，核变换可用三次加减与两次乘以$1/2$，输出恢复需要四次加减。含$1/2$的核变换可在核参数不变时复用，不应把全部变换开销计为零。
+\begin{figure}[htb]
+  \centering
+  \input{figures/cnn-winograd-example}
+  \caption{一维$F(2,3)$的完整数值路径。输入$\bm d=(1,2,3,4)^\top$与核$\bm g=(1,2,3)^\top$分别变为四个组合值，按位置相乘得到$\bm m=(-2,15,1,-6)^\top$，再用输出变换恢复两个互相关结果。四次核心乘法替代直接算法的六次乘法，加减与固定系数变换仍有成本。}
+  \label{fig:cnn-winograd-example}
+\end{figure}
+
+\paragraph{沿两个轴组合变换}
+
+
+把一维变换沿两个轴组合，$3\times3$核$\bm K$与$4\times4$输入块$\bm D$产生$2\times2$输出：
+\begin{equation}
+  \begin{aligned}
+    \bm U&=\bm G\bm K\bm G^\top,\qquad
+    \bm V=\bm B^\top\bm D\bm B,\\
+    \bm Y&=\bm A^\top(\bm U\odot\bm V)\bm A\text{。}
+  \end{aligned}
+  \label{eq:cnn-winograd-transform}
+\end{equation}
+一组适用于这里互相关方向的变换矩阵为
+\begin{equation}
+  \bm B^\top=\begin{bmatrix}
+    1&0&-1&0\\0&1&1&0\\0&-1&1&0\\0&1&0&-1
+  \end{bmatrix},\quad
+  \bm G=\begin{bmatrix}
+    1&0&0\\1/2&1/2&1/2\\1/2&-1/2&1/2\\0&0&1
+  \end{bmatrix}\text{，}
+  \label{eq:cnn-winograd-matrices-bg}
+\end{equation}
+\begin{equation}
+  \bm A^\top=\begin{bmatrix}1&1&1&0\\0&1&-1&-1\end{bmatrix}\text{。}
+  \label{eq:cnn-winograd-matrix-a}
+\end{equation}
+这些矩阵的尺寸分别是$\bm B^\top\in\mathbb R^{4\times4}$、$\bm G\in\mathbb R^{4\times3}$、$\bm A^\top\in\mathbb R^{2\times4}$。左乘处理行方向，右乘处理列方向；因此$\bm U,\bm V$均为$4\times4$，逐元素乘积有十六项，输出恢复将其变为$2\times2$。这不是对每个输出独立使用一维技巧，而是两轴都先形成组合，再让十六个乘积服务于全部四个输出。直接计算的$4\times9=36$次核心乘法降为$16$次\scite{lavin2016fast}多通道时，每个输入通道分别变换，在变换域按通道累积$\sum_c\bm U_{c,o}\odot\bm V_c$，然后对每个输出通道恢复空间块。输入变换可供多个输出通道复用，核变换可供多个空间块与批量样本复用。由于输出变换是线性的，先对通道求和再恢复，与逐通道恢复后相加完全等价，却只需为每个输出通道执行一次恢复。若同时处理许多输入块，在每个变换位置$(\xi,\nu)$上，还可把全部核组合排成$c_{\mathrm{out}}\times c_{\mathrm{in}}$矩阵、输入组合排成$c_{\mathrm{in}}\times n_{\mathrm{tile}}$矩阵，进行一次通道矩阵乘法；$n_{\mathrm{tile}}$是当前输入块数。$F(2\times2,3\times3)$因而可以组织为十六组通道矩阵乘法。这种结构使变换算法也能使用GEMM，与前面的矩阵化路线并不矛盾。
+
+实现时先为每个输入、输出通道对变换核，再将输出切成互不重叠的$2\times2$块。每个输出块读取一个$4\times4$输入块，变换输入、完成通道乘加、恢复四个空间输出，再加偏置。相邻输出块的起点相隔两格，对应输入块重叠两行或两列；边缘不足一块时需填充或单独处理。变换后的核有$16$个系数而非$9$个，活动值工作区也会扩大；可以分块处理以控制内存。更大输出块虽然进一步减少单位输出的核心乘法，却通常增加变换成本和数值敏感性。上述方案直接适用于步长一、无空洞的$3\times3$设置，其他设置需要另行构造算法或选择别的内核。
+
+\begin{figure}[tb]
+  \centering
+  \input{figures/cnn-transform-algorithms}
+  \caption{变换类卷积的共同流程与不同目标。Toom--Cook通过多项式求值及插值恢复完整乘积系数；Winograd通过固定小矩阵恢复所需输出块；FFT在补零后的频域相乘并反变换。输入和核可以分别变换，变换结果按输入通道相乘并求和；能复用多少次，决定变换开销能否被摊薄。}
+  \label{fig:cnn-transform-algorithms}
+\end{figure}
+
+\subsubsection{FFT与分块频域卷积}
+\label{sec:cnn-fft}
+
+若求值和插值自身仍有很高的成本，减少点值乘法就未必能带来收益。\term{快速傅里叶变换}（fast Fourier transform, FFT）利用单位根的对称性，加速从系数到点值、再从点值到系数的转换。Toom--Cook在少数实数点上求值，FFT则选取复平面上等间隔的单位根。若补零后的序列长$N$，记$\zeta_N=\exp(-2\pi\mathrm i/N)$，其中$\mathrm i$为虚数单位。长度$N$的离散傅里叶变换（discrete Fourier transform, DFT）及其逆变换为
+\begin{equation}
+  \begin{aligned}
+    \widehat x_\omega&=\sum_{i=0}^{N-1}x_i\zeta_N^{\omega i},
+       &&\omega=0,\ldots,N-1,\\
+    x_i&=\frac1N\sum_{\omega=0}^{N-1}
+                    \widehat x_\omega\zeta_N^{-\omega i},
+       &&i=0,\ldots,N-1\text{。}
+  \end{aligned}
+  \label{eq:cnn-dft-inverse}
+\end{equation}
+正变换就是在$\zeta_N^\omega$处计算$X(z)$的值，逆变换恢复系数。归一化因子$1/N$不可省略；因为单位根的正交关系使$\sum_\omega\zeta_N^{\omega(i-j)}$在$i=j$时等于$N$，在不同索引时等于零。与一般点值插值相比，单位根的规则结构允许快速求值和快速恢复。
+
+\paragraph{FFT怎样加速求值与恢复}
+
+直接DFT为$N$个频率各求一个长度$N$的和，需要$O(N^2)$工作。以$N$为二的幂为例，把系数分成偶数索引与奇数索引，分别得到长度$N/2$的序列，其DFT记为$E_\omega,O_\omega$。由于$\zeta_N^2=\zeta_{N/2}$，对$0\leq\omega<N/2$有
+\begin{equation}
+  \begin{aligned}
+    \widehat x_\omega&=E_\omega+\zeta_N^\omega O_\omega,\\
+    \widehat x_{\omega+N/2}&=E_\omega-\zeta_N^\omega O_\omega\text{。}
+  \end{aligned}
+  \label{eq:cnn-fft-butterfly}
+\end{equation}
+同一对$E_\omega,O_\omega$同时服务两个频率，第二式的减号来自$\zeta_N^{N/2}=-1$。这一步没有丢掉一半频率，而是用两个较小DFT和线性合并恢复全部频率。递归满足$T(N)=2T(N/2)+O(N)$，共有$\log_2N$层、每层$O(N)$工作；逆变换改变指数符号并除以$N$，可沿用同样的递归。这是Cooley--Tukey分治的一种基二形式，其他合成长度也可按其因子分解，不要求所有FFT的长度都为二的幂\scite{cooley1965fft}
+
+\paragraph{频域乘法为什么等于卷积}
+
+对循环卷积$y_j=\sum_{i=0}^{N-1}x_i k_{(j-i)\bmod N}$，将DFT中的求和按$j=i+a\pmod N$重排，得到
+\begin{equation}
+  \widehat y_\omega
+    =\sum_{i=0}^{N-1}\sum_{a=0}^{N-1}
+        x_i k_a\zeta_N^{\omega(i+a)}
+    =\widehat x_\omega\widehat k_\omega\text{。}
+  \label{eq:cnn-convolution-theorem-derivation}
+\end{equation}
+周期性保证索引回绕不会改变单位根的幂。空间中的加权求和变成每个频率上的一次乘法，求值后只需$N$项乘法，再用$O(N\log N)$成本逆变换回去。这一卷积定理可写为
+\begin{equation}
+  \bm x*_N\bm k=\mathcal F_N^{-1}
+       \!\left(\mathcal F_N(\bm x)\odot\mathcal F_N(\bm k)\right)\text{。}
+  \label{eq:cnn-fft-convolution}
+\end{equation}
+这直接得到循环卷积。若要计算长度$n_x,n_k$的有限序列的线性卷积，应先将两者补零到$N\geq n_x+n_k-1$，避免末端贡献回绕叠加到开头。二维情况沿高、宽分别满足补零要求。
+
+例如$(1,2,3,4)$与$(1,-1)$的完整数学卷积是$(1,1,1,1,-4)$，至少需要长度五的变换。若只取长度四，最后一项回绕，首项变为$1-4=-3$，得到$(-3,1,1,1)$，已是另一个运算。网络中的valid互相关应先按约定翻转核，再选取完整线性卷积中对应的输出位置。例如先把$(1,-1)$翻成$(-1,1)$，完整卷积为$(-1,-1,-1,-1,4)$，保留索引一至三便得到互相关输出$(-1,-1,-1)$。补零、翻转和裁剪不能只靠“FFT后乘一下”省略。
+
+多通道二维卷积先分别变换输入和核，在每个频率上计算$\widehat y_o=\sum_c\widehat x_c\widehat k_{c,o}$，再对每个输出通道反变换。若补零后的网格含$N$个位置，核心频域乘加量为$O(n_{\mathrm b}c_{\mathrm{in}}c_{\mathrm{out}}N)$，另有输入、核及输出的变换成本，其量级分别为
+\[
+  O(n_{\mathrm b}c_{\mathrm{in}}N\log N),\quad
+  O(c_{\mathrm{in}}c_{\mathrm{out}}N\log N),\quad
+  O(n_{\mathrm b}c_{\mathrm{out}}N\log N)\text{。}
+\]
+这里$N$是补零后二维网格的总位置数，频域乘法通常是复数乘法，不能直接与一次实数乘法等价计价。输入频谱可供多个输出核复用，核频谱在参数不变时可跨样本复用；训练中参数更新后需要重算。Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu2014fft}
+
+\paragraph{长输入怎样逐块计算}
+
+FFT算法也可以逐块计算，以限制变换规模。\term{重叠相加}（overlap-add）将输入分块，每块补零后计算完整线性卷积，再将重叠的输出贡献相加；\term{重叠保留}（overlap-save）则让相邻输入块保留核长减一的重叠，只输出每块中没有循环污染的部分。一维核长$k$、变换长度$N$时，每块可保留$N-k+1$个新输出。例如将$(1,2,3,4)$拆为$(1,2)$与$(3,4)$，分别和$(1,-1)$作完整卷积，得到$(1,1,-2)$与$(3,1,-4)$。第二块原本从位置二开始，恢复后也要平移两位；重叠位置的$-2$与$3$相加，便得到整段输出$(1,1,1,1,-4)$，见图~\ref{fig:cnn-fft-blocks}。每块内部仍须补零至至少$2+2-1=3$，分块不能消除线性卷积的补零要求。
+
+重叠保留选择另一种组织方式。取核长二、$N=4$，每个输入块保留前一块最后一个输入值，再接三个新值。首块为$(0,1,2,3)$，其循环卷积为$(-3,1,1,1)$；丢掉受回绕污染的第一项，保留$(1,1,1)$。下一块为$(3,4,0,0)$，保留结果$(1,-4,0)$，按目标长度截取前两项，仍恢复同一个完整输出。重叠相加在输出端相加，重叠保留在输入端重叠并丢弃污染位置，两者不能混用拼接规则。
+
+\begin{figure}[htb]
+  \centering
+  \input{figures/cnn-fft-blocks}
+  \caption{重叠相加的数值例子。输入在原位置零和二分别开始两个长度二的块，块内补零后计算与$(1,-1)$的完整卷积，恢复到图上的五个全局输出位置。紫色区域表示该块可能产生贡献的位置，区域外记为零。虚线框内的两项贡献相加为一，最终结果与不分块的线性卷积相同。}
+  \label{fig:cnn-fft-blocks}
+\end{figure}
+
+块太小使变换和重叠开销增加，块太大增加内存及延迟。复数数组、变换代价与跨步后被丢弃的输出，都会影响FFT是否适合某一层。
+
+\subsubsection{空间可分离核：利用低秩结构}
+\label{sec:cnn-separable-implementation}
+
+还有一种加速依赖核自身的代数结构。若单通道核可写成$k_{a,b}=u_a v_b$，即$\bm K=\bm u\bm v^\top$，二维滤波就可分解为一个方向的长度$k_h$滤波和另一个方向的长度$k_w$滤波。这一分解直接来自求和顺序：
+\begin{equation}
+  \begin{aligned}
+    t_{i,j}&=\sum_{b=0}^{k_w-1}v_bx_{i,j+b},\\
+    y_{i,j}&=\sum_{a=0}^{k_h-1}u_at_{i+a,j}
+      =\sum_{a=0}^{k_h-1}\sum_{b=0}^{k_w-1}
+          u_av_bx_{i+a,j+b}\text{。}
+  \end{aligned}
+  \label{eq:cnn-spatial-separable-derivation}
+\end{equation}
+水平结果$t_{i,j}$可以被多个垂直窗口复用，因此不必为每个二维窗口重新计算整组水平点积。步长一、无空洞且逐轴边界与裁剪一致时，在足够大的网格上，主要成本由每个输出附近的$k_hk_w$项降为约$k_h+k_w$项，代价是保存或流式处理一维中间结果。
+
+取$\bm u=\bm v=(1,2,1)^\top$，则$\bm K=\left[\begin{smallmatrix}1&2&1\\2&4&2\\1&2&1\end{smallmatrix}\right]$。对原$4\times4$输入，水平滤波先得到$4\times2$的中间矩阵，再垂直滤波得到$2\times2$输出，图~\ref{fig:cnn-spatial-separable}列出全部数值。左上输出为$8+2\times24+40=96$，与直接二维求和一致。
+
+这个小例子也提醒我们区分局部估算与完整成本。不填充时，中间矩阵尺寸是$h\times w'$，所以两阶段共需$hw'k_w+h'w'k_h$次核心乘法，并不严格等于$h'w'(k_h+k_w)$。本例需要$4\times2\times3+2\times2\times3=36$次，与直接计算的$2\times2\times9=36$次相同；对$100\times100$输入，同一核的两阶段成本为$58212$次，直接计算则为$86436$次。图像相对核越大，中间区域的额外边界开销越容易摊薄。
+\begin{figure}[htb]
+  \centering
+  \input{figures/cnn-spatial-separable}
+  \caption{秩一空间核的两阶段计算。水平核与垂直核均为$(1,2,1)$，组成$3\times3$核$\bm u\bm v^\top$。在步长一、无填充条件下，原$4\times4$输入先变为$4\times2$中间结果，再变为$2\times2$输出。该小例子的两阶段核心乘法量仍为三十六次，图示验证的是结果等价，而非每种输入尺寸都能节省计算。}
+  \label{fig:cnn-spatial-separable}
+\end{figure}
+
+
+一般核未必秩一。对核作奇异值分解，将第$r$个奇异值吸收到一个向量中，可写成$\bm K=\sum_{r=1}^{\rho}\bm u_r\bm v_r^\top$，其中$\rho$为保留的非零奇异值个数。保留全部非零奇异值时，分解是精确的；计算$\rho$组一维滤波并相加，即可恢复原二维核的输出。在大网格上的每位置主要成本约为$\rho(k_h+k_w)$，只有这比$k_hk_w$足够小，才可能抵消分解与中间读写。只保留较少的奇异值通常会改变输出，属于近似算法，应检查误差或重新训练。这里的空间可分离性也不同于第~\ref{sec:cnn-layer}节的逐通道可分离层，后者改变了通道连接方式，不能作为任意密集卷积的无损替换。
+
+\begin{table*}[htb]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    计算路线 & 计算过程的改变 & 适用条件与代价\\
+    \midrule
+    直接计算 & 枚举全部局部乘积并累积 & 适用各种采样设置，乘加量为$c_{\mathrm{out}}qm$\\
+    矩阵化计算 & 将点积集中为矩阵乘法 & 普通GEMM保持乘加量；Strassen可减少块乘法，但增加加减与误差敏感性\\
+    Toom--Cook & 求值、逐点乘法、插值 & 面向多项式乘积，可能计算不需要的输出系数\\
+    Winograd & 固定变换恢复小块滤波输出 & 小核、小步长设置；变换成本及数值条件需核对\\
+    FFT & 频域乘法后反变换 & 线性卷积须补零，变换与复数运算有成本\\
+    空间可分离核 & 低秩分解为一维滤波 & 无损计算要求相应低秩结构；截断分解会改变输出\\
+    \bottomrule
+  \end{tabularx}
+  \caption{按计算过程比较卷积算法。矩阵化本身不减少普通乘加量，但提供了选择矩阵乘法算法的入口。前五条路线在精确算术下计算同一目标映射；空间可分离路线还要求核具有相应结构。表中不把显式展开、隐式取数等存储选择作为新的代数算法。}
+  \label{tab:cnn-algorithms}
+\end{table*}
+
+\subsubsection{工程实现与优化}
+\label{sec:cnn-engineering}
+
+计算算法确定需要哪些乘积与求和，执行速度还取决于数据如何送入计算单元。\term{分块}（tiling）把相邻输出位置和若干通道放在一起计算，在较近的存储中复用它们共用的输入与核，减少重复读取。块越大，复用机会越多，但寄存器和局部存储需求也越高，可能限制并行度。
+
+矩阵化卷积需要决定如何提供式\eqref{eq:cnn-im2col}中的窗口矩阵。\term{数据展开}（im2col）把窗口复制为连续的列，再调用GEMM；显式保存整个矩阵需要$qm$个元素，还会产生展开读写。\term{隐式GEMM}（implicit GEMM）则从原张量按需形成当前计算块所需的片段，省去完整展开矩阵，代价是加载时的地址计算与边界判断。CUTLASS给出了这种实现方式\scite{nvidiaCutlassConvolution}
+
+另一种选择是\term{间接卷积}（indirect convolution）：保存指向原输入通道向量的地址，由专用内核沿地址取数，避免复制全部窗口数值。它与隐式GEMM的区别在于显式记录取数位置，也需要承担地址表和间接访存的成本；地址表不能直接交给只接收数值矩阵的普通GEMM接口\scite{dukhan2019indirect}
+
+卷积之后的偏置和逐元素激活还可在写出前完成，这种\term{算子融合}（operator fusion）减少中间结果的读写与调用次数。分块、布局和融合可用于不同算法，但收益取决于层形状、精度、硬件及训练或推理条件。选型应测量完整算子的时间、工作区与误差，不能只比较乘法次数。存储层次、并行调度与融合的具体实现留到第\ref{vol:systems}卷“系统”展开。
+
+\FloatBarrier
+
+\section{网络结构}
+\label{sec:cnn-structure}
+
+一次局部求和只能产生一组线性响应。完整网络还需要用多个核形成不同特征，用非线性组合这些特征，按任务保留或汇聚位置，并把最终结果转换为可比较的预测。本节区分各层承担的作用，再考察它们怎样组成网络。
+
+\subsection{卷积层}
+\label{sec:cnn-layer}
+
+彩色图像在每个位置提供三个数值，隐藏层也可以在同一位置保存多种响应。\term{通道}（channel）就是这些并列的特征坐标；一个通道在全部空间位置上的响应构成一张\term{特征图}（feature map）。它仍然具有高、宽两个轴，通道轴则区分读取和产生的特征。
+
+设输入为$\bm X\in\mathbb R^{h\times w\times c_{\mathrm{in}}}$，核张量为$\bm W\in\mathbb R^{k_h\times k_w\times c_{\mathrm{in}}\times c_{\mathrm{out}}}$，偏置为$\bm b\in\mathbb R^{c_{\mathrm{out}}}$。空间和核索引从零开始，通道索引$c,o$从一开始；$x_{i,j,c}$、$w_{a,b,c,o}$、$b_o$分别是这些对象的元素。输出预激活值$\bm Z\in\mathbb R^{h'\times w'\times c_{\mathrm{out}}}$为
+\begin{equation}
+  \begin{aligned}
+    z_{i,j,o}=b_o+\sum_{c=1}^{c_{\mathrm{in}}}
+      \sum_{a=0}^{k_h-1}\sum_{b=0}^{k_w-1}
+      w_{a,b,c,o}\widetilde x_{u(i,a),v(j,b),c},\\
+    u(i,a)=is_h-p_{\mathrm t}+ad_h,\qquad
+    v(j,b)=js_w-p_{\mathrm l}+bd_w\text{。}
+  \end{aligned}
+  \label{eq:cnn-layer-forward}
+\end{equation}
+随后通常逐元素应用激活，得到$h_{i,j,o}=\sigma(z_{i,j,o})$。每个输出通道具有一组覆盖全部输入通道的核权重，先分别计算局部贡献，再把各输入通道的贡献相加；输入通道轴在这一步被求和，输出通道轴被保留。图~\ref{fig:cnn-channels}展示了这种关系。
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-channels}
+  \caption{三输入、两输出通道的卷积。左侧三张错位叠放的平面共同组成输入张量$\bm X$，蓝、紫、青区分输入通道；每个输出核的同色切片读取相应通道中高亮的局部窗口。各切片完成局部乘加后，三项贡献与偏置一起求和，分别写入右侧输出张量$\bm Z$的两个通道；紫、青输出平面分别由核1、核2产生。示意采用$4\times4$输入、$2\times2$核、步长一和无填充，输出为$3\times3$；核在空间位置间共享。}
+  \label{fig:cnn-channels}
+\end{figure*}
+
+普通卷积层的参数数为
+\begin{equation}
+  p_{\mathrm{conv}}=k_hk_wc_{\mathrm{in}}c_{\mathrm{out}}
+                    +c_{\mathrm{out}}\text{。}
+  \label{eq:cnn-layer-parameters}
+\end{equation}
+空间尺寸没有出现在该式中，却仍出现在式\eqref{eq:cnn-direct-cost}的计算量和活动值存储量中。较大图像可以使用相同参数，但要生成更多响应。参数量、计算量和中间特征的内存应分别判断。
+
+核为$1\times1$时，每个输出只读取同一空间位置的通道向量。\term{逐点卷积}（pointwise convolution）因此是所有位置共享的通道变换，可以增加、压缩或混合通道，却不直接扩展空间感受野。\term{分组卷积}（grouped convolution）把输入、输出通道分成$g$组，各组只在内部连接；若两类通道数都能被$g$整除，权重数变为$k_hk_wc_{\mathrm{in}}c_{\mathrm{out}}/g$。若每个输入通道单独使用一个空间核，再接逐点卷积混合通道，就得到一种\term{深度可分离卷积}（depthwise separable convolution）：将空间处理与通道混合分成两步。在每个输入通道产生一张中间图的设置下，权重数为$k_hk_wc_{\mathrm{in}}+c_{\mathrm{in}}c_{\mathrm{out}}$，但两步施加的结构约束也与普通卷积不同。
+
+多层组合让一个高层单元读取更大的输入范围。沿单条串联路径，设第$\ell$层的有效核尺寸为$e_\ell$、步长为$s_\ell$，$r_\ell$表示感受野跨度，$j_\ell$表示相邻响应在原输入上的间距。对一个轴，有
+\begin{equation}
+  r_0=j_0=1,\qquad
+  r_\ell=r_{\ell-1}+(e_\ell-1)j_{\ell-1},\qquad
+  j_\ell=s_\ell j_{\ell-1}\text{。}
+  \label{eq:cnn-receptive-field}
+\end{equation}
+新增的$e_\ell-1$个间隔，每个在原输入上跨越$j_{\ell-1}$个位置，所以要相乘。两个步长为一的$3\times3$层覆盖$5\times5$，三个则覆盖$7\times7$。这是结构上可能影响该输出的范围；实际梯度和学到的权重可能集中在其中一部分，空洞采样也可能使范围内存在未读取的位置。填充还会改变感受野中心与边界的对应，不能只检查跨度。
+
+\FloatBarrier
+
+\subsection{池化层}
+\label{sec:cnn-pooling}
+
+某个局部区域内出现了一个特征时，后续计算有时只需要其强度，不需要每个位置的响应。\term{池化}（pooling）按预设规则汇聚窗口内的数值，通常对每个通道独立作用。它与卷积都读取窗口，但标准池化不学习窗口中的权重，也不直接混合通道。
+
+设输出位置$(i,j)$在某通道读取的有效输入位置集合为$\Omega_{i,j}$，其元素个数为$q_{i,j}$。\term{最大池化}（max pooling）保留窗口内的最大响应，\term{平均池化}（average pooling）保留窗口内的平均响应：
+\begin{equation}
+  \begin{aligned}
+    y_{i,j,c}^{\mathrm{max}}&=\max_{(u,v)\in\Omega_{i,j}}x_{u,v,c},\\
+    y_{i,j,c}^{\mathrm{avg}}&=\frac1{q_{i,j}}
+                   \sum_{(u,v)\in\Omega_{i,j}}x_{u,v,c}\text{。}
+  \end{aligned}
+  \label{eq:cnn-local-pooling}
+\end{equation}
+在式\eqref{eq:cnn-matrix-example}上用不重叠的$2\times2$窗口、步长二且不填充，分别得到
+\begin{equation}
+  \bm Y^{\mathrm{max}}=\begin{bmatrix}6&8\\14&16\end{bmatrix},\qquad
+  \bm Y^{\mathrm{avg}}=\begin{bmatrix}3.5&5.5\\11.5&13.5\end{bmatrix}\text{。}
+  \label{eq:cnn-pooling-example}
+\end{equation}
+最大池化侧重最强响应，平均池化反映整体水平。两者都丢失窗口内的部分信息：仅凭$6$不能知道该窗口的其他三个值，仅凭$3.5$也不能知道四个值的排列。
+
+采用相同窗口与完整窗口取整规则时，池化的输出尺寸可由式\eqref{eq:cnn-output-size}计算。边界规则却要单独核对：最大池化常将无效位置排除，等价于用负无穷填充，而补零会改变全负窗口的最大值；平均池化若把补零位置计入分母，边缘均值会与只除以有效元素数不同。某些接口使用向上取整，并另行处理末尾窗口，不能把这种输出形状与本章的向下取整约定混用。
+
+\term{全局平均池化}（global average pooling）把每张特征图汇成一个数，得到通道向量$\bm r\in\mathbb R^{c_{\mathrm{in}}}$：
+\begin{equation}
+  r_c=\frac1{hw}\sum_{i=0}^{h-1}\sum_{j=0}^{w-1}x_{i,j,c}\text{。}
+  \label{eq:cnn-global-average-pooling}
+\end{equation}
+全局最大池化则保留每个通道在全部位置上的最大值。若平移仅对特征图作位置置换，例如循环边界上的整数平移，这两种汇聚都保持结果不变。但实际网络中的填充、裁剪和跨步可能使平移后的特征图不再只是原图的置换，因此不能由“使用了全局池化”推出对任意图像平移严格不变。局部池化也只能在特定变化下保留局部响应，不能保证一般平移不变。
+
+\subsection{激活与归一化}
+\label{sec:cnn-activation-normalization}
+
+卷积层仍然是仿射映射，单独堆叠不足以学习复杂的非线性关系。ReLU、GELU或SiLU可逐元素作用于特征图，保留空间和通道形状，同时改变局部响应。它们的定义、梯度和初始化配合见第~\ref{sec:ffn-activations}节。卷积网络中常用ReLU，并不意味着其他激活不适用；应区分隐藏特征的非线性与输出的概率或取值约束。
+
+深层组合还会改变活动值的尺度。\term{批归一化}（batch normalization, BN）用当前小批量的统计量调整特征，再学习一个缩放与平移。对卷积特征，通常按通道在批量轴和两个空间轴上统计；设小批量预激活为$z_{t,i,j,c}$、样本索引$t=1,\ldots,n_{\mathrm b}$，统计元素数为$m=n_{\mathrm b}h'w'$，则
+\begin{equation}
+  \begin{aligned}
+    \mu_c&=\frac1m\sum_{t,i,j}z_{t,i,j,c},\qquad
+    v_c=\frac1m\sum_{t,i,j}(z_{t,i,j,c}-\mu_c)^2,\\
+    \widehat z_{t,i,j,c}&=\frac{z_{t,i,j,c}-\mu_c}{\sqrt{v_c+\epsilon}},\qquad
+    \bar z_{t,i,j,c}=\gamma_c\widehat z_{t,i,j,c}+\beta_c\text{。}
+  \end{aligned}
+  \label{eq:cnn-batch-normalization}
+\end{equation}
+其中$\epsilon>0$防止分母过小，$\gamma_c,\beta_c$是可学习参数。训练时，同一个样本的输出因此会依赖同批其他样本；推理时通常使用训练中累计的均值与方差，使单样本计算固定。累计方差的具体估计约定应与实现一致。常见组合是“卷积—BN—ReLU”，紧接BN的卷积偏置常可省略，因为通道中心化会消除它，BN另有平移参数\scite{ioffe2015batchnorm}
+
+当批量较小或批内组成变化较大时，可以改变统计范围。\term{组归一化}（group normalization, GN）把通道分成若干组，对每个样本分别在一组通道及其空间位置上统计均值和方差，然后仍按通道学习缩放与平移。它不需要其他样本提供统计量，训练和推理使用相同的统计范围，但会让同组通道发生统计耦合。组数是结构设置，通道数需要能够均分。GN与BN改变的是统计对象，不能仅凭名称断言哪一种在所有任务上更好\scite{wu2018groupnorm}
+
+归一化、激活和池化的顺序影响计算含义。对平均池化，通常有$\sigma(\operatorname{Avg}(\bm X))\neq\operatorname{Avg}(\sigma(\bm X))$；例如两个响应为$-2$和$1$时，先平均再ReLU得到$0$，先ReLU再平均得到$1/2$。单调逐点激活与不含额外填充值的最大池化可以交换，但加入归一化后不能据此随意调换整个模块。各架构的模块顺序应按定义读取；跨架构的训练机制由后续《神经网络的训练》章展开。
+
+\subsection{输出和学习目标}
+\label{sec:cnn-output-objectives}
+
+预测整张图像的类别时，需要把空间特征转换为整体得分。可以将末层特征展平后接全连接层，也可以先作全局平均池化再接分类层。设汇聚向量为$\bm r$，类别数为$q$，原始得分为$\bm a=\bm U\bm r+\bm d\in\mathbb R^q$，则多类概率与单样本损失为
+\begin{equation}
+  p_k=\frac{\exp(a_k)}{\sum_{v=1}^{q}\exp(a_v)},\qquad
+  \ell=-\log p_y\text{。}
+  \label{eq:cnn-image-classification}
+\end{equation}
+这里$y\in\{1,\ldots,q\}$为图像标签；训练学习卷积特征与分类层参数，使用时取最大得分类别。回归、二分类和多标签输出可以沿用第~\ref{sec:ffn-output-objectives}节的变换与损失。将最后一张特征图简单当作类别概率，并没有完成这些输出约束。
+
+若要预测每个像素的类别，就需要保留或恢复空间轴。设得分张量为$\bm A\in\mathbb R^{h\times w\times q}$，在每个位置单独应用Softmax，可得到$p_{i,j,k}$。给定像素标签$y_{i,j}$，逐位置交叉熵为
+\begin{equation}
+  \ell_{\mathrm{seg}}=-\frac1{|\Omega|}
+    \sum_{(i,j)\in\Omega}\log p_{i,j,y_{i,j}}\text{。}
+  \label{eq:cnn-segmentation-loss}
+\end{equation}
+其中$\Omega$为有标签的位置集合，未标注像素不参与求和。每个位置输出多个颜色值或其他连续量时，可改用回归损失。两种输出任务都用卷积特征，却对空间汇聚有不同要求：分类可以舍去具体位置，分割和图像生成必须保留输出与位置之间的对应。
+
+对$n$个独立训练样本，用$\bm\theta$收集所有可学习核、偏置、归一化参数和输出层参数，训练目标为
+\begin{equation}
+  \widehat R_S(\bm\theta)=\frac1n\sum_{t=1}^{n}
+    \ell\!\left(\bm f_{\bm\theta}(\bm X_t),\bm Y_t\right)\text{。}
+  \label{eq:cnn-training-objective}
+\end{equation}
+这里$\bm Y_t$统指与任务对应的目标；标量类别标签按式\eqref{eq:cnn-image-classification}处理。像素损失可在单张图像内部先汇聚，再在图像之间取平均。正则项、数据增强和优化策略可以加入训练过程，本章重点是结构特有的梯度与信息传递。
+
+\FloatBarrier
+
+\subsection{常见卷积网络架构}
+\label{sec:cnn-classic-architectures}
+
+完整架构要在空间精度、特征种类和计算成本之间分配资源。下采样减少空间位置，高层增加通道可以在较粗网格上保存更多特征；末端再根据任务读出。下面分别介绍LeNet、AlexNet、VGG和GoogLeNet。图中长方体表示特征张量，正面示意空间网格，厚度示意通道维；深色局部块与虚线突出一次局部映射，四角连线帮助追踪相邻张量的形状变化。全连接层用包含圆形神经元的平面方框表示，与卷积主体区分。主路径从左向右展开，实际尺寸写在各层或阶段下方；绘图尺寸不与张量元素数严格成比例。
+
+\subsubsection{LeNet-5：从局部检测到整体读出}
+\label{sec:cnn-lenet}
+
+手写字符的局部笔画需要逐渐组合成整字。LeNet-5交替使用卷积与降采样，先形成小范围响应，再扩大后层能够读取的区域。原网络接收$32\times32$的单通道图像，C1用六个$5\times5$核产生$28\times28\times6$特征；S2降为$14\times14\times6$，C3产生$10\times10\times16$，S4再降为$5\times5\times16$。C5用覆盖整个$5\times5$区域的核得到120个整体特征，接84单元的F6，再计算十类输出，见图~\ref{fig:cnn-lenet}\scite{lecun1998}
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/cnn-lenet}
+  \caption{LeNet-5的层次结构。C1、C3和C5为卷积层，S2、S4为原网络可学习的降采样层，F6为全连接层；原始十类读出采用欧氏径向基函数单元。长方体和局部映射均为示意，标签给出实际形状。C3的部分通道连接与降采样层的可学习参数未在图中逐条展开。}
+  \label{fig:cnn-lenet}
+\end{figure*}
+
+S2和S4不是今天无参数的标准平均池化：每张特征图的局部求和还经过可学习缩放、偏置和非线性。C3也不是每个输出都连接全部输入通道，而是采用指定的部分连接，使不同输出读取不同的通道组合。C5虽然空间输出为$1\times1$，仍是卷积层；对这里固定的输入形状，它恰好具有整体连接的作用。
+
+因此，教学中常见的“普通卷积—平均池化—ReLU—Softmax”版本是对LeNet的改写。它便于使用现代算子实现，却不保留全部原始设计。阅读这类架构时，应分别识别空间缩小、通道组合和整体读出的职责，再核对版本差别；只按层名照搬，容易把不同年代的训练与输出约定混在一起。
+
+\FloatBarrier
+
+\subsubsection{AlexNet：扩大容量并组织GPU训练}
+\label{sec:cnn-alexnet}
+
+自然图像包含更多颜色、纹理和尺度变化，需要更丰富的局部表示。AlexNet包含五个卷积层和三个全连接层；隐藏层使用ReLU，在第一、第二和第五个卷积阶段后作最大池化，在前两个全连接层使用Dropout。卷积主体输出通道依次为$96,256,384,384,256$，前两层分别用较大核快速扩大覆盖范围，后三层用$3\times3$继续组合特征\scite{krizhevsky2012}
+
+图~\ref{fig:cnn-alexnet}采用能明确核算形状的$227\times227$输入约定：首层$11\times11$、步长四、无填充产生$55\times55$输出，池化降到$27\times27$；第二卷积使用$5\times5$且保持尺度，池化降到$13\times13$；三层$3\times3$卷积保持该尺度，末次池化形成$6\times6\times256$，展平为9216维，接4096、4096和1000单元。原论文正文写输入$224\times224$，却展示首层55的空间尺寸；在无填充的向下取整规则下二者并不相符。这里显式选用227，避免把这个版本差异藏在图中。
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/cnn-alexnet}
+  \caption{AlexNet的五个卷积层与三个全连接层。全部主路径在一行展开，卷积层、最大池化层与全连接层分别绘出；最后一次池化的输出展平为9216维。各层下方给出空间尺寸和通道数，C表示卷积，P表示池化。此图采用227输入及正文给定的填充约定，省略局部响应归一化、Dropout和原始双GPU的分组细节。}
+  \label{fig:cnn-alexnet}
+\end{figure*}
+
+容量增加也会把成本集中到尾部。仅9216维到4096维的全连接权重就有$37748736$个，下一层又有$16777216$个；它们与卷积核共享权重的组织不同，是全模型参数量的重要来源。原实现将网络分配到两块GPU，部分层限制跨GPU的通道连接，这也影响了分组方式。ReLU、数据增强和Dropout分别作用于非线性、训练输入变化与正则化；GPU解决计算可行性，不能代替这些学习设计。AlexNet的意义在于这些因素共同支撑了大规模监督学习，而不是某一个模块单独保证效果。
+
+\FloatBarrier
+
+\Needspace{14\baselineskip}
+\subsubsection{VGG：以连续小核组织深度}
+\label{sec:cnn-vgg}
+
+AlexNet混合不同核尺寸，VGG则研究较规则的小核堆叠。主体使用步长一、填充一的$3\times3$卷积，在阶段末用$2\times2$、步长二的最大池化缩小空间。VGG-16的五个阶段分别含$2,2,3,3,3$个卷积层，通道数为$64,128,256,512,512$；加上三个全连接层，共有16个带权重的层，池化与激活不计入这个数字。VGG-19把后三阶段的卷积数增为四，总计19个带权重层\scite{simonyan2015vgg}
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/cnn-vgg}
+  \caption{VGG-16的五阶段卷积主体与全连接尾部。每个阶段内的$3\times3$卷积保持空间尺寸，阶段末池化减半；图中主体特征标注为池化后的形状。13个卷积层与三个全连接层组成16个带权重的层。每个卷积阶段合并展示其中的卷积堆叠与末端池化，平面神经元框表示全连接层；层下方分别标出空间尺寸与通道数。}
+  \label{fig:cnn-vgg}
+\end{figure*}
+
+连续小核能够逐层扩大感受野。两个步长一的$3\times3$层覆盖$5\times5$跨度，三个覆盖$7\times7$；若各层通道均为$c$且忽略偏置，两个小核用$18c^2$个权重，单个$5\times5$用$25c^2$个。中间激活还增加了一次非线性，因此前者并非后者的精确替换；比较成立的通道假设也不能省略。
+
+这种规则结构便于分阶段核算形状，但高分辨率阶段的活动值与乘加仍然很大，经典VGG的4096单元全连接尾部也有大量参数。增加深度时仍需合适的训练与正则化。VGG提供了一种清晰的深度组织方式，并没有自动解决深层串联中的梯度与退化问题。
+
+\FloatBarrier
+
+\subsubsection{GoogLeNet：在模块内分配多个尺度}
+\label{sec:cnn-googlenet}
+
+连续小核把不同尺度安排在不同深度。若希望同一层同时处理不同范围，可以把输入送入并行分支。\term{Inception模块}将同一输入分别交给$1\times1$、$3\times3$、$5\times5$局部处理及池化分支，再沿通道轴拼接。较大核前先用$1\times1$压缩通道，池化分支保持空间尺寸后也可用逐点卷积调节通道。各分支需要相同高、宽，通道数则可以不同，见图~\ref{fig:cnn-inception}。
+
+\begin{figure*}[tb]
+  \centering
+  \input{figures/cnn-inception}
+  \caption{一个Inception模块的四分支教学配置。输入为$28\times28\times64$；四条分支分别输出16、32、16、16个通道，保持同一空间尺度，拼接得到$28\times28\times80$。中间的逐点卷积先压缩通道，最大池化采用步长一及same填充。圆角方框表示处理算子，Max为最大池化，线路上的数字为通道数；圆形$+$表示沿通道拼接，四条路径实际并行，激活省略。}
+  \label{fig:cnn-inception}
+\end{figure*}
+
+图中$3\times3$分支先将通道从64压到16，再输出32个通道，权重数为$64\times16+9\times16\times32=5632$；直接从64映射到32需要$18432$个。节省来自中间通道压缩，压缩也会限制该分支的表示。拼接保留分支间的区别，没有像相加那样把对应通道混合；后续卷积再学习如何组合这些通道。
+
+经典GoogLeNet先用普通卷积与池化形成$28\times28\times192$特征，再堆叠九个Inception模块，按两、五、两个模块分成三个尺度阶段；两个阶段间池化将空间降为14和7。末端$7\times7\times1024$特征经全局平均池化形成1024维向量，再作1000类分类。训练时，在中间层加入辅助分类器，让较浅位置也收到任务损失；推理时使用主分类路径。图~\ref{fig:cnn-googlenet}展示主路径，原论文按最长路径计22个带参数层，不能把一个Inception模块误计为一个普通卷积层\scite{szegedy2015googlenet}
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/cnn-googlenet}
+  \caption{经典GoogLeNet的主分类路径。卷积前端把$224\times224$输入变成$28\times28\times192$；两个、五个、两个Inception模块组成三个阶段，阶段间池化改变空间尺度。各阶段末的通道数为480、832和1024，全局平均池化后接1000类分类器。辅助分类分支及模块内部细节省略，模块内部结构见图~\ref{fig:cnn-inception}。}
+  \label{fig:cnn-googlenet}
+\end{figure*}
+
+GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分支的成本，并以全局汇聚替代庞大的全连接尾部。代价是分支调度、拼接和更多中间特征，理论乘加预算仍需结合实现分析。表~\ref{tab:cnn-classic-architectures}把四种架构放回共同的问题：它们如何从局部形成整体表示，又将计算与参数放在何处。
+
+\FloatBarrier
+
+\begin{table*}[htb]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    架构 & 主体组织 & 理解结构时的侧重点\\
+    \midrule
+    LeNet & 卷积与可学习降采样交替 & 局部到整体；部分连接及原始输出约定\\
+    AlexNet & 五个卷积层与较大全连接尾部 & 通道容量、训练机制、GPU分组及尾部成本\\
+    VGG & 连续小核，阶段间池化 & 感受野、深度、规则结构及活动值成本\\
+    GoogLeNet & 多尺度分支、通道压缩与拼接 & 同层并行处理、计算预算与整体汇聚\\
+    \bottomrule
+  \end{tabularx}
+  \caption{经典卷积网络的组织方式。各行比较计算结构，没有在不同训练设置之间比较准确率。层数、输入形状和读出方式均应结合具体版本理解。}
+  \label{tab:cnn-classic-architectures}
+\end{table*}
+
+\section{参数学习}
+\label{sec:cnn-learning}
+
+卷积网络仍按前章的链式法则学习。结构带来的区别是：一个核权重在许多位置出现，一个输入又可能被多个窗口读取。因此，初始化应按局部连接数定尺度，反向传播则必须汇总所有重复使用的贡献。
+
+\subsection{参数初始化}
+\label{sec:cnn-initialization}
+
+对普通卷积，一个输出单元读取$k_hk_wc_{\mathrm{in}}$个值，故通常取
+\begin{equation}
+  \mathrm{fan\text{-}in}=k_hk_wc_{\mathrm{in}},\qquad
+  \mathrm{fan\text{-}out}=k_hk_wc_{\mathrm{out}}\text{。}
+  \label{eq:cnn-fans}
+\end{equation}
+后者按内部位置、步长为一的连接估计，每个输入向多个输出位置及通道贡献；边界、跨步和分组会改变实际连接数。初始化实现一般采用固定的核级约定，应区分这一约定与每个位置的精确计数。
+
+设初始权重独立、零均值、方差为$v$，与输入独立，偏置为零，各输入元素二阶矩为$q$。不同权重的交叉项均值为零，即使相邻像素相关，仍可在这个初始化模型下得到
+\[
+  \mathbb E[z_{i,j,o}^2]=k_hk_wc_{\mathrm{in}}vq
+\]
+用于内部位置的尺度估计。若预激活分布关于零对称，ReLU截去负半轴会使二阶矩减半，所以前向He初始化取
+\begin{equation}
+  w_{a,b,c,o}\sim\mathcal N\!\left(0,
+          \frac{2}{k_hk_wc_{\mathrm{in}}}\right)\text{。}
+  \label{eq:cnn-he-initialization}
+\end{equation}
+这与前章一致，分母变为局部输入连接数，而非整张图像的像素数。偏置可以初始化为零；不同核仍需要不同的随机权重，以打破输出通道之间的对称性\scite{he2015rectifiers}
+
+对中心附近近似单位斜率的激活，Glorot初始化可用方差$2/(\mathrm{fan\text{-}in}+\mathrm{fan\text{-}out})$折中前后向尺度。分组层的局部fan-in需除以组数；只有一个空间核的逐通道层，每个输出读取$k_hk_w$个值。跨步卷积中，每个输入参与的输出窗口更少且可能随位置变化，简单独立性估计也不会捕捉共享权重造成的空间相关。初始化提供的是起始尺度依据，训练中还需检查实际活动值与梯度，不能把这些近似当成全过程保证。
+
+\subsection{卷积层反向传播}
+\label{sec:cnn-backpropagation}
+
+固定一个样本，记损失为$\ell$，上游传到卷积预激活的梯度为$\delta_{i,j,o}=\partial\ell/\partial z_{i,j,o}$。若已知的是激活输出的梯度，需先乘$\sigma'(z_{i,j,o})$；若中间还有归一化，则先通过归一化的求导得到这里的$\delta$。以下采用式\eqref{eq:cnn-layer-forward}，并固定零填充约定。
+
+同一权重$w_{a,b,c,o}$出现在每个输出位置，因此链式法则给出
+\begin{equation}
+  \begin{aligned}
+    \frac{\partial\ell}{\partial w_{a,b,c,o}}
+      &=\sum_{i=0}^{h'-1}\sum_{j=0}^{w'-1}
+         \delta_{i,j,o}\widetilde x_{u(i,a),v(j,b),c},\\
+    \frac{\partial\ell}{\partial b_o}
+      &=\sum_{i=0}^{h'-1}\sum_{j=0}^{w'-1}\delta_{i,j,o}\text{。}
+  \end{aligned}
+  \label{eq:cnn-parameter-gradients}
+\end{equation}
+每个位置都提出一项局部更新意见，共享参数将这些意见相加。不同位置的贡献可以相互加强，也可以抵消；参数共享并不要求所有位置产生相同响应或相同梯度。小批量再沿样本轴累积，并按照损失采用的求和或平均方式缩放。
+
+一个输入$x_{u,v,c}$可能参与多个输出窗口，也可能连接多个输出通道。将所有包含它的项找出，得到
+\begin{equation}
+  \frac{\partial\ell}{\partial x_{u,v,c}}
+  =\sum_{i,j,o}\sum_{a,b}
+    \delta_{i,j,o}w_{a,b,c,o}
+    \mathbb I\{u=u(i,a),\ v=v(j,b)\}\text{。}
+  \label{eq:cnn-input-gradient}
+\end{equation}
+其中$u,v$在原输入范围内，$\mathbb I$为条件成立时取一的指示函数，求和范围沿用前向计算。该式适用于跨步和空洞，不需要凭印象猜核应当翻转几次。若使用复制或反射填充，一个原输入还可能对应多个扩展位置，需把这些位置的梯度再累加回来；不能将零填充下的单一索引条件直接照搬。
+
+矩阵形式揭示了它与转置卷积的联系。固定参数时，前向预激活为$\bm z=\bm C\bm x+\bm b_{\mathrm{rep}}$，$\bm b_{\mathrm{rep}}$表示各位置重复的偏置；把$\delta_{i,j,o}$展平为$\bm\delta$，就有
+\begin{equation}
+  \nabla_{\bm x}\ell=\bm C^\top\bm\delta\text{。}
+  \label{eq:cnn-backprop-transpose}
+\end{equation}
+输入梯度正是前向线性算子的转置作用。数据展开实现则先把每个窗口的梯度算出来，再把各列放回输入坐标，并累加重叠部分；这个回填步骤常称为col2im，它不是把重复窗口无条件复制回去。
+
+仍用式\eqref{eq:cnn-matrix-example}，不填充、步长一，令损失为全部互相关输出之和。九个输出的$\delta$均为一，则
+\begin{equation}
+  \nabla_{\bm K}\ell=
+    \begin{bmatrix}54&63\\90&99\end{bmatrix},\qquad
+  \nabla_{\bm X}\ell=
+    \begin{bmatrix}
+      1&1&1&0\\1&0&0&-1\\1&0&0&-1\\0&-1&-1&-1
+    \end{bmatrix}\text{。}
+  \label{eq:cnn-gradient-example}
+\end{equation}
+例如左上核权重汇总九个窗口的左上元素，和为$54$；$x_{1,1}=6$既以系数$1$参与一个窗口，也以系数$-1$参与另一个窗口，两项相消。虽然某些核权重当前为零，它们的梯度仍可非零，因为改变该权重会立即改变相应输出。偏置梯度为$9$。这个例子把“共享参数累积”与“重叠输入累积”区分开来。
+
+\subsection{池化层反向传播}
+\label{sec:cnn-pooling-backpropagation}
+
+池化没有标准的可学习参数，但它决定上游梯度怎样返回输入。设池化输出的梯度为$g_{i,j,c}=\partial\ell/\partial y_{i,j,c}$。平均池化对每个参与的元素具有相同导数，因此
+\begin{equation}
+  \frac{\partial\ell}{\partial x_{u,v,c}}
+  =\sum_{i,j}\frac{g_{i,j,c}}{q_{i,j}}
+                  \mathbb I\{(u,v)\in\Omega_{i,j}\}\text{。}
+  \label{eq:cnn-average-pooling-gradient}
+\end{equation}
+分母必须与前向平均采用的计数相同。窗口重叠时，一个输入收到多项；全局平均池化则将某通道的上游梯度均分给该通道全部位置。
+
+最大池化在最大值唯一时，只对被选中的元素有非零导数。前向计算记录其位置$(u^*_{i,j,c},v^*_{i,j,c})$，后向使用同一位置：
+\begin{equation}
+  \frac{\partial\ell}{\partial x_{u,v,c}}
+  =\sum_{i,j}g_{i,j,c}
+       \mathbb I\{(u,v)=(u^*_{i,j,c},v^*_{i,j,c})\}\text{。}
+  \label{eq:cnn-max-pooling-gradient}
+\end{equation}
+若多个元素并列最大，函数在该点不可微；实现可以按固定规则选择一个位置，也可以采用最大值集合上的合法次梯度分配。必须保持前后向约定一致。同一元素若是多个重叠窗口的最大值，会收到这些窗口梯度的和。
+
+对式\eqref{eq:cnn-pooling-example}，令四个输出梯度均为一。平均池化使每个输入收到$1/4$，最大池化只让原矩阵中的$6,8,14,16$各收到$1$。回传规则因此保留了两种汇聚方式的区别：平均把影响均分，最大把影响路由到当前胜出的位置。卷积与池化梯度接入前章的反向传播后，就能联合更新整个网络；优化器和学习率的通用选择由后续训练章讨论。
+
+\section{支持更深的网络结构}
+\label{sec:cnn-deep-structures}
+
+连续堆叠卷积可以扩大感受野并增加非线性组合，却也使信息和梯度经过更长的变换链。前章已说明，雅可比连乘可能放大或衰减梯度。即使初始化和归一化让训练开始收敛，更深的普通串联网络仍可能出现更高的训练误差。这里的\term{退化问题}（degradation problem）指增加层数后训练效果反而下降，不能仅用训练集外的过拟合来解释。ResNet论文在其图像实验中报告并研究了这一现象\scite{he2016resnet}
+
+跨层连接允许部分信息绕过某些变换。下面比较三种组织方式：直接相加、用门选择相加，以及保留旧特征再拼接新特征。它们都可以保持前馈计算，但改变了中间表示和梯度路径。
+
+\subsection{残差连接与ResNet}
+\label{sec:cnn-resnet}
+
+若新增的一组层暂时无须改变输入，普通串联模块仍要学出恒等映射。\term{残差连接}（residual connection）把输入直接加到变换分支的结果上，使该分支只学习相对于输入需要改动的部分。将输入特征展平为$\bm x\in\mathbb R^d$，维度相同时，模块写为
+\begin{equation}
+  \bm y=\bm x+\bm F_{\bm\theta}(\bm x)\text{。}
+  \label{eq:cnn-residual-block}
+\end{equation}
+其中$\bm F_{\bm\theta}:\mathbb R^d\to\mathbb R^d$由若干卷积、归一化和激活组成。若目标映射接近恒等，残差分支只需接近零。这里的“残差”是模块输出相对于输入的差，不是标签减去预测值的训练误差。
+
+在可微位置，令$\bm J_F=\partial\bm F/\partial\bm x$，有
+\begin{equation}
+  \frac{\partial\bm y}{\partial\bm x}=\bm I+\bm J_F,
+  \qquad
+  \nabla_{\bm x}\ell=(\bm I+\bm J_F)^\top\nabla_{\bm y}\ell\text{。}
+  \label{eq:cnn-residual-gradient}
+\end{equation}
+梯度具有一项直接经过恒等路径的贡献，不必每一项都经过残差分支的全部层。但不同贡献仍可能相消，多块连乘也可能放大或衰减，因而这不是“永不消失”的保证。若相加后再用ReLU，还需乘该激活的局部导数，恒等贡献也会受其筛选。
+
+当阶段间下采样或改变通道时，输入与分支结果不能直接逐元素相加。可用投影$\bm P$调整形状，写为$\bm y=\bm P\bm x+\bm F(\bm x)$；例如用跨步$1\times1$卷积同时改变空间尺寸与通道。此时跨层路径的雅可比是$\bm P$，不再是$\bm I$。选择恒等或投影，取决于两条分支的形状和希望保留的映射。
+
+ResNet在多个阶段堆叠残差模块。基本模块常用两个$3\times3$卷积；瓶颈模块用$1\times1$压缩通道、$3\times3$处理空间、再用$1\times1$恢复通道，以控制主体计算。经典版本在相加后使用激活。比较不同版本时，应核对跳跃路径是否保持恒等，以及下采样究竟位于哪一条分支；仅写“使用残差”还不足以确定计算图。
+
+图~\ref{fig:cnn-resnet}展开一个基本模块中的层与残差连接。ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7$卷积取步长二、填充三，产生$112\times112$特征；接BN、ReLU及$3\times3$、步长二、填充一的最大池化，得到$56\times56$网格。四个阶段分别使用64、128、256、512个通道，每个阶段包含两个基本模块；后三阶段的首模块将空间减半，并用投影匹配相加形状。末端全局平均池化与分类层完成整体读出。
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/cnn-resnet}
+  \caption{残差基本模块中的逐层变换与恒等旁路。主分支依次经过$3\times3$卷积、BN、ReLU及第二个$3\times3$卷积、BN，再与直接传来的输入逐元素相加并激活。两次卷积均保持$32\times32\times64$形状，上方蓝色旁路跳过主分支的变换。圆角方框表示算子，圆形加号节点表示逐元素相加；改变尺度或通道时，旁路需要投影。}
+  \label{fig:cnn-resnet}
+\end{figure*}
+
+\FloatBarrier
+
+\subsection{门控连接与Highway网络}
+\label{sec:cnn-highway}
+
+直接相加始终保留输入并叠加变换；若希望根据当前输入控制两条路径的比例，可以让网络学习一个门。\term{Highway网络}（Highway network）用控制门调节哪些坐标更多采用新变换、哪些更多保留原值。维度相同、保留门与变换门互补时，
+\begin{equation}
+  \begin{aligned}
+    \bm g(\bm x)&=\operatorname{Sigmoid}(\bm G(\bm x)),\\
+    \bm y&=\bm g(\bm x)\odot\bm F(\bm x)
+            +(\bm1-\bm g(\bm x))\odot\bm x\text{。}
+  \end{aligned}
+  \label{eq:cnn-highway-block}
+\end{equation}
+其中$\bm F$为变换路径，$\bm G$产生与输入同形状的门得分，Sigmoid逐元素把门值限制在$(0,1)$。在卷积模块中，$\bm F$和$\bm G$都可使用共享局部计算。门值接近零时以保留路径为主，接近一时以变换路径为主。原工作采用负的门偏置，使初始门倾向保留输入，帮助很深的网络开始学习\scite{srivastava2015highway}
+
+门也依赖输入，所以求导不能把它当成常数。记$\operatorname{Diag}(\bm v)$为以向量$\bm v$作对角线的矩阵，$\bm J_g$为门的雅可比，则
+\begin{equation}
+  \begin{aligned}
+    \bm J_y={}&\operatorname{Diag}(\bm g)\bm J_F
+      +\operatorname{Diag}(\bm1-\bm g)\\
+      &+\operatorname{Diag}(\bm F(\bm x)-\bm x)\bm J_g\text{。}
+  \end{aligned}
+  \label{eq:cnn-highway-gradient}
+\end{equation}
+末项来自门值随输入变化的影响。负偏置使门初始更接近保留路径，也可能让Sigmoid进入导数较小的区域，门参数的学习仍需合适尺度。Highway增加了可学习的路由及其参数成本；式\eqref{eq:cnn-highway-block}中两条系数之和为一，与ResNet无门控的直接相加具有不同约束。
+
+图~\ref{fig:cnn-highway}展开变换、门和保留路径，两个逐元素乘法节点分别调节变换结果与原输入，再由相加节点合并。三条路径都保持$h\times w\times c$形状，门按位置和通道决定缩放系数；若设计需要改变形状，应先明确保留路径的投影及门的目标形状，不能直接套用同维公式。
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/cnn-highway}
+  \caption{同形状卷积Highway模块。上方卷积与ReLU产生$\bm F(\bm x)$，门路径经卷积与Sigmoid产生$\bm g$，蓝色保留路径传递原输入；两个$\odot$节点分别计算$\bm g\odot\bm F(\bm x)$和$(\bm1-\bm g)\odot\bm x$，再由$+$节点相加。所有特征与门具有同一空间、通道形状，圆角方框表示各条路径的处理算子。}
+  \label{fig:cnn-highway}
+\end{figure*}
+
+\FloatBarrier
+
+\subsection{密集连接与DenseNet}
+\label{sec:cnn-densenet}
+
+残差相加把旧特征和新特征合在相同通道中。若希望后层仍能分别读取先前各层的特征，可以沿通道轴保留它们。\term{密集连接}（dense connection）使一个块内的每层读取全部先前层的输出；DenseNet按这种方式构造卷积模块：
+\begin{equation}
+  \bm H^{(\ell)}=\bm F_\ell\!\left(
+      [\bm H^{(0)},\bm H^{(1)},\ldots,\bm H^{(\ell-1)}]
+    \right)\text{。}
+  \label{eq:cnn-dense-block}
+\end{equation}
+方括号表示通道拼接，不是逐元素相加；块内空间高、宽必须一致。$\bm H^{(0)}$为块的输入，各层只产生新的通道，旧特征仍可供更后层直接读取\scite{huang2017densenet}
+
+若块输入有$c_0$个通道，每层新增$k$个通道，$k$称为\term{增长率}（growth rate），即每层增加的特征数。第$\ell$层输入有$c_0+(\ell-1)k$个通道，包含$L$层的整个块输出有$c_0+Lk$个通道。以$c_0=32,k=16,L=4$为例，各层依次读取$32,48,64,80$个通道，最终拼接得到$96$个通道。块间的\term{过渡层}（transition layer）用逐点卷积压缩通道，再通过池化降低空间尺寸，限制持续增长的特征规模。
+
+密集连接提供直接的特征读取和梯度路径，但需要保留更多活动值。若每层只用一个产生$k$个新通道的$3\times3$卷积，忽略偏置，块内权重数为
+\begin{equation}
+  9k\sum_{\ell=1}^{L}\bigl(c_0+(\ell-1)k\bigr)
+  =9k\left(Lc_0+\frac{kL(L-1)}2\right)\text{。}
+  \label{eq:cnn-dense-cost}
+\end{equation}
+固定增长率下，这个简化块的通道相关成本随层数呈二次增长；瓶颈和压缩设计会改变具体成本。残差模块维持相加后的通道数，密集模块保留旧通道并增加新通道，二者对特征复用、活动值内存和计算的取舍不同，不能仅按跨层连接的数量判断效率。
+
+
+图~\ref{fig:cnn-densenet}从左向右展示一个三层教学密集块：32个初始通道加上三组16个新通道，输出为80个通道。每次变换前的全部特征经旁路保留，再与本层新产生的通道拼接，因而后层仍能读取每个先前层的输出。若在块后接过渡层，可用$1\times1$卷积把80个通道压缩为40个，再通过池化把$32\times32$空间网格缩为$16\times16$。
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/cnn-densenet}
+  \caption{DenseNet的三层教学密集块。各$\bm F_\ell$依次执行BN、ReLU和$3\times3$卷积，保持$32\times32$空间网格并新增16个通道。三次变换分别读取32、48、64个通道；上方旁路保留变换前的全部特征，标出的32、48、64为累计通道数；卷积下方的16为新增通道数。圆形$+$将新旧特征沿通道拼接，最终得到80个通道。逐次累积拼接等价于保留并向后传递全部先前层的输出，不作逐元素相加。}
+  \label{fig:cnn-densenet}
+\end{figure*}
+
+\FloatBarrier
+
+\section{理论分析}
+\label{sec:cnn-theory}
+
+卷积、池化和跨层连接改变了候选函数及其学习过程，但训练误差降低仍不能独自说明新图像上的风险。这里以期望风险与经验风险之间的差为泛化分析对象。假设$n$个训练样本独立同分布地来自$\mathcal P$，测试样本也来自$\mathcal P$，架构和参数约束在抽样前确定；数据相关约束需要另加选择代价。以下分别讨论数据、参数和结构，避免把某一个因素单独当作泛化保证。
+
+\subsection{输入与数据对泛化的影响}
+\label{sec:cnn-data-generalization}
+
+样本量首先要按独立信息的来源计数。同一图像中的像素、重叠裁块或同一段视频中的相邻帧通常相关；若理论假设独立图像，不能把一张图像的百万个像素当作百万个独立训练样本。按位置重复使用参数增加了学习信号的来源，但没有自动满足独立同分布条件。训练集与测试集也应按原始图像、对象或采集来源划分，避免高度相关的样本跨越划分边界。
+
+输入尺寸与尺度需要一起分析。若每个输入元素的绝对值不超过$a$，展平图像的欧氏范数只能粗略保证$\lVert\bm x\rVert_2\leq a\sqrt{hwc_{\mathrm{in}}}$。增大分辨率可能增加有用细节，也可能在范数界中增加复杂度项。按整张图像归一化可以控制总范数，却改变了局部数值尺度；逐通道标准化并不必然控制整图范数。较高分辨率下，固定像素大小的卷积核还覆盖较小的相对区域，因此输入尺寸也改变了结构与任务的配合。
+
+参数共享有价值的条件，是不同位置确实可以由相近规则处理。若同一物体的平移应保持分类标签，共享局部特征与整体汇聚与任务相符；若目标是判断标记是否位于图像左侧，完全舍去位置的读出就可能丢失目标所需信息。对分割，目标轮廓随输入平移，等变表示更贴近输出关系。固定位置、边界和尺度差异都可能使同一个局部图案在不同位置具有不同含义。
+
+可以用一个受限模型把样本量与尺度的作用算清楚。此处只研究单通道标量得分，省去激活和偏置，并在局部线性响应之后作全局平均。设展平输入为$\bm x\in\mathbb R^d$，第$r$个窗口的取数矩阵为$\bm P_r\in\mathbb R^{q\times d}$，共有$m$个窗口。采用零填充且每个窗口内不重复读取同一坐标，定义平均窗口向量
+\begin{equation}
+  \bm\phi(\bm X)=\frac1m\sum_{r=1}^{m}\bm P_r\bm x,
+  \qquad f_{\bm w}(\bm X)=\bm w^\top\bm\phi(\bm X)\text{。}
+  \label{eq:cnn-pooled-linear-model}
+\end{equation}
+其中$\bm w\in\mathbb R^q$为共享核权重。假设抽样前固定$\lVert\bm w\rVert_2\leq\alpha$，输入满足$\lVert\bm x\rVert_2\leq r_x$。取数不会增大单个窗口的范数，再由三角不等式有$\lVert\bm\phi(\bm X)\rVert_2\leq r_x$。对独立随机符号$\varepsilon_t\in\{-1,+1\}$，经验Rademacher复杂度满足
+\begin{equation}
+  \begin{aligned}
+    \widehat{\mathfrak R}_S(\mathcal H)
+    &=\frac\alpha n\mathbb E_{\bm\varepsilon}
+           \left\lVert\sum_{t=1}^{n}\varepsilon_t\bm\phi(\bm X_t)\right\rVert_2\\
+    &\leq\frac\alpha n
+         \sqrt{\sum_{t=1}^{n}\lVert\bm\phi(\bm X_t)\rVert_2^2}
+     \leq\frac{\alpha r_x}{\sqrt n}\text{。}
+  \end{aligned}
+  \label{eq:cnn-pooled-rademacher}
+\end{equation}
+这里$\mathcal H$是满足该核约束的函数空间。等号来自欧氏球上线性函数的最大值，第一条不等式来自均方根上界，交叉项因随机符号独立而消失。窗口数$m$没有显式出现，因为我们控制了平均后的特征范数；这不表示窗口产生了$m$倍独立样本。
+
+若损失取值于$[0,1]$、对得分具有Lipschitz常数$\lambda_{\mathrm{loss}}$，并满足定理~\ref{thm:rademacher-risk-bound}的可测性条件，由收缩引理和经验复杂度风险界，以至少$1-\delta$的概率，对全部上述模型有
+\begin{equation}
+  R(f)\leq\widehat R_S(f)
+    +\frac{2\lambda_{\mathrm{loss}}\alpha r_x}{\sqrt n}
+    +3\sqrt{\frac{\log(2/\delta)}{2n}}\text{。}
+  \label{eq:cnn-pooled-risk-bound}
+\end{equation}
+其中$\delta\in(0,1)$为失效概率，$R$与$\widehat R_S$使用同一损失。这个界让样本数、输入尺度和核约束各自承担明确作用；它不直接覆盖任意深层CNN，也不直接适用于无界交叉熵。若平均汇聚已经删掉标签需要的位置差异，复杂度很小的模型也可能具有较大的逼近误差。学习判断仍需结合式\eqref{eq:ffn-risk-decomposition}中的逼近、估计和优化三项。
+
+\subsection{参数对泛化的影响}
+\label{sec:cnn-parameter-generalization}
+
+卷积的参数规模由核尺寸与通道数决定，空间共享限制了独立可调的自由度。对固定有限的分段线性架构，可以把参数数和计算结构代入相应容量分析，但还需保留深度、计算单元及共享方式的条件；不能只把一个全连接网络的计数结论替换成卷积参数数。理论部分的VC分析提供最坏情形工具，实际得到的界也可能很松。
+
+参数范数提供另一种约束。一个核展平后得到的$\bm W_{\mathrm{loc}}$描述单个窗口的映射，整个卷积层的$\bm C$却还包括窗口重复与重叠。两者的谱范数一般不同。以步长一、循环边界的一维核$(1,1)$为例，局部行向量范数为$\sqrt2$；输入为常数向量时，整层把该向量放大两倍，整层算子范数实际为$2$。把核的展平范数直接称为整层谱范数，会漏掉重叠作用。
+
+这个区别可以通过数据展开估计。设一个原输入坐标最多被$\mu$个窗口读取，把所有窗口堆成向量的取数映射记为$\bm E$。零填充下，每个坐标至多被重复$\mu$次，所以$\lVert\bm E\rVert_2\leq\sqrt\mu$。各窗口再独立应用同一局部矩阵，便有
+\begin{equation}
+  \lVert\bm C\rVert_2
+    \leq\sqrt\mu\,\lVert\bm W_{\mathrm{loc}}\rVert_2
+    \leq\sqrt\mu\,\lVert\bm W_{\mathrm{loc}}\rVert_{\mathrm F}\text{。}
+  \label{eq:cnn-operator-bound}
+\end{equation}
+其中$\lVert\cdot\rVert_{\mathrm F}$为Frobenius范数。普通步长一的二维窗口有$\mu\leq k_hk_w$；跨步和边界会改变重复次数，复制填充还需重新统计坐标复用。这是一个便于解释的上界，不保证紧。
+
+在步长一、循环边界的条件下，傅里叶基可以将卷积化为各频率上的通道映射。对每个离散频率$(\omega_1,\omega_2)$，记核对应的复矩阵为$\widehat{\bm W}(\omega_1,\omega_2)\in\mathbb C^{c_{\mathrm{out}}\times c_{\mathrm{in}}}$，则
+\begin{equation}
+  \lVert\bm C\rVert_2
+    =\max_{\omega_1,\omega_2}
+       \sigma_{\max}\!\left(\widehat{\bm W}(\omega_1,\omega_2)\right)\text{。}
+  \label{eq:cnn-fourier-norm}
+\end{equation}
+这里$\sigma_{\max}$是最大奇异值，频域核使用与该卷积映射一致的变换约定。Sedghi等系统研究了这种卷积奇异值表示；有限图像的零填充、裁剪或跨步会改变线性算子，不能直接把循环边界的精确等式套用过去\scite{sedghi2019singular}
+
+对普通串联网络，若激活是$1$-Lipschitz，固定网络的输入扰动放大可由各层算子范数的乘积控制；归一化和池化则需计入自己的常数。深层泛化界通常还需要结合其他范数、分类间隔、输入尺度或函数空间的覆盖量，详见第~\ref{sec:network-norm-bounds}节。限制单层范数只控制其中一部分；将全部得分缩小也会缩小分类间隔，不能仅因参数数值变小就认定分类风险更低。
+
+\subsection{网络结构对泛化的影响}
+\label{sec:cnn-structure-generalization}
+
+局部连接与参数共享通过限制候选映射减少自由度。如果在相同输入输出、相同后续层和相容参数约束下，把一个不共享权重的局部网络限制为所有位置共用权重，就得到其中一个子空间；复杂度不会因这种限制而增大。但子空间可能排除目标需要的规则。结构匹配时，这种限制可以减少估计负担；结构失配时，逼近误差可能增加。这才是卷积归纳偏置与泛化之间的有条件联系。
+
+深度与通道宽度同时改变表示能力、参数约束和传播路径。增加通道可以保留更多局部特征，增加深度可以组合更大范围的信息；若各层范数随之变化，相应复杂度控制也会变化。式\eqref{eq:cnn-pooled-risk-bound}中没有显式出现通道宽度，并不说明任意加宽的深层网络都保留同样的界。要比较架构，应固定任务、输入尺度、损失和约束，再检查新增的候选函数与路径。
+
+跨层连接还改变固定网络的敏感度。为单独考察合并操作，假设残差分支$\bm F$的Lipschitz常数不超过$\lambda_F$，忽略额外的归一化与输出激活，则
+\begin{equation}
+  \operatorname{Lip}(\bm x+\bm F(\bm x))\leq1+\lambda_F\text{。}
+  \label{eq:cnn-residual-lipschitz}
+\end{equation}
+残差块提供直接路径，但连续多个块的粗略上界仍为$\prod_\ell(1+\lambda_{F_\ell})$。若分支缩放为$\alpha_\ell\bm F_\ell$，相应因子变成$1+|\alpha_\ell|\lambda_{F_\ell}$。这个计算说明路径及尺度怎样影响扰动，也说明残差连接并不会自动使理论复杂度更小。
+
+对密集结构，把保留的全部特征作为当前状态$\bm s$，一次新增特征可写成$\bm s'=[\bm s,\bm F(\bm s)]$。使用拼接后各坐标的欧氏范数，有
+\begin{equation}
+  \lVert\bm s'_1-\bm s'_2\rVert_2^2
+  \leq(1+\lambda_F^2)\lVert\bm s_1-\bm s_2\rVert_2^2\text{。}
+  \label{eq:cnn-dense-lipschitz}
+\end{equation}
+因子与相加的情形不同，状态维度也不断增长。拼接后卷积的局部输入通道数、范数约束和过渡层均要随之计入。Highway还涉及门的输入导数，式\eqref{eq:cnn-highway-gradient}中的末项不能省去。相加、拼接与门控各自改变了分析对象，没有仅凭连接名称成立的泛化排序。
+
+池化的作用也依赖窗口是否重叠。对不重叠窗口，最大池化在欧氏范数下至多为$1$-Lipschitz；大小均为$q$的平均池化至多为$1/\sqrt q$-Lipschitz。因为一个窗口的最大值差不超过该窗口输入差的最大绝对值，而平均值差可由Cauchy--Schwarz不等式控制，再将不重叠窗口平方求和即可得到这些界。若窗口重叠，同一个坐标重复参与输出，需要额外考虑覆盖次数。汇聚减少位置细节、可能降低敏感度，也可能损失分割边界所需的信息。
+
+这些敏感度估计还不是独立的泛化定理。函数空间的复杂度与算法稳定性考察不同对象：前者控制允许的所有候选函数，后者控制更换训练样本后的学习结果。卷积参数共享改变了两者可能用到的量，但稳定性分析仍需说明优化器、步长、停止时刻和损失条件。若部署图像来自不同设备或场景，前面的同分布界也不足以覆盖这一变化，需要承接迁移学习与可信性部分的分布分析。
+
+\section{常见应用}
+\label{sec:cnn-applications}
+
+分类把整张图像压成一个答案，而分割和图像生成需要输出一张新的空间图。两类任务都可以使用\term{编码器—解码器}（encoder--decoder）结构：编码器逐步把输入变成较粗但通道更丰富的特征，解码器再逐步恢复输出网格。恢复分辨率只增加输出位置，并不能自动找回下采样中丢失的细节，因此还需要考虑哪些中间特征应当保留。
+
+\subsection{图像分割}
+\label{sec:cnn-segmentation}
+
+图像分割为每个位置预测类别，例如区分医学图像中的组织区域。输入为$\bm X\in\mathbb R^{h\times w\times c_{\mathrm{in}}}$，目标标签矩阵为$\bm Y\in\{1,\ldots,q\}^{h\times w}$。低层特征保留较精细的边缘，高层特征能够结合更大的上下文；解码时既需要知道区域属于什么，也需要知道轮廓落在哪里。
+
+U-Net用从编码器到对应解码阶段的\term{跳跃连接}（skip connection）补充这些信息，即让较早的特征直接进入较后的计算。它在同一尺度上沿通道轴拼接编码特征与上采样后的解码特征，再用卷积融合。这里的跳跃连接与ResNet的残差相加不同：前者保留两组独立通道，后者在对应坐标上求和。原始U-Net采用不填充卷积，需要裁剪编码特征再拼接；本节教学版本采用保持尺寸的卷积，简化空间对齐\scite{ronneberger2015unet}
+
+图~\ref{fig:cnn-encoder-decoder}将一个三尺度例子的编码、解码主路径排成一行，上方保留同尺度的跳跃连接。$64\times64$输入在最高分辨率产生$32$个通道，下采样到$32\times32$后产生$64$个通道，再到$16\times16$产生$128$个通道。解码器把低分辨率特征上采样，并与相同网格的编码特征拼接；卷积再将拼接结果整理为该尺度的输出通道。最终用$1\times1$卷积将每个位置的$32$维特征映射为$q$个类别得分。
+
+\begin{figure*}[htb]
+  \centering
+  \input{figures/cnn-encoder-decoder}
+  \caption{用于分割或着色的三尺度编码器—解码器。长方体表示特征张量，标签给出空间尺寸和通道数。每级解码先上采样到下一尺度，再由圆形$+$沿通道拼接同尺度的编码特征，随后卷积融合；上方旁路均接入拼接节点。图中上采样保持通道数，因此两次拼接分别得到$128+64=192$和$64+32=96$个通道，卷积后变为64和32个。输出头产生$q$个类别得分或两个颜色通道；采用same卷积，省略原始U-Net的裁剪。}
+  \label{fig:cnn-encoder-decoder}
+\end{figure*}
+
+\term{上采样}（upsampling）是增加网格分辨率的操作。可以先用最近邻或双线性插值生成更密的网格，再用普通卷积处理；也可以用转置卷积共同完成位置扩展与可学习变换。插值方式、目标尺寸和坐标对齐约定都要固定。输入高、宽若不能被总下采样倍数整除，应在进入网络前填充、在输出后裁剪，或显式按目标尺寸上采样，不能只按通道数判断能否拼接。
+
+训练时，每张图像提供像素标签，网络按式\eqref{eq:cnn-segmentation-loss}计算损失，再联合更新编码器、解码器和输出头。未标注位置通过掩码排除；若少数类别被大量背景像素淹没，可以在明确权重和归一化后使用加权损失。推理时不需要标签，在各位置取最大得分类别，得到与目标网格对齐的分割图。像素准确率可能主要反映背景，因此评价还需按任务检查区域重叠和边界质量，具体指标在图像处理部分展开。
+
+跨尺度连接补回的是编码器仍保存的细节，不能创造输入中没有的信息。如果编码器已把小目标消去，或训练标签的边界本身不可靠，增加解码层数也不会自动修复。选择分辨率、下采样深度和损失时，需要保持目标尺度、标注质量与结构之间的配合。
+
+\FloatBarrier
+
+\subsection{图像生成}
+\label{sec:cnn-colorization}
+
+灰度图只提供亮暗信息，同样亮度的区域可以对应不同颜色。灰度图着色因此是一个\term{条件图像生成}（conditional image generation）问题：给定输入图像，生成与它相容的颜色图像。本节沿用编码器—解码器，展示如何形成空间输出；多个合理颜色之间的不确定性还需要由输出和目标来表达。
+
+采用Lab颜色表示时，一个通道描述亮度，另外两个通道描述颜色差异。把亮度按固定规则归一化为输入$\bm X\in\mathbb R^{h\times w\times1}$，将训练彩色图的两个颜色通道按预定尺度变为目标$\bm C\in\mathbb R^{h\times w\times2}$。编码器读取亮度中的边缘、纹理和上下文，解码器恢复颜色的空间分布，最后用$1\times1$卷积输出两个通道。若目标被缩放到$[-1,1]$，可以在输出使用Tanh；采用线性输出时，则需在转换与显示环节处理范围。归一化常数、反归一化和颜色空间转换必须一致，转成RGB后还要处理显示色域。
+
+最直接的教学模型产生确定的颜色估计$\widehat{\bm C}=\bm f_{\bm\theta}(\bm X)$，用像素平方损失训练：
+\begin{equation}
+  \ell_{\mathrm{col}}=\frac1{hw}\sum_{i=0}^{h-1}\sum_{j=0}^{w-1}
+      \lVert\widehat{\bm C}_{i,j,:}-\bm C_{i,j,:}\rVert_2^2\text{。}
+  \label{eq:cnn-colorization-loss}
+\end{equation}
+分割与着色的主体可以采用相同的空间结构，但分割在每个位置输出类别概率，着色在这里输出两个连续值。使用时，将预测颜色反归一化，与输入亮度组合，再转换成彩色图像；模型不应无意中改变输入与输出的空间对齐。
+
+平方损失还有一个与任务有关的限制。在颜色具有有限二阶矩且预测函数可自由选择时，条件平方损失的最优预测是$\mathbb E[\bm C\mid\bm X]$。若同一个灰度输入可能对应多种相距较远的颜色，平均值未必是一种合理着色；例如红与绿的平均可能降低饱和度。Zhang等将颜色空间离散成候选颜色，预测每个位置的颜色分布，用分类目标保留这种多解性，并讨论了平方损失的平均效应\scite{zhang2016colorization}
+
+若把输出头改为$q_{\mathrm{col}}$个颜色得分，就可以逐位置归一化为候选颜色概率，再按约定选择、平均或采样得到颜色。即使每个位置都有概率分布，也不自动获得整张图像在空间上的一致性。若希望对同一输入生成多个整体协调的结果，还需要引入随机变量并设计相应的分布学习目标。这里的确定性编码器—解码器说明了卷积如何连接亮度、上下文和颜色输出，不把单次回归预测当作完整的条件生成分布。
+
+\Needspace{20\baselineskip}
+\section{本章小结}
+\label{sec:cnn-summary}
+
+卷积网络对开篇问题给出了两项具体回答：局部连接把每次计算限定在邻域内，参数共享让同一组规则在不同位置重复使用。多通道组织保存不同的局部特征，非线性与层次组合使这些特征逐步参与更大范围的判断。网络是否保留空间轴、怎样处理边界和下采样，则决定了这种表示能否用于整体分类或逐位置输出。
+
+计算算法规定如何得到卷积结果，工程实现规定怎样组织存储、访存与并行执行。直接计算、矩阵化和变换方法各有运算与数值代价，分块、展开和融合则改变数据复用与读写；二者需要结合层形状和平台选择。
+
+数学卷积包含核翻转，网络常用互相关；填充、跨步、空洞和转置分别改变边界、窗口移动、核内采样与线性映射方向。明确这些约定，才能一致地计算输出形状、实现运算和推导梯度。参数共享使核梯度沿位置累积，窗口重叠使输入梯度累积；转置卷积在反向传播中出现，是因为链式法则需要转置算子，而非因为它能够逆转前向信息损失。
+
+跨层相加、门控与拼接改变了深层计算中的信息和梯度路径，也带来不同的通道规模与成本。它们帮助组织可训练的网络，却没有单独保证泛化。预测可靠性仍取决于结构是否保留目标所需信息、样本是否提供足够独立证据、参数与传播尺度是否受控，以及算法能否得到合适的解。分割与着色共同显示了这种配合：编码器构造上下文，解码器形成空间输出，跳跃连接保留细节，而输出头和损失决定最终预测究竟表示类别、连续值还是不确定性。

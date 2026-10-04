@@ -1,0 +1,106 @@
+% 一个显式神经元骨干，加上五种可替换的任务输出头。
+% 标量任务中心间隔 27 mm，向量任务间隔 32 mm，使内容之间均留约 8 mm。
+% 分支起点是整组隐藏坐标；汇合线表示向量传递，不是求和算子。
+\begin{tikzpicture}[x=1mm,y=1mm,font=\figurefont\footnotesize,
+  head unit/.style={nn output,minimum size=5.5mm},
+  head link/.style={nn flow,draw=NNOutput,line width=1.1pt},
+  result/.style={anchor=west,align=left,text=NNInk,inner sep=0pt},
+  task title/.style={nn heading,anchor=west,inner sep=0pt}]
+  \node[nn heading,anchor=west] at (1,86) {共同的前馈网络};
+  \node[nn heading,anchor=west] at (77,86) {按任务选择一个输出头};
+  \draw[NNLine,line width=.65pt] (1,81)--(59,81);
+  \draw[NNLine,line width=.65pt] (77,81)--(168,81);
+  \node[nn annotation,align=left,anchor=north west] at (1,71)
+    {输入逐层形成隐藏表示\\输出头决定预测的含义};
+
+  % 3--4--4 的共同骨干与第三个输出头居中对齐。
+  \begin{scope}[shift={(0,13)}]
+    \foreach \i/\y in {1/7,2/-5,3/-17} \coordinate (x\i) at (6,\y);
+    \foreach \i/\y in {1/13,2/1,3/-11,4/-23}{
+      \coordinate (h\i) at (27,\y);
+      \coordinate (k\i) at (48,\y);
+    }
+    \foreach \i in {1,2,3} \foreach \j in {1,2,3,4}
+      \draw[nn link,draw=NNInput!58,shorten <=3.3mm,shorten >=3.3mm] (x\i)--(h\j);
+    \foreach \i in {1,2,3,4} \foreach \j in {1,2,3,4}
+      \draw[nn link,draw=NNHidden!58,shorten <=3.3mm,shorten >=3.3mm] (h\i)--(k\j);
+    \foreach \i in {1,2,3}
+      \node[nn input,minimum size=6mm] at (x\i) {};
+    \foreach \i in {1,2,3,4}{
+      \node[nn hidden,minimum size=6mm] at (h\i) {};
+      \node[nn hidden,minimum size=6mm] at (k\i) {};
+    }
+    \node[nn annotation] at (6,24) {$\bm{x}$};
+    \node[nn annotation] at (27,24) {$\bm{h}^{(1)}$};
+    \node[nn annotation] at (48,24) {$\bm{h}^{(L)}$};
+    \draw[NNHidden!60,line width=.85pt] (54,17)--(56,17)--(56,-27)--(54,-27);
+    \draw[nn flow,draw=NNHidden] (56,-5)--(65,-5);
+    \node[nn annotation,align=left,anchor=north west] at (1,-38)
+      {圆点：一个神经元\\细线：可学习的连接};
+    \node[nn annotation,align=left,anchor=north west,text width=57mm] at (1,-56)
+      {各头读取整组$\bm{h}^{(L)}$，\\并各自学习输出权重和偏置。};
+  \end{scope}
+  \draw[NNLine,line width=.85pt] (65,62)--(65,-56);
+  \foreach \y/\tag/\title in {62/a/回归,35/b/二分类,8/c/互斥多分类,-24/d/多标签分类,-56/e/表示输出}{
+    \draw[head link,draw=NNHidden!75] (65,\y)--(82,\y);
+    \node[task title] at (78,\y+13) {(\tag)\ \title};
+  }
+
+  % 标量输出头。
+  \foreach \y/\tag/\transform/\prediction/\loss in {
+    62/a/恒等/\widehat y=a\in\mathbb{R}/平方损失,
+    35/b/Sigmoid/p=s(a)/二元交叉熵}{
+    \begin{scope}[shift={(0,\y)}]
+      \node[head unit] (score\tag) at (86,0) {$a$};
+      \node[nn transform,minimum width=22mm] (transform\tag) at (114,0) {\transform};
+      \draw[head link] (score\tag)--(transform\tag);
+      \draw[head link] (transform\tag.east)--(132,0);
+      \node[result] at (136,3) {$\prediction$};
+      \node[result,text=BookMuted] at (136,-3) {\loss};
+    \end{scope}
+  }
+
+  % 一个归一化模块读入所有得分。
+  \begin{scope}[shift={(0,8)}]
+    \node[nn transform,minimum width=22mm,minimum height=17mm] (softmax) at (114,0) {Softmax};
+    \foreach \i/\dy in {1/7,2/0,3/-7}{
+      \node[head unit] (c\i) at (86,\dy) {$a_{\i}$};
+      \draw[nn link,draw=NNHidden!65] (79,0)--(c\i.west);
+      \draw[head link] (c\i.east)--(103,\dy);
+    }
+    \draw[head link] (softmax.east)--(132,0);
+    \node[result] at (136,3) {$\sum_k p_k=1$};
+    \node[result,text=BookMuted] at (136,-3) {多类交叉熵};
+  \end{scope}
+
+  % 三个独立变换模块分别读取对应得分。
+  \begin{scope}[shift={(0,-24)}]
+    \foreach \i/\dy in {1/7,2/0,3/-7}{
+      \node[head unit] (d\i) at (86,\dy) {$a_{\i}$};
+      \draw[nn link,draw=NNHidden!65] (79,0)--(d\i.west);
+      \node[nn transform,minimum width=22mm,minimum height=5mm,inner sep=1pt]
+        (sig\i) at (114,\dy) {$s(a_{\i})$};
+      \draw[head link] (d\i.east)--(sig\i.west);
+      \draw[head link] (sig\i.east)--(132,\dy);
+    }
+    \node[result] at (136,3) {$p_k\in(0,1)$};
+    \node[result,text=BookMuted] at (136,-3) {逐标签交叉熵};
+  \end{scope}
+
+  % 表示由下游任务提供学习约束。
+  \begin{scope}[shift={(0,-56)}]
+    \node[nn transform,minimum width=22mm,minimum height=17mm] (rep) at (114,0)
+      {恒等或\\长度归一化};
+    \foreach \i/\dy in {1/7,2/0,3/-7}{
+      \node[head unit] (e\i) at (86,\dy) {$a_{\i}$};
+      \draw[nn link,draw=NNHidden!65] (79,0)--(e\i.west);
+      \draw[head link] (e\i.east)--(103,\dy);
+    }
+    \node[nn transform,draw=NNGradient,fill=NNGradient!18,
+      minimum width=29mm] (downstream) at (152,0) {下游模块};
+    \draw[head link] (rep.east)--(downstream.west);
+    \node[text=NNOutput] at (131,7) {$\bm{r}$};
+    \node[text=BookMuted,inner sep=1pt] (objective) at (152,-14) {任务损失$\ell$};
+    \draw[head link,draw=NNGradient] (downstream.south)--(objective.north);
+  \end{scope}
+\end{tikzpicture}
