@@ -155,10 +155,13 @@ w = w - learning_rate * gradient
 BibTeX 的 `author` 字段必须保留可核实的完整作者元数据，不得通过删名或 `and others` 缩短边注。
 
 超长作者条目仅适用以下例外：作者超过 20 位，且完整作者列表经章节 PDF 检查无法在单个 Tufte
-边注中完整显示时，可以在该条目的 `options` 中设置 `maxnames=3,minnames=3`，仅在显示层保留
-前三位作者并缩略其余作者。标题、载体、年份及已有的卷、期、页码仍须完整显示；作者不超过
-20 位或完整列表能够排下时，不得使用该例外。缩略后仍须检查 PDF，确认边注不裁切、不与正文
-或页脚重叠，并检查构建日志中没有 overfull。
+边注中完整显示时，可以为该条目增加规范化的 `shortauthor` 姓名列表；共享作者打印宏在该字段
+存在时用它替代 `author`，仅缩略显示层。`shortauthor` 必须使用 `and others` 明确生成
+`et al.` 等缩略标记，例如 `shortauthor = {Bommasani, Rishi and others}`，不得把不带缩略标记的
+截断名单冒充完整作者。标题、载体、年份及已有的卷、期、页码仍须完整显示；作者不超过 20 位
+或完整列表能够排下时，不得使用该例外，也不得用条目 `options` 的 `maxnames` / `minnames`
+控制 `\fullcite`。缩略后仍须检查 PDF，确认边注不裁切、不与正文或页脚重叠，并检查构建日志中
+没有 overfull。
 
 - 书籍：作者，*标题*，出版社，年份，edition。
 - 期刊：作者，*标题* In 期刊名，年份，vol.，no.，pp.。
