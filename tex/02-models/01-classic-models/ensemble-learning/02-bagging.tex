@@ -1,0 +1,117 @@
+\section{基于Bagging的集成}
+\label{sec:ensemble-bagging}
+
+若一个学习算法对训练样本的细小变化很敏感，可以在同一总体上设想反复取得训练集、反复训练模型，再平均预测。真实任务通常只有一份训练集，无法直接完成这种重复抽样。\term{Bagging}是bootstrap aggregating的缩写：它用自助采样从现有训练集构造多份样本，分别训练成员，再用固定规则聚合。该方法主要减弱能够被重采样暴露出来的训练波动，不会自动修正所有成员共享的表示偏差\scite{breiman1996bagging}。
+
+\subsection{Bagging}
+\label{sec:ensemble-bagging-bootstrap}
+
+\subsubsection{自助样本与聚合预测}
+
+对第$m$个成员，从$\{1,\ldots,n\}$中独立、等概率、有放回地抽取$n$次索引，所得多重集合记为$I^{(m)}$。同一原始样本可能出现多次，也可能一次都没有出现。学习算法$\mathcal{A}$在相应自助样本上训练出
+\[
+  h_m=\mathcal{A}\!\left(D_n^{(m)}\right),
+  \qquad
+  D_n^{(m)}=\{(\bm{x}_i,y_i):i\in I^{(m)}\}.
+\]
+回归通常平均$h_m(\bm{x})$；分类可以投票，也可以在成员输出具有同一语义时平均逐类得分或概率。自助样本大小不必固定为$n$，成员算法也不必是树，但方法是否受益取决于重采样能否产生有用的预测差异。
+
+一份大小为$n$的标准自助样本没有抽中原始样本$i$的概率为
+\begin{equation}
+  \mathbb{P}\!\left(i\notin I^{(m)}\right)
+  =
+  \left(1-\frac{1}{n}\right)^n
+  \longrightarrow e^{-1}.
+  \label{eq:ensemble-oob-probability}
+\end{equation}
+因此，每个成员平均约有$36.8\%$的原始样本未参与其训练。这些样本构成该成员的\term{袋外样本}（out-of-bag sample, OOB sample）。反过来，对每个训练样本$i$，可以只收集没有使用它训练的成员预测。令
+\[
+  \mathcal{M}_{i}^{\mathrm{OOB}}
+  =\{m:i\notin I^{(m)}\},
+\]
+当$\mathcal{M}_{i}^{\mathrm{OOB}}$非空时，回归的袋外预测可写为
+\begin{equation}
+  \widehat{y}_{i}^{\mathrm{OOB}}
+  =
+  \frac{1}{|\mathcal{M}_{i}^{\mathrm{OOB}}|}
+  \sum_{m\in\mathcal{M}_{i}^{\mathrm{OOB}}}h_m(\bm{x}_i),
+  \label{eq:ensemble-oob-prediction}
+\end{equation}
+分类则对同一成员集合投票或平均类别输出。图\ref{fig:ensemble-bagging-oob}强调了袋外预测的样本级条件：不同训练样本由不同成员子集预测，而不是另行训练一个统一的“OOB模型”。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/ensemble-bagging-oob}
+  \caption{Bagging训练与袋外预测。每个成员只使用其自助样本训练；对训练样本$\bm{x}_i$，袋外预测只聚合未抽中$i$的成员。图中索引和成员集合仅用于说明数据流；有限成员下，各样本可用的袋外成员数并不相同。}
+  \label{fig:ensemble-bagging-oob}
+\end{figure*}
+
+\subsubsection{成员数量与误差来源}
+
+Bagging的成员可以独立训练，因而适合把成员分配到不同计算单元。并行性只缩短墙钟时间，不会消除总计算量：若单个成员的训练和预测成本分别为$C_{\mathrm{train}}$与$C_{\mathrm{pred}}$，朴素实现的总工作量仍约随$M C_{\mathrm{train}}$和$M C_{\mathrm{pred}}$增长。模型存储也通常随成员数量增加。
+
+增加成员数主要减小有限次随机抽样造成的Monte Carlo波动。若成员由同一随机训练机制产生，等权平均会随$M$增加逼近该随机机制下的期望预测；它不会消除原训练集有限、模型族不合适或成员高度相关造成的误差。实践中可以观察袋外损失随成员数的变化，在曲线趋于稳定后停止增加成员，但这个停止规则也属于模型选择过程。
+
+成员模型的复杂度与成员数量承担不同职责。较深的树通常更能拟合每份自助样本，也更容易因样本扰动产生不同结构；平均可以削弱部分波动，却不意味着每棵树都应无条件生长到纯叶。叶最小样本量、最大深度、类别权重和自助样本大小仍须与成员数共同选择，尤其在标签噪声、极小叶或类别极不平衡时。
+
+\subsubsection{袋外预测的用途与边界}
+
+袋外预测没有使用当前样本训练相应成员，因而可用于观察成员数量、估计内部误差或构造置换重要性。它省去了为每个成员另设验证集的开销，但与$K$折交叉验证并不相同：每个样本的袋外成员数随机变化，成员训练集之间也高度重叠。成员数很小时，某些样本可能没有足够的袋外预测。
+
+如果模型结构、成员数和特征处理都反复根据袋外结果选择，最终袋外误差已经参与了选择，不再是冻结流程后的独立测试结果。时间序列、分组样本或空间相关数据还要求自助抽样尊重依赖单位；逐行重采样会破坏原有数据结构。袋外机制提供的是一种内部样本外预测来源，而不是脱离数据生成条件的无偏泛化保证。
+
+\subsection{随机森林}
+\label{sec:ensemble-random-forest}
+
+Bagging若以树为成员，各棵树仍可能反复选择少数强特征，产生相近的上层分裂。\term{随机森林}（random forest）在树的自助采样之外加入节点级特征随机化：每个节点先随机抽取一组候选特征，再只在这组特征中搜索分裂。树仍按第\ref{sec:regression-trees}节或第\ref{sec:classification-trees}节的任务准则形成叶输出，改变的是每个成员可参与分裂搜索的信息\scite{breiman2001randomforests}。
+
+候选特征数控制单树质量与树间依赖的取舍。候选数接近全部特征时，森林更接近普通的树Bagging；候选数较小时，不同树更可能采用不同分裂，但单棵树也更容易错过当前节点上的有效特征。这一取舍还会受到特征冗余、样本量和树深影响，不能由一个固定默认值替代验证。
+
+树数增加时，随机森林预测会逐渐稳定到其随机化机制对应的有限样本极限。这种稳定是对抽样随机性的收敛，不表示模型已经得到真实风险最小解，也不表示继续加树没有资源代价。随机森林的一致性结论通常针对特定的树构造、抽样比例与分布条件；实际软件在缺失值、类别特征、停止规则和并行实现上的差异，可能不满足同一组理论假设\scite{scornet2015consistency}。
+
+\subsubsection{特征重要性的解释}
+
+树集成常附带两类特征重要性。\term{不纯度下降重要性}（impurity-decrease importance）累计某个特征参与分裂时带来的加权目标下降，计算方便，却可能偏向候选切分较多的特征。它还会把相关特征之间的可替代关系压缩进实际被选中的分裂，不能解释为变量的独立贡献。
+
+\term{置换重要性}（permutation importance）固定已训练模型，在评价数据上打乱一个特征，再观察预测损失增加多少。这个量直接对应已拟合模型在所选扰动下对该特征的依赖，但打乱会破坏该特征与其他特征的联合关系。高度相关的特征可能互相替代，使单个特征的置换影响看起来很小；不现实的特征组合也可能夸大损失变化。两类重要性都不是因果效应，需要连同评价数据、损失和置换方式一起报告\scite{strobl2007bias}。
+
+图\ref{fig:ensemble-tree-randomization}沿一棵树的构造路径比较三种随机化位置。树Bagging主要改变成员看到的训练样本；随机森林还在每个节点抽取候选特征；Extra Trees继续把随机性放入候选阈值。三者都保留树的任务准则，但交给贪心搜索的信息逐步受到更多约束。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/ensemble-tree-randomization}
+  \caption{树Bagging、随机森林与Extra Trees的随机化位置。蓝色节点表示引入随机性的环节，青色节点表示仍按任务准则执行的搜索，深色节点表示得到的成员树。Extra Trees面板采用原始方法的完整训练集设定；具体实现也可能额外启用自助采样。}
+  \label{fig:ensemble-tree-randomization}
+\end{figure*}
+
+\subsection{极度随机树（Extra Trees）}
+\label{sec:ensemble-extra-trees}
+
+随机森林仍会在候选特征内搜索较优阈值。\term{极度随机树}（extremely randomized trees, Extra Trees）把随机性进一步放入阈值选择：在每个节点，对随机选出的候选特征生成随机切分点，再从这些随机候选中选择得分较好的切分。原始方法通常让各棵树使用完整训练集，把成员差异主要交给特征与阈值随机化；具体软件也可能允许额外使用自助采样\scite{geurts2006extra}。
+
+随机阈值减少了穷举候选切分的工作，也会让单棵树偏离当前样本上的最佳贪心分裂。组合是否改善，取决于单树预测能力下降与成员依赖减弱之间的平衡。候选特征数、每个特征的随机阈值数、叶最小样本量以及是否采用自助采样共同决定这个平衡；“随机性更强”不能推出测试风险必然更低。
+
+Extra Trees还说明，Bagging家族的共同点不是必须采用标准自助采样，而是通过受控扰动产生一组成员，并用固定规则聚合。随机子空间只扰动成员可见的特征，Pasting以无放回子样本替代自助样本，随机权重则让同一记录在不同成员中具有不同影响。每种扩展都应明确扰动发生在哪里，以及它是否保留袋外预测等附带机制。
+
+\subsection{模型对比与总结}
+\label{sec:ensemble-bagging-comparison}
+
+表\ref{tab:ensemble-bagging-comparison}固定树为成员，比较三种方法怎样产生差异。普通Bagging只改变训练样本；随机森林再限制节点可见的候选特征；Extra Trees进一步随机化候选阈值。后两者并非简单地沿一条“随机性越多越好”的顺序排列，因为它们还可能采用不同抽样方案，并改变单树质量和搜索成本。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}*{6}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    方法 & 样本扰动 & 节点候选特征 & 阈值选择 & 袋外预测 & 成员训练 & 主要边界 \\
+    \midrule
+    树Bagging & 通常自助采样 & 全部特征 & 在候选中搜索 & 标准自助设定下可用 & 成员间可并行 & 强特征可能使树高度相关 \\
+    随机森林 & 通常自助采样 & 随机特征子集 & 在子集内搜索 & 标准自助设定下可用 & 成员间可并行 & 候选数过小会削弱单树 \\
+    Extra Trees & 原始方法使用完整训练集；实现可选自助采样 & 随机特征子集 & 生成随机阈值后择优 & 仅在采用自助采样时可用 & 成员间可并行 & 过强随机化会增大单树误差 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{以树为成员时，Bagging、随机森林与Extra Trees的机制比较。表中描述稳定的方法定义；软件默认值可能随实现和版本改变，实际比较还须固定树复杂度、成员数与计算预算。}
+  \label{tab:ensemble-bagging-comparison}
+\end{table*}
+
+Bagging适合把训练扰动转化为成员差异，再通过聚合降低其中不共享的部分。若所有成员都遗漏同一结构，固定聚合不会主动告诉下一棵树应修正什么。下一节转向序贯成员：新成员不再独立产生，而是根据当前组合留下的训练信号继续更新。

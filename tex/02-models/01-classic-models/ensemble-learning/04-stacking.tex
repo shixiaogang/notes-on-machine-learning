@@ -1,0 +1,110 @@
+\section{基于Stacking的集成}
+\label{sec:ensemble-stacking}
+
+Bagging预先规定平均或投票，Boosting在训练中形成加法权重；二者的成员生成机制与组合方式紧密绑定。若已经有线性模型、近邻模型、随机森林和梯度提升树等异质候选，还可以把它们的预测视为新特征，再训练一个模型决定怎样组合。\term{Stacking}（stacked generalization，堆叠）采用这种两层结构：基学习器产生一级预测，\term{元学习器}（meta-learner）把这些预测映射为最终输出\scite{wolpert1992stacked,breiman1996stacked}。
+
+\subsection{Stacking}
+\label{sec:ensemble-stacking-model}
+
+\subsubsection{为什么不能直接使用训练内预测}
+
+设第$m$个成员模型为$h_m$。若直接在完整训练集上拟合$h_m$，再把$h_m(\bm{x}_i)$作为样本$i$的元特征，元学习器看到的是成员对自身训练数据的预测。一个容量很大的成员可能近乎记住训练标签，元学习器便会高估它在新样本上的可靠性。问题不在于元学习器“多看了一列数据”，而在于这列特征的生成条件与部署时不同。
+
+Stacking通常用交叉验证生成\term{折外预测}（out-of-fold prediction, OOF prediction）。把训练样本划分为$K$个互不相交的折$V_1,\ldots,V_K$。对每个成员类型$m$和每个折$k$，只用$D_n\setminus V_k$训练临时模型$h_m^{(-k)}$，再预测$V_k$中的样本。若样本$i$属于$V_{k(i)}$，元特征定义为
+\begin{equation}
+  z_{i,m}
+  =
+  h_m^{(-k(i))}(\bm{x}_i).
+  \label{eq:ensemble-oof-feature}
+\end{equation}
+把所有成员的折外预测拼成$\bm{z}_i=(z_{i,1},\ldots,z_{i,M})^{\top}$，再由元学习算法$\mathcal{G}$训练
+\[
+  g=\mathcal{G}\!\left(\{(\bm{z}_i,y_i)\}_{i=1}^{n}\right).
+\]
+这样，每个$z_{i,m}$都来自未使用样本$i$标签拟合的临时成员。图\ref{fig:ensemble-stacking-oof}展示了折外矩阵的形成过程。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/ensemble-stacking-oof}
+  \caption{三折Stacking的折外特征构造。每一折轮流作为留出折，临时成员只在其余两折训练，并为留出折产生预测；拼接三次预测得到完整折外矩阵$\bm{Z}$，元学习器以$\bm{Z}$为输入并使用对应标签拟合。部署阶段的基成员还需按预先规定的方式重训或保留。}
+  \label{fig:ensemble-stacking-oof}
+\end{figure*}
+
+分类成员若输出$C$维概率向量，一个成员通常贡献$C$列元特征；二分类时也可以只保留一个类别概率。硬标签丢失了置信程度，未经校准的得分又可能量纲不同。采用哪种输出必须在训练和部署阶段保持一致，元学习器的正则化也要适应该尺度与相关性。
+
+\subsubsection{部署模型与完整数据重训}
+
+折外矩阵用于训练元学习器，但部署时还需要能预测新输入的基成员。一种做法是在完整训练集上重新拟合每类基学习器$\widehat{h}_m$，预测
+\[
+  \widehat{y}
+  =
+  g\!\left(
+    \widehat{h}_1(\bm{x}),\ldots,\widehat{h}_M(\bm{x})
+  \right).
+\]
+这种做法充分使用训练数据，却使元学习器训练时看到的折内模型预测与部署时的全量模型预测存在有限样本差异。另一种做法是保留每折模型，对新输入先在折内模型间平均，再交给元学习器；其输入条件更接近折外构造，但需要保存和运行更多模型。
+
+两种部署方案都可以成立，关键是事先固定并完整评价实际链路。基学习器的特征处理、类别编码和超参数搜索必须在相应训练折内完成。若先用全部数据选择特征或编码，再只把模型拟合放进交叉验证，信息仍可能从留出折进入元特征。
+
+\subsection{Blending}
+\label{sec:ensemble-blending}
+
+\term{Blending}用一次固定留出替代$K$折交叉验证。将可用于开发的数据分为基训练集$D_{\mathrm{base}}$和组合训练集$D_{\mathrm{blend}}$；基成员只在$D_{\mathrm{base}}$上拟合，对$D_{\mathrm{blend}}$产生预测，元学习器再以这些预测和对应标签训练。每个基成员只需完成一次用于元特征的拟合，流程比完整Stacking短。
+
+代价是元学习器只能使用$D_{\mathrm{blend}}$中的样本，基成员也暂时失去这部分训练数据。划分较小时，元学习器估计不稳定；划分较大时，基成员训练信息减少。多次随机划分并平均可以减小单次划分的偶然性，但它重新引入多次训练，已经不再具有单次Blending的全部成本优势。
+
+部署时若把$D_{\mathrm{blend}}$加入基成员重新训练，基预测分布可能相对元学习器训练时发生变化；若不加入，则没有充分利用已有标签。这个取舍不能由“Blending更简单”自动解决，需要在流程中明确重训方式，并用冻结后的验证或测试数据评价完整组合。
+
+\subsection{受约束线性Stacking}
+\label{sec:ensemble-constrained-linear-stacking}
+
+元学习器不一定要很复杂。对回归输出，可以在折外矩阵$\bm{Z}\in\mathbb{R}^{n\times M}$上学习线性组合
+\begin{equation}
+  (\widehat{b},\widehat{\bm{w}})
+  \in
+  \argmin_{b,\bm{w}}
+  \frac{1}{n}
+  \sum_{i=1}^{n}
+  \ell\!\left(
+    y_i,
+    b+\bm{w}^{\top}\bm{z}_i
+  \right)
+  +\lambda\lVert\bm{w}\rVert_2^2.
+  \label{eq:ensemble-linear-stacking}
+\end{equation}
+也可以施加$w_m\geq0$或$\sum_mw_m=1$，把组合限制为成员预测的凸组合。非负和归一化约束减少高度相关成员之间的大幅正负抵消，使结果不易外推到成员预测范围之外；但若真实有效的校正需要负权重或截距，这些约束也会增加偏差。
+
+权重大小同时受输出尺度、成员相关性和损失函数影响。两个成员预测近乎相同，线性模型可以在它们之间任意分配相近作用；一个成员输出的数值范围更大，也会改变未标准化正则项下的权重。因此，$\widehat{w}_m$不能直接解释为成员的独立重要性。对类别概率做凸组合时，结果仍位于概率单纯形内，却仍需检查样本外校准。
+
+\subsection{Super Learner}
+\label{sec:ensemble-super-learner}
+
+\term{Super Learner}把候选学习器库、交叉验证风险与组合权重放进一个明确程序。给定预先规定的候选库和损失，先生成每个候选的折外预测，再在指定组合类中选择交叉验证风险较小的组合；组合类可以是最佳单成员、非负线性组合或其他受控元模型。
+
+在独立同分布、损失有界或满足相应矩条件、候选库与交叉验证方案受控等条件下，Super Learner的理论结果把其风险与候选组合类中的oracle风险联系起来：样本量增加时，交叉验证选择的组合能够渐近接近该库中最优候选或最优组合的风险\scite{vanderlaan2007superlearner}。这里的oracle只在预先给定的库和损失内比较，不表示找到了所有可测预测器中的最优模型。
+
+三个条件不能混为同一句“组合必然优于成员”。候选库中需要存在有用且互补的预测；折外风险需要在当前数据制度下稳定估计；元学习器还要有足够样本控制自身复杂度。渐近oracle结论也不推出任意有限样本上都优于最佳成员。若数据存在时间、群组或空间依赖，交叉验证划分还必须与部署时的新样本定义一致。
+
+\subsection{模型对比与总结}
+\label{sec:ensemble-stacking-comparison}
+
+表\ref{tab:ensemble-stacking-comparison}比较Stacking家族的元特征来源与组合约束。标准Stacking和Super Learner都依赖折外预测；Blending以一次留出降低训练次数；受约束线性Stacking说明“学习组合”不等于必须使用高容量元模型。模型名称之外，还应记录预处理、基模型重训和元输出类型，否则无法复现实际预测链路。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{25mm}*{5}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    方法 & 元特征来源 & 数据利用 & 组合规则 & 主要成本 & 主要风险 \\
+    \midrule
+    Stacking & $K$折折外预测 & 每个样本都产生元特征 & 可线性或非线性 & 每类成员需多次折内拟合 & 折外流程不完整造成泄漏 \\
+    Blending & 固定留出集预测 & 元学习器只用留出集 & 可线性或非线性 & 基成员用于元特征时只拟合一次 & 划分敏感与重训分布变化 \\
+    受约束线性Stacking & 通常为折外预测 & 与所用划分一致 & 非负、和为一或正则化线性组合 & 组合层较轻量 & 约束可能排除有效校正 \\
+    Super Learner & 交叉验证预测与风险 & 由交叉验证方案决定 & 在预定库和组合类中选择 & 候选库越大，训练与选择成本越高 & oracle范围和有限样本被夸大 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{Stacking及其代表性变体。表中“数据利用”描述元学习器训练阶段；部署前是否用完整开发数据重训基成员，还需作为流程的一部分单独规定。}
+  \label{tab:ensemble-stacking-comparison}
+\end{table*}
+
+多层Stacking把一层折外输出继续交给下一层，每增加一层都要重新保证当前样本没有通过上游拟合泄漏到本层特征。输入相关的门控组合则让权重随$\bm{x}$变化，它与第\ref{sec:ensemble-dynamic-selection}节的动态成员选择相邻，也与神经网络中的混合专家相接。它们增加了表达能力，同时扩大了数据划分、模型存储和调试成本；在两层组合尚未提供稳定新增价值时，没有理由仅凭层数增加继续扩展。
