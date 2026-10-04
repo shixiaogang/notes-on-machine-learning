@@ -1,7 +1,7 @@
 \chapter{基于数据本身的知识获取}
 \label{chap:data-derived-knowledge-acquisition}
 
-前几章讨论的训练依据具有明确的任务含义：类别标签回答样本属于哪一类，数值标注回答目标量是多少，成对判断则回答哪一个候选更符合要求。可是，大量文本、图像和传感器记录只有观测内容，并没有随记录附带最终任务的答案。若等到每条记录都获得任务标签后才开始学习，未标注数据中已经存在的结构就没有得到利用。于是，本章要回答一个更基础的问题：\term{没有现成任务标签时，怎样从数据中建立可训练、可检查的依据}？
+前几章讨论的训练依据具有明确的任务含义：类别标签回答样本属于哪一类，数值标注回答目标量是多少，成对判断则回答哪一个候选更符合要求。可是，大量文本、图像和传感器记录只有观测内容，并没有随记录附带最终任务的答案。若等到每条记录都获得任务标签后才开始学习，未标注数据中已经存在的结构就没有得到利用。于是，本章要回答一个更基础的问题：没有现成任务标签时，怎样从数据中建立可训练、可检查的依据？
 
 关键不在于目标函数是否写成“预测”，而在于预测目标从哪里来。遮住图像块后恢复像素，答案在遮蔽之前已经记录在数据中；根据一个裁剪预测另一个裁剪的表示，目标向量由训练中的模型计算；聚类后预测簇编号，目标又来自分组算法。三者都能写成输入到目标的学习问题，却依赖不同假设，也需要不同的技术检查。把它们统称为预测任务，会掩盖监督来源、梯度路径和失效原因。
 
@@ -29,7 +29,7 @@
 \begin{table*}[htbp]
   \centering
   \small
-  \begin{tabularx}{\linewidth}{@{}p{20mm}p{28mm}p{27mm}p{22mm}p{31mm}X@{}}
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{20mm}>{\raggedright\arraybackslash}p{28mm}>{\raggedright\arraybackslash}p{27mm}>{\raggedright\arraybackslash}p{22mm}>{\raggedright\arraybackslash}p{31mm}>{\raggedright\arraybackslash}X@{}}
     \toprule
     构造方式 & 原始记录与模型可见部分 & 保留目标 & 损失位置 & 关键构造参数 & 容易发生的信息泄露 \\
     \midrule
@@ -80,7 +80,8 @@
 \]
 这个数值只检查两处预测，不把其余七个已经可见的值计入成绩。例子也没有声称$0.6$和$0.8$是真实世界的无噪声像素，它们只是训练记录中被暂时保留的值。
 
-掩码自编码器（masked autoencoder, MAE）把图像划分为块，编码器只处理可见块，轻量解码器再结合掩码标记预测缺失块的像素；原论文的均方误差只计算在被遮蔽块上\scite{ka-he2022mae}因此，编码器没有看到的位置与损失评价的位置恰好互补。MAE也研究过按块归一化后的像素目标，但无论是否归一化，答案都可在训练前从原图确定，仍属于观测目标。
+掩码自编码器（masked autoencoder, MAE）把图像划分为块，编码器只处理可见块，轻量解码器再结合掩码标记预测缺失块的像素；原论文的均方误差只计算在被遮蔽块上\scite{ka-he2022mae}
+因此，编码器没有看到的位置与损失评价的位置恰好互补。MAE也研究过按块归一化后的像素目标，但无论是否归一化，答案都可在训练前从原图确定，仍属于观测目标。
 
 遮蔽比例控制信息与难度的平衡。比例太低时，模型可能只做局部插值；比例太高时，一个给定输入可能对应许多合理恢复结果，点预测会平均这些可能性。随机遮蔽、连续片段遮蔽和结构化遮蔽还改变了可利用的上下文。具体比例不能仅按训练损失选择：更容易恢复通常会降低损失，却未必更能保留下游任务所需的信息。
 
@@ -121,7 +122,8 @@
 \end{equation}
 这一分解与第~\ref{sec:pgm-static-directed-autoregressive}节的自回归模型一致；本节关注的是怎样从一条记录切出输入和答案。训练记录“花朵逐渐开放”可以形成“花朵$\to$逐渐”和“花朵逐渐$\to$开放”等多个位置目标，监督覆盖随可预测位置增多，但计算也近似按位置数增长。
 
-遮蔽词元时，模型通常可读取目标左右两侧；前缀预测则只能读取目标之前的内容。BERT的掩码词元目标属于前一种安排：原词元从记录中保留，输入使用双向上下文\scite{devlin2019}二者即使都采用交叉熵，也不能互换条件概率的含义。
+遮蔽词元时，模型通常可读取目标左右两侧；前缀预测则只能读取目标之前的内容。BERT的掩码词元目标属于前一种安排：原词元从记录中保留，输入使用双向上下文\scite{devlin2019}
+二者即使都采用交叉熵，也不能互换条件概率的含义。
 
 训练时常把真实前缀$x_{<t}$交给模型，这称为教师强制式输入安排；连续生成时，后续位置读到的可能是模型自己此前的输出。于是，式~\eqref{eq:data-derived-knowledge-context-prediction}上的一步预测误差不能直接代表长序列生成误差。窗口截断还会让模型看不到更早信息，位置选择和片段边界也可能制造不自然的上下文。
 
@@ -196,7 +198,8 @@
 
 花卉照片与说明文字可能有三种范围：描述整株形态，只描述花色，或者误配到另一张照片。前两种都是真实配对，却只在不同内容上对应；第三种则是关系错误。训练前应说明关系是整例对应、局部对应还是允许一个对象匹配多条记录，并保留缺失一侧和多重匹配。
 
-CLIP使用图像与文本的已有配对构造正对应，再把同一批次中的其他图文组合作为对照\scite{radford2021}文字给出了人类书写的描述信息，因此这类学习虽然不要求为目标分类逐图标注，却不能笼统称为“没有人类监督”。本章关心的是配对如何成为训练依据，而不是把所有非类别标签信号归入同一成本口径。
+CLIP使用图像与文本的已有配对构造正对应，再把同一批次中的其他图文组合作为对照\scite{radford2021}
+文字给出了人类书写的描述信息，因此这类学习虽然不要求为目标分类逐图标注，却不能笼统称为“没有人类监督”。本章关心的是配对如何成为训练依据，而不是把所有非类别标签信号归入同一成本口径。
 
 自然配对的常见误差包括时间同步偏移、描述不完整、重复记录和共享背景。若多张照片复用同一句模板描述，把它们互相当作负对照会制造冲突；若音频比画面延迟，固定时刻配对会把不同事件连在一起。扩大数据量不能自动修复系统性错配，需要回查采集协议和关联记录。
 
@@ -233,23 +236,22 @@ CLIP使用图像与文本的已有配对构造正对应，再把同一批次中�
 \begin{table*}[htbp]
   \centering
   \scriptsize
-  \begin{tabularx}{\linewidth}{@{}
-    >{\hsize=.80\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
-    >{\hsize=.65\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
-    >{\hsize=.85\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
-    >{\hsize=1.05\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
-    >{\hsize=.85\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
-    >{\hsize=1.35\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
-    >{\hsize=1.45\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X@{}}
+  \begin{tabular}{@{}
+    >{\raggedright\arraybackslash}p{15mm}
+    >{\raggedright\arraybackslash}p{14mm}
+    >{\raggedright\arraybackslash}p{17mm}
+    >{\raggedright\arraybackslash}p{21mm}
+    >{\raggedright\arraybackslash}p{18mm}
+    >{\raggedright\arraybackslash}p{27mm}
+    >{\raggedright\arraybackslash}p{31.5mm}@{}}
     \toprule
     方法 & 关系 & 比较量 & 分支安排 & 当前步梯度 & 退化控制 & 额外成本 \\
     \midrule
     对比判别；SimCLR & 正对应、批内负对照 & 归一化投影表示的相对相似度 & 共享编码器和投影器；无教师 & 对称损失经两路反传 & 其他候选提供区分；仍依赖负对照假设 & 候选表示、相似度矩阵和跨设备通信 \\
-    跨视图预测；BYOL & 正对应 & 在线预测与目标投影 & 在线侧有预测头；目标侧用EMA更新 & 单向项只回传在线侧；目标侧停止梯度 & 预测头、停止梯度、EMA与优化动态共同作用 & 额外目标网络、预测头和双向计算 \\
-    分布自蒸馏；DINO & 全局与局部视图的正对应 & 教师、学生的$K$维输出分布 & 同构学生与EMA教师；教师输出居中、锐化 & 只回传学生；教师和中心分别用EMA更新 & 居中、锐化、动量教师与多裁剪共同作用 & 教师网络、多视图前向和中心统计 \\
+    跨视图预测；BYOL／DINO & 正对应 & BYOL比较在线预测与目标投影；DINO比较学生与教师的$K$维输出分布 & BYOL在线侧有预测头；DINO无预测头；两者目标侧均用EMA更新 & 单向项只回传在线侧或学生侧；目标侧停止梯度 & BYOL由预测头、停止梯度、EMA与优化动态共同作用；DINO由居中、锐化、动量教师与多裁剪共同作用 & 额外目标网络与双向或多视图计算；BYOL另有预测头，DINO另有中心统计 \\
     对称匹配；VICReg & 正对应 & 两路嵌入差异及批内统计 & 可共享参数；无教师和停止梯度 & 匹配、方差和协方差项均回传 & 方差项限制常数坍塌；协方差项减少坐标冗余 & 批内方差、$d\times d$协方差和多项权重 \\
     \bottomrule
-  \end{tabularx}
+  \end{tabular}
   \caption{关系依据相同时仍可选择不同训练目标。表中的退化控制只描述各完整方法采用的机制，不把任一单独组件表述为普遍保证。}
   \label{tab:data-derived-knowledge-relation-objectives}
 \end{table*}
@@ -416,7 +418,7 @@ VICReg使用两个正对应视图批次$\bm{Z},\bm{Z}'\in\mathbb{R}^{n\times d}$
 \begin{table*}[htbp]
   \centering
   \small
-  \begin{tabularx}{\linewidth}{@{}p{18mm}p{31mm}p{31mm}p{48mm}X@{}}
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{18mm}>{\raggedright\arraybackslash}p{31mm}>{\raggedright\arraybackslash}p{31mm}>{\raggedright\arraybackslash}p{48mm}>{\raggedright\arraybackslash}X@{}}
     \toprule
     时点 & 在线分支状态 & 目标分支状态 & 执行的操作 & 依据与数值例 \\
     \midrule
@@ -445,19 +447,20 @@ DINO除教师参数EMA外，还维护教师输出中心的移动平均；SwAV则
 
 图~\ref{fig:data-derived-knowledge-representation-degeneration}用四个教学样本展示三种情况。每个样本的两视图都很接近，所以单看配对误差，三个面板都可能“成功”；跨样本方差和坐标协方差却能区分常数输出与单方向变化。右侧分散只表示这两个示意维度没有前两种简单退化，不表示形成了真实类别。
 
-\begin{figure*}[htbp]
+\begin{figure*}[!t]
   \centering
   \input{figures/knowledge-acquisition-ch05-representation-degeneration.tex}
   \caption{匹配成功与表示退化可以同时发生。三个面板使用相同坐标范围和样本标记；实心点与空心圈表示同一样本的两个视图。下方矩阵均为手工构造，分别对应全部重合、两个坐标重复同一变化、以及在示意维度中分散的情况。}
   \label{fig:data-derived-knowledge-representation-degeneration}
 \end{figure*}
-\FloatBarrier
 
 SimCLR通过候选集合中的相对判别排除全部表示完全相同的解，但效果依赖负对照关系。错误负例可能迫使语义相近样本分开，容易区分的背景也可能满足目标。对比项控制的是当前关系集合中的相对排序，不是语义类别本身。
 
-BYOL的预测头、停止梯度、移动平均目标与优化动态共同形成非对称训练。原论文的完整方法没有显式负例，并通过消融研究这些组件\scite{ka-grill2020byol}不能从“停止梯度”单独推出不会坍塌，也不能把EMA称为沿目标损失梯度更新；式~\eqref{eq:data-derived-knowledge-byol-ema}明确显示它采用另一条参数规则。
+BYOL的预测头、停止梯度、移动平均目标与优化动态共同形成非对称训练。原论文的完整方法没有显式负例，并通过消融研究这些组件\scite{ka-grill2020byol}
+不能从“停止梯度”单独推出不会坍塌，也不能把EMA称为沿目标损失梯度更新；式~\eqref{eq:data-derived-knowledge-byol-ema}明确显示它采用另一条参数规则。
 
-DINO针对输出分布区分两种退化：所有样本都接近均匀分布，或者所有样本集中到同一输出维度。教师输出锐化抵抗前者，居中抵抗后者，两者在动量教师条件下共同使用\scite{ka-caron2021dino}这两种分布退化不同于所有连续向量坐标相等，诊断时不能只画一个重合散点代替。
+DINO针对输出分布区分两种退化：所有样本都接近均匀分布，或者所有样本集中到同一输出维度。教师输出锐化抵抗前者，居中抵抗后者，两者在动量教师条件下共同使用\scite{ka-caron2021dino}
+这两种分布退化不同于所有连续向量坐标相等，诊断时不能只画一个重合散点代替。
 
 VICReg把控制条件直接写入损失。方差项对图~\ref{fig:data-derived-knowledge-representation-degeneration}(a)产生惩罚，协方差项对(b)产生惩罚。SwAV的均衡分配约束则防止一个小批量的全部代码集中到同一原型，但它既不证明真实类别均衡，也不排除编码器保留无关差异。
 
@@ -472,20 +475,19 @@ VICReg把控制条件直接写入损失。方差项对图~\ref{fig:data-derived-
 
 图~\ref{fig:data-derived-knowledge-grouping-targets}把同一批表示送入三种机制。它们可以共用编码器，也可以组合使用：原型分配本身是一种分组，跨视图交换预测又利用了第~\ref{sec:data-derived-knowledge-relations}节的正对应。分类位置取决于当前要解释的主要知识构造机制。
 
-\begin{figure*}[htbp]
+\begin{figure*}[!t]
   \centering
   \input{figures/knowledge-acquisition-ch05-grouping-targets.tex}
   \caption{分组结构怎样变成训练目标。聚类产生临时组号，原型机制产生硬或软分配，邻域图产生组号或组内关系；更新后的表示可以选择性返回分组步骤刷新目标。原型连线粗细表示分配权重，图面板的赭色虚线表示可能错误合并两组的桥接边。}
   \label{fig:data-derived-knowledge-grouping-targets}
 \end{figure*}
-\FloatBarrier
 
 表~\ref{tab:data-derived-knowledge-grouping}进一步比较三种机制产生的目标、统计范围和刷新要求。分组一旦更新，目标编号、原型或图关系及其下游接口必须同步变化，不能只替换其中一项。
 
 \begin{table*}[htbp]
   \centering
   \small
-  \begin{tabularx}{\linewidth}{@{}p{19mm}p{27mm}p{24mm}p{29mm}p{31mm}X@{}}
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{19mm}>{\raggedright\arraybackslash}p{27mm}>{\raggedright\arraybackslash}p{24mm}>{\raggedright\arraybackslash}p{29mm}>{\raggedright\arraybackslash}p{31mm}>{\raggedright\arraybackslash}X@{}}
     \toprule
     分组方式 & 分组依据与输出目标 & 关键配置 & 所需统计范围 & 刷新时同步对象 & 主要失效条件 \\
     \midrule
@@ -497,12 +499,13 @@ VICReg把控制条件直接写入损失。方差项对图~\ref{fig:data-derived-
   \caption{分组目标的生成与维护要求。三种机制并不互斥；表中“均衡”与“编号”都是算法构造，不是对真实类别比例或语义身份的证明。}
   \label{tab:data-derived-knowledge-grouping}
 \end{table*}
-\FloatBarrier
 
 \subsection{基于聚类的分组目标构造}
 \label{sec:data-derived-knowledge-cluster-targets}
 
-最直接的做法是先提取每个样本的表示$\bm{z}_i=f_{\bm{\theta}}(\bm{x}_i)$，运行聚类得到$c_i\in\{1,\ldots,K\}$，再训练模型根据输入预测$c_i$。簇编号把无标签样本转成了一个分类式目标，但它的含义完全由当前表示和聚类配置决定。
+最直接的做法是先提取每个样本的表示$\bm{z}_i=f_{\bm{\theta}}(\bm{x}_i)$，运行聚类得到$c_i\in\{1,\ldots,K\}$，再训练模型根据输入预测$c_i$。DeepCluster给出了这一交替机制的代表实现：用$k$均值对网络特征分组，再以簇分配监督网络更新\scite{knowledge-acquisition-deepcluster2018}
+
+簇编号把无标签样本转成了一个分类式目标，但它的含义完全由当前表示和聚类配置决定。下面的流程是对这类交替训练的抽象，不把编号对齐、刷新策略和失败边界都归因于某一篇论文。
 
 固定分组只运行一次聚类，之后一直预测同一批$c_i$。周期性分组则交替执行
 \[
@@ -561,7 +564,19 @@ SwAV把原型分配与跨视图关系结合。对同一图像的两个视图$t,s
   \right\}.
   \label{eq:data-derived-knowledge-swav-assignment}
 \end{align}
-这里$H(\bm{Q})=-\sum_{k=1}^{K}\sum_{b=1}^{B}Q_{k,b}\log Q_{k,b}$，$\varepsilon>0$控制熵正则强度，$\bm{1}_B$和$\bm{1}_K$分别是$B$维和$K$维全一向量。行列约束使当前批次的总分配质量在原型间近似均衡，并让每个样本获得同样总质量。Sinkhorn--Knopp迭代通过交替归一化求近似软分配；用于交叉熵前，可把每列重新归一化为和为$1$的代码。
+这里$H(\bm{Q})=-\sum_{k=1}^{K}\sum_{b=1}^{B}Q_{k,b}\log Q_{k,b}$，$\varepsilon>0$控制熵正则强度，$\bm{1}_B$和$\bm{1}_K$分别是$B$维和$K$维全一向量。行列约束使当前批次的分配权重总和在原型间近似均衡，并让每个样本获得相同的分配权重总和。由于$\bm{1}_K^{\top}\bm{Q}_{:,b}=1/B$，Sinkhorn--Knopp迭代得到的第$b$列必须在进入交叉熵前归一化为
+\begin{equation}
+  \bm{q}_b
+  =
+  \frac{\bm{Q}_{:,b}}
+       {\bm{1}_K^{\top}\bm{Q}_{:,b}}
+  =
+  B\bm{Q}_{:,b},
+  \qquad
+  \bm{1}_K^{\top}\bm{q}_b=1.
+  \label{eq:data-derived-knowledge-swav-code-normalization}
+\end{equation}
+式~\eqref{eq:data-derived-knowledge-swav-swap}中的$\bm{q}_t,\bm{q}_s$固定表示这种归一化代码，而不是和为$1/B$的原始列。这样，交换预测损失中的目标才是原型上的概率分布，也不会额外缩小$1/B$。
 
 当前损失中，Sinkhorn得到的$\bm{q}_t,\bm{q}_s$停止求导；编码器和原型则通过式~\eqref{eq:data-derived-knowledge-swav-swap}中$p_k(\bm{z})$一侧的梯度更新。优化器完成更新后，原方法把每个原型列投影回单位球，即令$\bm{c}_k\leftarrow\bm{c}_k/\lVert\bm{c}_k\rVert_2$，下一批再用归一化原型计算分数。这个投影是梯度更新后的约束步骤，不是分配目标的反向传播。SwAV没有BYOL式目标网络。若实现让梯度穿过分配求解器，或省略原型归一化，计算路径就与原方法不同。
 
