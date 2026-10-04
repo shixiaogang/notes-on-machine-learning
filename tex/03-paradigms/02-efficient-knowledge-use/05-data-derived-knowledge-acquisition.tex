@@ -233,14 +233,21 @@ CLIP使用图像与文本的已有配对构造正对应，再把同一批次中�
 \begin{table*}[htbp]
   \centering
   \scriptsize
-  \begin{tabularx}{\linewidth}{@{}p{17mm}p{22mm}p{24mm}p{25mm}p{22mm}p{30mm}X@{}}
+  \begin{tabularx}{\linewidth}{@{}
+    >{\hsize=.80\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
+    >{\hsize=.65\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
+    >{\hsize=.85\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
+    >{\hsize=1.05\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
+    >{\hsize=.85\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
+    >{\hsize=1.35\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X
+    >{\hsize=1.45\hsize\linewidth=\hsize\raggedright\arraybackslash\parindent=0pt}X@{}}
     \toprule
-    目标类型与实例 & 使用的关系 & 比较对象 & 目标分支安排 & 当前步梯度 & 退化控制依据 & 额外成本 \\
+    方法 & 关系 & 比较量 & 分支安排 & 当前步梯度 & 退化控制 & 额外成本 \\
     \midrule
-    对比判别；SimCLR & 正对应与批内负对照 & 归一化投影表示的相对相似度 & 两路共享编码器和投影器，无独立教师 & 对称损失经两路输出回到共享参数 & 分母中的其他候选提供相对区分；仍依赖负对照假设 & 大候选集合的表示、相似度矩阵与通信 \\
-    跨视图预测；BYOL & 正对应 & 在线预测向量与目标投影向量 & 在线分支有预测头；目标编码器和投影器用EMA更新 & 每个单向项只回到在线分支，目标端停止梯度 & 完整BYOL的预测头、停止梯度、EMA与优化动态共同作用 & 额外目标网络、预测头和两向计算 \\
-    分布自蒸馏；DINO & 全局与局部视图的正对应 & 教师、学生在$K$维输出上的概率分布 & 同构学生与EMA教师，无预测头；教师输出居中、锐化 & 只回到学生；教师与中心按各自EMA更新 & 居中、锐化、动量教师及多裁剪共同控制不同退化 & 教师网络、多视图前向与中心统计 \\
-    对称匹配；VICReg & 正对应 & 两路嵌入差异及各路批内统计 & 可共享参数，无独立教师和停止梯度 & 匹配、方差和协方差项均回到相应分支 & 方差项限制常数坍塌，协方差项减少坐标冗余 & 批内方差、$d\times d$协方差及多项权重 \\
+    对比判别；SimCLR & 正对应、批内负对照 & 归一化投影表示的相对相似度 & 共享编码器和投影器；无教师 & 对称损失经两路反传 & 其他候选提供区分；仍依赖负对照假设 & 候选表示、相似度矩阵和跨设备通信 \\
+    跨视图预测；BYOL & 正对应 & 在线预测与目标投影 & 在线侧有预测头；目标侧用EMA更新 & 单向项只回传在线侧；目标侧停止梯度 & 预测头、停止梯度、EMA与优化动态共同作用 & 额外目标网络、预测头和双向计算 \\
+    分布自蒸馏；DINO & 全局与局部视图的正对应 & 教师、学生的$K$维输出分布 & 同构学生与EMA教师；教师输出居中、锐化 & 只回传学生；教师和中心分别用EMA更新 & 居中、锐化、动量教师与多裁剪共同作用 & 教师网络、多视图前向和中心统计 \\
+    对称匹配；VICReg & 正对应 & 两路嵌入差异及批内统计 & 可共享参数；无教师和停止梯度 & 匹配、方差和协方差项均回传 & 方差项限制常数坍塌；协方差项减少坐标冗余 & 批内方差、$d\times d$协方差和多项权重 \\
     \bottomrule
   \end{tabularx}
   \caption{关系依据相同时仍可选择不同训练目标。表中的退化控制只描述各完整方法采用的机制，不把任一单独组件表述为普遍保证。}
@@ -497,13 +504,17 @@ VICReg把控制条件直接写入损失。方差项对图~\ref{fig:data-derived-
 
 固定分组只运行一次聚类，之后一直预测同一批$c_i$。周期性分组则交替执行
 \[
-  \bm{z}_i^{(r)}=f_{\bm{\theta}^{(r)}}(\bm{x}_i)
-  \ \longrightarrow\
-  c_i^{(r)}=\operatorname{Cluster}(\{\bm{z}_j^{(r)}\}_{j=1}^{n})
-  \ \longrightarrow\
-  \bm{\theta}^{(r+1)}=\operatorname{Train}(\{(\bm{x}_i,c_i^{(r)})\}_{i=1}^{n}),
+  \begin{aligned}
+    \{\bm{z}_i^{(r)}=f_{\bm{\theta}^{(r)}}(\bm{x}_i)\}_{i=1}^{n}
+    &\ \longrightarrow\
+    \bm{c}^{(r)}
+    =\operatorname{Cluster}(\{\bm{z}_i^{(r)}\}_{i=1}^{n}),\\
+    \mathcal{D}^{(r)}=\{(\bm{x}_i,c_i^{(r)})\}_{i=1}^{n}
+    &\ \longrightarrow\
+    \bm{\theta}^{(r+1)}=\operatorname{Train}(\mathcal{D}^{(r)}),
+  \end{aligned}
 \]
-其中$r$是分组轮次而不是梯度步。前一轮训练改变表示，下一轮聚类便可能改变目标；频繁刷新更及时，也增加全量编码、聚类和目标存储成本。
+其中$\bm{c}^{(r)}=(c_i^{(r)})_{i=1}^{n}$，$r$是分组轮次而不是梯度步。前一轮训练改变表示，下一轮聚类便可能改变目标；频繁刷新更及时，也增加全量编码、聚类和目标存储成本。
 
 簇编号没有天然顺序。即使两轮几何分组完全相同，算法也可能把原来的组1改名为组3。若预测头跨轮保留，就要按样本重叠或中心匹配对齐编号，或者重新初始化相应输出；仅按数字相同继承参数没有依据。群组发生分裂和合并时，一一匹配甚至不存在。
 
@@ -536,20 +547,27 @@ SwAV把原型分配与跨视图关系结合。对同一图像的两个视图$t,s
   \max_{\bm{Q}\in\mathcal{Q}}\quad&
   \operatorname{Tr}(\bm{Q}^{\top}\bm{C}^{\top}\bm{Z})
   +\varepsilon H(\bm{Q}),\\
-  \mathcal{Q}=\left\{\bm{Q}\in\mathbb{R}_{+}^{K\times B}\ \middle|\ &
-  \bm{Q}\bm{1}_B=\frac{1}{K}\bm{1}_K,\qquad
-  \bm{Q}^{\top}\bm{1}_K=\frac{1}{B}\bm{1}_B\right\}.
+  \mathcal{Q}
+  ={}&
+  \left\{
+    \bm{Q}\in\mathbb{R}_{+}^{K\times B}
+    \ \middle|\
+    \begin{aligned}
+      \bm{Q}\bm{1}_B&=\frac{1}{K}\bm{1}_K,\\
+      \bm{Q}^{\top}\bm{1}_K&=\frac{1}{B}\bm{1}_B
+    \end{aligned}
+  \right\}.
   \label{eq:data-derived-knowledge-swav-assignment}
 \end{align}
-行列约束使当前批次的总分配质量在原型间近似均衡，并让每个样本获得同样总质量。Sinkhorn--Knopp迭代通过交替归一化求近似软分配；用于交叉熵前，可把每列重新归一化为和为$1$的代码。
+这里$H(\bm{Q})=-\sum_{k=1}^{K}\sum_{b=1}^{B}Q_{k,b}\log Q_{k,b}$，$\varepsilon>0$控制熵正则强度，$\bm{1}_B$和$\bm{1}_K$分别是$B$维和$K$维全一向量。行列约束使当前批次的总分配质量在原型间近似均衡，并让每个样本获得同样总质量。Sinkhorn--Knopp迭代通过交替归一化求近似软分配；用于交叉熵前，可把每列重新归一化为和为$1$的代码。
 
-当前损失中，Sinkhorn得到的$\bm{q}_t,\bm{q}_s$停止求导；编码器和原型则通过式~\eqref{eq:data-derived-knowledge-swav-swap}中$p_k(\bm{z})$一侧的梯度更新。SwAV没有BYOL式目标网络。若实现让梯度穿过分配求解器，计算图和优化目标就与原方法不同。
+当前损失中，Sinkhorn得到的$\bm{q}_t,\bm{q}_s$停止求导；编码器和原型则通过式~\eqref{eq:data-derived-knowledge-swav-swap}中$p_k(\bm{z})$一侧的梯度更新。优化器完成更新后，原方法把每个原型列投影回单位球，即令$\bm{c}_k\leftarrow\bm{c}_k/\lVert\bm{c}_k\rVert_2$，下一批再用归一化原型计算分数。这个投影是梯度更新后的约束步骤，不是分配目标的反向传播。SwAV没有BYOL式目标网络。若实现让梯度穿过分配求解器，或省略原型归一化，计算路径就与原方法不同。
 
 均衡约束防止全部样本在当前构造中集中到一个原型，却不说明真实花卉类别数量相等。$K$大于批量有效多样性时，严格均衡难以实现；原论文在小批量场景用前批表示扩充分配集合，这又引入队列状态和表示过时问题。熵系数$\varepsilon$过大还可能让分配过于均匀。
 
 原型数量、相似度温度、分配熵、均衡强度和小批量组成共同决定目标。比较最近原型硬编号与软分配时，应固定原型和表示；硬化会删除不确定性，软分配则增加存储与交叉熵计算。原型编号与聚类编号一样，没有预设物种含义。
 
-SwAV同时使用正对应和分组目标：同一图像的视图关系来自第~\ref{sec:data-derived-knowledge-transformation-positive}节，Sinkhorn代码来自本节的分组机制。把它只称为“非对比匹配”会漏掉原型分配约束，把它只称为“聚类”又会漏掉交换视图的训练关系。
+SwAV同时使用正对应和分组目标：同一图像的视图关系由数据变换建立，Sinkhorn代码来自本节的分组机制。把它只称为“非对比匹配”会漏掉原型分配约束，把它只称为“聚类”又会漏掉交换视图的训练关系。
 
 \subsection{基于邻域与图结构的分组目标构造}
 \label{sec:data-derived-knowledge-graph-targets}
@@ -560,7 +578,7 @@ SwAV同时使用正对应和分组目标：同一图像的视图关系来自第~
 
 构造时应明确节点、度量、邻居数或阈值、边是否有向、边权含义和最终分组规则。$k$固定时，稀疏区域可能连接很远的样本；半径固定时，密集区域又可能形成过多边。互近邻、局部尺度或密度规则能改变这些行为，但没有脱离数据分布的统一最优选择。
 
-图分组刷新需要重新编码、近邻检索、建边和划分。大规模精确近邻可能需要$O(n^2)$比较与存储，近似检索降低成本却会漏边或加错边。重新构图后，节点组号同样可能置换、分裂或合并，应同步刷新训练目标并保留未确定关系。
+图分组刷新需要重新编码、近邻检索、建边和划分。用直接全对比较构建精确近邻时，需要$O(n^2)$次距离计算；只有显式保存完整两两距离矩阵时，存储才是$O(n^2)$，只保留每个样本的$k$个近邻时，最终邻接表为$O(nk)$，检索索引另计。近似检索降低计算成本，却会漏边或加错边。重新构图后，节点组号同样可能置换、分裂或合并，应同步刷新训练目标并保留未确定关系。
 
 若群组随后被转换为正对应，可按第~\ref{sec:data-derived-knowledge-relations}节使用；此时正对应的可信程度继承分组假设。它与利用已有类别标签传播答案不同：本节先从数据关联发现群组，没有预先拥有类别语义。只有额外证据才能把图分组解释成任务类别。
 
