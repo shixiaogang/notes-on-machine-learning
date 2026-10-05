@@ -1,0 +1,1479 @@
+\chapter{给定模型下的规划}
+\label{chap:rl-planning}
+
+在第~\ref{chap:rl-overview}~章的导航任务中，动作会改变下一步的位置，因而不能只比较眼前的奖励。现在把环境模型交给决策者：如果每个动作的后果都能查询，是否只需把最优动作算出来？困难在于，一次查询只回答局部问题，而策略必须处理许多可能的后续状态。即使环境规则完全正确，状态空间、搜索树和计算精度仍可能超过可用预算。
+
+环境模型用来预测动作后果：若在状态$s$执行动作$a$，下一状态和奖励会怎样分布？规划算法取得答案的方式并不总是相同。\term{精确期望访问}能够直接计算
+$R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)v(s')$。例如，网格模型列出向前和向两侧滑移的全部概率后，可以一次完成加权求和。\term{生成模型访问}（generative model access）则像可反复调用的模拟器：指定任意合法的$(s,a)$，每次只返回一个独立样本$(r,s')\sim p(\cdot,\cdot\mid s,a)$。同一查询多次调用可能得到不同后果，必须用样本估计期望。
+
+生成模型不要求规划器先从起点实际走到$s$，也不要求公开概率表；它只须按给定环境规律正确采样。因而“模型准确”与“期望已知”是两件事：有限次模拟调用仍有统计误差。本章把这两种接口都视为给定的规划资源，并在使用处说明需要哪一种。生成模型与不可随意重置、只能沿实际轨迹推进的真实交互之间仍有区别，这是稀疏采样规划的基本前提\scite{rl2-kearns2002-sparse}
+
+除使用处另行说明外，状态、动作集合有限，每个$\mathcal A(s)$非空，$|r_t|\leq R_{\max}$，且$0\leq\gamma<1$。奖励$r_t$按执行$a_t$的时刻编号。价值和策略性能均使用未归一化折扣回报，因而$|V^\pi(s)|\leq V_{\max}:=R_{\max}/(1-\gamma)$。有限时域、成本最小化和平均奖励会在使用处重新给出约定。
+
+本章先给出一般有限问题的两条精确路线：Bellman动态规划反复使用局部递推，全局优化则把所有状态的约束放进同一个优化问题；二者求解的是同一规划目标。若模型还满足线性二次、递减差分或独立分解等附加条件，特殊结构能够进一步给出精确简化，但这些结论不能用于任意MDP。状态数或搜索树超出预算时，近似有两个主要落点：当前状态搜索只为眼前决策展开局部后果，全状态近似则构造可在许多状态复用的价值表示。前者可以把后者用作叶节点价值，因此二者并不互斥。图~\ref{fig:rl-planning-map}~概括了这些关系。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-planning-map}
+  \caption{给定模型时的规划方法关系。动态规划与全局优化是一般精确路线；特殊结构只在附加条件成立时给出精确简化。精确计算超出预算后，可以近似当前决策或构造全状态近似，二者可通过叶节点价值与前瞻目标结合。}
+  \label{fig:rl-planning-map}
+\end{figure*}
+
+% Outline: 2.1
+\section{Bellman动态规划}
+\label{sec:rl-planning-dp}
+
+如果未来的价值已经知道，当前动作的比较只需一次条件期望。动态规划（dynamic programming）利用这个事实，把长回报变成可以重复调用的一步运算。先固定策略，能把“某种行为会怎样”算清楚；有了评价，才能讨论“怎样改变行为”。
+
+% Outline: 2.1.1
+\subsection{策略评价}
+\label{sec:rl-planning-evaluation}
+
+固定平稳策略$\pi$后，动作不再是待优化的变量。定义
+\[
+ r^\pi(s)=\sum_a\pi(a\mid s)R(s,a),\qquad
+ P^\pi(s,s')=\sum_a\pi(a\mid s)P(s'\mid s,a).
+\]
+这里$r^\pi$是期望奖励，不是某次模拟得到的奖励样本。按状态排列的向量$\bm r^\pi$和矩阵$\bm P^\pi$都由模型与策略确定；令$\bm v^\pi$的$s$坐标为$V^\pi(s)$，Bellman方程成为
+\begin{equation}
+ \bm v^\pi=\bm r^\pi+\gamma\bm P^\pi\bm v^\pi,\qquad
+ (\bm I-\gamma\bm P^\pi)\bm v^\pi=\bm r^\pi.
+ \label{eq:rl-planning-linear-evaluation}
+\end{equation}
+因为$\bm P^\pi$非负且每行之和为1，$\lVert\bm P^\pi\rVert_\infty=1$，级数$\sum_{k\geq0}\gamma^k(\bm P^\pi)^k$收敛且是$\bm I-\gamma\bm P^\pi$的逆。直接解线性方程和累积各时刻的期望奖励，得到同一个价值。
+
+\begin{example}[三个格子的独立手算模型]
+ \label{ex:rl-planning-corridor}
+ 为便于手算，这里把基准网格另行简化为一条只有$x,y,g$三个格子的走廊，初始状态为$x$。它不是宽4、高3随机网格的子表：非终点只保留“前进”和“等待”两个动作，前进以$0.8$进入下一个格子、以$0.2$原地不动，等待则确定地留在原处，取消侧向滑移；$g$只执行零奖励吸收动作。进入$g$的奖励仍为1，其余非终点步为$-0.04$，$\gamma=0.9$。
+
+ 固定总是前进的策略，按$x,y,g$排序有
+ \[
+ \bm P^\pi=
+ \begin{pmatrix}0.2&0.8&0\\0&0.2&0.8\\0&0&1\end{pmatrix},
+ \qquad
+ \bm r^\pi=\begin{pmatrix}-0.04\\0.792\\0\end{pmatrix}.
+ \]
+ 第二个奖励是$0.8\times1+0.2\times(-0.04)=0.792$，不能把每次前进都记成奖励1。由$V^\pi(g)=0$得到
+ \[
+ 0.82V^\pi(y)=0.792,\qquad
+ 0.82V^\pi(x)=-0.04+0.72V^\pi(y),
+ \]
+ 因而
+ \[
+ V^\pi(y)=\frac{198}{205}\approx0.965854,\qquad
+ V^\pi(x)=\frac{6718}{8405}\approx0.799286.
+ \]
+ 若从$v^{(0)}=0$同步备份，前两次在$(x,y)$处依次得到
+ $(-0.04,0.792)$与$(0.52304,0.93456)$。前一次的$y$价值要到下一轮才传到$x$。
+\end{example}
+
+不显式求逆时，可以重复计算\term{Bellman备份}：用已有的后继价值更新当前价值。定义策略算子
+\begin{equation}
+ (T^\pi v)(s)=r^\pi(s)+\gamma\sum_{s'}P^\pi(s,s')v(s').
+ \label{eq:rl-planning-policy-operator}
+\end{equation}
+以下证明解释反复备份为何可靠，也给出实际停止时可检查的量。
+
+\begin{theorem}[策略评价的压缩性与收敛]
+ \label{thm:rl-planning-policy-contraction}
+ 在上述有限折扣条件下，$T^\pi$在无穷范数下为$\gamma$压缩映射，其唯一固定点为$V^\pi$。同步迭代$v^{(k+1)}=T^\pi v^{(k)}$满足
+ \[
+ \lVert v^{(k)}-V^\pi\rVert_\infty
+ \leq\gamma^k\lVert v^{(0)}-V^\pi\rVert_\infty.
+ \]
+\end{theorem}
+\begin{proof}
+ 对任意$v,u$和状态$s$，期望奖励相消，故
+ \[
+ \begin{aligned}
+ |(T^\pi v)(s)-(T^\pi u)(s)|
+ &\leq\gamma\sum_{s'}P^\pi(s,s')|v(s')-u(s')|\\
+ &\leq\gamma\lVert v-u\rVert_\infty.
+ \end{aligned}
+ \]
+ 第一个不等式使用概率非负，第二个使用行和为1。对$s$取最大值得到压缩性。有限维实向量空间在此范数下完备，压缩映射定理给出唯一固定点及迭代收敛。由有界回报拆出第一步并取条件期望，$V^\pi$满足式~\eqref{eq:rl-planning-policy-operator}，所以它就是该固定点。将压缩不等式对$v^{(k)}$和$V^\pi$递归使用$k$次，得到所述误差界。
+\end{proof}
+
+\begin{theorem}[评价残差证书]
+ \label{thm:rl-planning-evaluation-residual}
+ 对任意有界$v$，
+ \begin{equation}
+ \lVert v-V^\pi\rVert_\infty
+ \leq\frac{\lVert T^\pi v-v\rVert_\infty}{1-\gamma}.
+ \label{eq:rl-planning-evaluation-residual}
+ \end{equation}
+\end{theorem}
+\begin{proof}
+ 插入$T^\pi v$并利用固定点关系，有
+ \[
+ \begin{aligned}
+ \lVert v-V^\pi\rVert_\infty
+ &\leq\lVert v-T^\pi v\rVert_\infty+
+       \lVert T^\pi v-T^\pi V^\pi\rVert_\infty\\
+ &\leq\lVert v-T^\pi v\rVert_\infty+
+       \gamma\lVert v-V^\pi\rVert_\infty.
+ \end{aligned}
+ \]
+ 移项并除以正数$1-\gamma$即得结论。
+\end{proof}
+
+真实价值未知，但\term{Bellman残差}$T^\pi v-v$可以用精确模型算出。若要求价值误差不超过$\varepsilon$，全状态残差不超过$(1-\gamma)\varepsilon$就是证书。若只抽查几个状态，或用样本均值估计残差，尚须补上未查状态与估计误差的控制。
+
+同步更新保留一份旧表；Gauss--Seidel更新按顺序覆盖表，后面的状态可以使用本轮较新的值。更一般的异步更新可以每次只处理部分状态。对精确备份，一个充分条件是每个状态无限次更新，而且使用的信息不会永久停留在某个旧时刻；有界延迟是常用的更强条件。证明思路是按所有状态都完成一次有效更新划分阶段，在每个阶段之后压低共同误差包络。按大残差优先更新可能节约计算，却不能代替这一公平性条件：永不更新的状态会留下误差，并继续影响前驱状态。评价、改进和异步动态规划的标准处理可参见Sutton与Barto教材第4章\scite{sutton2018}
+
+% Outline: 2.1.2
+\subsection{策略改进与迭代}
+\label{sec:rl-planning-policy-iteration}
+
+网格中一个向左绕回起点的动作，可能比朝终点移动更差。但要判断它，不能只看动作的即时奖励，因为远离终点时两者往往同为$-0.04$。评价给出的$V^\pi$使我们能够比较“这一步改用$a$，之后仍按$\pi$行动”的后果：
+\[
+ Q^\pi(s,a)=R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)V^\pi(s').
+\]
+
+\begin{definition}[贪心策略]
+ \label{def:rl-planning-greedy}
+ 相对于$Q^\pi$的贪心策略只在最大化动作集合
+ \[
+  \arg\max_{a\in\mathcal A(s)}Q^\pi(s,a)
+ \]
+ 中选择动作。确定性选择每个状态的一个最大化动作，随机选择可以在这些动作间分配任意概率。策略迭代采用确定性规则：若旧动作仍达到最大值，就保留旧动作；否则按预先固定次序选一个最大化动作。
+\end{definition}
+
+这里的“贪心”使用长期动作价值，并不等于只看即时奖励。更重要的是，虽然$Q^\pi$只评价一次偏离，反复执行改进后的策略仍然不会变差。
+
+\begin{theorem}[策略改进及策略迭代的有限终止]
+ \label{thm:rl-planning-policy-improvement}
+ 若平稳策略$\pi'$满足$T^{\pi'}V^\pi\geq V^\pi$逐状态成立，则$V^{\pi'}\geq V^\pi$。在有限折扣MDP中，采用精确评价、确定性贪心改进和上述保留并列旧动作规则的策略迭代，有限步终止于全状态最优策略。
+\end{theorem}
+\begin{proof}
+ 非负转移概率使$T^{\pi'}$保持单调性：$u\geq v$蕴含$T^{\pi'}u\geq T^{\pi'}v$。从假设出发反复应用同一算子，
+ \[
+ V^\pi\leq T^{\pi'}V^\pi
+ \leq (T^{\pi'})^2V^\pi\leq\cdots.
+ \]
+ 定理~\ref{thm:rl-planning-policy-contraction}~说明右端收敛到$V^{\pi'}$，所以逐状态不等式在极限中仍成立。
+
+ 贪心改进满足
+ $T^{\pi'}V^\pi\geq T^\pi V^\pi=V^\pi$。若策略改变，保留并列旧动作的规则保证至少某个状态$s$有
+ $(T^{\pi'}V^\pi)(s)>V^\pi(s)$；上述单调序列又说明
+ $V^{\pi'}(s)\geq(T^{\pi'}V^\pi)(s)>V^\pi(s)$。
+ 因此策略未终止时，价值向量至少一个坐标严格增加，其他坐标不减，不可能回到以前的策略。确定性平稳策略至多有$\prod_s|\mathcal A(s)|$个，故必在有限步停止。
+
+ 停止时，对于所有$s,a$，
+ \[
+ V^\pi(s)\geq R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)V^\pi(s').
+ \]
+ 对任意可能依赖历史的策略$\sigma$，将该不等式沿它的动作与转移取条件期望并连续展开$H$步，得到
+ \[
+ V^\pi(s)\geq
+ \mathbb E_\sigma\!\left[
+ \sum_{t=0}^{H-1}\gamma^t r_t+\gamma^H V^\pi(s_H)
+ \,\middle|\,s_0=s\right].
+ \]
+ 有界性使终端项随$H\to\infty$趋于0，故$V^\pi(s)\geq V^\sigma(s)$。$\sigma$任意，而$\pi$本身可行，因而终止策略最优。
+\end{proof}
+
+\begin{algorithm}[精确策略迭代]
+ \label{alg:rl-planning-policy-iteration}
+ \begin{algorithmic}[1]
+  \Require 精确模型，$\gamma<1$，确定性初始策略$\pi^{(0)}$
+  \Ensure 全状态最优确定性平稳策略
+  \For{$k=0,1,\ldots$}
+   \State 解$(\bm I-\gamma\bm P^{\pi^{(k)}})\bm v=\bm r^{\pi^{(k)}}$
+   \For{每个状态$s$}
+    \State 计算$q(s,a)=R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)v(s')$
+    \State 在最大化动作中保留旧动作，否则按固定次序选取$\pi^{(k+1)}(s)$
+   \EndFor
+   \If{$\pi^{(k+1)}=\pi^{(k)}$}
+    \State \Return $\pi^{(k)}$
+   \EndIf
+  \EndFor
+ \end{algorithmic}
+\end{algorithm}
+
+回到未简化的基准网格：起点$(1,1)$，终点$(4,3)$，障碍$(2,2)$；意图方向概率$0.8$，两侧滑移各$0.1$，无效的意图动作不在动作集合中，滑移撞墙则停留。表~\ref{tab:rl-planning-grid-pi}~固定“左、下、右、上”的选择次序，以每个状态第一个合法动作为$\pi^{(0)}$，追踪两轮完整评价与改进。终点只执行零奖励吸收动作，表中省略。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}c*{3}{c}*{3}{>{\raggedright\arraybackslash}X}@{}}
+  \toprule
+  状态 & $\pi^{(0)}$ & $\pi^{(1)}$ & $\pi^{(2)}$ &
+  $V^{\pi^{(0)}}$ & $V^{\pi^{(1)}}$ & $V^{\pi^{(2)}}$\\
+  \midrule
+  $(1,1)$ & 右 & 右 & 右 & $-0.400000$ & $0.393318$ & $0.395377$\\
+  $(2,1)$ & 左 & 右 & 右 & $-0.400000$ & $0.515595$ & $0.517970$\\
+  $(3,1)$ & 左 & 右 & 右 & $-0.398373$ & $0.642761$ & $0.645466$\\
+  $(4,1)$ & 左 & 上 & 上 & $-0.383549$ & $0.769713$ & $0.771194$\\
+  $(1,2)$ & 下 & 下 & 下 & $-0.400000$ & $0.296572$ & $0.298380$\\
+  $(3,2)$ & 下 & 右 & 上 & $-0.383549$ & $0.785763$ & $0.801271$\\
+  $(4,2)$ & 左 & 上 & 上 & $-0.246674$ & $0.948042$ & $0.949576$\\
+  $(1,3)$ & 下 & 下 & 右 & $-0.400000$ & $0.268198$ & $0.606648$\\
+  $(2,3)$ & 左 & 右 & 右 & $-0.400000$ & $0.783647$ & $0.784994$\\
+  $(3,3)$ & 左 & 右 & 右 & $-0.398373$ & $0.948042$ & $0.949576$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{基准随机网格的两轮策略改进。每列价值均解完整线性方程后四舍五入至六位小数，不是轨迹样本均值。$\pi^{(2)}$尚未声称最优，下一轮仍需重新检查贪心条件。}
+ \label{tab:rl-planning-grid-pi}
+\end{table*}
+
+例如，初始策略在左侧闭合区域中永久支付$-0.04$，所以价值为$-0.04/(1-0.9)=-0.4$。第一轮改进使$(2,1)$转向右；$(1,3)$却要等到第二轮才转向右，因为第一次评价时右邻的旧策略也会把它带回左侧。改进能传播，并不要求一轮就看出最终路线。
+
+精确评价有时比改进本身昂贵。表~\ref{tab:rl-planning-evaluation-schedules}~区分缩短评价的几种安排。\term{广义策略迭代}（generalized policy iteration）指评价与改进互相推动的过程，而不是“任意拟合、任意换策略都单调变好”的定理。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  安排 & 每次评价工作 & 何时改进\\
+  \midrule
+  精确评价 & 解方程；理论上也可迭代至极限 & 得到$V^\pi$后\\
+  部分评价 & 固定若干次备份或达到指定残差 & 评价预算用尽时\\
+  修改策略迭代 & 从当前$v$选贪心策略，再做$m_k\geq1$次该策略备份 & 每个外层循环一次\\
+  \bottomrule
+ \end{tabularx}
+ \caption{评价深度与改进频率。部分评价是一类操作，修改策略迭代是将它嵌入明确循环的算法；两者不是互斥类别。}
+ \label{tab:rl-planning-evaluation-schedules}
+\end{table}
+
+% Outline: 2.1.3
+\subsection{价值迭代}
+\label{sec:rl-planning-value-iteration}
+
+策略迭代先解一组线性方程再换策略。若只想逐步逼近最优价值，可以把动作比较直接放进备份，而不先完成一次策略评价。
+
+\begin{definition}[最优Bellman算子]
+ \label{def:rl-planning-optimal-operator}
+ 对任意状态函数$v$，定义
+ \begin{equation}
+ (T^*v)(s)=\max_{a\in\mathcal A(s)}
+ \left\{R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)v(s')\right\}.
+ \label{eq:rl-planning-optimal-operator}
+ \end{equation}
+ 相对于$v$的贪心策略$\pi_v$选择该式的最大化动作，因此$T^{\pi_v}v=T^*v$。
+\end{definition}
+
+\begin{theorem}[最优固定点与平稳最优策略]
+ \label{thm:rl-planning-optimal-fixed-point}
+ 有限折扣MDP的$T^*$单调且为$\gamma$压缩映射。其唯一固定点为$V^*$，并且存在确定性平稳策略$\pi^*$，对每个初始状态及所有历史依赖随机策略都达到最优价值。
+\end{theorem}
+\begin{proof}
+ 若$v\leq u$，每个动作的期望备份都不减，取最大值后仍有$T^*v\leq T^*u$。对有限个实数$\{f_a\},\{g_a\}$，取$f_a$的最大化动作$a_f$，有
+ $\max_a f_a-\max_a g_a\leq f_{a_f}-g_{a_f}\leq\max_a|f_a-g_a|$。
+ 交换两组数便得最大值之差的绝对值界。因此
+ \[
+ \lVert T^*v-T^*u\rVert_\infty
+ \leq\gamma\lVert v-u\rVert_\infty.
+ \]
+ 压缩映射定理给出唯一固定点$\bar v$。有限动作集保证每个状态都能取到一个最大化动作，组成确定性平稳策略$\bar\pi$。于是
+ $T^{\bar\pi}\bar v=T^*\bar v=\bar v$，策略评价固定点的唯一性给出$\bar v=V^{\bar\pi}$。
+
+ 还须证明$\bar v$不只是平稳策略中的某个值。固定点对每个动作给出
+ $\bar v(s)\geq R(s,a)+\gamma\mathbb E[\bar v(s')\mid s,a]$。
+ 沿任意历史依赖随机策略逐步取条件期望，展开$H$步，
+ \[
+ \bar v(s)\geq\mathbb E\!\left[
+ \sum_{t=0}^{H-1}\gamma^t r_t+\gamma^H\bar v(s_H)
+ \,\middle|\,s_0=s\right].
+ \]
+ $\bar v$在有限状态集上有界，尾项趋于0，故$\bar v$支配每个策略的价值。另一方面$\bar\pi$实现它，因此$\bar v=V^*$，取$\pi^*=\bar\pi$即得结论。
+\end{proof}
+
+\term{价值迭代}（value iteration）就是$v^{(k+1)}=T^*v^{(k)}$。由压缩性，
+$\lVert v^{(k)}-V^*\rVert_\infty\leq\gamma^k\lVert v^{(0)}-V^*\rVert_\infty$。
+同评价残差的移项证明还给出
+\begin{equation}
+ \lVert v-V^*\rVert_\infty
+ \leq\frac{\lVert T^*v-v\rVert_\infty}{1-\gamma}.
+ \label{eq:rl-planning-optimal-residual}
+\end{equation}
+例如同步更新后，可以用$\lVert v^{(k+1)}-v^{(k)}\rVert_\infty$为旧表$v^{(k)}$给证书。实际返回哪一张表，就应使用哪一张表对应的残差，不能把索引错开。
+
+价值误差并不直接等于执行策略的损失。一个动作选错以后，策略会在后续时刻继续使用同一近似表，因此需要另一条界。
+
+\begin{theorem}[由价值精度到贪心策略性能]
+ \label{thm:rl-planning-greedy-loss}
+ 若$\lVert v-V^*\rVert_\infty\leq\varepsilon$，且$\pi_v$通过精确模型对$v$贪心，则
+ \begin{equation}
+ \lVert V^*-V^{\pi_v}\rVert_\infty
+ \leq\frac{2\gamma\varepsilon}{1-\gamma}.
+ \label{eq:rl-planning-greedy-loss}
+ \end{equation}
+\end{theorem}
+\begin{proof}
+ 利用$T^*v=T^{\pi_v}v$，在$T^*V^*-T^{\pi_v}V^{\pi_v}$中插入这两个相等的量，有
+ \[
+ \begin{aligned}
+ \lVert V^*-V^{\pi_v}\rVert_\infty
+ &\leq\lVert T^*V^*-T^*v\rVert_\infty
+       +\lVert T^{\pi_v}v-T^{\pi_v}V^{\pi_v}\rVert_\infty\\
+ &\leq\gamma\varepsilon+
+       \gamma\lVert v-V^{\pi_v}\rVert_\infty\\
+ &\leq2\gamma\varepsilon+
+       \gamma\lVert V^*-V^{\pi_v}\rVert_\infty.
+ \end{aligned}
+ \]
+ 将最后一项移到左侧即得。证明没有假设贪心策略只执行一步。
+\end{proof}
+
+因此，若全状态最优残差为$\eta$，返回精确贪心策略的损失至多
+$2\gamma\eta/(1-\gamma)^2$；$\gamma=0$时，按即时奖励贪心已是精确最优，无须使用含$1/\gamma$的停止阈值。
+
+图~\ref{fig:rl-planning-grid-values}~用基准网格的精确备份展示价值传播。初始化全为0，终点始终为0，而不是1，因为奖励已经在进入终点的那一步支付。第一轮邻近终点的最优期望奖励为$0.792$；较远状态要等到后续备份才感受到终点收益。
+
+\begin{figure*}[htbp]
+ \centering
+ \input{figures/rl-planning-grid-values}
+ \caption{基准随机网格在$k=1,3,10$次同步价值迭代后的价值，$\gamma=0.9$、$v^{(0)}=0$。数字由完整转移期望计算，显示四位小数；三个面板共用色阶，障碍单独标记。它们是确定的算法迭代值，不是实验学习曲线。}
+ \label{fig:rl-planning-grid-values}
+\end{figure*}
+
+备份形式相近，不代表所有长期目标共享同一收敛证明。表~\ref{tab:rl-planning-horizons}~区分三种情形：有限时域从终端往回算；折扣问题寻找唯一固定点；平均奖励则需要去掉累计奖励中的共同增长趋势。在具有共同最优平均奖励$g$的条件下，$h(s)$表示相对于这一增长趋势的差分价值，只确定到一个加法常数；表中$P_ah(s)=\sum_{s'}P(s'\mid s,a)h(s')$。有限折扣MDP、线性规划以及平均奖励条件的系统论述见Puterman\scite{rl1-puterman1994-mdp}
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  目标 & 递推与边界 & 关键条件与保证\\
+  \midrule
+  有限时域 & $V_H=0$，$V_t=T_t^*V_{t+1}$；无折扣时取该式$\gamma=1$ & 反向做$H$层；策略一般随$t$变化\\
+  无限折扣 & $V^*=T^*V^*$ & 有限状态动作、奖励有界、$\gamma<1$；无穷范数压缩\\
+  平均奖励 & $g+h(s)=\max_a\{R(s,a)+P_ah(s)\}$ & 需另给通信等条件以得到共同增益$g$；相对价值迭代收敛还需相应非周期或更强混合条件\\
+  \bottomrule
+ \end{tabularx}
+ \caption{不同时间目标的递推口径。平均奖励相对价值迭代通常每轮减去参考状态的备份值来固定$h$的常数，但不能直接套用$\gamma<1$的证明。}
+ \label{tab:rl-planning-horizons}
+\end{table*}
+
+% Outline: 2.2
+\section{从动态规划到全局优化}
+\label{sec:rl-planning-linear-programming}
+
+Bellman备份一次检查一个状态的后果。另一种做法是把所有状态、动作必须满足的关系同时交给优化器。价值描述每个状态应当值多少，访问流量描述策略实际上把时间花在哪里；两种变量对应同一个最优控制问题的原始与对偶形式。
+
+% Outline: 2.2.1
+\subsection{价值的线性规划}
+\label{sec:rl-planning-value-lp}
+
+最优价值至少等于“先选任意动作，再最优行动”的价值。由此得到线性约束
+$v(s)\geq R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)v(s')$。这些约束允许把所有价值一起抬高，所以不能在其上任意最大化$v$；那样通常无上界。给定非负状态权重$w(s)$，应当寻找其加权和尽可能小的价值上界：
+\begin{equation}
+ \begin{aligned}
+ \min_v\quad &\sum_s w(s)v(s)\\
+ \text{满足}\quad
+ &v(s)-\gamma\sum_{s'}P(s'\mid s,a)v(s')\geq R(s,a),
+ \quad s\in\mathcal S,\ a\in\mathcal A(s).
+ \end{aligned}
+ \label{eq:rl-planning-value-lp}
+\end{equation}
+每个动作对应一条约束，即使最终策略不使用这个动作，也不能事先删除它。
+
+\begin{theorem}[价值线性规划的解]
+ \label{thm:rl-planning-value-lp}
+ 任意可行$v$逐状态满足$v\geq V^*$。若$w(s)>0$对所有状态成立，则式~\eqref{eq:rl-planning-value-lp}~的唯一最优解为$V^*$。
+\end{theorem}
+\begin{proof}
+ 所有约束合起来就是$v\geq T^*v$。利用单调性反复备份，
+ $v\geq T^*v\geq(T^*)^2v\geq\cdots$，而压缩性使后者收敛到$V^*$，所以$v\geq V^*$。$V^*$自身满足全部约束，因而可行。对任何不同于$V^*$的可行$v$，至少一个坐标严格大于$V^*$，其他坐标不小于；所有权重严格为正便推出
+ $\sum_s w(s)v(s)>\sum_s w(s)V^*(s)$。这同时证明最优性和唯一性。
+\end{proof}
+
+若只关心初始分布下的回报，可以取$w=\rho_0$，但必须放弃上述全状态唯一性结论。例如增加一个从走廊不可达的孤立状态$z$，其唯一动作是零奖励自循环。约束只要求$v(z)\geq\gamma v(z)$，即$v(z)\geq0$。若$\rho_0(z)=0$，任何$v(z)\geq0$都不改变目标，而真正最优价值是$V^*(z)=0$。初始分布下目标最优，不等于每个未被关注的坐标都已恢复。
+
+% Outline: 2.2.2
+\subsection{占用度量的线性规划}
+\label{sec:rl-planning-occupancy-lp}
+
+只给每个动作任意分配一个权重，并不一定能形成策略轨迹。访问量必须满足“从哪里来、向哪里去”的守恒关系。沿用第~\ref{chap:rl-overview}~章的归一化占用度量，
+\[
+ d^\pi(s,a)=(1-\gamma)\sum_{t=0}^{\infty}
+ \gamma^t\mathbb P_\pi(s_t=s,a_t=a),\qquad
+ d^\pi(s)=\sum_a d^\pi(s,a).
+\]
+拆开$t=0$项，对其余时刻使用全概率公式，
+\begin{equation}
+ \begin{aligned}
+ d^\pi(s)
+ &=(1-\gamma)\rho_0(s)
+   +(1-\gamma)\sum_{t=1}^{\infty}\gamma^t
+     \sum_{x,a}\mathbb P_\pi(s_{t-1}=x,a_{t-1}=a)P(s\mid x,a)\\
+ &=(1-\gamma)\rho_0(s)+\gamma\sum_{x,a}P(s\mid x,a)d^\pi(x,a).
+ \end{aligned}
+ \label{eq:rl-planning-flow}
+\end{equation}
+图~\ref{fig:rl-planning-occupancy-flow}~显示三个格子的流量：注入不是$\rho_0$，而是$(1-\gamma)\rho_0$；每条转移边还要乘$\gamma$。对所有状态求和可得
+$\sum_{s,a}d^\pi(s,a)=1$，吸收终点也有占用量，只是之后不产生奖励。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-occupancy-flow}
+ \caption{手算走廊中前进策略的归一化折扣流。状态流出分别为$d_x,d_y,d_g$；初始注入为$0.1$，前进转移流为$0.72d$，原地流为$0.18d$，终点吸收流为$0.9d_g$。等待动作在最优解中的流量为0，未画出。}
+ \label{fig:rl-planning-occupancy-flow}
+\end{figure}
+
+对偶如何从价值约束中出现？取$w=\rho_0$，为每条写成“右端减左端不大于0”的约束引入$\lambda(s,a)\geq0$。拉格朗日函数为
+\[
+ \begin{aligned}
+ L(v,\lambda)
+ &=\sum_s\rho_0(s)v(s)
+ +\sum_{s,a}\lambda(s,a)[R(s,a)-v(s)]\\
+ &\quad+\gamma\sum_{s,a}\lambda(s,a)\sum_xP(x\mid s,a)v(x)\\
+ &=\sum_{s,a}\lambda(s,a)R(s,a)+\sum_s v(s)\kappa_\lambda(s),
+ \end{aligned}
+ \]
+其中收集$v(s)$后得到的系数为
+\[
+ \kappa_\lambda(s)=\rho_0(s)-\sum_a\lambda(s,a)
+       +\gamma\sum_{x,a}P(s\mid x,a)\lambda(x,a).
+\]
+变量$v(s)$没有符号限制，故$\inf_v L(v,\lambda)$有限当且仅当每个系数$\kappa_\lambda(s)$为0。于是自然对偶变量$\lambda$满足注入为$\rho_0$的流方程，它是\emph{未归一化}的占用量，总质量为$1/(1-\gamma)$。代入$d=(1-\gamma)\lambda$才得到本书使用的形式：
+\begin{equation}
+ \begin{aligned}
+ \max_{d\geq0}\quad&
+ \frac{1}{1-\gamma}\sum_{s,a}d(s,a)R(s,a)\\
+ \text{满足}\quad&
+ \sum_a d(s,a)-\gamma\sum_{x,a}P(s\mid x,a)d(x,a)
+   =(1-\gamma)\rho_0(s),\quad s\in\mathcal S.
+ \end{aligned}
+ \label{eq:rl-planning-occupancy-lp}
+\end{equation}
+归一化改变变量尺度，不改变问题目标$J(\pi)$；不能把归一化流约束与没有$(1-\gamma)^{-1}$的目标混用。
+
+\begin{theorem}[可行占用量的策略实现]
+ \label{thm:rl-planning-occupancy-realization}
+ 对有限折扣MDP，任意满足式~\eqref{eq:rl-planning-occupancy-lp}~约束的$d$都可由平稳随机策略实现。具体地，令$d(s)=\sum_a d(s,a)$；在$d(s)>0$处取$\pi(a\mid s)=d(s,a)/d(s)$，在$d(s)=0$处任取合法动作分布，则$d=d^\pi$。
+\end{theorem}
+\begin{proof}
+ 对正占用状态有$d(s,a)=d(s)\pi(a\mid s)$。零占用状态中，每个$d(s,a)$非负且和为0，所以各项皆为0，同一等式仍成立。将其代入流方程，以列向量$\bm d$表示状态占用量，
+ \[
+ \bm d=(1-\gamma)\bm\rho_0+\gamma(\bm P^\pi)^\top\bm d.
+ \]
+ 由于$\bm I-\gamma\bm P^\pi$可逆，其转置也可逆，此方程的唯一解为
+ \[
+ \bm d=(1-\gamma)\sum_{t=0}^{\infty}
+ \gamma^t((\bm P^\pi)^\top)^t\bm\rho_0.
+ \]
+ 右端正是策略$\pi$的折扣状态分布。再乘$\pi(a\mid s)$，得到$d(s,a)=d^\pi(s,a)$。零占用状态的任意动作选择没有改变这个唯一解。
+\end{proof}
+
+% Outline: 2.2.3
+\subsection{价值与占用度量的对偶关系}
+\label{sec:rl-planning-duality}
+
+价值LP总可取常数$R_{\max}/(1-\gamma)$作可行上界，且其目标由$V^*$从下方界住。占用LP至少有任意平稳策略的占用量作为可行点，所有可行$d$又属于总质量为1的非负单纯形，目标有界。因此这是有限维、可行且具有有限最优值的一对线性规划，线性规划强对偶保证两个最优目标相等。
+
+在示例~\ref{ex:rl-planning-corridor}~中，前进策略的两个非终点价值均大于等待的自循环备份$-0.04+0.9V(s)$，且前进备份达到等号，因此它已满足最优Bellman方程。取$\rho_0(x)=1$，其占用流满足
+\[
+ d_x=0.1+0.18d_x,\qquad
+ d_y=0.72d_x+0.18d_y,\qquad
+ d_g=0.72d_y+0.9d_g.
+\]
+解得
+\[
+ (d_x,d_y,d_g)=\frac{1}{1681}(205,180,1296).
+\]
+等待的占用量为0，前进及终点吸收动作取得相应状态的全部流量。原始目标与对偶目标逐项核对为
+\[
+ \rho_0^\top\bm v^*=V^*(x)=\frac{6718}{8405}
+ =10\left(-0.04\frac{205}{1681}
+           +0.792\frac{180}{1681}\right).
+\]
+终点占用了大部分折扣时间，但对奖励目标没有贡献；忽略它会使流量总和与守恒方程都出错。
+
+\begin{theorem}[互补松弛与最优动作]
+ \label{thm:rl-planning-complementarity}
+ 设$v,d$分别为以$\rho_0$加权的价值LP和归一化占用LP的最优解。若$d(s,a)>0$，则
+ \[
+ v(s)=R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)v(s').
+ \]
+ 由$d$按状态归一化恢复的策略在$\rho_0$下最优；仅凭正占用动作的等式，不能断言零占用状态的任意恢复动作也全状态最优。
+\end{theorem}
+\begin{proof}
+ 将流约束乘$v(s)$再求和，原始、对偶目标之差恰为
+ \[
+ \frac{1}{1-\gamma}\sum_{s,a}d(s,a)
+ \left[v(s)-R(s,a)-\gamma\sum_{s'}P(s'\mid s,a)v(s')\right].
+ \]
+ 每项由原始与对偶可行性保证非负，强对偶又使总和为0。因此，只要$d(s,a)>0$，对应方括号必须为0，这就是互补松弛。定理~\ref{thm:rl-planning-occupancy-realization}~保证恢复策略实现$d$，其$J$等于对偶目标，故等于$\rho_0^\top\bm v^*$。
+
+ 若某个状态占用为0，乘积等于0并不约束该处动作的松弛量。例如在不可达孤立状态增加一个奖励$-1$的自循环动作，从$\rho_0$出发完全不影响占用目标，却显然不如零奖励自循环。要取得全状态最优策略，可在所有状态对真正的$V^*$贪心，或使用严格正的初始权重求出全状态价值后恢复策略。
+\end{proof}
+
+这两种优化变量各有方便之处。表~\ref{tab:rl-planning-dp-lp}~中的累计成本接口尤其直接：若$c(s,a)$是有界单步成本，则对应策略的未归一化折扣累计期望为
+\[
+ \mathbb E_\pi\sum_{t=0}^{\infty}\gamma^t c(s_t,a_t)
+ =\frac{1}{1-\gamma}\sum_{s,a}d^\pi(s,a)c(s,a).
+\]
+这里仅建立代数接口，约束MDP的可行性、随机化和安全含义由第~\ref{chap:rl-trustworthy}~章讨论。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  形式 & 求解关系 & 适合检查的量\\
+  \midrule
+  价值迭代 & 局部Bellman备份 & 全状态残差、贪心损失界\\
+  价值LP & 全部动作的上界约束 & 原始可行性、最小上界\\
+  占用LP & 非负流及全局守恒 & 对偶间隙；累计成本$\sum dc/(1-\gamma)\leq B$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{递推与全局优化的不同接口。等价的最优目标不意味着通用LP求解器比专用动态规划更快。}
+ \label{tab:rl-planning-dp-lp}
+\end{table}
+
+% Outline: 2.3
+\section{特殊结构下的精确求解}
+\label{sec:rl-planning-structure}
+
+一般MDP把每个状态的价值都当作独立未知量，但一些任务不需要这么多自由度。下面分别检查四种结构：备份是否保留有限参数形式，价值方程是否能换元为线性方程，最优动作是否有单调形状，以及多个子任务是否可以分别求解。这四个问题关注不同对象，可以同时成立。
+
+% Outline: 2.3.1
+\subsection{价值函数族的封闭结构}
+\label{sec:rl-planning-closure}
+
+若价值原本可以由少数参数表示，一次精确备份之后还能不能这样表示？\term{Bellman封闭性}（Bellman closure）回答的就是这个问题。
+
+\begin{definition}[函数族的Bellman封闭性]
+ \label{def:rl-planning-closure}
+ 对给定算子$T$和函数族$\mathcal F$，若$v\in\mathcal F$蕴含$Tv\in\mathcal F$，称$\mathcal F$在$T$下封闭。有限时域也可使用逐时刻的函数族，要求$T_t\mathcal F_{t+1}\subseteq\mathcal F_t$，并要求终端价值属于$\mathcal F_H$。
+\end{definition}
+
+线性参数化本身不保证封闭。例如在连续状态$x$上，取两个动作的即时奖励为$x$和$-x$，之后立即终止。零函数属于线性函数族，但最优备份为$\max(x,-x)=|x|$，已经不再是$x$的线性函数。下面的二次形式之所以保留，依赖动力学和成本同时具有特殊结构，而不只是选择了一组方便的特征。
+
+\term{线性二次调节器}（linear quadratic regulator, LQR）用线性动力学描述状态变化，用二次成本权衡偏离目标与控制用力。此处改用有限时域、无折扣的成本最小化；记最小剩余成本为$C_t$，相应奖励取单步成本的负数，故奖励价值等于$-C_t$。设状态$\bm x_t\in\mathbb R^{n_x}$完全可见，动作$\bm u_t\in\mathbb R^{n_u}$无额外约束，
+\[
+ \bm x_{t+1}=\bm A\bm x_t+\bm B\bm u_t+\bm w_t,
+ \quad
+ \bm A\in\mathbb R^{n_x\times n_x},\
+ \bm B\in\mathbb R^{n_x\times n_u}.
+\]
+各$\bm w_t$相互独立，独立于此前状态与动作，均值为0，协方差$\bm\Sigma_t$有限。待最小化的成本为
+\begin{equation}
+ \mathbb E\!\left[
+ \sum_{t=0}^{H-1}
+  (\bm x_t^\top\bm Q\bm x_t+\bm u_t^\top\bm R\bm u_t)
+ +\bm x_H^\top\bm Q_f\bm x_H\right],
+ \label{eq:rl-planning-lqr-cost}
+\end{equation}
+其中$\bm Q,\bm Q_f\succeq0$且$\bm R\succ0$均对称；$\bm Q$是成本矩阵，不是动作价值$Q$。这里终端成本不为零，明确取$C_H(\bm x)=\bm x^\top\bm Q_f\bm x$。
+
+从终端开始，假设$C_{t+1}(\bm x)=\bm x^\top\bm S_{t+1}\bm x+c_{t+1}$，其中$\bm S_{t+1}\succeq0$。令$\bm m=\bm A\bm x+\bm B\bm u$。零均值使交叉项消失，且
+\[
+ \mathbb E[(\bm m+\bm w_t)^\top\bm S_{t+1}(\bm m+\bm w_t)]
+ =\bm m^\top\bm S_{t+1}\bm m+
+   \operatorname{tr}(\bm S_{t+1}\bm\Sigma_t).
+\]
+因此Bellman备份中需要最小化的部分是
+\[
+ \begin{aligned}
+ &\bm x^\top(\bm Q+\bm A^\top\bm S_{t+1}\bm A)\bm x
+ +2\bm u^\top\bm B^\top\bm S_{t+1}\bm A\bm x\\
+ &\qquad+\bm u^\top(\bm R+\bm B^\top\bm S_{t+1}\bm B)\bm u
+ +c_{t+1}+\operatorname{tr}(\bm S_{t+1}\bm\Sigma_t).
+ \end{aligned}
+ \]
+定义正定矩阵$\bm M_t=\bm R+\bm B^\top\bm S_{t+1}\bm B$和
+$\bm K_t=\bm M_t^{-1}\bm B^\top\bm S_{t+1}\bm A$。对$\bm u$配方，
+\[
+ \begin{aligned}
+ \bm u^\top\bm M_t\bm u+
+ 2\bm u^\top\bm B^\top\bm S_{t+1}\bm A\bm x
+ &=(\bm u+\bm K_t\bm x)^\top\bm M_t(\bm u+\bm K_t\bm x)\\
+ &\quad-\bm x^\top\bm K_t^\top\bm M_t\bm K_t\bm x.
+ \end{aligned}
+ \]
+由于$\bm M_t\succ0$，第一项在$\bm u_t^*=-\bm K_t\bm x_t$处唯一达到0。于是得到线性反馈与\term{Riccati递推}：
+\begin{equation}
+ \begin{aligned}
+ \bm K_t&=(\bm R+\bm B^\top\bm S_{t+1}\bm B)^{-1}
+                \bm B^\top\bm S_{t+1}\bm A,\\
+ \bm S_t&=\bm Q+\bm A^\top\bm S_{t+1}\bm A
+   -\bm A^\top\bm S_{t+1}\bm B
+      (\bm R+\bm B^\top\bm S_{t+1}\bm B)^{-1}
+      \bm B^\top\bm S_{t+1}\bm A,\\
+ c_t&=c_{t+1}+\operatorname{tr}(\bm S_{t+1}\bm\Sigma_t),\\
+ \bm S_H&=\bm Q_f,\qquad c_H=0.
+ \end{aligned}
+ \label{eq:rl-planning-riccati}
+\end{equation}
+无噪声部分是非负二次成本的最小值，因此$\bm S_t\succeq0$，归纳所需条件得以保留。噪声只增加$c_t$，不改变$\bm K_t$；这个结论依赖状态完全可见、噪声加性且独立，并不适用于动作会改变噪声分布或需要额外估计隐藏状态的任意控制问题。确定性有限时域推导及递推的标准形式可参见Boyd的课程讲义\scite{rl2-boyd2009-lqr}
+
+\begin{example}[标量Riccati递推]
+ \label{ex:rl-planning-lqr}
+ 取教学参数$A=B=Q=R=Q_f=1$、$H=2$。从$S_2=1$得到
+ $K_1=1/2$、$S_1=2-1/2=3/2$，再得
+ $K_0=(3/2)/(5/2)=3/5$、$S_0=5/2-9/10=8/5$。
+ 无噪声且$x_0=1$时，$u_0=-3/5$、$x_1=2/5$、
+ $u_1=-1/5$、$x_2=1/5$。代入成本，
+ \[
+ 1+\frac{9}{25}+\frac{4}{25}+\frac{1}{25}+\frac{1}{25}
+ =\frac85=C_0(1).
+ \]
+ 若两步噪声方差都改为$0.04$，反馈增益不变，
+ $c_1=0.04$、$c_0=0.04+1.5\times0.04=0.10$，
+ 故最优期望成本为$1.70$；这不是同一条确定轨迹的成本。
+\end{example}
+
+图~\ref{fig:rl-planning-lqr-closure}~展示了封闭性真正节省的工作：状态可取无穷多个值，但一次备份只需更新矩阵和常数。反馈计算为矩阵乘法；一般动作约束或非线性动力学会破坏上述无约束配方，不能继续声称价值全局二次。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-lqr-closure}
+ \caption{有限时域LQR的封闭关系。给定线性动力学、二次成本与独立零均值加性噪声，最小化一步成本后仍得到二次价值加常数；增益由反向递推得到，控制按正向时间执行。}
+ \label{fig:rl-planning-lqr-closure}
+\end{figure}
+
+对无限时域、无噪声、无折扣的总成本，标准结论要求$(\bm A,\bm B)$可稳定、$(\bm Q^{1/2},\bm A)$可检测，且$\bm Q\succeq0$、$\bm R\succ0$。可稳定指存在反馈使$\bm A-\bm B\bm K$的特征值位于单位圆内；可检测排除成本观测不到的不稳定模式。在这些条件下，零终端成本的递推随时域延长收敛到唯一的半正定稳定化解$\bm S$，满足将式~\eqref{eq:rl-planning-riccati}~中的$\bm S_t,\bm S_{t+1}$均换成$\bm S$的代数Riccati方程。
+
+证明路线是：更长的非负总成本使有限时域价值单调增加，可稳定反馈又提供有限二次上界，因而矩阵序列收敛；连续性给出代数方程，可检测性进一步排除不稳定的闭环模式。不能只找到一个代数解就认定它是稳定化解。持续的非零噪声通常使无折扣无限总成本发散，此时应改用平均成本等适当准则；有限时域中“噪声仅进入常数”并不意味着可以直接把常数累加到无穷。
+
+% Outline: 2.3.2
+\subsection{价值方程的可线性化结构}
+\label{sec:rl-planning-kl-control}
+
+LQR的价值形式封闭，但矩阵递推仍含求逆。另一类简化不要求价值落在低维函数族，而是改变控制接口与成本，使价值经过换元后满足线性方程。\term{KL控制}用偏离自然转移规律的程度计费；控制变量是下一状态的分布，而不是一般MDP中任意给定的一组动作。
+
+\begin{definition}[有限时域KL控制]
+ \label{def:rl-planning-kl-control}
+ 给定有限状态集、被动转移$P_0(s'\mid s)$、取有限实数值的状态成本$c_t(s)$和终端成本$g(s)$，以及$\lambda>0$。在状态$s$可选择概率分布$u(\cdot\mid s)$，要求
+ $P_0(s'\mid s)=0$时$u(s'\mid s)=0$。单步期望成本为
+ \[
+ c_t(s)+\lambda D_{\mathrm{KL}}(u(\cdot\mid s)\Vert P_0(\cdot\mid s)).
+ \]
+ 本节以$V_t^{\mathrm c}$表示最小剩余\emph{成本}，取$V_H^{\mathrm c}=g$，不折扣；奖励最大化的对应价值为$-V_t^{\mathrm c}$。
+\end{definition}
+
+支持约束禁止用有限成本产生被动模型绝不可能发生的转移。对支持内概率采用$0\log0=0$约定；$\lambda>0$保证代价确实惩罚分布偏离，而不是鼓励任意改变动力学。
+
+给定$V_{t+1}^{\mathrm c}$，定义
+$Z_t(s)=\sum_{s'}P_0(s'\mid s)\exp(-V_{t+1}^{\mathrm c}(s')/\lambda)>0$，并构造概率分布
+\[
+ u_t^*(s'\mid s)=
+ \frac{P_0(s'\mid s)\exp(-V_{t+1}^{\mathrm c}(s')/\lambda)}{Z_t(s)}.
+\]
+直接把$\log u_t^*$代回KL散度，可将需要最小化的两项改写成
+\begin{equation}
+ \begin{aligned}
+ &\lambda D_{\mathrm{KL}}(u\Vert P_0)
+       +\sum_{s'}u(s'\mid s)V_{t+1}^{\mathrm c}(s')\\
+ &\qquad=\lambda D_{\mathrm{KL}}(u\Vert u_t^*)-\lambda\log Z_t(s).
+ \end{aligned}
+ \label{eq:rl-planning-kl-completion}
+\end{equation}
+KL非负且在两分布相同时为0，所以这不是只满足一阶条件的候选解：$u_t^*$确实达到全局最小值。由此
+\[
+ V_t^{\mathrm c}(s)=c_t(s)-\lambda\log Z_t(s).
+\]
+成本较小的后继得到较大的指数权重；负号来自成本最小化，不能照搬为奖励的负向偏好。
+
+令$z_t(s)=\exp(-V_t^{\mathrm c}(s)/\lambda)$，则
+\begin{equation}
+ z_t(s)=\exp(-c_t(s)/\lambda)\sum_{s'}P_0(s'\mid s)z_{t+1}(s'),
+ \qquad z_H(s)=\exp(-g(s)/\lambda).
+ \label{eq:rl-planning-kl-linear}
+\end{equation}
+这是关于$z_{t+1}$的线性反向递推。计算出$z$后，
+$u_t^*(s'\mid s)=P_0(s'\mid s)z_{t+1}(s')/\sum_xP_0(x\mid s)z_{t+1}(x)$
+恢复最优转移。线性可解MDP的控制限制、指数变换及不同时间目标的区别来自Todorov的原始工作\scite{rl2-todorov2006-linear}
+
+例如只剩一步，被动转移以相等概率到达两处，终端成本分别为0和$\lambda\log3$，当前状态成本为0。两处$z_H$分别为1和$1/3$，故$Z=2/3$，最优受控概率为$(3/4,1/4)$，最小成本为$\lambda\log(3/2)$。直接选择概率$(1,0)$虽消除终端成本，却要支付$\lambda\log2$，反而更贵；KL项使最优控制保留第二个后继。
+
+表~\ref{tab:rl-planning-kl-regimes}~列出相同换元的适用边界。特别是一般折扣成本方程含$\gamma V(s')$，换元后得到$z(s)=e^{-c(s)/\lambda}\sum_{s'}P_0(s'\mid s)z(s')^\gamma$，通常仍是非线性关系。能够线性化也不等于未知量很少：有限表格中仍需存储每个状态的$z(s)$。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  目标 & 换元后的关系 & 所需边界或附加条件\\
+  \midrule
+  有限时域 & $\bm z_t=\bm G_t\bm P_0\bm z_{t+1}$ & $\bm G_t=\operatorname{diag}(e^{-c_t/\lambda})$，终端$\bm z_H=e^{-\bm g/\lambda}$\\
+  终止型总成本 & $\bm z_N=\bm G_N(\bm P_{NN}\bm z_N+\bm P_{NB}\bm z_B)$ & 固定终点集$B$的边值；如$\bm G_N\bm P_{NN}$的谱半径小于1，线性方程唯一可解\\
+  平均成本 & $e^{-\bar c/\lambda}\bm z=\bm G\bm P_0\bm z$ & 有限不可约被动链、有限成本给正的Perron特征向量；只确定尺度，非周期性影响幂迭代\\
+  一般折扣成本 & $\bm z=\bm G\bm P_0\bm z^\gamma$ & 幂按坐标作用；不再是线性方程\\
+  \bottomrule
+ \end{tabularx}
+ \caption{KL控制的三类线性形式及折扣边界。终止型的$N$表示非终点集合，不是时间；平均成本的$\bar c$是每步最优平均成本。}
+ \label{tab:rl-planning-kl-regimes}
+\end{table*}
+
+平均成本关系可由$\bar c+V^{\mathrm c}(s)=c(s)-\lambda\log\sum_{s'}P_0(s'\mid s)e^{-V^{\mathrm c}(s')/\lambda}$直接换元得到。不可约非负矩阵的Perron理论给出正特征向量；结合该等式沿轨迹求和、使有界差分价值的首尾项除以时长后消失，得到平均成本的最优性。这里的证明依据是特征值与平均成本验证，不是折扣压缩性。
+
+% Outline: 2.3.3
+\subsection{最优策略的单调与阈值结构}
+\label{sec:rl-planning-monotone}
+
+库存越多时通常不必订得更多，但这句话有两种动作含义：“订货量”可能下降，“订货后的总库存”却可能上升。结构结论必须先固定动作如何参数化。\term{单调策略}在有序状态上按同一方向选择有序动作；二元动作的单调策略常可用一个切换点表示，称为\term{阈值策略}。库存中的\term{基库存策略}则将订后库存设为$\max\{x,S_t\}$，订货量为$(S_t-x)_+$。阈值或基库存水平$S_t$还要由模型与目标计算，形状本身不告诉我们位置。
+
+要从直觉得到保证，关键是比较“大动作相对小动作的成本差”如何随状态改变。称一步成本目标$f(s,a)$具有\term{递减差分}，若对$s_2\geq s_1$、$a_2\geq a_1$，
+\begin{equation}
+ f(s_2,a_2)-f(s_2,a_1)
+ \leq f(s_1,a_2)-f(s_1,a_1).
+ \label{eq:rl-planning-decreasing-differences}
+\end{equation}
+也就是说，状态增大时，较大动作变得相对更便宜。以下有限全序版本把适当的并列选择规则一并写清；更一般的格上比较静态结果见Topkis\scite{rl2-topkis1978-lattice}
+
+\begin{theorem}[递减差分给出单调最优动作]
+ \label{thm:rl-planning-monotone}
+ 状态有序、各状态共享同一个有限全序动作集，目标为成本最小化。若$f$满足式~\eqref{eq:rl-planning-decreasing-differences}，则选取最大的最小化动作
+ $a^*(s)=\max\arg\min_a f(s,a)$得到随$s$单调不减的策略。
+\end{theorem}
+\begin{proof}
+ 取$s_2\geq s_1$，记$a_1=a^*(s_1)$、$a_2=a^*(s_2)$。反设$a_2<a_1$。最优性给出
+ $f(s_1,a_1)-f(s_1,a_2)\leq0$与
+ $f(s_2,a_1)-f(s_2,a_2)\geq0$。递减差分又给出
+ \[
+ 0\leq f(s_2,a_1)-f(s_2,a_2)
+ \leq f(s_1,a_1)-f(s_1,a_2)\leq0.
+ \]
+ 所有不等式只能取等号，故$a_1$也是$s_2$处的最小化动作。但$a_1>a_2$，与$a_2$是最大的最小化动作矛盾。因此$a_2\geq a_1$。
+\end{proof}
+
+这一定理约束的是包含剩余价值的目标，不只是即时成本。给出一个可逐步核查条件的排队例子：状态$x\in\{0,\ldots,B\}$为有容量上限的队长，动作$a=0$保留当前队列，$a=1$立即清空队列。保留支付非负、单调不减的等待成本$h(x)$，清空支付固定成本$K>0$。随后发生与状态动作独立、分布已知的非负到达$W_t$，容量外到达被丢弃且不另收费；后继分别为
+$\min(x+W_t,B)$和$\min(W_t,B)$。取有限时域、无折扣、终端成本0。
+
+若$C_{t+1}$单调不减，则
+\[
+ \begin{aligned}
+ f_t(x,0)&=h(x)+\mathbb E C_{t+1}(\min(x+W_t,B)),\\
+ f_t(x,1)&=K+\mathbb E C_{t+1}(\min(W_t,B)).
+ \end{aligned}
+ \]
+第一项随$x$不减，第二项为常数，所以二者的最小值$C_t$仍随$x$不减；从$C_H=0$反向归纳，该性质每步保持。同时$f_t(x,1)-f_t(x,0)$随$x$不增，正是二元动作下的递减差分。因此“队列达到某阈值便清空”有了完整的模型条件。若加入依赖队长的清空费用、复杂丢包成本或不同服务后的到达机制，就应重新验证差分，不能沿用结论。
+
+取教学参数$B=5$、$h(x)=x$、$K=2.5$、$W_t=1$、$H=2$。最后一步$C_1(x)=\min(x,2.5)$，在$t=0$处清空的目标恒为$2.5+C_1(1)=3.5$，保留的目标为$x+C_1(\min(x+1,5))$。在$x=0,1,2$处后者分别为1、3、4.5，因此阈值为2，如图~\ref{fig:rl-planning-threshold}~所示。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-threshold}
+ \caption{上述两步排队教学模型在$t=0$的最优动作。横轴是整数队长，纵轴0表示保留、1表示清空；连接线只帮助阅读阶梯形状，不表示连续状态模型。阈值2由列出的Bellman目标计算。}
+ \label{fig:rl-planning-threshold}
+\end{figure}
+
+库存问题需要另外处理动作约束$y\geq x$，不能直接套用共享动作集的定理。经典的零提前期、独立需求、允许缺货结转、无固定订货费、线性单位订货费和凸持有／缺货成本模型中，若终端成本凸且每步目标有最小值，动态规划保持适当凸性。写订后库存$y$时，一步目标可整理为$-cx+G_t(y)$，其中$G_t$凸；在$y\geq x$上最小化便得到$y^*=\max(x,S_t)$，$S_t$为$G_t$的最小化点。这里订后库存单调不减，订货量单调不增，固定订货费等改动则可能产生其他策略形状。
+
+% Outline: 2.3.4
+\subsection{整体价值与策略的可分离结构}
+\label{sec:rl-planning-separable}
+
+两个设备各有状态，各自的操作也不相互影响时，枚举它们的联合状态似乎浪费计算。但只有动力学独立还不够：若两台设备共用一个操作者，一次只能操作一台，动作选择仍然耦合。
+
+\begin{theorem}[独立子过程的可分离性]
+ \label{thm:rl-planning-separable}
+ 设$s=(s_1,\ldots,s_m)$，动作集合是$\mathcal A(s)=\prod_i\mathcal A_i(s_i)$，
+ \[
+ P(s'\mid s,a)=\prod_iP_i(s_i'\mid s_i,a_i),\qquad
+ R(s,a)=\sum_iR_i(s_i,a_i).
+ \]
+ 在有限状态动作的折扣问题中，$V^*(s)=\sum_iV_i^*(s_i)$，且各子过程的最优动作可分别选择。有限时域中，若终端价值也可加，同一结论按时刻成立。
+\end{theorem}
+\begin{proof}
+ 对任意可加函数$v(s)=\sum_i v_i(s_i)$，利用转移的乘积形式并对其他坐标求和，
+ \[
+ \sum_{s'}P(s'\mid s,a)v(s')
+ =\sum_i\sum_{s_i'}P_i(s_i'\mid s_i,a_i)v_i(s_i').
+ \]
+ 因为每个$a_i$可以独立地在$\mathcal A_i(s_i)$中选择，
+ \[
+ \begin{aligned}
+ (T^*v)(s)
+ &=\max_{a_1,\ldots,a_m}\sum_i
+   \left[R_i(s_i,a_i)+\gamma\sum_{s_i'}P_i(s_i'\mid s_i,a_i)v_i(s_i')\right]\\
+ &=\sum_i(T_i^*v_i)(s_i).
+ \end{aligned}
+ \]
+ 最后一个等式的两个方向分别来自“任意动作的和不超过各自最大值之和”和“同时选择每个最大化动作便达到该和”。有限时域由可加终端值反向归纳，且逐层的独立最大化恢复策略。折扣情形取各子过程固定点$v_i=V_i^*$，其和成为联合$T^*$的固定点；唯一性给出联合最优价值，独立最大化动作构成联合最优策略。
+\end{proof}
+
+图~\ref{fig:rl-planning-factorization}~显示两个独立子网格各有一个动作接口的情形。若额外规定每步最多激活其中一个，就不能同时选择局部最大化动作，证明中的最后一个等式随之失效。最简单的反例是两个各只有一个状态的设备：激活一个每步奖励1，空闲奖励0，所有状态恒定。在笛卡尔积动作下，联合最优价值为$2/(1-\gamma)$；加入互斥激活后只有$1/(1-\gamma)$。转移完全独立，也没有恢复可加的局部最优值。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-factorization}
+ \caption{可分解的动力学不等于可分解的决策。上部两个子网格分别接收$a_1,a_2$；下部共享调度选择只能激活一个接口，使联合动作集不再是原局部动作集的笛卡尔积。}
+ \label{fig:rl-planning-factorization}
+\end{figure}
+
+共享激活约束有时仍能用更特殊的结构求解。\term{经典冻结型Markov老虎机}（rested Markov bandit）中，多个臂独立，只有被激活的臂转移并产生奖励，其他臂状态冻结且奖励为0；每步恰好激活一个臂，无切换成本。对有限状态、已知转移、有界非负奖励、共同$0<\gamma<1$和无限时域目标，Gittins指数定理给出最优选择规则：每步激活当前指数最大的臂。
+
+对臂$i$当前状态$x$，指数可写成局部停止问题
+\begin{equation}
+ \nu_i(x)=\sup_{\tau\geq1}
+ \frac{\mathbb E_x\sum_{t=0}^{\tau-1}\gamma^t R_i(X_t)}
+      {\mathbb E_x\sum_{t=0}^{\tau-1}\gamma^t},
+ \label{eq:rl-planning-gittins}
+\end{equation}
+其中$X_t$是连续激活该臂时的局部状态过程，$\tau$是依据该臂已见历史决定的停止时刻，分母为正。可以把候选指数$\lambda$理解为每次激活的机会成本：考察最优停止收益
+$\sup_{\tau\geq1}\mathbb E_x\sum_{t<\tau}\gamma^t(R_i(X_t)-\lambda)$，
+临界的$\lambda$给出上述比值。指数定理的关键不是价值直接相加，而是利用冻结性将竞争臂的激活片段进行交换比较，证明按指数排序不会损失回报。完整的指数理论与局部计算方法见Gittins的原文\scite{rl2-gittins1979-index}
+
+这个结论没有覆盖不激活时也会演化的restless情形，也没有覆盖任意有限截止日期或切换成本。局部臂的价值仍可有封闭、可线性化或单调结构，但这些局部便利不自动解决全局调度耦合。
+
+% Outline: 2.4
+\section{面向当前状态的有限预算下的近似规划}
+\label{sec:rl-planning-local-search}
+
+前面的算法试图回答每个状态该怎样行动。执行导航时，机器人可能只需在很短时间内决定当前位置的下一步。此时可以把计算集中到从当前状态能够到达的未来，而不先解出整张价值表；代价是每次行动前可能都要重新搜索。
+
+% Outline: 2.4.1
+\subsection{有限预算下的近似规划问题}
+\label{sec:rl-planning-local-budget}
+
+当前状态规划的输出通常是一个动作，以及可选的动作价值估计。评价它需要同时说明该动作的长期质量、作决定的在线延迟、模型调用次数和搜索树占用的内存。一个全状态方法即使总运行时间较长，也可能预先完成计算而实现快速行动；一个局部方法即使总查询较少，也可能超过单次行动的截止时间。二者应按实际输出和预算比较。
+
+图~\ref{fig:rl-planning-search-tree}~把有限预算分配到四处：只看有限步、只保留部分分支、给叶子补上剩余价值，以及决定下一次模拟走哪条路径。它们可以在同一次搜索中使用，而不是四个互斥的方法类别。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-search-tree}
+ \caption{局部搜索中的四种预算安排。方框是状态处的动作选择，圆点是选定动作后的随机后继选择；虚线边表示未展开的分支，底部虚线表示深度截断，叶子处的$b$为剩余价值估计。加粗路径表示下一次模拟的一个可能样本路径，不表示确定的环境转移。}
+ \label{fig:rl-planning-search-tree}
+\end{figure}
+
+精确期望接口允许读取一个动作的所有非零概率后继并加权求和；生成模型接口则只返回某次随机结果，必须用重复查询近似期望。后者仍保留动作选择节点和随机后继节点的区别：规划器可以主动选择查询哪个动作，却不能把随机后继中最有利的一个当成必然结果。已知规则消除了模型规格的不确定性，没有消除有限模拟的统计误差。
+
+% Outline: 2.4.2
+\subsection{未来步数受限的搜索空间构造}
+\label{sec:rl-planning-horizon-search}
+
+令$b$为搜索边界上的终端估值，从当前状态$s$向前考虑$H$步，定义
+\begin{equation}
+ U_H^b(s)=\sup_\sigma\mathbb E_\sigma\!\left[
+ \sum_{t=0}^{H-1}\gamma^t r_t+\gamma^H b(s_H)
+ \,\middle|\,s_0=s\right].
+ \label{eq:rl-planning-lookahead}
+\end{equation}
+$\sigma$允许在这$H$步中根据已经到达的状态选择动作。因此这是反馈决策树的优化，不是预先固定一串动作后忽略随机后果。由$U_0^b=b$反向备份，有$U_h^b=T^*U_{h-1}^b$。零边值$b=0$把搜索范围以外的回报删掉，而非断言真实任务在第$H$步终止。
+
+\term{滚动时域规划}（receding-horizon planning）每次求解这样一个有限问题，只执行根节点动作；观察到真实新状态后，再以同样的长度$H$重新规划。它能够利用实际发生的滑移，但每次重新开始都保留同一个截断偏差。
+
+\begin{theorem}[有限前瞻的终端误差]
+ \label{thm:rl-planning-terminal-error}
+ 对有界终端函数$b,\tilde b$，
+ \[
+ \lVert U_H^b-U_H^{\tilde b}\rVert_\infty
+ \leq\gamma^H\lVert b-\tilde b\rVert_\infty.
+ \]
+ 特别地，若$\lVert b-V^*\rVert_\infty\leq\varepsilon$，
+ 则$\lVert U_H^b-V^*\rVert_\infty\leq\gamma^H\varepsilon$；
+ 零终端值满足
+ $\lVert U_H^0-V^*\rVert_\infty\leq\gamma^H R_{\max}/(1-\gamma)$。
+ 固定同一策略序列、比较其两个终端估值时，同样成立。
+\end{theorem}
+\begin{proof}
+ 对任意同一策略序列，两个$H$步目标的前$H$步奖励相消，差只剩
+ $\gamma^H\mathbb E[b(s_H)-\tilde b(s_H)]$，绝对值不超过
+ $\gamma^H\lVert b-\tilde b\rVert_\infty$。对两个目标分别取上确界，利用
+ $|\sup f-\sup g|\leq\sup|f-g|$，该界仍成立。也可逐层使用期望的非扩张性和最大化的非扩张性，每层再乘$\gamma$，得到同一结果。
+
+ 取$\tilde b=V^*$时，$T^*V^*=V^*$保证$U_H^{V^*}=V^*$，即得第二条。又因$\lVert V^*\rVert_\infty\leq R_{\max}/(1-\gamma)$，令$b=0$得到零边值界。它也等于直接控制尾和
+ $\sum_{t=H}^{\infty}\gamma^t|r_t|\leq\gamma^H R_{\max}/(1-\gamma)$所得的界。
+\end{proof}
+
+这条结论界定的是前瞻价值。若每次都使用相同的$H$、边界函数$b$和固定的并列动作选择规则，精确求解后执行根动作便定义了一个平稳策略。它是对$U_{H-1}^b$贪心，而不是对$U_H^b$贪心。由定理~\ref{thm:rl-planning-greedy-loss}，$H\geq1$且$\lVert b-V^*\rVert_\infty\leq\varepsilon$时，滚动策略的损失至多
+$2\gamma^H\varepsilon/(1-\gamma)$。因此小的根节点估值误差与长期执行损失仍须区分。
+
+\begin{example}[同一障碍下的短前瞻]
+ \label{ex:rl-planning-detour}
+ 为隔离时域的影响，采用基准网格的坐标、障碍和终点，但将起点改为$(1,2)$，取消滑移，使合法动作确定执行；奖励和$\gamma=0.9$不变，所有搜索使用$b=0$。从起点向上绕过障碍，最短4步到终点；向下进入底部通道，至少6步到终点。
+
+ 长度$L$的确定到达路径的回报为
+ $-0.04\sum_{t=0}^{L-2}0.9^t+0.9^{L-1}$。
+ 当$H=2$时，上、下动作的最优截断回报都为$-0.076$，按“下优先”的并列规则会选下。当$H=4$时，向上的分支已经看到终点，回报为$0.6206$；向下的分支仍只有四次步成本，回报为$-0.13756$。完整6步底部路线的回报为$0.426686$，也低于上方路线。
+\end{example}
+
+图~\ref{fig:rl-planning-detour}~将短树看不见的终点放回网格。重复规划不保证自动纠正上述问题：若始终用$H=1$和“下、上、右、左”的并列次序，起点会向下，底部左格又会向上，产生往返。若早期动作不可逆，后来的长搜索更无法撤销已经发生的损失。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-detour}
+ \caption{确定性教学变体中的两条绕行路线。实线为4步上方路线，虚线为6步底部路线；标记$H=2$说明两个首动作在零叶值下都尚未看到终点。图中条件仅用于示例~\ref{ex:rl-planning-detour}，不替代基准随机网格。}
+ \label{fig:rl-planning-detour}
+\end{figure}
+
+% Outline: 2.4.3
+\subsection{未来分支受限的搜索空间构造}
+\label{sec:rl-planning-sparse-search}
+
+即使深度固定，每一层仍同时增长动作分支和随机后继分支。删除一个候选动作会改变可选决策，可能永久遗漏最优选择；给保留的动作抽样后继，则是在估计同一个转移期望。二者的误差来源不同，不能把“每个动作只抽一个后继”解释为环境已经确定。
+
+\term{稀疏采样}（sparse sampling）在每个搜索节点枚举有限动作，对每个动作独立取得$m$个模型样本，并对这些样本递归估值。以零叶值为例，
+\begin{equation}
+ \begin{aligned}
+ \widehat U_0(s)&=0,\\
+ \widehat Q_h(s,a)&=\frac1m\sum_{j=1}^{m}
+       \bigl[r_j+\gamma\widehat U_{h-1}^{(j)}(s'_j)\bigr],\\
+ \widehat U_h(s)&=\max_{a\in\mathcal A(s)}\widehat Q_h(s,a).
+ \end{aligned}
+ \label{eq:rl-planning-sparse-sampling}
+\end{equation}
+这里$r_j,s'_j$中的$j$是同一状态动作查询下的样本编号，不是轨迹时刻；上标$(j)$标记相应的递归子树，不是同一张全局表的迭代次数。每棵子树使用新样本。设每处动作数至多为$A$，则深度$H$的模型调用数满足
+$C_0=0$、$C_h\leq Am(1+C_{h-1})$，故
+$C_H\leq\sum_{\ell=1}^{H}(Am)^\ell$。状态空间可以很大，但树只访问采到的状态。
+
+一个保守的高概率论证可以直接看出所需条件。理想的$h$步值为$U_h^0$，则
+$r+\gamma U_{h-1}^0(s')\in[-V_{\max},V_{\max}]$。
+对树中一个动作的$m$个独立样本，Hoeffding不等式给出其样本均值偏离理想期望超过$\eta$的概率至多
+$2\exp[-m\eta^2/(2V_{\max}^2)]$。
+树中需要估计的动作均值至多有
+$M=A\sum_{\ell=0}^{H-1}(Am)^\ell$个。即使节点状态由祖先样本决定，在给定祖先后，该节点的新样本仍独立，且相同的概率界一致成立。因此联合失败概率至多
+$2M\exp[-m\eta^2/(2V_{\max}^2)]$。
+
+在所有这些均值均准确的事件上，把理想子值替换为递归估计最多再增加$\gamma e_{h-1}$，所以
+$e_h\leq\eta+\gamma e_{h-1}$、$e_0=0$，从而
+$e_H\leq\eta(1-\gamma^H)/(1-\gamma)$。
+根部各动作值的误差也有同样上界；按估计值选动作相对理想$H$步最优首动作的损失不超过$2e_H$。再单独加上截断误差，才能联系无限时域目标。选择$m$使上述失败概率不超过指定$\alpha$便得到一条充分保证；$M$也依赖$m$，故这是需满足的隐式条件，而不是忽略树大小的一次均值估计。
+
+这一证明路线强调独立生成模型、有限动作、奖励界和有限树上的联合控制。Kearns等给出更系统的稀疏采样分析：当前状态规划的代价可以不显含全状态数，但仍可能对有效时域和精度非常昂贵\scite{rl2-kearns2002-sparse}
+
+另一种节省宽度的安排是\term{渐进加宽}（progressive widening）：访问节点较少时只展开少量候选，访问增加后再加入新动作或后继。图~\ref{fig:rl-planning-widening}~固定同一个父节点，区分预设宽度与随访问增长的宽度。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-widening}
+ \caption{固定分支与渐进加宽。左侧预先只保留两个动作；右侧在节点访问次数$N$增加后加入第三个动作，虚线标记本次新增边。若加宽的是随机后继而非动作，应在每个动作节点内部另行实施，不能混为同一次动作筛选。}
+ \label{fig:rl-planning-widening}
+\end{figure}
+
+例如可限制动作数为$\lceil cN^\beta\rceil$，其中$c>0$、$0<\beta<1$，从而使宽度增长慢于访问次数。这只是预算规则。连续动作还需要规定新动作的提议分布、最优动作邻域的覆盖以及价值随动作变化的正则性；随机后继的保留与重采样也要维护正确概率口径。没有这些条件，新增更多节点不构成最优性证书。
+
+% Outline: 2.4.4
+\subsection{搜索空间外的未来价值评估}
+\label{sec:rl-planning-leaf-value}
+
+叶子只是计算停下的位置，未必是环境结束的位置。\term{边界价值评估}给未展开的后续过程一个数值摘要。零终端值直接删去后续回报；启发式用问题知识给近似值；基础策略的\term{rollout}则从叶子继续模拟既定策略；近似价值函数通过共享参数给出数值。四者都可作为式~\eqref{eq:rl-planning-lookahead}~的$b$，但估计目标并不自动相同。
+
+固定示例~\ref{ex:rl-planning-detour}~中的两处叶子$p=(2,3)$和$q=(3,2)$，它们在确定性变体中都恰好距终点两步。最佳剩余回报同为$-0.04+0.9=0.86$。表~\ref{tab:rl-planning-leaf-values}~在这同一对叶子上比较四种接口；所有数字均为教学设定。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}lcc>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  边界规则 & $b(p)$ & $b(q)$ & 额外调用 & 偏差与方差\\
+  \midrule
+  零值 & $0$ & $0$ & 0 & 忽略真实剩余回报，无采样方差\\
+  距离启发式 & $0.9$ & $0.9$ & 已知距离时为0 & 只计终点折扣、漏计步成本；此例高估$0.04$\\
+  基础策略rollout & $0.86$ & $0.6206$ & 每条轨迹分别2、4次 & 基础策略在$q$多走两步；确定性模型中方差为0\\
+  近似价值函数 & $0.80$ & $0.82$ & 求值时为0 & 给定的教学预测；相对$V^*$误差分别$-0.06,-0.04$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{固定叶子的四类评估。rollout基础策略在$p$走$p\to(3,3)\to g$，在$q$走$q\to(3,1)\to(4,1)\to(4,2)\to g$；预测数值不是训练实验结果，计算或训练这些预测的前期代价未计入在线调用。}
+ \label{tab:rl-planning-leaf-values}
+\end{table*}
+
+rollout在模型随机时估计的是$V^{\pi_{\mathrm b}}$，其中$\pi_{\mathrm b}$为所选基础策略，而不是$V^*$。独立平均$N$条完整回报可降低方差，但不会消除基础策略本身的次优性。若只模拟$L$步并置零，估计的还是截断基础策略价值；相对$V^{\pi_{\mathrm b}}$另有至多$\gamma^L V_{\max}$的尾误差。折扣任务可能没有自然终止，因而“完整rollout一次需要有限调用”也不能无条件成立。
+
+定理~\ref{thm:rl-planning-terminal-error}~说明，更准确的叶值和更深的前瞻可以共同减小根部误差。深度增加会扩展整棵树，改善叶值却可能复用已有计算；反过来，一个在搜索到达区域以外训练准确的价值网络，并不保证当前叶子上的误差小。此处只使用价值函数，怎样跨状态表示和评价它，接下来再讨论。
+
+% Outline: 2.4.5
+\subsection{搜索预算的自适应分配}
+\label{sec:rl-planning-mcts}
+
+平均分配模拟次数会在已经明显较差的分支上耗费查询。\term{蒙特卡罗树搜索}（Monte Carlo tree search, MCTS）保留搜索统计量，用已有模拟决定下一次走哪里。一次模拟沿已建树选择动作，遇到未充分展开的节点时扩展，在叶子评估剩余回报，然后把沿途实际奖励与折扣叶值逐层回传。随机后继仍按模型抽样；“选择较好分支”只作用于可控动作。
+
+在边$(s,a)$上记访问次数$N(s,a)$及从该边起算的平均折扣回报$\bar Q(s,a)$，令$N(s)=\sum_aN(s,a)$。\term{UCT}使用一种树内上置信选择分数，
+\begin{equation}
+ a\in\arg\max_a\left[
+ \bar Q(s,a)+c\sqrt{\frac{\log N(s)}{N(s,a)}}\right],
+ \label{eq:rl-planning-uct}
+\end{equation}
+其中$c>0$的尺度应与回报范围相配，未访问动作先至少试一次。探索项使低访问分支有机会补充证据。最终根动作通常按访问次数或均值决定，不再加上探索奖励；必须说明使用哪种规则。
+
+图~\ref{fig:rl-planning-mcts}~给出一次具体更新。为演示统计量而人工给定根状态$(1,1)$的两条边：
+$N(\text{右})=4,\bar Q(\text{右})=0.30$，
+$N(\text{上})=1,\bar Q(\text{上})=0.20$，
+取$c=0.20$。UCT分数分别约为$0.427$与$0.454$，因此下一次模拟先试“上”。假定本次没有滑移，到达$(1,2)$，当步奖励$-0.04$，叶估值$b=0.70$；回传值为
+$g=-0.04+0.9\times0.70=0.59$。
+这是假设的单次搜索记录，$0.70$不是该状态的真实最优价值。更新后
+$N(\text{上})=2$，
+$\bar Q(\text{上})=(1\times0.20+0.59)/2=0.395$。
+此时两条分数约为$0.434$与$0.584$，下一次仍偏向“上”。一次乐观叶估值会改变后续预算，因此访问次数大并不自行证明估值正确。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-mcts}
+ \caption{一次MCTS模拟及回传。边标签列出模拟前的$(N,\bar Q)$；本次选择“上”，扩展到样本后继，用$b=0.70$评估叶子，并回传$0.59$，得到更新后的$(2,0.395)$。箭头旁分别标明树内选择与统计量回传，数字为正文规定的教学记录。}
+ \label{fig:rl-planning-mcts}
+\end{figure}
+
+更深的路径按$g_t=r_t+\gamma g_{t+1}$逐层回传，每条边更新
+$N\leftarrow N+1$、
+$\bar Q\leftarrow\bar Q+(g_t-\bar Q)/N$。
+不能把根部的同一个累计回报不加区分地写入所有深度，因为各边的起算时刻不同。
+
+UCT的探索项形式类似独立老虎机的UCB，但树中一个动作的后续回报会随下游搜索策略改变，并非固定同分布样本。原始UCT分析在有限动作、适当有界回报及有限深度等设定下，沿树深归纳控制这种非平稳性；折扣问题还需结合截断分析。其一致性不等于任意先验、任意叶网络和任意连续加宽方案都有相同有限样本界\scite{rl2-kocsis2006-uct}
+
+AlphaZero说明搜索可以利用学习得到的建议而不学习环境动力学。棋类合法走子与状态转移由已知规则给出，网络输出动作先验与局面价值，搜索再产生比一次网络求值更充分的动作比较\scite{rl2-silver2018-alphazero}
+
+它采用带先验的PUCT式选择，典型探索项与
+$p(a\mid s)\sqrt{N(s)}/(1+N(s,a))$成正比，而非直接照抄式~\eqref{eq:rl-planning-uct}。表~\ref{tab:rl-planning-alphazero}~区分各信息的职责。
+
+\begin{table*}[t]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  部件 & 无学习先验的基本搜索 & AlphaZero中的接口\\
+  \midrule
+  环境后果 & 用精确规则或模型样本展开 & 已知棋类规则，不以学习动力学为必要条件\\
+  动作预算 & 根据均值和探索项分配 & 策略先验影响早期访问分配；先验错误可能浪费预算\\
+  叶子价值 & 零值、启发式或rollout & 价值网络估计当前局面结果，仍有逼近误差\\
+  搜索输出 & 根动作及其统计量 & 根访问分布提供动作选择依据，并作为策略训练目标\\
+  训练反馈 & 可以完全没有训练阶段 & 自我对弈结果训练价值；对手与数据分布随策略变化\\
+  \bottomrule
+ \end{tabularx}
+ \caption{已知模型搜索中规则、先验、叶值和搜索目标的不同作用。棋类回报与双方轮流行动的符号按当前玩家处理，不能直接套用单智能体网格的同向回报。}
+ \label{tab:rl-planning-alphazero}
+\end{table*}
+
+搜索可以借用已有网络，但是否学到更好的先验、训练分布怎样变化，是另一个问题。自我对弈及对手分布留给第~\ref{chap:rl-multi-agent}~章；本节只说明它们如何向已知规则的搜索器提供输入。
+
+% Outline: 2.5
+\section{面向全状态的近似规划}
+\label{sec:rl-planning-global-approximation}
+
+局部搜索把资源集中到当前状态，却可能反复计算相似局面。另一条路线是用共享参数描述许多状态的价值，把计算结果保留下来。这能减少存储和重复计算，但参数共享会把不同状态的误差联系起来：一次拟合不再只改变一张表的一个格子。
+
+% Outline: 2.5.1
+\subsection{全状态规划的挑战}
+\label{sec:rl-planning-global-budget}
+
+基准网格只有11个合法位置，价值表很小。若额外记录$q$种物品的库存，每种库存有$L$个取值，联合状态已有$11L^q$个。取教学规模$L=10,q=6$，就得到1100万个状态；每个价值用8字节存储，仅价值表便需8800万字节。若还有动作维、时间维或多个设备，转移表增长得更快。描述每个物品怎样变化的公式可能很短，但显式枚举所有组合依然昂贵。
+
+图~\ref{fig:rl-planning-approximation-loop}~区分四处计算困难。状态表示决定哪些值共享参数；Bellman备份需要求转移期望；拟合把备份结果压回所选函数类；动作选择需要求最大值。存不下、算不准期望、拟合不了目标与没有找到最佳动作，是不同的问题。
+
+\begin{figure*}[htbp]
+ \centering
+ \input{figures/rl-planning-approximation-loop}
+ \caption{全状态近似的共同计算接口。实线表示当前一轮的信息传递，外侧回路表示把新价值送往下一轮；下方分别标出表示、期望估计、拟合和动作优化可能产生的误差。给定模型仍是备份的输入。}
+ \label{fig:rl-planning-approximation-loop}
+\end{figure*}
+
+本节仍假设模型给定。为降低求和代价而从该模型采样，会增加期望估计误差；从真实交互中学习一个错误模型则是另一层误差，留给第~\ref{chap:rl-learning}~章。不能把这两者混入一个未说明来源的“预测误差”。
+
+% Outline: 2.5.2
+\subsection{跨状态近似价值的表示}
+\label{sec:rl-planning-representation}
+
+参数共享应保留与回报有关的差别，而不仅是几何接近。\term{状态聚合}（state aggregation）用映射$g:\mathcal S\to\{1,\ldots,p\}$把状态分组，并令$v(s)=\theta_{g(s)}$。同一组内所有状态共享一个数值，因此更新一个参数会同时改变整组状态。
+
+\term{基函数展开}用已知特征$\bm\phi(s)\in\mathbb R^p$表示
+$v_{\bm\theta}(s)=\bm\phi(s)^\top\bm\theta$。
+例如在网格上取$\bm\phi(s)=(1,x/4,y/3)^\top$，只需3个参数；可表示函数仅为坐标的仿射函数，不能任意给11个状态赋值，更不能自行表示障碍造成的绕行。组指示特征则使状态聚合成为线性展开的特例。一般参数化函数$v_{\bm\theta}(s)$，例如神经网络，可以表达非线性关系，但仍受结构和参数规模限制。
+
+图~\ref{fig:rl-planning-aggregation}~比较同一网格的两种分组。按行聚合会把障碍两侧的$(1,2)$和$(3,2)$放在同组；基准网格中它们的最优价值分别约为$0.501527$和$0.801271$。任何共享的常数在这两处的最大误差都至少为两值差的一半，约为$0.149872$。按到达终点的通道划组能够保留这一区别，却仍不保证每个组内价值相等，必须继续检查组内误差。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-aggregation}
+ \caption{同一基准网格的两种教学聚合。左图按行分成A、B、C组，右图按障碍周围的通道分成L、T、R组；非终点格的字母表示共享参数，终点价值固定为0，颜色仅作辅助。右图保留了障碍两侧的区别，但不是精确MDP同态或零误差聚合的声明。}
+ \label{fig:rl-planning-aggregation}
+\end{figure}
+
+表~\ref{tab:rl-planning-representations}~分别比较一次价值求值与一次单状态参数更新所需的资源。更灵活的函数类可能减小表示偏差，但投影迭代未必更稳定，数值优化也未必能找到最佳拟合。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}lcc>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  表示 & 参数存储 & 求值／单样本更新 & 表达范围与限制\\
+  \midrule
+  全状态表 & $O(n_S)$ & $O(1)$／$O(1)$ & 可独立表示每个状态，不含模型存储\\
+  $p$组聚合 & $O(p)$ & $O(1)$／$O(1)$ & 假设组索引可常数时间取得；组内差别全部丢失\\
+  $p$维稠密线性特征 & $O(p)$ & $O(p)$／$O(p)$ & 只能表示特征张成空间；未计特征构造和批量解方程\\
+  一般参数化函数 & 参数数$P$ & 依计算图而定 & 前向与反向代价须按架构计数；非凸拟合与泛化另需分析\\
+  \bottomrule
+ \end{tabularx}
+ \caption{价值表示的资源口径。一次函数求值不包括Bellman备份所需的多后继求值；动作价值$q(s,a)$若为每个动作单独输出，还需计入动作维。}
+ \label{tab:rl-planning-representations}
+\end{table*}
+
+% Outline: 2.5.3
+\subsection{策略的近似价值评估}
+\label{sec:rl-planning-approximate-evaluation}
+
+固定策略后，“近似评价”仍有不同目标。用真实$V^\pi$作回归标签是在逼近一个已知函数；而我们通常恰恰不知道$V^\pi$，只能利用模型给出的Bellman关系。为了比较，先固定状态权重$\xi(s)>0$、$\sum_s\xi(s)=1$，定义
+$\lVert v\rVert_\xi^2=\sum_s\xi(s)v(s)^2$，并取线性函数空间$\mathcal F$。
+
+\begin{definition}[三种近似评价对象]
+ \label{def:rl-planning-projected-evaluation}
+ 令$\Pi_\xi$为到$\mathcal F$的$\xi$加权正交投影。以下三种问题分别为
+ \[
+ \begin{array}{ll}
+ \text{价值拟合：}&\displaystyle\min_{v\in\mathcal F}\lVert v-V^\pi\rVert_\xi^2,\\
+ \text{残差最小化：}&\displaystyle\min_{v\in\mathcal F}\lVert v-T^\pi v\rVert_\xi^2,\\
+ \text{投影方程：}&v=\Pi_\xi T^\pi v,\qquad v\in\mathcal F.
+ \end{array}
+ \]
+ 前两者最小化不同误差；第三者要求一次备份后投影回来不再改变$v$，并不要求原始Bellman残差为零。
+\end{definition}
+
+用$\bm\Phi\in\mathbb R^{n_S\times p}$的第$s$行为$\bm\phi(s)^\top$，
+$\bm D=\operatorname{diag}(\xi)$，并假设$\bm\Phi$列满秩。投影矩阵为
+$\bm\Pi_\xi=\bm\Phi(\bm\Phi^\top\bm D\bm\Phi)^{-1}\bm\Phi^\top\bm D$。
+将$\bm v=\bm\Phi\bm\theta$代入投影方程并乘$\bm\Phi^\top\bm D$，得到
+\begin{equation}
+ \underbrace{\bm\Phi^\top\bm D(\bm I-\gamma\bm P^\pi)\bm\Phi}_{\bm A}
+ \bm\theta
+ =\underbrace{\bm\Phi^\top\bm D\bm r^\pi}_{\bm b}.
+ \label{eq:rl-planning-projected-system}
+\end{equation}
+只有$\bm A$可逆时，才能直接称$\bm A^{-1}\bm b$为唯一解；特征满秩本身未必保证$\bm A$可逆。奇异时需要检查解是否存在、如何选解或是否正则化，而正则化会改变原来的方程。
+
+\begin{example}[同一特征的三种答案]
+ \label{ex:rl-planning-projection}
+ 构造一个独立的两状态、单动作教学模型，$\gamma=1/2$，
+ \[
+ \bm P^\pi=\begin{pmatrix}0&1\\0&1\end{pmatrix},\quad
+ \bm r^\pi=\begin{pmatrix}1\\0\end{pmatrix},\quad
+ \bm\Phi=\begin{pmatrix}1\\2\end{pmatrix},\quad
+ \bm D=\tfrac12\bm I.
+ \]
+ 精确价值为$(1,0)^\top$。价值拟合最小化
+ $\tfrac12[(\theta-1)^2+4\theta^2]$，故$\theta=1/5$。
+ 原始残差为$(\theta,2\theta)^\top-(1+\theta,\theta)^\top=(-1,\theta)^\top$，
+ 所以残差最小化给$\theta=0$。
+
+ 对投影方程，
+ $(\bm I-\gamma\bm P^\pi)\bm\Phi=(0,1)^\top$，
+ 因而$\bm A=1$、$\bm b=1/2$，解为$\theta=1/2$。
+ 若每轮先备份再投影，参数更新为
+ $\theta^{(k+1)}=1/5+(3/5)\theta^{(k)}$，也收敛到$1/2$。
+ 三者不同不是数值误差，而是目标不同。
+\end{example}
+
+投影方程迭代能否沿用精确评价的证明，取决于复合算子$\Pi_\xi T^\pi$在所选范数下是否压缩。例如$\xi$为$\bm P^\pi$的严格正平稳分布时，由Jensen不等式，
+\[
+ \lVert\bm P^\pi v\rVert_\xi^2
+ \leq\sum_s\xi(s)\sum_{s'}P^\pi(s,s')v(s')^2
+ =\lVert v\rVert_\xi^2.
+\]
+正交投影在$\xi$范数下也非扩张，故复合算子是$\gamma$压缩映射，存在唯一投影固定点。例~\ref{ex:rl-planning-projection}~的权重不是严格正平稳分布，但更新斜率$3/5<1$直接证明该例收敛；充分条件不必在每个收敛例子中都成立。
+
+一般采样权重下，上述平稳等式不成立；正交投影也不自动在无穷范数下非扩张。因而不能把“最小二乘投影”当作无条件稳定部件。若另外算出了原始残差的全状态上界，式~\eqref{eq:rl-planning-evaluation-residual}~仍能评价结果，无论结果是怎样拟合的。仅有投影残差为零则没有这项证书。采样情况下怎样估计残差梯度，以及为何出现双重采样问题，由第~\ref{chap:rl-learning}~章继续处理。
+
+% Outline: 2.5.4
+\subsection{基于近似价值的策略改进}
+\label{sec:rl-planning-approximate-improvement}
+
+得到近似价值后，选择动作有两个接口。若保存的是状态价值$v$，还要借助模型比较
+$R(s,a)+\gamma P_av$，其中$P_av=\sum_{s'}P(s'\mid s,a)v(s')$。
+若保存的是动作价值$q(s,a)$，则直接对$q$取最大值；它省去行动时的一步期望，却把该后果的估计责任放进$q$本身。
+
+\begin{definition}[近似贪心误差]
+ \label{def:rl-planning-greedy-error}
+ 对状态价值$v$，策略$\pi'$的模型贪心误差为
+ \[
+ \eta(v,\pi')=\lVert T^*v-T^{\pi'}v\rVert_\infty.
+ \]
+ 因$T^*v\geq T^{\pi'}v$，它衡量实际动作选择比精确最大化少了多少一步备份价值。对给定动作价值$q$，对应地考察
+ \[
+  \sup_s\left[\max_a q(s,a)-\sum_a\pi'(a\mid s)q(s,a)\right].
+ \]
+\end{definition}
+
+即使$v$准确，连续动作上的数值最大化也可能留下$\eta>0$；即使对$q$精确贪心，$q$与真实动作价值之间仍可能有误差。这两个量不能相互替代。有限动作可以枚举，连续动作则需说明优化器、约束和求解精度。
+
+表~\ref{tab:rl-planning-approximate-loops}~用相同的评价、拟合和改进接口区分三种循环，其中$\mathcal F$表示选定的函数类，“拟合”是把目标压回该类的操作。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  循环 & 每轮备份与拟合 & 动作选择的位置\\
+  \midrule
+  近似策略迭代 & 固定$\pi^{(k)}$，用若干次评价备份及拟合得到$v^{(k)}\approx V^{\pi^{(k)}}$ & 评价结束后对$v^{(k)}$近似贪心\\
+  近似价值迭代 & 一次$T^*v^{(k)}$后拟合一次，得$v^{(k+1)}\in\mathcal F$ & 每次最优备份内部都比较动作\\
+  修改策略迭代 & 先取$\pi^{(k+1)}$，再做$m_k$次$T^{\pi^{(k+1)}}$；近似版本还需注明每次或最后拟合 & 每个外层循环开始时一次\\
+  \bottomrule
+ \end{tabularx}
+ \caption{共享接口下的不同循环。$m_k=1$且没有拟合时，修改策略迭代退化为价值迭代；最优备份不意味着已经精确评价了所选策略。}
+ \label{tab:rl-planning-approximate-loops}
+\end{table*}
+
+动作差很小时，少量误差就能改变行为。构造一个只剩一步的两动作教学问题，真实价值为$Q(a)=0.50,Q(b)=0.49$；若估计扰动分别为$-0.01,+0.01$，则$q(a)=0.49,q(b)=0.50$，贪心会选$b$。误差最大仅为$0.01$，但动作已经翻转。若旧策略选$a$，这次近似改进的真实回报反而下降$0.01$。有误差的策略迭代不能继续无条件宣称每轮单调改进；需要把评价误差与贪心误差一起带入性能分析。
+
+% Outline: 2.5.5
+\subsection{误差传播与策略性能损失}
+\label{sec:rl-planning-error-propagation}
+
+不同实现可以统一写成
+$v^{(k+1)}=T^*v^{(k)}+e^{(k)}$。
+这里$e^{(k)}$是这一轮相对理想最优备份的\emph{总}误差。为查找误差来源，可在理想目标与输出之间插入明确的中间目标：动作优化后的期望目标、采样目标、函数类中的最佳拟合以及实际拟合结果。相邻目标之差分别对应动作优化、期望估计、表示不足和拟合求解误差，三角不等式给出总误差上界。最佳拟合所用范数必须说清，不能把加权二范数最优自动称为无穷范数最佳。
+
+图~\ref{fig:rl-planning-error-flow}~突出两种传播：旧价值误差在理想备份中收缩，新误差在当前轮注入。若动作优化误差已经包含在$e^{(k)}$中，就不能再把同一项加进$\delta$两次；最终提取策略的近似贪心误差则是另一处误差。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-planning-error-flow}
+ \caption{近似价值迭代的误差传播。横向每经过一次理想Bellman备份，旧误差乘$\gamma$；上方$e^{(k)}$在各轮注入。因此第$j$轮的误差对第$k$轮的贡献按$\gamma^{k-1-j}$衰减，而每轮都持续注入的误差不会消失。}
+ \label{fig:rl-planning-error-flow}
+\end{figure}
+
+\begin{theorem}[近似价值迭代的统一误差界]
+ \label{thm:rl-planning-avi-error}
+ 若每轮满足$\lVert v^{(k+1)}-T^*v^{(k)}\rVert_\infty\leq\delta$，则
+ \begin{equation}
+ \lVert v^{(k)}-V^*\rVert_\infty
+ \leq\gamma^k\lVert v^{(0)}-V^*\rVert_\infty
+       +\frac{\delta(1-\gamma^k)}{1-\gamma}.
+ \label{eq:rl-planning-avi-error}
+ \end{equation}
+ 若输出策略$\pi^{(k)}$对$v^{(k)}$的贪心误差不超过$\eta$，其真实性能满足
+ \[
+ \lVert V^*-V^{\pi^{(k)}}\rVert_\infty
+ \leq\frac{2\gamma\lVert v^{(k)}-V^*\rVert_\infty+\eta}{1-\gamma}.
+ \]
+\end{theorem}
+\begin{proof}
+ 记$E_k=\lVert v^{(k)}-V^*\rVert_\infty$。插入$T^*v^{(k)}$并使用压缩性，
+ \[
+ E_{k+1}\leq
+ \lVert v^{(k+1)}-T^*v^{(k)}\rVert_\infty+
+ \lVert T^*v^{(k)}-T^*V^*\rVert_\infty
+ \leq\delta+\gamma E_k.
+ \]
+ 连续代入得到
+ $E_k\leq\gamma^kE_0+\delta\sum_{j=0}^{k-1}\gamma^j$，计算几何和即为第一式。
+
+ 提取策略时，插入$T^*v^{(k)}$及$T^{\pi^{(k)}}v^{(k)}$，两者差至多$\eta$。其余两项分别用最优算子和策略算子的压缩性控制，得到
+ \[
+ \lVert V^*-V^{\pi^{(k)}}\rVert_\infty
+ \leq 2\gamma E_k+\eta+
+       \gamma\lVert V^*-V^{\pi^{(k)}}\rVert_\infty.
+ \]
+ 移项即得第二式；$\eta=0$时正好回到精确贪心性能界。
+\end{proof}
+
+例如$\gamma=0.9$、每轮统一误差$\delta=0.001$，渐近价值误差上界为$0.01$；精确贪心的对应性能上界为$0.18$。后者可能很保守，但显示了持续误差和长期反馈的两次累积。这里是解析界，不是声称实际网格恰好损失这些数值。
+
+上述假设控制每一个状态；加权平均误差小要弱得多。例如某重要状态在拟合分布中的概率为$10^{-6}$，该处误差为1、其余处误差为0，加权二范数仍只有$10^{-3}$。若部署初始分布全部集中在该状态，小的拟合误差并未保护初始决策。将加权误差转换为性能界，需要部署占用分布相对采样分布的覆盖或密度比条件；零覆盖状态不能靠增加原分布上的样本数补救。生成模型下拟合价值迭代的有限时间分析明确保留函数类逼近能力和未来状态分布的集中性条件\scite{rl2-munos2008-fitted}
+
+近似策略迭代还需处理不断变化的评价策略，不能直接套用式~\eqref{eq:rl-planning-avi-error}。一种统一范数证明路线如下：若
+$\lVert v^{(k)}-V^{\pi^{(k)}}\rVert_\infty\leq\varepsilon$，
+改进误差不超过$\eta$，则
+$T^{\pi^{(k+1)}}V^{\pi^{(k)}}\geq T^*V^{\pi^{(k)}}-\beta
+\geq V^{\pi^{(k)}}-\beta$，
+其中$\beta=2\gamma\varepsilon+\eta$。这由比较$T^*v^{(k)}$和$T^{\pi^{(k+1)}}v^{(k)}$、再把$v^{(k)}$换回真实评价值获得。
+利用
+\[
+ V^{\pi'}-V^\pi
+ =(\bm I-\gamma\bm P^{\pi'})^{-1}(T^{\pi'}V^\pi-V^\pi)
+\]
+及逆矩阵的非负几何级数，可得$V^{\pi'}\geq V^\pi-\beta/(1-\gamma)$。
+再插入$T^*V^\pi$与$T^{\pi'}V^\pi$，逐状态有
+\[
+\begin{aligned}
+ V^*-V^{\pi'}
+ &=T^*V^*-T^{\pi'}V^{\pi'}\\
+ &\leq\gamma\lVert V^*-V^\pi\rVert_\infty
+       +\beta+\gamma\bm P^{\pi'}(V^\pi-V^{\pi'})\\
+ &\leq\gamma\lVert V^*-V^\pi\rVert_\infty+\frac{\beta}{1-\gamma}.
+\end{aligned}
+\]
+由于$V^*\geq V^{\pi'}$，对状态取最大值得到保守递推
+$\lVert V^*-V^{\pi^{(k+1)}}\rVert_\infty
+\leq\gamma\lVert V^*-V^{\pi^{(k)}}\rVert_\infty+\beta/(1-\gamma)$，
+从而渐近损失至多$\beta/(1-\gamma)^2$。这个推理使用每轮对\emph{当前策略真实价值}的误差界，和AVI的一次备份误差并非同一假设。更细的加权范数与不同迭代安排的误差传播见Farahmand等\scite{rl2-farahmand2010-errors}
+
+% Outline: 2.6
+\section{可计算性与复杂度边界}
+\label{sec:rl-planning-complexity}
+
+精确求和、模拟一条转移与求解一个动作优化问题，都可能在伪代码中只占一行，却消耗不同资源。本节把输入接口、输出要求与误差标准一并固定，再讨论计算代价。否则，“迭代更少”或“不依赖状态数”都容易给出错误印象。
+
+% Outline: 2.6.1
+\subsection{复杂度指标与模型访问}
+\label{sec:rl-planning-access-complexity}
+
+\term{算术运行时间}计算加法、乘法等基本运算次数；\term{存储复杂度}计算同时保留的模型、价值、策略及搜索节点；\term{并行深度}计算有无限处理器时仍必须顺序完成的依赖层数；\term{模型调用复杂度}计算外部模型接口被调用多少次。并行减少的是依赖允许范围内的延迟，不自动减少总算术工作或总样本数。
+
+表~\ref{tab:rl-planning-access-models}~把四种输入表示对应到各自的基本操作。关键区别是一次调用究竟返回一个表项、可遍历的后继集合，还是一个随机样本；只有固定这个单位，模型调用次数才具有可比含义。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  模型表示 & 基本访问操作 & 一次备份仍需付出的代价\\
+  \midrule
+  显式稠密转移表 & 读取一个概率或奖励表项 & 对$n_S$个后继求和；需要整个模型的存储\\
+  稀疏转移表 & 遍历一个状态动作的非零后继 & 对$b$个后继求和，并读取对应价值\\
+  解析动力学 & 计算状态转移或积分表达式 & 单次函数代价依公式而定；有公式不等于积分可解析\\
+  生成模型 & 给定$(s,a)$取得一个独立$(r,s')$ & 用样本均值估计期望；还须计样本数与失败概率\\
+  \bottomrule
+ \end{tabularx}
+ \caption{不同模型访问协议的计数单位。表中$b$表示非零后继数；生成模型的一次查询通常只产生一个后继，不能与遍历整行概率等价计数。}
+ \label{tab:rl-planning-access-models}
+\end{table*}
+
+例如计算同一个$P_av$，稀疏精确模型求和需要$b$次价值读取和加权运算，不产生采样误差。生成模型用$m$个后继的平均值替代它，代价随$m$增长，精度则以一定置信度保证。即使$m<b$，也只是付出较少查询取得一个近似答案，不能称为同精度下更快而略去误差。
+
+输出也改变任务难度：全状态价值要求每个坐标都准确；给定$\rho_0$的策略性能只要求$J(\pi)$接近最优；当前状态动作选择只比较一个根部决策。它们不共享全部下界。例如输出一个$n_S$维显式价值表本身就需$\Omega(n_S)$次写入，而输出一个根动作不需要这张表。
+
+下面的运行时间采用单位成本算术模型。若输入概率为有理数，编码位长和目标精度会影响位复杂度；精确消元中分子分母还可能增长。因此算术步数为多项式，不自动说明每一步的位运算成本为常数。数值实现还需把舍入误差纳入残差证书。
+
+% Outline: 2.6.2
+\subsection{全状态动态规划的计算代价}
+\label{sec:rl-planning-dp-complexity}
+
+设状态数为$n_S$，每处动作数至多$n_A$，每个状态动作平均有$b$个非零后继；用最坏动作数乘平均后继数的表达作为上界。一次最优Bellman扫描枚举状态、动作和相应后继，算术代价为
+\begin{equation}
+ O(n_Sn_Ab).
+ \label{eq:rl-planning-sweep-cost}
+\end{equation}
+稠密时$b=n_S$，变为$O(n_S^2n_A)$。稀疏模型及其奖励的存储为$O(n_Sn_Ab)$，价值表为$O(n_S)$；确定性策略只需每状态一个动作索引，为$O(n_S)$个字，随机策略表则需$O(n_Sn_A)$个概率。同步迭代增加一张价值表，不改变渐近阶。
+
+由压缩性，初始误差上界为$E_0$时，对$0<\gamma<1$、$0<\varepsilon<E_0$，充分迭代次数为
+\begin{equation}
+ k\geq\left\lceil\frac{\log(E_0/\varepsilon)}{-\log\gamma}\right\rceil.
+ \label{eq:rl-planning-iteration-count}
+\end{equation}
+从零初始化可取$E_0=R_{\max}/(1-\gamma)$。由于$-\log\gamma\geq1-\gamma$，也可给出较保守的
+$O((1-\gamma)^{-1}\log(E_0/\varepsilon))$轮数。$\gamma$接近1时，未来的影响衰减慢，证书要求的迭代也增加。$\gamma=0$时一次备份已给最优值；$\varepsilon\geq E_0$时初值已满足价值精度，不使用上述对数式。
+
+表~\ref{tab:rl-planning-dp-costs}~把单轮与轮数分开。固定确定性策略时，每个状态只取一个动作；固定稠密随机策略时，则还需对动作混合，或先构造$\bm P^\pi,\bm r^\pi$。直接解稠密$n_S$阶线性方程的常规消元代价为$O(n_S^3)$、存储$O(n_S^2)$；稀疏消元可能产生填充，不能仅把$b$替换进这个立方式便声称得到稀疏求解代价。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  操作 & 单轮算术代价 & 轮数或输出条件\\
+  \midrule
+  固定确定性策略的迭代评价 & 一次固定策略扫描$O(n_Sb_\pi)$ & $b_\pi$为所选动作平均后继数；轮数由评价压缩或残差确定\\
+  策略改进 & $O(n_Sn_Ab)$ & 只比较一次动作；不包括评价\\
+  价值迭代 & $O(n_Sn_Ab)$ & 达到价值误差的轮数见式~\eqref{eq:rl-planning-iteration-count}\\
+  精确策略迭代 & 稠密评价$O(n_S^3)$加改进；模型混合另计 & 外层轮数依问题而变；有限终止论证只给有限策略数的粗界\\
+  \bottomrule
+ \end{tabularx}
+ \caption{全状态动态规划的成本。$b_\pi$可能与所有动作平均的$b$不同；表中随机策略若未预先混合转移，评价扫描还需计入动作枚举。}
+ \label{tab:rl-planning-dp-costs}
+\end{table*}
+
+策略迭代至多检查$\prod_s|\mathcal A(s)|$种确定性策略，这证明有限性，但该数量对$n_S$可能指数增长，既不是紧界，也不能被称为多项式时间结论。比较算法时需说明采用哪种策略迭代规则、折扣是否固定，以及所引用复杂度定理的输入口径。
+
+若有足够处理器，同步扫描中各状态动作的求和可以并行。令$b_{\max}$为单个状态动作的最大非零后继数，树状求和与最大值规约的深度为$O(\log(1+b_{\max})+\log(1+n_A))$；平均后继数$b$不足以控制最长依赖链。第$k+1$次扫描仍依赖第$k$次价值，因此总依赖深度仍含迭代次数，不能把所有轮次同时完成。
+
+% Outline: 2.6.3
+\subsection{时域、分支与搜索复杂度}
+\label{sec:rl-planning-search-complexity}
+
+固定每处$A$个动作、每个动作$B$个随机后继。深度$H$按动作执行次数计数，状态节点数为
+$\sum_{h=0}^{H}(AB)^h$，非叶状态处的动作节点数为
+$A\sum_{h=0}^{H-1}(AB)^h$。
+当$AB>1$时，前者为$[(AB)^{H+1}-1]/(AB-1)$，随深度指数增长；$AB=1$时则只有一条长度$H$的链，不能使用分母为0的几何和形式。
+
+搜索树把不同历史都保留为不同节点，同一个网格位置可能重复出现多次。若未来只依赖当前状态，可把相同的$(s,\text{剩余深度})$合并成动态规划图；包含终端层时至多有$(H+1)n_S$个时层状态，其中至多$Hn_S$个需要备份，但要存储并识别这些状态。将树改成图利用了Markov结构，不是免费删除随机分支。连续状态几乎不重复时，精确合并的收益可能很小。
+
+表~\ref{tab:rl-planning-search-costs}~回到图~\ref{fig:rl-planning-search-tree}~中的同一棵树，区分各种节约发生在哪里。稀疏采样把$B$换成$m$，却仍留下$(Am)^H$；MCTS只展开实际访问的节点，但查询预算和解的质量之间未必有良好的最坏关系。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  手段 & 减少的计算 & 误差及额外条件\\
+  \midrule
+  深度截断 & 删除$H$步之后的展开 & 尾和或$\gamma^H\varepsilon$终端误差；短视不可逆动作仍危险\\
+  稀疏采样 & 每个动作只抽$m$个后继 & 样本均值及递归误差；独立生成模型、置信度和树规模\\
+  叶值近似 & 用一次求值替代叶外模拟 & 叶值必须在到达区域准确；预计算和训练代价另计\\
+  MCTS & 将查询集中于被选择的分支 & 回报非平稳、叶值偏差与探索条件；选择性展开不是普遍最坏界\\
+  状态合并 & 复用相同状态及剩余深度的计算 & 要求表示保留决策所需信息，并支付索引与存储成本\\
+  \bottomrule
+ \end{tabularx}
+ \caption{搜索预算的节省对象。不同手段可以组合，但组合后的误差应按实际接口重新分析。}
+ \label{tab:rl-planning-search-costs}
+\end{table*}
+
+一次深度至多$H$的MCTS模拟，如果每层只抽一个后继且叶评估花费$L$次模型调用，通常不超过$H+L$次调用；$N$次模拟的预算上界为$N(H+L)$。这只是调用计数，不包含枚举动作、网络推理或连续动作优化，也不自动给出误差随$N$下降的速度。若模拟长度是随机变量，应另报期望调用及尾部延迟，而不是把期望当作严格截止时间。
+
+% Outline: 2.6.4
+\subsection{计算下界}
+\label{sec:rl-planning-lower-bounds}
+
+上界说明某个算法需要多少资源，下界说明在给定接口下任何算法都无法普遍省去什么。核心方法是构造\term{不可区分问题对}：算法已经读取的内容完全相同，未查部分却使最优动作不同。只要这两种问题还不能区分，算法就无法在二者中同时保证正确。
+
+先看精确奖励表。一个单步问题有$A$个动作，奖励都是0，只有某个未查动作可能被改成1。若至少两个动作未查，可以分别把奖励1放在这两个动作上，构成读取记录完全相同、最优动作不同的两个问题。要求精确最优的确定性算法，最坏至少需检查$A-1$个表项；全表扫描给$O(A)$上界。这里即使期望奖励完全确定，读取必要信息仍有成本。
+
+生成模型的困难不同：同一个动作查过一次，也可能仍无法分辨其期望。考虑单状态、单步、两动作的问题，即$H=1$、无后续奖励，等价于$\gamma=0$。奖励均在$[0,1]$；动作$a_1$恒得$1/2$，动作$a_2$在两个模型$M_+$和$M_-$中分别服从
+$\operatorname{Bernoulli}(1/2+2\varepsilon)$和
+$\operatorname{Bernoulli}(1/2-2\varepsilon)$，其中$0<\varepsilon\leq1/8$。
+要求输出一个确定性根动作，以至少$1-\alpha$的概率达到$\varepsilon$最优，$0<\alpha<1/4$。选错动作损失$2\varepsilon$，所以算法必须区分两个模型。
+
+单个样本的KL散度为$O(\varepsilon^2)$；例如用
+$D_{\mathrm{KL}}(\operatorname{Ber}(p)\Vert\operatorname{Ber}(q))
+\leq(p-q)^2/[q(1-q)]$即可得到统一常数界。自适应查询记录的KL链式法则给出总散度至多
+$C\varepsilon^2\mathbb E_+N_2$，其中$N_2$为查询$a_2$的次数，$C$为绝对常数。二元检验的两类错误概率之和至少为
+$\tfrac12\exp[-D_{\mathrm{KL}}(\mathbb P_+\Vert\mathbb P_-)]$，
+而成功要求使该和不超过$2\alpha$。因而
+\[
+ \mathbb E_+N_2\geq
+ \frac{\log(1/(4\alpha))}{C\varepsilon^2}.
+\]
+这给出样本辨识下界的证明思路；对$\alpha\leq1/8$，其阶为
+$\Omega(\varepsilon^{-2}\log(1/\alpha))$。反过来，用固定次数独立样本估计$a_2$均值，与$1/2$比较，Hoeffding不等式给出同阶上界。若接口直接返回精确期望，只查一次就能区分二者，这条样本下界随即不适用。
+
+受限搜索还可能隐藏大量尚未访问的叶子。考虑深度$H$、每层$A\geq2$个动作的完整确定性树，有限时域且不折扣；此前奖励均为0，$A^H$个终端叶子中恰有一个奖励1，其余为0。转移结构已知，每个叶奖励只能通过一次精确查询读取，没有可利用的奖励参数化或内部节点摘要。要求以至少$2/3$概率输出$\varepsilon<1/2$最优的确定性根动作。
+
+若把唯一奖励叶在$A^H$个位置均匀放置，至多$q$次查询发现它的概率不超过$q/A^H$。固定算法的随机种子后，在所有查询都返回0的记录上，算法只能输出某个根分支；该分支最多包含全部叶子的$1/A$，所以“未发现且猜对”这一联合事件的概率至多为$1/A$。对随机种子取平均，界仍成立。因此总体成功率不超过$q/A^H+1/A$，要达到$2/3$，必有$q\geq A^H/6$。这个平均输入论证也推出某个输入上的随机算法预算下界；扫描全部叶子则给匹配上界。指数困难来自没有结构的叶奖励表，不能把它推广为所有简洁模型的不可解性，或声称共享状态的网格必然需要同样多的查询。
+
+表~\ref{tab:rl-planning-bounds}~将这三个问题族各自的下界与同条件上界并列。每一行在数量级上匹配，但行与行之间的查询单位、误差标准和成功概率不同；这种匹配只说明所列受限问题族的界已对齐，不给出一般MDP的统一最优复杂度。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}Xcc>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  输入、目标与接口 & 下界 & 同条件上界 & 匹配范围\\
+  \midrule
+  单步$A$动作、精确奖励表、精确最优动作 & $\Omega(A)$ & $O(A)$ & 表项读取次数，不是随机样本数\\
+  单步两动作Bernoulli模型、$\varepsilon\leq1/8$、$\alpha\leq1/8$ & $\Omega(\varepsilon^{-2}\log(1/\alpha))$ & $O(\varepsilon^{-2}\log(1/\alpha))$ & 独立生成样本；常数因子未追求一致\\
+  完整确定树、唯一奖励叶、根动作成功率$2/3$ & $\Omega(A^H)$ & $O(A^H)$ & 精确叶奖励查询；不含到叶路径执行成本\\
+  \bottomrule
+ \end{tabularx}
+ \caption{三个受限问题族中的上、下界。它们分别隔离输入读取、统计辨识和搜索宽深度，不能合并为一个适用于所有MDP的复杂度公式。}
+ \label{tab:rl-planning-bounds}
+\end{table*}
+
+一般有限折扣MDP的生成模型规划还涉及$n_S,n_A,\gamma$及全状态策略误差。其接近极小极大样本率的结果需要更细的方差和依赖分析；例如经验模型规划可以使用高精度规划器作为内部模块，但其样本保证不等于内部规划器的运行时间保证\scite{rl2-agarwal2020-generative}
+本章没有把该一般结果的样本率当成精确概率表的读取下界。真实在线交互还不能任意查询未到达状态，会额外产生探索与可达性困难，由下一章另行分析。
+
+% Outline: 2.7
+\section{本章小结}
+\label{sec:rl-planning-summary}
+
+给定模型使长期后果可以计算，却没有使计算本身免费。在基准网格上，精确Bellman求解和占用量线性规划都得到同一个最优起点价值
+$J(\pi^*)\approx0.42116103368346147$；均匀策略的值为
+$-0.15475437784251433$。二者的差别来自行动方式，而非改变奖励或滑移规则。价值提供每个状态的长期评价，归一化占用量描述折扣时间分配；二者通过
+$J(\pi)=(1-\gamma)^{-1}\sum_{s,a}d^\pi(s,a)R(s,a)$联系，不能丢掉尺度系数。
+
+精确求解可以利用额外结构，但应检查结构约束的是哪个对象：LQR保留二次价值族，KL控制通过换元改变方程，递减差分限制最优动作形状，独立子过程与笛卡尔积动作才支持直接分解。它们可以叠加，也可能被动作约束、噪声机制或共享资源破坏。不能只凭模型名字推断某条简化仍然成立。
+
+当资源不足时，表~\ref{tab:rl-planning-method-choice}~按输出和接口归纳选择。可检查的误差证书与方法同样重要：搜索深度控制尾部影响，模型样本控制期望估计，函数表示控制跨状态逼近，动作优化控制最终选择。减少其中一种误差，不会自动消除其他几种。
+
+\begin{table*}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  所需输出 & 模型接口与资源 & 可用方法 & 应报告的证书或边界\\
+  \midrule
+  全状态精确价值／策略 & 精确期望，可存表并扫描 & 动态规划、价值或占用LP & 全状态残差、原对偶间隙及恢复条件\\
+  特殊结构的反馈律 & 解析模型，结构满足假设 & Riccati、线性换元、阈值或分解 & 封闭、可稳定、差分或独立性条件\\
+  当前状态动作 & 精确展开，在线时间有限 & 有限前瞻与滚动规划 & 截断尾界、叶值误差、根动作与执行损失的区别\\
+  当前状态动作 & 独立生成样本，调用预算有限 & 稀疏采样、MCTS & 查询次数、置信度、叶值与探索条件\\
+  可复用的全状态近似 & 精确或采样模型，价值表过大 & 聚合、拟合评价、近似策略／价值迭代 & 一致误差界；若只有加权误差，另需覆盖条件\\
+  \bottomrule
+ \end{tabularx}
+ \caption{模型已知时的方法选择。时间与存储应包含预计算、在线求值及模型本身；经验表现不能替代所列条件下的误差保证。}
+ \label{tab:rl-planning-method-choice}
+\end{table*}
+
+下一章保留本章的Bellman算子、评价与改进接口及性能界，但不再把准确模型接口当作默认资源。学习者必须解释数据从哪里来，怎样从经验估计价值与模型，以及当前策略为何会改变未来能够获得的数据。部分统计分析仍会另行假设生成模型访问，以隔离估计困难；真实在线交互则通常只能沿实际轨迹收集经验。规划的计算误差由此与统计误差、覆盖和探索问题共同出现。

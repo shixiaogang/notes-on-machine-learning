@@ -1,0 +1,1083 @@
+% Outline: 8
+\chapter{可信强化学习}
+\label{chap:rl-trustworthy}
+
+一台导航机器人平均很快到达终点，是否就适合投入运行？如果少数回合会严重延误，平均时间没有说明后果有多坏；如果地面变湿，原来学到的制动规律可能失效；如果机器人靠紧急保护器才没有撞上障碍，成功记录说明的是整个受保护系统，而不是候选策略本身。判断行为是否可接受，需要比平均回报更完整的要求，也需要与要求相匹配的证据。
+
+本章沿用第~\ref{chap:rl-overview}~章的策略与轨迹对象，以及第~\ref{chap:rl-planning}、\ref{chap:rl-learning}~章的规划和学习工具。风险敏感决策改变随机结果的比较方式，鲁棒决策改变要求覆盖的环境范围，安全约束改变允许选择的行为集合。这是三个可以组合的视角，不是一条从简单到高级的方法演进链。另一个独立问题是：即使算法声称优化了这些要求，有限试验或模型证明究竟支持什么结论？回答这一问题时，必须把策略、学习算法和实际执行系统分开。
+
+图~\ref{fig:rl-trustworthy-map}~将这三类要求并列放在共同设定之下。每一类要求都需要相应证据，才能参与同一任务中的方案比较；组合后的结论还要保留各自的条件与适用边界。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/rl-trustworthy-map}
+  \caption{可信强化学习的章内关系。共同设定向三个并列分支提供对象和运行条件，分支向共用验证过程提供要求与待验证策略；验证结论用于判断组合方案的取舍，并形成有条件的综合结论。箭头表示这些依赖，不表示风险、鲁棒与安全必须依次执行。}
+  \label{fig:rl-trustworthy-map}
+\end{figure*}
+
+% Outline: 8.1
+\section{行为要求与保证对象}
+\label{sec:rl-trustworthy-requirements}
+
+仍以从起点驶向终点的移动机器人为对象。为隔离不同问题，可以固定路线、初始位置和动力学，只改变到达时间的分布，观察偶发严重延误；也可以固定策略与目标，仅改变地面摩擦，观察制动距离；或者固定环境，把一块原本可以穿越的地带声明为危险区，检查策略是否满足新约束。启用一个会替换危险动作的保护层，又改变了实际执行机制。这四种比较分别追问结果分布、环境变化、行为可行性和保证对象，不能共用一个“成功率提高”的答案。
+
+本章的离散导航示意沿用宽4、高3的网格、起点$(1,1)$、终点$(4,3)$和障碍$(2,2)$。涉及具体概率时，会另行声明是基准滑移模型，还是为手算而抽象出的路线选择任务；后者不冒充整个随机网格的精确解。连续控制仍写作$\bm{x}_{t+1}=\bm{A}\bm{x}_t+\bm{B}\bm{u}_t+\bm{w}_t$，其中状态可以包含位置和速度，扰动$\bm{w}_t$的范围必须单独给定。
+
+\begin{definition}[回报、损失、成本与失败事件]
+  \label{def:rl-trustworthy-objects}
+  对轨迹$\tau=(s_0,a_0,r_0,s_1,\ldots)$，回报为
+  $G(\tau)=\sum_{t\geq0}\gamma^t r_t$，目标$J(\pi)=\mathbb E_\pi G$不作归一化。
+  损失$L(\tau)$表示需要抑制的后果，数值越大越差；它可以是累计延误，也可以是$-G$，但必须明确选择。
+  安全成本$c_{i,t}\geq0$记录第$i$类危险暴露或损害，其累计量为
+  $C_i(\tau)=\sum_{t\geq0}\gamma^t c_{i,t}$。
+  失败事件$F_H\subseteq\{\tau\}$则是一个真假条件，例如在前$H$次动作中至少碰撞一次。
+  有限时域任务的求和截至$H-1$，不折扣时直接使用有限和。
+\end{definition}
+
+到达效率可以进入奖励，严重延误可以进入损失，靠近危险区的时间可以进入成本，碰撞可以定义失败事件。同一次碰撞也可以同时增加损失和成本，但这些量不是同一个指标：成本可能区分事故的次数与严重程度，事件指示量$\mathbf 1\{F_H\}$只记录是否发生，尾部损失则比较最坏的一部分结果有多严重。
+
+\term{风险准则}（risk criterion）规定怎样用整个随机结果的分布比较策略，而非只比较均值。\term{鲁棒要求}（robustness requirement）规定同一策略必须应对哪些机制或输入变化。\term{安全约束}（safety constraint）规定什么行为才算可行，例如累计成本不超过预算、碰撞概率低于阈值，或始终不离开某个集合。\term{可靠性}（reliability）在这里指指定对象在声明的运行条件下持续满足要求的程度；它必须通过统计或模型证据来论证，不能由算法名称直接赋予。
+
+表~\ref{tab:rl-trustworthy-guarantee-objects}~把三种常见的保证对象分开。固定策略的随机轨迹来自环境和动作采样；重复训练还包含数据次序、初始化和探索造成的差异。保护层启用后，系统执行的动作可能与策略提出的动作不同，此时碰撞记录针对的是策略与保护层的组合。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{20mm}XXX@{}}
+    \toprule
+    保证对象 & 随机性来源 & 评价单位 & 要求作用时机 \\
+    \midrule
+    固定策略$\pi$ & 初态、转移、观测、动作采样 & 一个完整运行回合 & 策略冻结后的部署 \\
+    学习算法 & 训练种子、训练数据、探索与优化 & 一次完整训练及其输出 & 训练中或输出策略上 \\
+    策略与保护层 & 上述运行随机性，以及保护器输入与执行误差 & 实际执行系统的一回合 & 所有受保护执行时刻 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{保证对象决定抽样单位。每行还须固定初态分布、观测接口、时域、交互权限及其他参与者的范围，不能把训练曲线平稳等同于系统安全。}
+  \label{tab:rl-trustworthy-guarantee-objects}
+\end{table}
+
+运行范围可以写成一份协议：从哪些位置启动，允许什么摩擦变化，传感器误差多大，能否主动试探，其他机器人按什么规则行动，以及保护器是否启用。对这些条件不作限定，“策略可靠”没有确定的真假含义。
+
+还要区分两个概率。$p=\mathbb P_\pi(F_H)$回答“这个策略运行时多常失败”；置信水平$1-\delta$回答“重复采用这套取证与推断程序，所得界有多大比例覆盖真实$p$”。前者是行为性质，后者是统计程序的性质。例如$p\leq0.01$和置信水平$0.95$不能交换位置。阈值、运行范围和允许的推断错误率都应在验证前确定，否则根据结果反复修改标准会改变声明的含义。
+
+% Outline: 8.2
+\section{风险敏感决策}
+\label{sec:rl-trustworthy-risk}
+
+假定环境模型和运行范围暂时固定，问题是怎样比较其内部的随机后果。一个决策者可以在出发前评价整段累计损失，承诺按这个评价执行后续方案；也可以要求到达每个历史时都按同一种条件风险继续决策。两种要求的差别发生在时间结构上。某些累计风险能够通过状态增广递推，逐阶段递归风险也有自己的Bellman方程，但两者不因此成为同一个目标。
+
+% Outline: 8.2.1
+\subsection{累计结果分布上的风险决策}
+\label{sec:rl-trustworthy-static-risk}
+
+考虑两个教学策略：平稳策略损失恒为1，偶发严重损失的策略以0.95概率损失0、以0.05概率损失20。它们的期望损失都是1，方差却分别为0和$0.05\times20^2-1^2=19$。只看均值无法区分两者。若最坏的5\%回合需要人工接管，那么这一差别正是决策者关心的后果。
+
+不同准则表达不同偏好。最小化$\mathbb E u(L)$时，在损失取值范围上递增的凸函数$u$会加重严重损失。例如，对上述非负损失取$u(l)=l^2$，数值变为1和20，但也改变了损失单位；若允许负损失，平方函数就不再处处递增。均值--方差准则$\mathbb E L+\lambda\operatorname{Var}(L)$用$\lambda\geq0$调节离散程度，方差同时惩罚向均值两侧的偏离，而且需要二阶矩存在。分位数只询问某个概率位置上的损失阈值；尾部均值还考察阈值之外有多坏。不能因为这些准则都偏离期望，就认为它们会给出相同排序。
+
+\begin{definition}[损失上尾的VaR与CVaR]
+  \label{def:rl-trustworthy-cvar}
+  对可积损失$L$及分位水平$0<\alpha<1$，令
+  \begin{align}
+    \operatorname{VaR}_\alpha(L)
+      &=\inf\{z:\mathbb P(L\leq z)\geq\alpha\}, \\
+    \operatorname{CVaR}_\alpha(L)
+      &=\inf_{\eta\in\mathbb R}
+        \left\{\eta+\frac{\mathbb E(L-\eta)_+}{1-\alpha}\right\},
+      \label{eq:rl-trustworthy-cvar}
+  \end{align}
+  其中$(x)_+=\max(x,0)$。风险价值（value at risk, VaR）是分位点；条件风险价值（conditional value at risk, CVaR）是最差$1-\alpha$概率质量的平均损失，必要时只取分位点处概率原子的一部分。
+\end{definition}
+
+为什么优化式会找到分位点？记分布函数$F(z)=\mathbb P(L\leq z)$，把式~\eqref{eq:rl-trustworthy-cvar}~花括号内函数记为$\phi(\eta)$。每个$(L-\eta)_+$都是凸函数，所以$\phi$凸。阈值从左、右移动时，恰等于阈值的样本贡献不同，从而
+\[
+  \phi'_-(\eta)=\frac{F(\eta-)-\alpha}{1-\alpha},
+  \qquad
+  \phi'_+(\eta)=\frac{F(\eta)-\alpha}{1-\alpha}.
+\]
+凸函数在左右导数夹住0处取得最小值，条件就是
+$F(\eta-)\leq\alpha\leq F(\eta)$。分位点$q=\operatorname{VaR}_\alpha(L)$满足这个条件；存在平坦区间时最优阈值可以不唯一。将$q$代回目标，得到可直接处理概率原子的公式
+\begin{equation}
+  \operatorname{CVaR}_\alpha(L)=
+  \frac{\mathbb E[L\mathbf 1\{L>q\}]
+       +q\bigl(F(q)-\alpha\bigr)}{1-\alpha}.
+  \label{eq:rl-trustworthy-tail-mass}
+\end{equation}
+右侧从严格大于$q$的结果取全部质量，再从$q$处补足到$1-\alpha$。这正是一般损失分布下CVaR的处理方式\scite{rl8-rockafellar2002-cvar}
+
+对开头两个策略，$\operatorname{VaR}_{0.95}$分别为1和0，而$\operatorname{CVaR}_{0.95}$分别为1和20。后者若误用$\mathbb E[L\mid L\geq0]$，会得到1，遗漏最差5\%的含义。图~\ref{fig:rl-trustworthy-loss}~把概率画成离散质量：平稳策略在1处的原子只抽取5\%质量，另一策略在20处的全部5\%质量就是尾部。图中均值重合，分位点和尾部却不同。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-trustworthy-loss}
+  \caption{两个教学损失分布，横轴为无量纲损失，纵轴为概率质量。粗实线和实心点表示原子，虚线标均值；旁边的小条标明用于计算CVaR的最差5\%质量，不是连续概率密度。}
+  \label{fig:rl-trustworthy-loss}
+\end{figure}
+
+若模型未知但能够运行当前策略，可以直接优化累计损失的静态CVaR。设策略为$\pi_{\bm{\theta}}$，一回合损失为$L(\tau)$，定义
+\[
+  \Phi(\bm{\theta},\eta)
+  =\eta+\frac{1}{1-\alpha}
+      \mathbb E_{\tau\sim\pi_{\bm{\theta}}}(L(\tau)-\eta)_+.
+\]
+对于与参数无关的环境、可微且支持不随参数突变的随机策略，在可交换微分与期望的条件下，轨迹概率的对数导数是
+$\sum_{t=0}^{H-1}\nabla_{\bm{\theta}}\log\pi_{\bm{\theta}}(a_t\mid h_t)$。固定阈值求导给出
+\begin{equation}
+  \nabla_{\bm{\theta}}\Phi
+  =\frac{1}{1-\alpha}\mathbb E\left[
+    (L-\eta)_+
+    \sum_{t=0}^{H-1}\nabla_{\bm{\theta}}
+       \log\pi_{\bm{\theta}}(a_t\mid h_t)\right].
+  \label{eq:rl-trustworthy-tail-gradient}
+\end{equation}
+阈值的一个次梯度为
+$1-(1-\alpha)^{-1}\mathbb P(L>\eta)$；在$L=\eta$处可以按$[0,1]$中的权重分配质量。这是在联合目标上更新阈值和策略，不是假定有限样本分位数已经精确。
+
+\begin{algorithm}[累计CVaR的轨迹更新]
+  \label{alg:rl-trustworthy-static-cvar}
+  \begin{algorithmic}[1]
+    \Require 分位水平$\alpha$，时域$H$，批量$n$，步长序列，初值$\bm{\theta}^{(0)},\eta^{(0)}$
+    \Ensure 候选策略及其阈值；可靠性另用留出数据验证
+    \For{$k=0,\ldots,K-1$}
+      \State 冻结当前参数，用$\pi_{\bm{\theta}^{(k)}}$独立启动$n$条轨迹，记录逐步损失并计算$L_j$
+      \State 在旧参数、旧阈值上，用式~\eqref{eq:rl-trustworthy-tail-gradient}~的样本均值计算$\widehat{\bm{g}}_\theta$
+      \State 计算$\widehat g_\eta=1-\frac{1}{n(1-\alpha)}\sum_j\mathbf 1\{L_j>\eta^{(k)}\}$，按需处理阈值处原子
+      \State $\bm{\theta}^{(k+1)}=\bm{\theta}^{(k)}-\beta_k\widehat{\bm{g}}_\theta$，
+        $\eta^{(k+1)}=\eta^{(k)}-\zeta_k\widehat g_\eta$
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+这个更新如何改变行为？设每回合出发时以概率$p=\operatorname{sigmoid}(\theta)$选偶发严重损失策略，否则选平稳策略。对$0\leq p\leq1$，最差5\%质量由$0.05p$的损失20和$0.05(1-p)$的损失1组成，故CVaR为$1+19p$。在$p=1/2$、最优阈值$\eta=1$处，精确策略梯度为$19p(1-p)=4.75$；损失最小化的一步更新使$\theta$减小，从而降低选择高尾部损失路线的概率。这是解析教学计算，不是训练结果。
+
+一批数据需要$nH$次交互及相应的策略求导，存储整批轨迹需要与$nH$成正比的空间；排序求经验分位数另需$O(n\log n)$，阈值次梯度本身只需$O(n)$。当$n(1-\alpha)$很小时，梯度主要依赖极少数回合，甚至整批都没有出现关键尾部事件。用同批数据选策略再报告其尾部估计还会引入选择偏差。换成模型轨迹可以减少真实交互，却把模型在罕见区域的误差带入目标；这些误差不会被CVaR公式自动消除。百分位风险约束中的策略梯度和行动者--评论家方法也遵循“估计风险、更新策略、调整约束”的联系，其局部收敛条件不能解释成任意神经网络训练的全局最优保证\scite{rl8-chow2018-percentile}
+
+已知有限时域模型时，静态目标还可以保留为动态规划问题，而不改变成逐阶段CVaR。以累计损失
+$L=\sum_{t=0}^{H-1}\gamma^t\ell_t$为例，增广状态记录已经积累的损失$z$。对事先固定的$\eta$，令
+\begin{align}
+  W_H^\eta(s,z)&=(z-\eta)_+, \nonumber\\
+  W_t^\eta(s,z)&=\min_{a\in\mathcal A(s)}
+       \mathbb E\!\left[
+       W_{t+1}^\eta(s',z+\gamma^t\ell_t)\mid s,a\right].
+  \label{eq:rl-trustworthy-augmented-risk}
+\end{align}
+再在出发前最小化
+$\eta+(1-\alpha)^{-1}\mathbb E_{s_0\sim\rho_0}W_0^\eta(s_0,0)$。
+这里允许策略依赖时间、状态和已观察的累计损失，且用模型对联合后继状态与损失求期望。若损失支持离散且有限，可枚举可达$z$；若$z$连续，离散化或插值会增加状态规模并引入误差。阈值是事前承诺的一部分，途中不能把它重置为新的条件分位数。另一类增广方法保存尾部概率预算；其原论文将参数记为尾部质量，换成本章记号时应使用$1-\alpha$\scite{rl8-chow2015-cvar}
+
+\begin{example}[静态CVaR的时间不一致]
+  \label{ex:rl-trustworthy-time-inconsistency}
+  设$H=2$且不折扣。$t=0$只有一个虚拟动作，损失为0，随后进入可观察的分支A或B，概率分别为0.1与0.9。$t=1$在B只有一个动作，损失固定为10；在A可以选safe，损失12，也可以选risky，损失以0.9概率为0、以0.1概率为20。决策者在$t=0$选择并承诺一个完整条件策略，在到达A后执行约定动作。
+
+  取$\alpha=0.9$。承诺safe时，总损失分布为$10(0.9),12(0.1)$，CVaR为12。承诺risky时，分布为$0(0.09),10(0.9),20(0.01)$，最坏10\%由全部1\%的20和9\%的10组成，所以
+  \[
+    \operatorname{CVaR}_{0.9}(L_{\text{risky}})
+       =\frac{0.01\times20+0.09\times10}{0.1}=11.
+  \]
+  事前准则严格选择risky。但一旦到达A，重新最小化条件CVaR，safe与risky的数值分别为12与20，因而严格选择safe。环境和可选动作没有改变，改变的是条件化之后用于定义尾部的概率质量。
+\end{example}
+
+这个反例展示的是事前承诺与途中重新优化的冲突，而不是决策者看不到分支。静态CVaR在原物理状态上通常不能直接套用普通Bellman递推；式~\eqref{eq:rl-trustworthy-augmented-risk}~保留累计信息与事前目标，正是为避免丢掉这层承诺。若运行要求本来就希望每个历史都重新按相同风险规则判断，则应明确采用下一小节的动态目标。
+
+% Outline: 8.2.2
+\subsection{逐阶段条件风险下的决策}
+\label{sec:rl-trustworthy-dynamic-risk}
+
+到达A后，决策者已知道B没有发生，因而可以要求未来方案只按A下的后果比较。\term{条件风险映射}（conditional risk mapping）把下一阶段的不确定损失转成当前信息下的风险数值；这个数值对当前已知历史是可计算的，对更早时刻仍可以是随机变量。令$\mathcal F_t$表示时刻$t$已知的信息，映射$\rho_t$把$\mathcal F_{t+1}$可测损失变成$\mathcal F_t$可测量。条件CVaR就是在式~\eqref{eq:rl-trustworthy-cvar}~中使用条件期望，并允许阈值依赖当前历史。
+
+\begin{definition}[嵌套风险与时间一致性]
+  \label{def:rl-trustworthy-time-consistency}
+  取归一化$\rho_t(0)=0$的一步条件风险映射。对阶段损失$\ell_t$，定义
+  \[
+    \mathcal R_t
+      =\rho_t(\ell_t+\gamma\mathcal R_{t+1}),
+      \qquad \mathcal R_H=0.
+  \]
+  这称为嵌套风险（nested risk），即把后一步风险当作当前待评价的未来损失。
+  动态风险族是时间一致的（time-consistent），如果对任意$u<v$和两个损失序列，它们在$u,\ldots,v-1$相同，且$v$时刻的条件风险几乎处处满足$\mathcal R_v\leq\widetilde{\mathcal R}_v$，就有
+  $\mathcal R_u\leq\widetilde{\mathcal R}_u$。
+\end{definition}
+
+时间一致性要求“以后在每个可能历史下都不更差”的方案，在相同的前段损失下，不应被更早的评价颠倒排序。若各$\rho_t$单调，把$v$时刻的不等式逐层代入递归即可传到$u$，因此上述嵌套构造满足这一条件。这里比较的是条件风险的排序，不是保证每条轨迹都无损失。动态风险与Markov风险表示的系统论述见原始工作\scite{rl8-ruszczynski2010-risk}
+
+在示例~\ref{ex:rl-trustworthy-time-inconsistency}~中，每层都使用$\alpha=0.9$的条件CVaR。在A汇总risky的叶节点后得到20，safe得到12；在B得到10。再对分支风险$20(0.1),10(0.9)$汇总，risky的嵌套风险为20，而safe为12。图~\ref{fig:rl-trustworthy-risk-tree}~并排展示两种计算：静态准则保留叶节点的联合概率，嵌套准则先把各分支变成风险数值。嵌套风险选择safe不是静态CVaR求解器变得更准确，而是评价对象已改变。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/rl-trustworthy-risk-tree}
+  \caption{同一教学决策树的两种风险汇总，均取$\alpha=0.9$、$H=2$且不折扣。图中展示承诺risky的分支；实线表示随机转移，带文字的回传箭头表示风险计算。safe只需将A的两个叶节点替换为固定损失12。}
+  \label{fig:rl-trustworthy-risk-tree}
+\end{figure*}
+
+要把递归风险写成状态价值，状态必须保留条件分布和风险映射需要的信息。设当前动作确定后，一步损失$\ell(s,a)$已知，$\rho_{s,a}$评价后继状态上的随机量。若映射满足对当前已知量的平移等变性，便可把这一已知损失移到映射外。对有限时域Markov风险问题，向后归纳得到
+\begin{equation}
+  V_t(s)=\min_{a\in\mathcal A(s)}
+    \{\ell_t(s,a)+\rho_{t,s,a}(\gamma V_{t+1}(s'))\},
+  \qquad V_H=0.
+  \label{eq:rl-trustworthy-risk-bellman}
+\end{equation}
+若一步损失也随机，须把$\ell_t+\gamma V_{t+1}$一起放进对应联合分布的风险映射。若风险水平依赖剩余预算或历史，该信息也要进入状态。动作优化这里采用确定性Markov选择；若允许随机动作，要另外约定风险是在随机化之前还是之后评价，再建立相应算子。
+
+\begin{theorem}[折扣风险算子的压缩性]
+  \label{thm:rl-trustworthy-risk-contraction}
+  设状态与可行动作集有限且非空，阶段损失有界，$0<\gamma<1$。每个实值一步风险映射$\rho_{s,a}$满足单调性及常数平移等变性
+  $\rho_{s,a}(X+b)=\rho_{s,a}(X)+b$。
+  对已经按声明的风险问题建立的算子
+  \[
+    (TV)(s)=\min_a\{\ell(s,a)+\rho_{s,a}(\gamma V(s'))\},
+  \]
+  有$\lVert TV-TW\rVert_\infty\leq\gamma\lVert V-W\rVert_\infty$。
+  因而该算子有唯一固定点，反复应用$T$从任意有限初值收敛到该点。
+\end{theorem}
+\begin{proof}
+  令$\varepsilon=\lVert V-W\rVert_\infty$。对所有后继状态，
+  $\gamma W-\gamma\varepsilon\leq\gamma V\leq\gamma W+\gamma\varepsilon$。
+  单调性把不等式传入$\rho_{s,a}$，平移等变性把两端的常数移出，得到
+  \[
+    \rho_{s,a}(\gamma W)-\gamma\varepsilon
+      \leq\rho_{s,a}(\gamma V)
+      \leq\rho_{s,a}(\gamma W)+\gamma\varepsilon.
+  \]
+  记每个动作的花括号表达式为$q_V(s,a)$和$q_W(s,a)$，则
+  $|q_V-q_W|\leq\gamma\varepsilon$。对所有动作的下界取最小值，得
+  $(TV)(s)\geq(TW)(s)-\gamma\varepsilon$；取上界的最小值，得反向界。因此所需无穷范数界成立。
+
+  令$V^{(k+1)}=TV^{(k)}$。相邻迭代差至多为
+  $\gamma^k\lVert V^{(1)}-V^{(0)}\rVert_\infty$；对这些差求几何级数，说明序列是有限维完备空间中的Cauchy序列，故收敛到某个$V^\star$。压缩性蕴含连续性，将迭代式取极限得到$TV^\star=V^\star$。若$W^\star$也是固定点，则
+  $\lVert V^\star-W^\star\rVert_\infty\leq\gamma\lVert V^\star-W^\star\rVert_\infty$；由于$\gamma<1$，只能有$V^\star=W^\star$。再次应用压缩性得
+  $\lVert V^{(k)}-V^\star\rVert_\infty\leq\gamma^k\lVert V^{(0)}-V^\star\rVert_\infty$。
+\end{proof}
+
+证明没有用正齐次性；把折扣留在$\rho(\gamma V)$内部即可。固定点对应哪个决策目标，则仍依赖时间一致的风险定义、充分的状态表示和允许策略类，不能靠压缩性倒推这些建模条件已经满足。
+
+以已知有限模型上的条件CVaR价值迭代为例，冻结$V^{(k)}$，对每个$(s,a)$列出后继值$\gamma V^{(k)}(s')$及概率，排序后从最大值开始累计$1-\alpha$质量，按式~\eqref{eq:rl-trustworthy-tail-mass}~计算风险，再加$\ell(s,a)$并对动作取最小值。迭代到残差
+$\lVert TV^{(k)}-V^{(k)}\rVert_\infty\leq(1-\gamma)\epsilon$时，
+压缩界与三角不等式给出
+$\lVert V^{(k)}-V^\star\rVert_\infty\leq\epsilon$。
+在两阶段树上，从终端0开始，A的回传立即得到$\min(12,20)=12$，B得到10，根部再得到12，完成一次可复核的向后计算。
+
+记状态数为$m$、每个状态最多$b$个动作，稠密转移下每次排序式更新的代价为$O(bm^2\log m)$，存储模型需$O(bm^2)$。只有指定状态动作的随机采样接口时，可以用独立后继批次近似这些条件分布，但单个后继样本的风险一般不是总体风险的无偏估计。若每步近似算子误差一致不超过$e$，迭代误差满足
+$\Delta_{k+1}\leq\gamma\Delta_k+e$，长期误差上限为$e/(1-\gamma)$。
+风险策略梯度需要与嵌套目标一致的风险权重；分布评论家需要估计相应条件后果分布。只把期望评论家的输出换成一个尾部分位数，不能省去对新目标与采样关系的推导。
+
+% Outline: 8.3
+\section{不确定环境下的鲁棒决策}
+\label{sec:rl-trustworthy-robust}
+
+风险敏感决策可以在同一个已知概率模型内讨论；鲁棒决策则问该模型、观测或动作执行发生变化时，策略还能否维持要求。图~\ref{fig:rl-trustworthy-channels}~固定一个闭环，把变化分成三个作用位置。改变摩擦直接改变真实状态转移；修改传感读数不必改变物理状态；削弱制动力则发生在请求动作与实际执行之间。对抗训练是一种搜索不利变化的求解手段，不是与这三种位置并列的第四种不确定对象。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/rl-trustworthy-channels}
+  \caption{扰动进入交互闭环的三个位置。实线传递状态、观测与动作，虚线表示不同扰动权限。下方两个局部面板分别只突出观测误差和执行延迟，二者均不等于直接改变当前真实位置。}
+  \label{fig:rl-trustworthy-channels}
+\end{figure*}
+
+% Outline: 8.3.1
+\subsection{环境机制变化下的鲁棒决策}
+\label{sec:rl-trustworthy-mechanism}
+
+估计得到摩擦系数0.6，与知道真实系数位于$[0.4,0.8]$，提供的是不同信息。前者给出一个标称模型$\widehat P$，后者给出一族可能的转移核$\mathcal U$。本小节先固定奖励$R$和初态分布$\rho_0$，只允许转移核变化，以免不确定对象含混。
+
+\begin{definition}[最坏情形回报]
+  \label{def:rl-trustworthy-robust-return}
+  对模型集合$\mathcal U$，固定策略$\pi$的鲁棒回报为
+  \[
+    J_{\mathrm{rob}}(\pi)=\inf_{P\in\mathcal U}J_P(\pi),
+    \qquad \max_\pi J_{\mathrm{rob}}(\pi).
+  \]
+  集合$\mathcal U$描述允许的环境，而不是轨迹中随机转移结果的集合。若奖励或初态也不确定，应把它们与$P$一起列入模型集合。
+\end{definition}
+
+若$\mathcal U=\mathcal U(\mathcal D)$来自数据，还需区分模型假设与统计覆盖事件
+$\{P_{\text{真}}\in\mathcal U(\mathcal D)\}$。在该事件上，任何被评价策略都有
+$J_{P_{\text{真}}}(\pi)\geq\inf_{P\in\mathcal U}J_P(\pi)$。
+若集合以至少$1-\delta$的概率覆盖真实模型，才可把这个确定性集合内结论转成带置信水平的声明。集合过小可能漏掉真实模型，过大则可能造成不必要的保守。鲁棒MDP中的集合结构与数据置信区域需要一起指定\scite{rl8-wiesemann2013-robust}
+
+要沿用Bellman递推，需要进一步限定集合如何分解。状态--动作矩形性（state-action rectangularity）指
+$\mathcal U=\prod_{s,a}\mathcal U_{s,a}$：任意从每个局部集合中选一个转移分布，组合起来仍是允许的模型。与之对应的动态对手可以观察当前状态和已选动作，在$\mathcal U_{s,a}$中选择下一步分布，没有跨状态或跨时间共享的剩余扰动预算。此时鲁棒Bellman算子为
+\begin{equation}
+  (T_{\mathrm{rob}}V)(s)
+    =\max_{a\in\mathcal A(s)}
+      \left\{R(s,a)+\gamma
+        \min_{p\in\mathcal U_{s,a}}\sum_{s'}p(s')V(s')\right\}.
+  \label{eq:rl-trustworthy-robust-bellman}
+\end{equation}
+外层选择动作，内层选择该动作下最不利的后继分布，顺序表达了对手的信息权限。若对手必须在看到动作前承诺跨动作耦合的参数，就不能不加说明地使用同一算子。
+
+\begin{theorem}[矩形鲁棒Bellman算子的压缩性]
+  \label{thm:rl-trustworthy-robust-contraction}
+  设状态动作有限，可行动作非空，奖励有界，$0<\gamma<1$，每个$\mathcal U_{s,a}$都是概率单纯形中的非空紧集。在状态--动作矩形不确定集和上述对手权限下，式~\eqref{eq:rl-trustworthy-robust-bellman}~在无穷范数下是$\gamma$压缩映射。
+\end{theorem}
+\begin{proof}
+  令$\varepsilon=\lVert V-W\rVert_\infty$。对任意概率向量$p$，
+  \[
+    \left|\sum_{s'}p(s')V(s')-\sum_{s'}p(s')W(s')\right|
+      \leq\sum_{s'}p(s')\varepsilon=\varepsilon.
+  \]
+  记内层最小值为$m_V,m_W$。上式对集合中每个$p$都成立，故
+  $\sum pV\geq\sum pW-\varepsilon\geq m_W-\varepsilon$，取最小值得
+  $m_V\geq m_W-\varepsilon$。由于紧性保证$W$的最小点$p_W$存在，
+  $m_V\leq\sum p_WV\leq m_W+\varepsilon$。于是$|m_V-m_W|\leq\varepsilon$。
+  加入相同的$R(s,a)$并乘以$\gamma$，每个动作的表达式相差至多$\gamma\varepsilon$。
+  对各动作的上下界分别取最大值，得到
+  \[
+    (T_{\mathrm{rob}}W)(s)-\gamma\varepsilon
+      \leq(T_{\mathrm{rob}}V)(s)
+      \leq(T_{\mathrm{rob}}W)(s)+\gamma\varepsilon.
+  \]
+  对状态取最大绝对差，结论成立。固定点存在、唯一及价值迭代收敛由定理~\ref{thm:rl-trustworthy-risk-contraction}~证明中的Cauchy序列与唯一性论证直接得到。
+\end{proof}
+
+这段压缩证明只检查数值算子。矩形性另负责把局部选择接成同一个合法的全局环境。在固定点处，每个状态可选择一个外层最优动作，每个状态动作可选择一个内层最差分布；矩形性使这些分布能够共同组成$P^\star\in\mathcal U$。固定平稳Markov策略后也能作同样选择：将外层动作最大化换成按$\pi(a\mid s)$平均，保留每个动作下的内层最小化，相应评价算子给出该策略在矩形模型族中的最坏回报。历史依赖策略则须保留它所用的记忆，不能直接套用这个状态评价算子。有限时域的逐步归纳及无限时域的折扣极限把局部选择与动态对手问题连接起来；有限时域模型族还须允许各时刻的局部分布独立组合，不能从空间上的矩形性推得时间上的自由变化。这种连接不能移植到任意耦合集合。
+
+实际求解时，若集合由一个置信多面体给定，内层是线性目标$\sum pV$的线性规划；若只是两个后继状态的概率区间，检查端点即可。教学例中后继价值为10与0，$\gamma=0.9$，当前奖励0，好状态概率$p\in[0.7,0.9]$，该动作的鲁棒备份为$0.9\times0.7\times10=6.3$，标称$p=0.8$时则为7.2。若另一动作有确定后继价值7.5，其备份为6.75，鲁棒动作选择会改变。迭代过程冻结旧价值、逐对求内层最小值、再取外层最大值。设一次内层优化代价为$C_{\text{内}}$，每轮需$O(mbC_{\text{内}})$；内层残差、模型集估计和价值逼近误差应分别记录。
+
+\begin{example}[共享参数不能随状态独立取坏值]
+  \label{ex:rl-trustworthy-coupling}
+  一个两阶段教学任务以相同概率从$s_1,s_2$启动，各只有一个动作，第一步奖励0。下一步到达成功状态得到奖励1，失败状态得到0，随后终止。整个环境共享一个固定未知参数$\vartheta\in[0,1]$，成功概率分别是
+  $p_1=\vartheta$与$p_2=1-\vartheta$。
+  对任意合法环境，初态平均回报都为
+  $\gamma(p_1+p_2)/2=\gamma/2$。
+  如果只保留每个概率各自属于$[0,1]$，逐状态最坏选择会取$p_1=p_2=0$，得到回报0；然而不存在同时产生这两个概率的$\vartheta$。
+\end{example}
+
+图~\ref{fig:rl-trustworthy-rectangular}~中的斜线才是真实允许的参数组合，方形是矩形化后的扩大集合。扩大集合上的算子可以严格收敛，但求得的是更保守的另一个问题。若共享参数可被观测历史逐渐识别，还会产生信息价值；此时要保留参数信念或相关历史，而不是把每次访问都解释成对手重新任意改变参数。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-trustworthy-rectangular}
+  \caption{教学耦合集$\{(p_1,p_2):p_1+p_2=1\}$与矩形外包$[0,1]^2$。方形左下角给出局部最坏选择，却不属于共享参数模型。坐标是两状态的成功概率。}
+  \label{fig:rl-trustworthy-rectangular}
+\end{figure}
+
+“分布鲁棒”也需要指出分布是谁的分布。它可以表示后继状态转移分布$p(\cdot\mid s,a)$的不确定性，也可以表示随机环境参数$\vartheta$的分布$\nu$不确定，后者优化
+$\inf_{\nu\in\mathfrak U}\mathbb E_{\vartheta\sim\nu}J_{P_\vartheta}(\pi)$。
+一个模型在每回合开始抽取并保持不变，与每一步重新抽取，通常不是同一个过程。Xu与Mannor的分布鲁棒MDP通过参数分布的嵌套集合约束编码概率信息，并给出相应的状态分解与求解条件；不能据此把任何参数分布歧义集都逐状态拆开\scite{rl8-xu2010-distributional}
+
+表~\ref{tab:rl-trustworthy-uncertainty}~按不确定对象比较集合。对于其他参与者造成的转移变化，是否允许任意局部对手还要与第~\ref{chap:rl-multi-agent}~章的联合行为模型一致；识别未知参数后适应，则回到第~\ref{chap:rl-transfer}~章的任务推断问题。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{20mm}XX@{}}
+    \toprule
+    不确定对象 & 集合来源与矩形条件 & 内层求解及保证范围 \\
+    \midrule
+    参数$\vartheta\in\Theta$ & 物理区间或联合置信集；共享参数通常耦合状态 & 在$\Theta$上优化；覆盖整个参数族，不自动支持局部备份 \\
+    转移分布$p\in\mathcal U_{s,a}$ & 距离球、矩或似然约束；须说明各对之间能否自由组合 & 线性、凸或专门分布优化；只覆盖声明集合 \\
+    参数分布$\nu\in\mathfrak U$ & 对模型参数随机性的矩、支持或概率质量约束 & 对分布求最坏期望；需说明参数抽取时机及依赖 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{三种不同层次的不确定性。置信覆盖是构造集合的额外统计性质，不由“鲁棒”或“分布鲁棒”的名称保证。}
+  \label{tab:rl-trustworthy-uncertainty}
+\end{table}
+
+% Outline: 8.3.2
+\subsection{观测信息受扰下的鲁棒决策}
+\label{sec:rl-trustworthy-observation}
+
+现在固定真实动力学与路线，只让传感器报告发生变化。记真实状态为$s_t$，原始观测为$o_t$，受扰观测为$\widetilde o_t$，策略只能使用
+$\widetilde h_t=(\widetilde o_0,a_0,\ldots,\widetilde o_t)$。
+一个具体威胁模型可以规定：扰动者在原始观测产生后、策略采样动作前，选择
+$\widetilde o_t\in\mathcal B_\epsilon(o_t)=\{o:\lVert o-o_t\rVert_\infty\leq\epsilon\}$；
+它能看到当前原始观测和策略参数，但不能看到未来噪声或尚未采样的动作。若还有总预算$\sum_t\lVert\widetilde o_t-o_t\rVert\leq B$，剩余预算就是对手状态的一部分。不同权限对应不同最坏情形，不能只写“加了扰动”。
+
+图~\ref{fig:rl-trustworthy-channels}~的观测面板给出一个一维教学反例：真实位置$x=0.49$不变，策略在读数小于0.5时向右，否则制动。读数0.49与0.51都可能由$|\widetilde o-x|\leq0.02$产生，却触发不同动作。这里被修改的是策略输入，不是机器人已经移动到0.51。若仅测试$\widetilde o=0.48,0.49$，两个测试都通过也没有检查到允许集合另一侧的动作切换。
+
+一种可执行的训练循环是固定当前策略，按允许预算搜索使回报较小的观测序列，再在这些受扰轨迹上更新策略，并用未参与更新的扰动规则与启动条件检验。以无记忆的确定性连续动作策略和可微的一步价值代理为例，可从$o_t$初始化，反复进行
+\[
+  \widetilde o^{(j+1)}
+   =\operatorname{Proj}_{\mathcal B_\epsilon(o_t)}
+      \left(\widetilde o^{(j)}
+       -\xi\nabla_{\widetilde o}
+          \widehat Q(s_t,\pi_{\bm{\theta}}(\widetilde o^{(j)}))\right).
+\]
+这一步以降低奖励价值为方向，使用训练时可得的真实状态或其估计；它不是保证找到整条轨迹最坏观测的算法。随机策略应对动作分布下的期望价值求导，不能把概率分布当作一个动作直接输入$\widehat Q$；有记忆策略还须保留受扰历史对内部状态的影响。生成样本后，用第~\ref{chap:rl-learning}~章的策略更新提高受扰回报，新的参数又改变下一轮内层目标。若每步搜索$K_{\text{攻}}$次，梯度计算代价约为普通采样的该倍数，且对手梯度与策略梯度应分开计算。
+
+鲁棒状态估计把读数转成与误差模型相容的状态集合；历史方法利用动力学与多次观测消除一部分歧义；输入保护则修复或拒绝可疑读数。三者都需要额外假设：误差界有效、动力学足够准确，或可疑输入能够识别。若修复器输出$\widehat o$仍有误差$\|\widehat o-o\|\leq e$，对确定性连续动作策略，还需它在该区域满足Lipschitz条件，才有动作误差上界
+$\|\pi(\widehat o)-\pi(o)\|\leq L_\pi e$；还需价值或闭环动力学的敏感性界，才能把它转成回报或安全界。阈值策略在切换面附近不满足这样的连续性估计。信念和历史状态的构造见第~\ref{chap:rl-information}~章。
+
+设真实最坏回报为$J_{\min}=\inf_{\nu\in\mathcal N}J(\pi,\nu)$，近似攻击找到$\widehat\nu$，则
+$J_{\min}\leq J(\pi,\widehat\nu)$：攻击样本的回报对最坏回报只是一个上界。只有另外证明内层误差
+$J(\pi,\widehat\nu)-J_{\min}\leq e_{\text{攻}}$，才能得到
+$J_{\min}\geq J(\pi,\widehat\nu)-e_{\text{攻}}$。
+因此，针对若干攻击表现良好，是测试证据；覆盖全部允许输入的保证还需要搜索完备性、可验证的误差界或形式化分析。
+
+% Outline: 8.3.3
+\subsection{动作执行受扰下的鲁棒决策}
+\label{sec:rl-trustworthy-actuation}
+
+策略请求制动，并不意味着制动力立即足量施加。记请求动作为$a_t$，实际执行动作为$\widetilde a_t$。幅值误差可以写成$\widetilde a_t=a_t+e_t$、$\|e_t\|\leq\epsilon_a$，但执行器饱和还需把结果限制在物理可行输入内；篡改要规定攻击者何时读取请求动作，延迟则要规定队列及最大滞后。图~\ref{fig:rl-trustworthy-channels}~的执行面板突出这种区别。
+
+固定一拍延迟时，物理系统实际满足
+$x_{t+1}=f(x_t,a_{t-1},w_t)$。仅给出$x_t$和当前请求$a_t$，无法确定下一步分布，因为队列里的旧请求仍会执行。增广状态
+$z_t=(x_t,q_t)$、$q_t=a_{t-1}$，则
+\begin{equation}
+  x_{t+1}=f(x_t,q_t,w_t),\qquad q_{t+1}=a_t.
+  \label{eq:rl-trustworthy-delay}
+\end{equation}
+若$w_t$在给定$z_t,a_t$后按固定核抽取，该式恢复马尔可夫转移。例如教学系统$x_{t+1}=x_t+\widetilde a_t$，在$x_t=0,q_t=1$时即使请求$a_t=-1$，下一步仍为$x_{t+1}=1$；该请求只把队列改为$-1$。忽略队列会把一次正确的制动请求错误地解释成模型预测失效。
+
+已知执行误差集合时，鲁棒规划可以在每个请求动作下计算最坏后继价值
+\begin{equation}
+  \inf_{e\in E(s,a)}
+       \mathbb E\!\left[V\bigl(f(s,a+e,w)\bigr)\right].
+  \label{eq:rl-trustworthy-actuation-backup}
+\end{equation}
+其中$E(s,a)$是状态$s$下请求动作$a$允许的执行误差集合，$e$由扰动者选择；$w$是按已声明条件分布抽取的其他随机扰动，$f$给出实际动作$a+e$对应的状态转移，$V$是后继价值。该表达式先选择执行误差，再对随机扰动求期望；备份还须加入即时奖励和折扣，并按实际对手权限组织动作优化。若即时奖励也依赖执行误差，应将它放入同一个内层最坏情形优化。
+
+扰动对手训练用模型或真实交互搜索不利执行动作，其近似内层误差仍受上一小节的限制。反馈补偿则根据实际运动估计误差并修正下一次请求；它需要足够快的测量、可辨识的误差和剩余控制能力，不能补偿任意延迟或完全失去制动能力。
+
+若执行通道在给定当前状态动作后与更早历史条件独立，且条件分布$K$固定，可以将它积分进有效转移核
+\[
+  P_{\mathrm{eff}}(s'\mid s,a)
+    =\int P(s'\mid s,\widetilde a)\,K(d\widetilde a\mid s,a).
+\]
+有记忆的延迟、相关误差或对手剩余预算不能如此无损消去；执行动作不可见时，还可能需要对队列或误差状态作历史推断。表格规划的状态数也会从$m$扩大到$m|\mathcal A|$，多拍队列可进一步指数增长。
+
+数据记录应同时保存请求动作、执行动作和干预原因。学习物理模型$P(s'\mid s,\widetilde a)$需要实际动作；学习包括执行通道的模型$P_{\mathrm{eff}}(s'\mid s,a)$则使用请求动作并固定通道协议。二者混用会把通道变化归因于错误的对象。即便补偿提高了平均回报，修正后的实际动作是否保持安全状态，仍要由下一节的约束与保护条件判断。
+
+% Outline: 8.4
+\section{安全约束下的策略学习与保护}
+\label{sec:rl-trustworthy-safety}
+
+“减少危险”还不是一个可检验的要求。机器人在危险区域停留的平均时间不超过预算、整段导航的碰撞概率不超过阈值、任何时刻都不越过边界，允许的行为并不相同。表~\ref{tab:rl-trustworthy-constraint-types}~按判定方式区分三类约束。训练数据来自哪里、是否知道动力学、能否部署保护器，决定怎样满足约束，却不会改变约束本身的类别。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm}XXX@{}}
+    \toprule
+    约束对象 & 个别轨迹能否违反 & 是否区分严重程度 & 覆盖时机 \\
+    \midrule
+    期望累计成本 & 可以；只限制总体平均 & 由成本大小决定 & 通常约束输出策略，训练另查 \\
+    轨迹事件概率 & 可以；总概率有上限 & 事件本身只计真假 & 须指定回合或整个学习过程 \\
+    逐步或逐轨迹硬要求 & 在声明范围内不允许 & 可另设轨迹预算 & 只有从训练起执行才覆盖训练 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{约束的三种判定方式。“不允许”仍以动力学、扰动范围、状态信息和执行机制满足前提为条件，不表示无条件排除现实中的一切事故。}
+  \label{tab:rl-trustworthy-constraint-types}
+\end{table}
+
+% Outline: 8.4.1
+\subsection{期望累计成本约束下的安全学习}
+\label{sec:rl-trustworthy-cmdp}
+
+若要求每天的平均危险暴露时间不超过某个值，可以使用\term{约束马尔可夫决策过程}（constrained Markov decision process, CMDP）：在普通MDP上增加成本$c_i(s,a)$与预算$b_i$，求解
+\begin{equation}
+  \max_\pi J(\pi)
+  \quad\text{满足}\quad
+  J_{c_i}(\pi):=\mathbb E_\pi\sum_{t\geq0}\gamma^tc_i(s_t,a_t)
+       \leq b_i,\qquad i=1,\ldots,m_c.
+  \label{eq:rl-trustworthy-cmdp}
+\end{equation}
+奖励衡量要争取的收益，成本约束划出可行策略。若成本来自转移结果，可先用条件期望定义$c_i(s,a)$，采样时仍记录实际成本。期望约束允许少量轨迹成本很高。例如单步教学任务以0.99概率成本0、以0.01概率碰撞并产生成本10，期望成本只有0.1；预算0.1允许它，但没有禁止碰撞。
+
+有限状态动作、已知转移核且$0\leq\gamma<1$时，第~\ref{chap:rl-planning}~章的占用度量给出一个精确的凸表示。令$d(s,a)$为归一化折扣占用量，则CMDP等价于
+\begin{align}
+  \max_{d\geq0}\quad&
+       \frac{1}{1-\gamma}\sum_{s,a}d(s,a)R(s,a), \nonumber\\
+  \text{满足}\quad&
+       \sum_a d(s,a)
+       =(1-\gamma)\rho_0(s)
+          +\gamma\sum_{\bar s,\bar a}d(\bar s,\bar a)
+                   P(s\mid\bar s,\bar a), \nonumber\\
+  &\sum_{s,a}d(s,a)c_i(s,a)\leq(1-\gamma)b_i
+       \quad (i=1,\ldots,m_c).
+  \label{eq:rl-trustworthy-cmdp-lp}
+\end{align}
+第一组等式是折扣流守恒；对状态求和可得$\sum_{s,a}d(s,a)=1$。成本约束右侧必须乘$1-\gamma$，因为原预算针对未归一化的累计成本，而不是一次从$d$抽样的平均成本。给定可行占用解，在$d(s)=\sum_a d(s,a)>0$的状态取
+$\pi(a\mid s)=d(s,a)/d(s)$；零占用状态任取合法分布。代入流方程，该策略产生原占用量，因而保留回报与成本。与无约束折扣MDP不同，最优策略未必能取确定性。
+
+\begin{theorem}[约束最优可能需要随机化]
+  \label{thm:rl-trustworthy-randomization}
+  单步任务只有一个初始状态，两个动作的回报与成本分别为$(1,1)$和$(0,0)$，期望成本预算为$1/2$。确定性可行策略的最优回报为0；随机策略的最优回报为$1/2$。
+\end{theorem}
+\begin{proof}
+  确定性策略只有两个。选择第一个动作时成本为1，违反预算；选择第二个动作时成本为0、回报为0，故确定性可行最优值为0。
+  任意随机策略由选择第一个动作的概率$p\in[0,1]$完全描述，其期望回报与期望成本都为$p$。约束等价于$p\leq1/2$，所以可行策略的回报至多为$1/2$。取$p=1/2$达到这个上界，证明完毕。
+\end{proof}
+
+随机化解决的是平均预算下的资源分配，不会让每条轨迹的成本都等于$1/2$。该最优策略仍有一半回合成本为1；若要求每回合成本不超过$1/2$，只有第二个动作可行。
+
+模型未知时，可以用轨迹估计回报与成本，并将约束写成拉格朗日目标
+\begin{equation}
+  \mathcal L(\bm{\theta},\bm{\lambda})
+    =J(\pi_{\bm{\theta}})
+       -\sum_i\lambda_i\bigl(J_{c_i}(\pi_{\bm{\theta}})-b_i\bigr),
+  \qquad \lambda_i\geq0.
+  \label{eq:rl-trustworthy-lagrangian}
+\end{equation}
+策略最大化$\mathcal L$，乘子最小化$\mathcal L$。因为
+$\partial\mathcal L/\partial\lambda_i=b_i-J_{c_i}$，乘子下降一步得到
+\[
+  \lambda_i^{(k+1)}
+   =\left[\lambda_i^{(k)}
+       +\eta_k\bigl(\widehat J_{c_i}^{(k)}-b_i\bigr)\right]_+.
+\]
+成本超标会增大惩罚，成本低于预算则降低惩罚。以下先假定实际执行的就是可微平稳随机策略$\pi_{\bm{\theta}}$，环境与初态不依赖参数，且满足第~\ref{chap:rl-learning}~章策略梯度的正则条件。对策略参数求导时，固定当前乘子，使用奖励优势$A_r^\pi$和各成本优势$A_{c_i}^\pi$：
+\begin{equation}
+  \begin{aligned}
+    \nabla_{\bm{\theta}}\mathcal L
+      &=\frac{1}{1-\gamma}
+        \mathbb E_{(s,a)\sim d^\pi}
+          \left[\nabla_{\bm{\theta}}\log\pi_{\bm{\theta}}(a\mid s)
+                 A_{\bm{\lambda}}^\pi(s,a)\right],\\
+    A_{\bm{\lambda}}^\pi(s,a)
+      &=A_r^\pi(s,a)-\sum_i\lambda_iA_{c_i}^\pi(s,a).
+  \end{aligned}
+  \label{eq:rl-trustworthy-cost-gradient}
+\end{equation}
+这里的$1/(1-\gamma)$与占用度量的归一化一致。优化器可以把常数吸收入步长，但不能在报告梯度或成本单位时无声删去。若保护器改写动作，下面算法不能把实际动作直接当作候选策略的采样；须按组合机制重新定义价值、占用和得分，或以请求动作为策略输出、将固定保护通道纳入环境，再推导对应更新。
+
+\begin{algorithm}[带成本评论家的原始--对偶更新]
+  \label{alg:rl-trustworthy-primal-dual}
+  \begin{algorithmic}[1]
+    \Require 成本定义与预算$b_i$，当前策略，奖励及成本评论家，非负乘子
+    \For{$k=0,\ldots,K-1$}
+      \State 用当前策略$\pi_{\bm{\theta}}$采样并直接执行，记录$(s_t,a_t,r_t,c_{1,t},\ldots,s_{t+1})$
+      \State 以$r_t+\gamma\widehat V_r(s_{t+1})$及$c_{i,t}+\gamma\widehat V_{c_i}(s_{t+1})$为目标更新各评论家；真正终止处不自举，仅采样时间截断仍保留继续价值
+      \State 从相同批次构造$\widehat A_r,\widehat A_{c_i}$，按式~\eqref{eq:rl-trustworthy-cost-gradient}~作策略上升
+      \State 从初态回合或初态价值估计$\widehat J_{c_i}$，按超标量作乘子投影更新
+      \State 记录策略、成本界、乘子与保护干预；另用独立验证数据决定能否交付
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+算法中的采样分布需要与推导对应。从$\rho_0$启动，并独立抽取
+$\mathbb P(T=t)=(1-\gamma)\gamma^t$，则$(s_T,a_T)$恰服从$d^\pi$。实际实现也可对有限轨迹加折扣权重；若$c_i\leq c_{i,\max}$，截断到$H$后遗漏的期望成本至多
+$\gamma^Hc_{i,\max}/(1-\gamma)$。该余项以及评论家误差都应进入约束判断。对于上面的单步例，$\mathcal L=p-\lambda(p-1/2)$，固定$\lambda<1$时策略倾向增大$p$，固定$\lambda>1$时倾向减小$p$；乘子$\lambda=1$时所有$p$的拉格朗日值相同。仅找到这个乘子并没有选出可行的最优$p=1/2$，策略恢复仍是必要步骤。
+
+图~\ref{fig:rl-trustworthy-primal-dual}~把两条反馈分开。一次批量更新的交互代价为轨迹总步数，评论家数量随成本数$m_c$增加，反向传播代价取决于网络规模。乘子过快变化可能使策略追逐移动目标，成本稀疏或严重低估可能使惩罚长期不足。离策略数据还需要第~\ref{chap:rl-information}~章的覆盖与校正条件；保护器改写动作后，不能仍把日志当作未保护策略的同策略样本。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-trustworthy-primal-dual}
+  \caption{期望成本约束的两条反馈。奖励与成本优势共同推动策略更新，累计成本与预算的差推动乘子更新；这是一种求解循环，不是每次采样均满足约束的证书。}
+  \label{fig:rl-trustworthy-primal-dual}
+\end{figure}
+
+\begin{theorem}[有限折扣CMDP的强对偶]
+  \label{thm:rl-trustworthy-strong-duality}
+  有限状态动作、折扣因子小于1、奖励与成本有界且至少有一个可行策略时，允许随机平稳策略的CMDP与占用度量线性规划等价，且
+  \[
+    \begin{aligned}
+      \max_{\pi:\,J_{c_i}(\pi)\leq b_i}J(\pi)
+        &=\min_{\bm{\lambda}\geq0}g(\bm{\lambda}),\\
+      g(\bm{\lambda})
+        &=\sum_i\lambda_i b_i+
+          \max_\pi\left\{J(\pi)-\sum_i\lambda_iJ_{c_i}(\pi)\right\}.
+    \end{aligned}
+  \]
+  原始最优解和有限维线性规划的对偶最优解存在。
+\end{theorem}
+
+证明思路是把策略换成式~\eqref{eq:rl-trustworthy-cmdp-lp}~中的占用量。可行占用集是非空有界闭多面体，线性目标有有限最优值；有限维线性规划强对偶给出对偶最优值相等。流守恒的对偶变量是状态价值，成本不等式的对偶变量是非负乘子。先对占用流求最大值、保留成本乘子，便得到上式。互补松弛还要求
+$\lambda_i^\star(J_{c_i}(\pi^\star)-b_i)=0$：严格富余的预算不需要正惩罚，但紧约束也未必有严格正乘子。这个论证依赖的是占用多面体，不是任意神经网络参数集的凸性；参数化策略可能无法表示最优占用量，交替梯度也可能停在非全局解。
+
+\term{约束策略优化}（constrained policy optimization, CPO）选择另一种更新方式：在旧策略附近，用回报和成本的局部代理问题限制一次更新的影响。理解其结论要保留代理误差。令旧策略$\pi$与候选策略$\pi'$均为平稳Markov策略，对奖励或任一成本$f$定义
+\[
+  \begin{aligned}
+    \mathcal S_f(\pi',\pi)
+      &=J_f(\pi)+\frac{1}{1-\gamma}
+          \mathbb E_{s\sim d^\pi,a\sim\pi'}A_f^\pi(s,a),\\
+    \epsilon_f
+      &=\max_s\left|\mathbb E_{a\sim\pi'}A_f^\pi(s,a)\right|.
+  \end{aligned}
+\]
+在共同MDP、共同初态和有界优势下，有
+\begin{align}
+  J(\pi')&\geq\mathcal S_r(\pi',\pi)
+      -\frac{2\gamma\epsilon_r}{(1-\gamma)^2}\overline D_{\mathrm{TV}},
+      \nonumber\\
+  J_{c_i}(\pi')&\leq\mathcal S_{c_i}(\pi',\pi)
+      +\frac{2\gamma\epsilon_{c_i}}{(1-\gamma)^2}\overline D_{\mathrm{TV}},
+  \label{eq:rl-trustworthy-cpo-bound}\\
+  \overline D_{\mathrm{TV}}
+    &=\mathbb E_{s\sim d^\pi}
+          \frac12\sum_a|\pi'(a\mid s)-\pi(a\mid s)|. \nonumber
+\end{align}
+关键估计是占用变化界
+$\|d^{\pi'}-d^\pi\|_1\leq
+2\gamma\overline D_{\mathrm{TV}}/(1-\gamma)$。
+性能差恒等式原本在$d^{\pi'}$下平均优势；将其换成$d^\pi$，用$\epsilon_f$乘上占用差，再除以$1-\gamma$，就得到上述误差项。若
+$\mathbb E_{d^\pi}D_{\mathrm{KL}}(\pi'\|\pi)\leq\kappa$，Pinsker不等式和Jensen不等式进一步给出
+$\overline D_{\mathrm{TV}}\leq\sqrt{\kappa/2}$。因此，精确求得
+$\mathcal S_{c_i}$加上误差余量不超过$b_i$，才直接推出下一策略成本达标。完整的界与CPO构造见原论文\scite{rl8-achiam2017-cpo}
+
+实际CPO用样本优势、成本约束的一阶近似和KL的二阶近似求局部步，再以线搜索检查代理量；$\epsilon_f$的全状态上界通常也并未被精确估计。若只令线性化成本代理不超预算，理论上至多得到仍带余项的成本界，不能抹掉余项而宣称严格可行。Lagrangian PPO或SAC把乘子惩罚接入各自策略目标，继承相应采样与近似误差；SAC若含熵奖励，还需说明优化的回报已改变。奖励约束策略优化（reward constrained policy optimization, RCPO）使用便于学习的替代惩罚及多时间尺度更新，其收敛依赖替代惩罚与原约束的关系、步长和优化假设，不等于任意换一个奖励后就能满足原成本约束\scite{rl8-tessler2019-rcpo}
+
+至此可以分清四层结论：理想占用规划有全局最优与强对偶；近似更新有求解和估计误差；最终策略需要独立检查原成本；训练轨迹是否安全仍是另一个约束问题。最后一层不会由输出策略的平均成本达标自动获得。
+
+% Outline: 8.4.2
+\subsection{轨迹事件概率约束下的安全学习}
+\label{sec:rl-trustworthy-chance}
+
+“平均碰撞成本低”有时仍不符合需求，用户可能直接要求每次导航发生任意碰撞的概率不超过1\%。设$E_t$表示动作$t$导致碰撞，定义
+\[
+  F_H=\bigcup_{t=0}^{H-1}E_t,\qquad
+  \mathbb P_\pi(F_H)\leq\varepsilon.
+\]
+这称为\term{机会约束}（chance constraint），即允许违约发生，但把指定事件的概率限制在阈值内。时域$H$是定义的一部分。$\mathbf1\{F_H\}$不区分一次或多次碰撞，也不区分损坏1个或100个部件；相同的事件概率可以对应完全不同的事故成本。
+
+要精确计算首次碰撞概率，可把“是否已经失败”加入状态。令$z_0=0$，$z_t\in\{0,1\}$，并递推
+$z_{t+1}=z_t\lor\mathbf1\{E_t\}$。若原系统和碰撞判定在状态、动作与后继状态上是马尔可夫的，则$(s_t,z_t)$也是马尔可夫状态，且
+$\mathbb P_\pi(F_H)=\mathbb E_\pi z_H$。
+对于以状态集合$\mathcal B$表示的危险区域，也可令$z_0=\mathbf1\{s_0\in\mathcal B\}$，将初始失败纳入事件；两种起始约定不能混用。
+
+固定时间相关策略$\pi_t$后，概率价值$v_t(s,z)$满足
+\begin{align}
+  v_H(s,z)&=z,\nonumber\\
+  v_t(s,z)&=\sum_a\pi_t(a\mid s,z)
+       \sum_{s'}P(s'\mid s,a)
+         v_{t+1}\bigl(s',z\lor e(s,a,s')\bigr),
+  \label{eq:rl-trustworthy-probability-value}
+\end{align}
+其中$e(s,a,s')$是本步事件指示量。递推从终端标记开始，按$t=H-1,\ldots,0$计算，最后对$\rho_0$平均$v_0(s,0)$。这是概率的普通期望递推，不应额外乘奖励任务中的折扣因子。也可把首次失败成本定义为
+$k_t=\mathbf1\{z_t=0,z_{t+1}=1\}$，则$\sum_tk_t=z_H$；普通碰撞次数之和一般不等于$z_H$。
+
+\begin{theorem}[风险预算的并集界]
+  \label{thm:rl-trustworthy-union-bound}
+  对任意有限个事件$E_0,\ldots,E_{H-1}$，无须独立性，都有
+  \[
+    \mathbb P\left(\bigcup_{t=0}^{H-1}E_t\right)
+      \leq\sum_{t=0}^{H-1}\mathbb P(E_t).
+  \]
+  因而若$\mathbb P(E_t)\leq\varepsilon_t$且
+  $\sum_t\varepsilon_t\leq\varepsilon$，则整回合失败概率不超过$\varepsilon$。
+\end{theorem}
+\begin{proof}
+  固定任意样本结果$\omega$。若没有事件发生，并集指示量与各事件指示量之和都是0；若至少一个事件发生，并集指示量为1，而指示量之和至少为1。因此逐样本有
+  \[
+    \mathbf1\left\{\omega\in\bigcup_tE_t\right\}
+      \leq\sum_t\mathbf1\{\omega\in E_t\}.
+  \]
+  两边取期望，并对有限和使用期望线性性，即得到第一式。逐项代入$\mathbb P(E_t)\leq\varepsilon_t$，再使用预算和条件，得到第二个结论。整个推导没有使用事件独立性。
+\end{proof}
+
+并集界重复计算了同一轨迹上的多次事件，因此可能保守。另一种常用预算针对存活条件。令
+$S_t=\bigcap_{j<t}E_j^c$，在$\mathbb P(S_t)>0$时定义
+$q_t=\mathbb P(E_t\mid S_t)$，则由条件概率乘法
+\[
+  \mathbb P(F_H)=1-\mathbb P(S_H)
+       =1-\prod_{t=0}^{H-1}(1-q_t).
+\]
+取条件预算$\beta_t\in[0,1]$，则$q_t\leq\beta_t$推出
+$\mathbb P(F_H)\leq1-\prod_t(1-\beta_t)\leq\sum_t\beta_t$。
+这里的$q_t$已经对存活历史求了平均；若要求每个存活历史下的条件概率都不超过$\beta_t$，这是更强的充分条件。若某时刻存活概率为0，整回合失败概率已经是1，不再需要定义后续条件概率。不能将无条件$\mathbb P(E_t)$、存活条件$q_t$和特定状态下的概率混作同一预算。
+
+教学计算中，若每步给定存活后的碰撞概率都是0.01，则$H=10$时整回合概率为
+$1-0.99^{10}\approx0.0956$，$H=100$时为
+$1-0.99^{100}\approx0.6340$。这两个数不需要额外假设各$E_t$独立，因为条件概率已被直接给定。若要求100步整回合不超过0.01，并且均匀分配条件预算，每步应满足
+$\beta\leq1-0.99^{1/100}\approx0.00010050$。
+图~\ref{fig:rl-trustworthy-events}~另将多个训练回合括在一起：最终策略单回合的$F_H$与训练期间任一回合出事的事件，具有不同样本空间和时域。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-trustworthy-events}
+  \caption{单步事件、整回合事件与整个学习过程事件。树在首次失败后合并成终止分支；下方回合可以使用不同策略，不能直接套用固定策略独立同分布的频率模型。}
+  \label{fig:rl-trustworthy-events}
+\end{figure}
+
+如何学习带事件约束的策略，取决于可得信息。直接采样时，每回合记录一次$z_H$，用其均值估计概率，并用轨迹得分
+$z_H\sum_t\nabla\log\pi(a_t\mid h_t)$估计概率梯度；再把它作为拉格朗日约束更新。这种估计在稀有事件下方差大，零观测不是零梯度背后的安全证明。已知模型时，可用式~\eqref{eq:rl-trustworthy-probability-value}~评价候选策略，或在时间与失败标记增广状态上优化期望终端成本，单次稠密评价代价为$O(H|\mathcal S|^2|\mathcal A|)$。两种方法都必须保证事件标记完整，不能将超时截断后没有记录的事故当作没有发生。
+
+剩余风险预算还可作为决策状态。到达尚未失败的$(t,s)$且剩余允许概率为$b$时，对候选动作$a$记本步立即失败概率为$p_f(s,a)$，给各个未失败后继状态分配预算$b(s')$，要求
+\begin{equation}
+  p_f(s,a)+
+    \sum_{s':\,e(s,a,s')=0}P(s'\mid s,a)b(s')\leq b.
+  \label{eq:rl-trustworthy-risk-budget}
+\end{equation}
+然后选择满足这个条件且未来回报最高的动作与预算分配，到达$s'$后携带$b(s')$继续。最后一步后剩余失败概率为0，由向后归纳可知这个约束确实控制整个后续失败概率。随机化动作时，对动作也取平均，并保留选定分支的预算。连续预算增加一个状态维度，网格化会带来规模和近似误差；不能只从$b$中减去一个未定义的“风险分数”。
+
+CVaR有时可以构造机会约束的保守替代，但必须先定义违约量。令$X(\tau)>0$恰好表示失败，例如轨迹上最大的边界超出量。若$X$可积，要求
+\[
+  \operatorname{CVaR}_{1-\varepsilon}(X)\leq0
+  \quad\Longrightarrow\quad
+  \operatorname{VaR}_{1-\varepsilon}(X)\leq0
+  \quad\Longrightarrow\quad
+  \mathbb P(X>0)\leq\varepsilon.
+\]
+第一个箭头用尾部均值不小于分位点，第二个用分位点定义。反向一般不成立：以0.99概率取$X=-1$、以0.01概率取$X=100$，满足$\varepsilon=0.05$的机会约束，但最差5\%的均值为
+$(0.01\times100-0.04)/0.05=19.2>0$。若直接令$X=\mathbf1\{F_H\}$，则
+$\operatorname{CVaR}_{1-\varepsilon}(X)=\min(1,p/\varepsilon)$；
+把这个非负量限制为0会要求$p=0$，远比原机会约束严格。替代目标的含义取决于损失编码，而非CVaR名称本身。
+
+表~\ref{tab:rl-trustworthy-chance-methods}~对齐这些方法的信息需求。直接采样依赖完整回合，概率递推和预算分配依赖可信模型，CVaR替代还引入尾部严重程度；选择方法前应明确手头具备哪一种信息。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{21mm}XX@{}}
+    \toprule
+    方法 & 必要信息与记录 & 计算及主要边界 \\
+    \midrule
+    整回合采样 & 完整事件标记、固定时域与初态协议 & 每回合一个Bernoulli量；罕见事件样本少 \\
+    概率价值递推 & 转移模型、时间、已失败标记 & 逐阶段备份；模型漏掉危险转移即失效 \\
+    风险预算分配 & 上述模型、剩余预算及后继分配 & 增广预算空间；可行分配未必存在 \\
+    CVaR替代 & 可积违约量及其尾部分布 & 同时限制尾部严重程度；通常更保守 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{机会约束的四种处理方式。它们分别解决估计、规划或保守替代问题，不能用相同数值阈值互相替换。}
+  \label{tab:rl-trustworthy-chance-methods}
+\end{table}
+
+若学习过程有$K$回合，记第$k$回合失败事件为$F_H^{(k)}$，训练期事件是
+$F_{\text{训}}=\bigcup_{k=1}^KF_H^{(k)}$。即使每个训练回合都有概率上界$\varepsilon_k$，也只能直接得到
+$\mathbb P(F_{\text{训}})\leq\sum_k\varepsilon_k$；自适应训练中可先对过去训练历史给条件上界，再用全期望与并集界。仅验证训练结束后的策略，完全没有约束先前探索使用的策略序列。
+
+% Outline: 8.4.3
+\subsection{逐步与逐轨迹硬要求下的安全学习}
+\label{sec:rl-trustworthy-hard-safety}
+
+假如导航机器人的位置仍在允许区域内，但已经高速接近边界，且剩余制动力不足，那么“当前位置合法”没有留下下一步的可行选择。硬安全要求需要关注可持续保持的状态，而非只检查即时越界。对已知离散系统
+$\bm{x}_{t+1}=f(\bm{x}_t,\bm{u}_t,\bm{w}_t)$，令$\mathcal X$为允许状态集，$\mathcal U(\bm{x})$为可执行输入集，$\mathcal W(\bm{x},\bm{u})$为允许扰动集。
+
+\begin{definition}[控制不变集与可恢复集]
+  \label{def:rl-trustworthy-invariance}
+  集合$\mathcal K\subseteq\mathcal X$是鲁棒控制不变的，如果每个$\bm{x}\in\mathcal K$都有输入$\bm{u}\in\mathcal U(\bm{x})$，使所有
+  $\bm{w}\in\mathcal W(\bm{x},\bm{u})$对应的后继状态仍在$\mathcal K$。
+  一个从$\mathcal K$内选择这类输入的规则称为备份策略。
+  给定备份不变集和步数$N$，可恢复集由那些存在控制策略、能在所有允许扰动下始终留在$\mathcal X$并于至多$N$步进入$\mathcal K$的状态组成。
+\end{definition}
+
+允许状态集未必不变，可恢复集也依赖输入限幅、扰动和可用时间。若要求整条轨迹成本不超过$B$，还应保留剩余预算
+$b_{t+1}=b_t-c_t$、$b_0=B$，并在增广状态$(\bm{x}_t,b_t)$上要求$b_t\geq0$及未来可行。折扣预算对应扣减$\gamma^tc_t$，或采用一致的相对时刻预算递推；不能用期望成本评论家替代每条轨迹的余额。
+
+\begin{theorem}[安全集的一步封闭性保证]
+  \label{thm:rl-trustworthy-invariance}
+  假定动力学$f$已知，实际状态可准确获得，初态$\bm{x}_0\in\mathcal K$，实际扰动始终在声明集合内。若每个$\bm{x}\in\mathcal K$的可行保护输入集合
+  \[
+    \begin{aligned}
+      \mathcal U_{\mathcal K}(\bm{x})
+        =\bigl\{\bm{u}\in\mathcal U(\bm{x}):\ &
+          f(\bm{x},\bm{u},\bm{w})\in\mathcal K,\\
+        &\text{对所有 }\bm{w}\in\mathcal W(\bm{x},\bm{u})\bigr\}
+    \end{aligned}
+  \]
+  非空，且执行器在每步实际施加其中一个输入，则每条允许扰动轨迹都满足$\bm{x}_t\in\mathcal K$，$t\geq0$。
+\end{theorem}
+\begin{proof}
+  固定任意满足扰动集合限制的轨迹。初始条件给出$\bm{x}_0\in\mathcal K$，这是归纳起点。
+  假设在某个$t$有$\bm{x}_t\in\mathcal K$。集合非空保证能够选择
+  $\bm{u}_t\in\mathcal U_{\mathcal K}(\bm{x}_t)$；按定义，对所有允许扰动，特别是实际发生的$\bm{w}_t$，
+  \[
+    \bm{x}_{t+1}=f(\bm{x}_t,\bm{u}_t,\bm{w}_t)\in\mathcal K.
+  \]
+  归纳步成立，故所有有限$t$都有$\bm{x}_t\in\mathcal K$。由于起初固定的轨迹任意，结论对每条允许扰动轨迹均成立。
+\end{proof}
+
+证明的力量来自全称条件，也因此对前提敏感。如果$\mathcal U_{\mathcal K}$为空，保护器就没有满足要求的输入；如果用错误状态作判断，执行动作可能不在真实状态的可行集合中；如果扰动越界或动作延迟未建模，一步封闭性也不再适用。状态只能估计为集合$\widehat{\mathcal X}_t$时，应要求同一个输入对其中所有可能真实状态和所有允许扰动都有效，且另行保证真实状态确在估计集合内。
+
+定理~\ref{thm:rl-trustworthy-invariance}~给出了可以用于执行检查的条件：已验证的不变集$\mathcal K$，以及使所有允许后继仍落在$\mathcal K$内的一步保持条件。本节将这类数学条件及其成立依据称为\term{安全证书}（safety certificate）。在下面的算法中，证书具体指上述不变集与保持条件；后文的屏障函数和预测过滤器提供构造或检验相应条件的其他方式。
+
+\begin{algorithm}[带可行性检查的安全过滤]
+  \label{alg:rl-trustworthy-filter}
+  \begin{algorithmic}[1]
+    \Require 候选策略、有效状态估计集合、动力学及误差集合、已验证不变集$\mathcal K$及其一步保持条件、可用备份
+    \For{每个执行时刻$t$}
+      \State 取得候选动作$\bm{u}^{\text{候}}_t$，更新状态估计集合
+      \State 按定理~\ref{thm:rl-trustworthy-invariance}~构造保护输入集合：同一输入须使所有可能真实状态在所有允许扰动下的后继都留在$\mathcal K$
+      \State 若候选动作在集合中，直接使用；否则求与候选动作距离最小的可行输入
+      \State 若优化超时，使用已验证且当前仍有效的备份；若连备份也不可行，报告保证失效并触发预设应急机制
+      \State 执行实际动作，记录候选、实际动作、干预原因和后继状态，反馈给学习器
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+应急停止可以是工程措施，但只有也满足模型与可行性条件时才是证明中的安全输入。“优化失败就刹车”不能补上一个本来已无路可退的状态。图~\ref{fig:rl-trustworthy-filter}~因此让模型、估计与备份直接输入保护模块，并将实际动作反馈给学习器。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/rl-trustworthy-filter}
+  \caption{保护器改变的是实际执行链路。实线是决策与日志流，虚线是保护判断所依赖的模型和证书；评估时必须说明保护是否启用、哪些动作被替换，以及保证针对哪个组合系统。}
+  \label{fig:rl-trustworthy-filter}
+\end{figure*}
+
+离散动作系统可以直接屏蔽不满足一步保持条件的动作，再在剩余动作中按候选策略选择。屏蔽所需的状态可能还包含任务自动机或历史标记；只过滤“向墙内移动”等即时非法动作的普通action masking，并没有证明未来安全。基于安全规格构造的屏蔽则在抽象模型上维护允许的后继行为，其保证仍取决于抽象是否覆盖真实系统\scite{alshiekh2018shielding}
+
+连续输入下，若可行集可计算，可以求投影
+\[
+  \min_{\bm{u}\in\mathcal U_{\mathcal K}(\bm{x})}
+          \|\bm{u}-\bm{u}^{\text{候}}\|^2.
+\]
+教学系统$x_{t+1}=x_t+u_t+w_t$取$\mathcal K=[0,1]$、
+$u_t\in[-0.2,0.2]$、$w_t\in[-0.05,0.05]$。鲁棒一步条件为
+$0.05-x_t\leq u_t\leq0.95-x_t$。在$x_t=0.96$时，候选$u_t=0.1$会使最坏后继达到1.11；与输入限幅取交后，可行集为$[-0.2,-0.01]$，投影得到$u_t=-0.01$，后继范围为$[0.90,1.00]$。这不是“稍微减小动作”便有效，而是显式计算了误差下的全部后继。
+
+控制屏障函数（control barrier function, CBF）把集合写成$h(\bm{x})\geq0$，再限制控制输入使系统不穿出边界。离散时间需要检查
+$h(f(\bm{x},\bm{u},\bm{w}))\geq0$对允许扰动成立，或者使用能够推出这一条件的更强不等式。连续时间控制仿射系统
+$\dot{\bm{x}}=\bm{f}(\bm{x})+\bm{g}(\bm{x})\bm{u}$则常使用
+\[
+  \nabla h(\bm{x})^\top
+       \bigl(\bm{f}(\bm{x})+\bm{g}(\bm{x})\bm{u}\bigr)
+        \geq-\alpha_h(h(\bm{x})).
+\]
+其中$h$连续可微，$\alpha_h$是适当的扩展类$\mathcal K$函数，即连续、严格递增且$\alpha_h(0)=0$。在边界处$\nabla h\neq0$、闭环解于声明时域内存在且唯一、输入约束下屏障不等式始终可行、实际执行满足该不等式的反馈且初态在集合内等条件下，比较原理支持前向不变性。控制仿射性使输入在线性不等式中出现，常可与二次投影目标组成二次规划（QP）；输入饱和或多个约束冲突仍会使QP不可行。连续时间结论不能直接覆盖采样间隔、执行延迟和模型误差，必须加入相应余量或另作离散分析\scite{rl8-ames2017-barrier}
+
+预测安全过滤器（predictive safety filter）进一步检查未来一段控制计划：从当前状态出发，在预测时域内让状态和输入都满足约束，并在末端到达已有备份能维持的不变集\scite{rl8-wabersich2021-filter}
+鲁棒版本应使用反馈计划或误差管束，使约束覆盖所有允许扰动，而不是仅让标称轨迹避障。优化目标仍可优先保留候选动作。若上一时刻的可行管束在执行一步后仍包含真实状态，下一时刻可以将旧计划向前平移，并在末端接上备份控制；这是递归可行性的核心理由。模型误差集合突然扩大、终端集失效、状态估计不再被管束覆盖或求解未按时完成，都会破坏这条理由。预测步数、状态维度与非线性误差传播决定在线求解代价，不能仅凭“MPC过滤”这一名称声称安全。
+
+恢复控制关注把系统带回已验证区域，并在恢复过程中保持约束；停止当前学习任务而返回安全种子，也可以是整体方案的一部分。近期的安全复位研究把到达复位区域与避开危险联合建模。无人干预学习还要解决回合之间如何安全重置，而不只保护单回合动作。这是对保证时域的扩展，不表示复位过程天然安全或没有代价\scite{rl8-begzadic2025-reset}
+
+模型未知时，需要一块已知可安全运行的种子区域或备份控制，再用受保护的数据逐渐缩小误差集、扩展可验证区域。高斯过程（Gaussian process, GP）模型可以提供预测均值与不确定区间，但有用的证书要求：在所声明的状态输入范围与所有取证时刻上，真实动力学以至少$1-\delta$的概率同时落在模型集合内。得到这种联合覆盖通常需要函数正则性、噪声假设、合适的置信参数及对自适应采样的控制。稳定性证书与GP误差界相结合的安全学习依赖这些前提，而非只依赖模型给出了方差\scite{rl8-berkenkamp2017-safe}
+
+记联合模型覆盖事件为$\mathcal E$。准确的表述是：“在$\mathcal E$上，过滤器按不变性条件保持安全；取证程序满足$\mathbb P(\mathcal E)\geq1-\delta$。”单个测试点的95\%预测区间不能替代整个闭环轨迹上的联合事件。若实际扰动具有无界支持，也不能无条件假设所有时刻均在一个有界集合内；有限时域高概率覆盖与无限时域逐轨迹保证必须分开。
+
+多个机器人共享狭窄通道时，每个机器人在“对方会等待”的假设下都可能有可行计划，两个计划同时执行却相撞。因此还需检查联合输入约束、通信延迟及其他参与者是否遵守建模承诺。去中心化过滤器只有在局部假设彼此相容、联合可行域非空且执行信息满足证明条件时，才可能推出团队安全；不能从个体QP各有一个解直接得到联合保证。参与者的响应模型仍由第~\ref{chap:rl-multi-agent}~章提供。
+
+% Outline: 8.5
+\section{可靠性评价与保证}
+\label{sec:rl-trustworthy-evidence}
+
+一个策略可能在训练目标上满足要求，却没有足够证据支持部署声明；一个受保护系统也可能长期没有事故，却无法说明移除保护后的策略如何表现。评价需要从预设要求出发，明确取得什么证据，再判断这些证据对哪个对象有效。图~\ref{fig:rl-trustworthy-validation}~给出本节的过程：运行条件变化时，应重新检查协议与取证，而非只继续累计旧成功次数。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/rl-trustworthy-validation}
+  \caption{可靠性验证的信息依赖。判断可以触发补充取证、收窄范围、保护或回退；条件改变则要求重新核对协议。流程本身不替代任何统计覆盖或模型证明。}
+  \label{fig:rl-trustworthy-validation}
+\end{figure*}
+
+% Outline: 8.5.1
+\subsection{确定验证协议并取得证据}
+\label{sec:rl-trustworthy-protocol}
+
+同一策略从不同位置启动，考察的是固定策略的运行分布；同一算法换随机种子重新训练，考察的是算法输出的变化；同一系统换摩擦条件，则考察运行范围。把这三种试验的回合混在一个成功率里，会把策略差异、初态差异和环境变化相互掩盖。
+
+一份可执行的协议至少应固定：交付策略和保护器版本、统计单位、初态与环境抽样分布、时域和终止规则、允许的扰动与参与者、样本预算、失败判定、回报与成本阈值、置信要求。假如碰撞意味着“机身越过边界”，就不能仅记录控制器是否发出报警。恢复时间要约定从何时起算、恢复到哪个集合；到时仍未恢复的轨迹应按删失或超时规则处理，不能从平均值中直接删除。
+
+表~\ref{tab:rl-trustworthy-evidence-sources}~按证据来源指出可以支持的结论。模型证明与运行试验可以互补：前者覆盖显式模型中的全部允许情况，后者检查实际系统是否出现模型遗漏；二者的保证范围都需要写明。
+
+\begin{table*}[t]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{23mm}XXX@{}}
+    \toprule
+    证据来源 & 统计单位与可控条件 & 可支持结论 & 关键缺口 \\
+    \midrule
+    重复训练 & 一次完整训练；算法、预算、种子分布固定 & 输出策略指标分布、训练失败概率 & 不能只挑最好种子报告 \\
+    固定策略重复运行 & 一回合；策略和运行协议冻结 & 协议分布下的回报、成本和事件概率 & 回合独立性、有效样本量 \\
+    压力测试 & 指定极端场景或攻击；权限固定 & 已测条件下的失效及响应 & 不直接给常态运行失败频率 \\
+    已有日志 & 日志中的回合；行为机制可追溯 & 覆盖与校正条件下的离线评价 & 漏报事件、选择性记录、支持不足 \\
+    形式化模型分析 & 模型中的状态、轨迹或扰动集合 & 前提成立时的全称性质 & 真实系统是否满足抽象与误差前提 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{取证方式与保证对象的对应关系。重复训练的一条学习曲线不是一次固定策略运行，主动挑选的极端情况也不是从日常运行分布随机抽到的回合。}
+  \label{tab:rl-trustworthy-evidence-sources}
+\end{table*}
+
+验证信息应留出。用于更新策略的任务、攻击和训练种子，不再是对同一策略完全未使用的测试证据；若根据验证集反复挑选策略，选择过程也利用了该集。可将开发、策略选择与最终验收分开，或事先使用对整个候选类同时有效的界。随机种子留出还不够：如果同一个困难地形被反复用于调整保护阈值，地形信息仍已进入选择过程。
+
+每个回合应保留初始条件、请求动作、执行动作、奖励、损失、成本、事件标记、接管时刻和恢复时间。事件后的数据可能更有诊断价值，不能因回合“已经失败”而在日志中消失。干预率也应说明分母：被替换动作数占总执行动作数，与发生过至少一次接管的回合比例，是不同指标。
+
+稀有事件需要增加有效取证，而不是复制已有成功轨迹。若通过重要性采样提高危险场景出现频率，须知道目标运行分布相对于采样分布的密度比，保证目标支持被覆盖，再对完整事件统计加权；未知密度比的主动压力测试只提供场景证据。相关回合、同一条长轨迹切出的重叠窗口，以及共享未重置环境状态的连续试验，都不自动构成独立样本。
+
+% Outline: 8.5.2
+\subsection{由证据估计指标与保证范围}
+\label{sec:rl-trustworthy-inference}
+
+冻结策略后，一条完整轨迹给出$G_j,L_j,C_{i,j}$和失败标记$Y_j=\mathbf1\{F_H^{(j)}\}$。样本均值估计回报与成本，$\widehat p=n^{-1}\sum_jY_j$估计失败概率；经验分位数和式~\eqref{eq:rl-trustworthy-cvar}~的样本目标估计尾部损失。尾部只使用少量有效质量，不能拿回报均值的标准误直接当作CVaR的误差。恢复时间还需要处理未在观察时域内恢复的回合。
+
+点估计给出一个数；置信界限制统计程序的覆盖错误率；模型误差界限制近似模型与真实系统的偏差；形式化性质则是前提下的逻辑结论。它们回答不同问题。轨迹内的状态高度相关，并不妨碍独立回合之间的Bernoulli分析，但若把每一步当作独立回合，就改变了有效样本量与事件定义。
+
+\begin{theorem}[零失败记录的单侧上界]
+  \label{thm:rl-trustworthy-zero-failure}
+  对预先固定的策略、运行分布、事件和正整数样本量$n$，假设$n$个回合的失败标记独立同分布为$\operatorname{Bernoulli}(p)$。取$0<\delta<1$，若观察到零次失败，则精确二项单侧置信上界为
+  \[
+    U_0(n,\delta)=1-\delta^{1/n}.
+  \]
+  这不是对$p=0$的证明，也不覆盖根据数据选择样本量或策略的未经校正程序。
+\end{theorem}
+\begin{proof}
+  令$K=\sum_{j=1}^nY_j$。独立性给出
+  $\mathbb P_p(K=0)=(1-p)^n$。要检验一个候选概率$p_0$是否过大，零失败提供的单侧尾概率就是$(1-p_0)^n$。边界方程
+  $(1-p_0)^n=\delta$的解为$p_0=1-\delta^{1/n}$；更大的$p_0$产生零失败的概率小于$\delta$，因而在该单侧检验中被拒绝。
+
+  为明确置信覆盖的含义，可先构造一个保守的完整程序：$K=0$时返回上界$U_0$，$K>0$时返回1。若真实$p\leq U_0$，它从不漏盖；若$p>U_0$，漏盖只能发生在$K=0$，概率为$(1-p)^n<\delta$。因此程序的覆盖率至少为$1-\delta$。通常的精确二项上界在$K>0$时也反演相应二项尾概率，得到更紧的数值；在本命题的零失败情形，仍为上述同一表达式。
+\end{proof}
+
+取$\delta=0.05$，100次零失败的95\%单侧上界约为0.029513，即2.95\%，不是1\%。若想仅凭零失败把上界压到$\varepsilon$以下，需要事先选择
+\[
+  n\geq
+  \left\lceil\frac{\log\delta}{\log(1-\varepsilon)}\right\rceil.
+\]
+因此，1\%阈值至少需要299次，0.1\%阈值至少需要2995次。表~\ref{tab:rl-trustworthy-zero-failure}~全由公式计算，不是机器人实验结果。已经观察到大量成功，仍可能没有积累足够证据排除稀有失败。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}rrl@{}}
+    \toprule
+    固定样本量$n$ & 95\%失败概率上界 & 与阈值比较 \\
+    \midrule
+    100  & 0.02951305 & 尚不能支持$p\leq0.01$ \\
+    299  & 0.00996915 & 支持$p\leq0.01$ \\
+    1000 & 0.00299125 & 尚不能支持$p\leq0.001$ \\
+    2995 & 0.00099974 & 支持$p\leq0.001$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{零失败的解析教学上界。每行分别代表预先固定样本量的独立验证，不代表持续查看同一次试验并在达标时停止的程序。}
+  \label{tab:rl-trustworthy-zero-failure}
+\end{table}
+
+离线评价还要追问日志能否识别目标策略的风险。复用第~\ref{chap:rl-information}~章的轨迹重要性采样，若行为策略$\mu$已知且覆盖目标策略$\pi$，同一环境与初态下
+$W_j^\pi=\prod_{t=0}^{H-1}\pi(a_{j,t}\mid h_{j,t})/
+\mu(a_{j,t}\mid h_{j,t})$，就有
+$\mathbb E_\mu[W^\pi G]=J_H(\pi)$及
+$\mathbb E_\mu[W^\pi C_i]=J_{c_i,H}(\pi)$。
+失败事件也可用$W^\pi Y$估计。动作覆盖不等于日志完整：若碰撞之后的记录被删掉，密度比无法恢复根本没有记录的结果。隐藏混杂、执行通道改变或目标动作无支持，则可能使安全指标不可识别。
+
+可以具体写出同时检验性能和安全所需的两个方向。设固定候选$\pi$和固定基线$\pi_b$共用$n$条独立同分布的行为回合，且两者的轨迹分布都相对于行为分布绝对连续；只覆盖候选而不覆盖基线，还不足以评价二者之差。定义
+$Z_j=(W_j^\pi-W_j^{\pi_b})G_j$与
+$X_{i,j}=W_j^\pi C_{i,j}$。若已知
+$Z_j\in[z_-,z_+]$、$X_{i,j}\in[0,x_{i,+}]$几乎处处成立，则Hoeffding不等式给出
+\begin{align}
+  J_H(\pi)-J_H(\pi_b)
+     &\geq \overline Z
+        -(z_+-z_-)\sqrt{\frac{\log(1/\delta_r)}{2n}}
+        =:\mathrm{LCB}_{\Delta J}, \nonumber\\
+  J_{c_i,H}(\pi)
+     &\leq \overline X_i
+        +x_{i,+}\sqrt{\frac{\log(1/\delta_i)}{2n}}
+        =:\mathrm{UCB}_{c_i}.
+  \label{eq:rl-trustworthy-offline-joint}
+\end{align}
+证明思路是先由换测度恒等式得到$\mathbb E Z$为回报差、$\mathbb E X_i$为候选成本，再分别对有界独立样本施加单侧浓缩不等式。用并集界，所有声明同时成立的概率至少为
+$1-\delta_r-\sum_i\delta_i$，无须各估计量相互独立。检验
+$\mathrm{LCB}_{\Delta J}\geq-\epsilon_{\text{改进}}$与
+$\mathrm{UCB}_{c_i}\leq b_i$，才分别支持“不比基线差太多”和“成本达标”。折扣无限时域评价还要补上截断余项。
+
+这里最强的假设是权重及结果有已知界；长时域的乘积权重可能极大，使区间没有实用信息。权重截断降低方差却引入偏差，须另给偏差界；模型辅助估计也引入模型条件。基线自举的安全策略改进（safe policy improvement with baseline bootstrapping, SPIBB）把数据支持不足区域的行为约束在基线附近，研究在相应数据与模型假设下相对基线的性能改进。这个性能含义上的“safe”不直接等于成本或碰撞概率安全：基线可能不安全，候选也可能以更高风险换取更高回报。需要安全声明时，仍须增加单独的成本或事件上界\scite{rl4-laroche2019-spibb}
+
+若$\pi$由同一评价数据挑选，式~\eqref{eq:rl-trustworthy-offline-joint}~的普通固定策略界不能原样使用。可对预先确定的有限候选集分配总错误预算，也可用对策略类一致有效的界，或将最终策略冻结后在独立留出数据上验证。保护器在日志期间替换了动作时，权重分母应反映实际行为机制；若评价对象也是受保护系统，目标分子也要反映组合机制。否则估计的并不是要交付的策略或系统。
+
+表~\ref{tab:rl-trustworthy-indicators}~将每个指标与它需要的覆盖条件对应起来。回报、尾部、事件与恢复过程可以来自同一份日志，但并不共用一种误差界；不变性证明更需要单独核对真实闭环是否落在证书范围内。
+
+\begin{table*}[t]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{19mm}XXXX@{}}
+    \toprule
+    指标或性质 & 估计／验证方法 & 覆盖条件 & 主要误差来源 & 保证对象 \\
+    \midrule
+    平均回报、成本 & 回合均值、离线校正与单侧界 & 固定策略和协议；独立或已处理相关性 & 抽样、截断、权重与模型偏差 & 指定策略的期望值 \\
+    尾部损失、动态风险 & 累计损失的分位及CVaR估计；嵌套目标另需逐阶段条件估计 & 损失与尾部样本假设；动态目标还需条件分布覆盖 & 稀有样本、阈值估计、选择及递推误差 & 事先声明的累计或动态风险 \\
+    失败概率 & 完整事件频率、二项或加权界 & 事件、时域、运行分布明确 & 漏报、相关回合、分布改变 & 固定执行系统的回合事件 \\
+    恢复时间 & 完整或删失数据分析 & 恢复集合、起止和删失规则固定 & 超时删除、选择性接管 & 指定恢复机制 \\
+    不变性 & 模型、误差集、可行性证明 & 真实闭环满足全部模型前提 & 状态估计、未建模执行与越界扰动 & 证书覆盖的保护系统 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{不同指标需要不同的误差控制。一个回报评论家准确，并不意味着碰撞概率或尾部损失已被准确估计。}
+  \label{tab:rl-trustworthy-indicators}
+\end{table*}
+
+价值、分布和世界模型的校准必须说明在哪个策略诱导分布上检查。训练数据覆盖的常见状态上预测准确，不足以覆盖新策略频繁访问的边界状态；多个模型彼此一致，也可能共同遗漏同一个危险机制，因此集成分歧不自动是置信界。形式化结论则要逐项核对真实动力学、状态估计、保护动作和执行器是否满足证明前提，不能只核对名义控制算法。
+
+% Outline: 8.5.3
+\subsection{依据要求作出判断并持续复核}
+\label{sec:rl-trustworthy-decision}
+
+对于失败概率要求$p\leq\varepsilon$，上置信界$U_p\leq\varepsilon$支持达标，下置信界$L_p>\varepsilon$支持不达标；区间跨过阈值时，证据不足以作出这两种结论。对于回报要求$J\geq j_{\min}$，方向相反：$L_J\geq j_{\min}$支持达标，$U_J<j_{\min}$支持不达标。多项条件同时要求成立时，要预先控制联合置信错误率，不能给每项各一个95\%区间后就称整体仍有95\%覆盖。
+
+图~\ref{fig:rl-trustworthy-intervals}~上半部分比较两份零失败数据：点估计都为0，100次试验的上界仍越过1\%，299次试验的上界才降到1\%以下。下半部分用纯示意区间说明回报需要检查下界而非上界；它没有对应未经报告的实验。信息不足时，可以按新的预设方案取得更多证据，或将部署范围收窄到已有覆盖的条件；不能把“不足以确认安全”改写成“已证实不安全”，也不能直接批准原范围部署。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/rl-trustworthy-intervals}
+  \caption{置信界与阈值的方向。上图按$n$次零失败的解析公式计算95\%单侧上界；下图仅以给定区间示意回报判断，不代表某个统计估计器或实验。点标估计，线段标可支持的指标范围。}
+  \label{fig:rl-trustworthy-intervals}
+\end{figure*}
+
+判断还要绑定策略和协议版本。改变摩擦范围会改变轨迹分布，更新策略会改变状态动作占用，升级保护器会改变实际执行行为，增加参与者会改变闭环假设。旧数据不一定全部作废，但需要论证哪些条件仍匹配，哪些数据需要重加权或补充，哪些模型性质必须重证。只要交付对象或运行范围不再匹配，旧的安全声明就不能原封不动沿用。
+
+运行监测应关注这些前提是否持续成立，例如误差是否越出集合、备份是否仍可行、失败标记是否完整、干预比例是否明显改变。变化可以触发保护、回退、收窄运行范围或补充取证；监测基础设施由系统卷讨论。反复查看固定样本置信区间、直到第一次达标才停止，不自动保留原整体错误率。需要随时有效的判断时，可使用预先分配错误预算的多次检验，或在适当数据假设下使用置信序列，使整个时间序列同时受覆盖控制\scite{rl8-howard2021-sequences}
+
+% Outline: 8.6
+\section{多种要求的组合与取舍}
+\label{sec:rl-trustworthy-combination}
+
+前面的工具现在可以用于同一个导航决策，但比较时仍要控制变量。以下从基准网格抽象出一个单步路线选项任务：初态固定为起点，动作一次选择整段路线，之后返回到达终点的总用时$T$、碰撞标记$I$与成本$C=10I$。这是独立的教学模型，不使用基准网格的0.8滑移核；$H=1$、不折扣，回报$G=-T$，损失$L=T$。路线内部执行及恢复被汇总为一次结果，时间以教学单位计。
+
+可选策略先限定为四个确定路线选项A、B、C、D，所有比较使用同一初态和这同一组候选。干燥环境中，A以0.95概率用时5、以0.05概率用时25，其余三条路线用时固定为7、8、9。湿滑环境只让A、B的总用时各增加10，C、D不变。两种环境中，碰撞概率分别为0.02、0.005、0.003、0；为把时间与安全成本的影响分开，教学模型规定$I$与$T$独立，且碰撞不另外终止路线选项。这里的联合分布由这些假设完全确定，不能把它解释成真实机器人碰撞与恢复之间的经验规律。
+
+表~\ref{tab:rl-trustworthy-comparison}~由该分布精确计算。例如A的平均用时为
+$0.95\times5+0.05\times25=6$，0.95分位水平的CVaR为25，期望成本为$10\times0.02=0.2$。其余行用相同公式得到。全部路线均未启用外部保护，干预为0；“无干预”只说明执行机制，不是一个安全指标。
+
+\begin{table*}[t]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{14mm}XXXXXXX@{}}
+    \toprule
+    路线 & 标称平均回报 & 标称尾部损失 & 湿滑平均回报 & 碰撞概率 & 期望成本 & 干预比例 & 证据强度 \\
+    \midrule
+    A：捷径 & $-6$ & $25$ & $-16$ & $0.02$ & $0.20$ & $0$ & 教学模型精确值 \\
+    B：平稳 & $-7$ & $7$ & $-17$ & $0.005$ & $0.05$ & $0$ & 教学模型精确值 \\
+    C：抗滑 & $-8$ & $8$ & $-8$ & $0.003$ & $0.03$ & $0$ & 教学模型精确值 \\
+    D：保守 & $-9$ & $9$ & $-9$ & $0$ & $0$ & $0$ & 教学模型精确值 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{同一候选集合的解析教学比较。尾部损失为$\operatorname{CVaR}_{0.95}(T)$；碰撞概率和成本在两环境下按假设相同。D的零概率仅属于该指定模型，所有行均无真实部署统计证据。}
+  \label{tab:rl-trustworthy-comparison}
+\end{table*}
+
+只优化标称平均回报时选择A；改为最小化标称尾部损失时选择B；改为最大化干燥与湿滑两环境中的最坏平均回报时选择C；在原标称平均回报目标上增加期望成本预算$b=0.01$时，四个确定选项中只有D可行。这四次求解分别只改变一类要求，展示其影响，不是一个算法必须依次完成的四个阶段。
+
+策略类也影响答案。若允许在每回合出发前随机选路线，以0.2概率选B、0.8概率选D，就有期望成本$0.2\times0.05=0.01$，平均用时$0.2\times7+0.8\times9=8.6$，优于确定选择D的9。故上段关于D的最优性明确限定在四个确定选项内，与定理~\ref{thm:rl-trustworthy-randomization}~一致。概率混合不表示单条轨迹变成了一条“平均路线”，也不会消除B回合中的碰撞可能。
+
+若这些要求同时存在，可对声明的模型族$\mathcal M$求解，例如
+\begin{align}
+  \min_{\pi\in\Pi}\quad&
+      \sup_{M\in\mathcal M}\mathcal R_M(L^\pi), \nonumber\\
+  \text{满足}\quad&
+      \inf_{M\in\mathcal M}J_M(\pi)\geq j_{\min}, \nonumber\\
+  &\sup_{M\in\mathcal M}J_{c_i,M}(\pi)\leq b_i
+       \quad (i=1,\ldots,m_c).
+  \label{eq:rl-trustworthy-combined-problem}
+\end{align}
+这里$\mathcal R_M$必须事先选定为静态或动态风险；$\Pi$说明允许历史依赖和随机化的范围。第一个最坏值作用于风险目标，回报下界和成本上界也各自在模型族中取不利方向。只对回报作鲁棒优化，不会自动使成本对环境变化鲁棒；反过来，鲁棒成本达标也不保证平均任务收益足够。
+
+图~\ref{fig:rl-trustworthy-intersection}~把满足各阈值的策略画成集合，最终可行域是它们与$\Pi$的交集。要求增多只能保持或缩小可行域，最优值不会因此自动改善。在上述确定路线集合中，若同时要求标称CVaR不超过8、最坏平均用时不超过9、期望成本不超过0.01，则没有可行选项：C满足前两项却成本超标，D满足后两项却尾部用时为9。需要扩大策略类、改变环境或重新协商阈值，而不是把求解器返回的最少违反方案当作已满足原要求。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-trustworthy-intersection}
+  \caption{可行策略集合的概念示意，不是教学路线数值的几何嵌入。阴影为三种阈值共同允许的策略；在具体任务中，交集也可能为空。集合边界形状没有凸性含义。}
+  \label{fig:rl-trustworthy-intersection}
+\end{figure}
+
+保护贡献应另作控制变量比较。图~\ref{fig:rl-trustworthy-protected-path}~保留基准网格的起终点和障碍，但改成无滑移的确定性教学动力学，并把$(3,1)$标为危险格。关闭保护时，同一候选沿下方五步路径通过危险格；启用保护时，在$(2,1)$处拒绝继续向右，交给已验证的备份返回$(1,1)$，再沿上方到达终点，共七步。备份在此确定模型中保持位置不进入障碍和危险格；恢复随机滑移后，必须重新检查它是否对所有允许后继仍安全。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-trustworthy-protected-path}
+  \caption{同一候选启用或关闭保护的确定性路径示意，坐标、障碍和起终点沿用基准网格。虚线为被拒绝的请求，实线为实际路径；右图在干预后使用备份，不表示候选策略已自行学会绕行。}
+  \label{fig:rl-trustworthy-protected-path}
+\end{figure}
+
+右图少了一次危险区域穿越，多了两步行程和一次进入备份控制的切换。这说明受保护系统在该模型上满足的性质，不能归给未保护候选；也不能把路径图中的一步拒绝当成整个回合只有一次动作替换，后续备份动作同样需要日志辨认。保护改变了数据分布：学习器看到的安全轨迹可能来自外部修正，继续训练时必须保留候选与实际动作的区别。
+
+探索信息、任务收益、保守性和保护代价因此需要一起衡量。扩大不确定集合提高覆盖范围，却可能降低可达到的收益；更紧的尾部或安全阈值可能增加绕行和接管；更强保护减少危险探索，也可能使某些未执行动作的效果难以识别。合理结论应同时给出行为标准、环境范围、执行机制和证据，不以单一平均分数替代。公平、隐私、解释及目标对齐的共同问题仍由第一卷讨论，本章提供的是把已明确要求接入序贯决策及验证的方式。
+
+% Outline: 8.7
+\section{本章小结}
+\label{sec:rl-trustworthy-summary}
+
+平均回报没有说明严重损失的尾部、环境改变后的表现，也没有划定行为可行性。风险准则改变随机结果的比较方式，鲁棒要求改变必须覆盖的环境范围，安全约束改变允许采用的策略集合；三者可以组合，但其目标、信息和证明条件不能互相替换。
+
+风险决策中，静态累计CVaR与逐阶段嵌套风险评价不同的对象，状态增广和时间一致性要与目标匹配。鲁棒决策中，扰动作用于动力学、观测还是执行通道，决定可用状态和对手权限；矩形性连接局部最坏备份与全局模型族。安全决策中，期望成本、轨迹事件概率和硬要求允许的违约方式不同，乘子、概率预算和安全过滤分别维护不同性质。
+
+表~\ref{tab:rl-trustworthy-summary}~将这些联系收拢为“要求、条件、方法、证据”。阅读任何可信强化学习方法时，都应能回答：它维护什么性质，针对策略还是受保护系统，依赖哪些模型与数据前提，前提改变后原结论还剩多少。
+
+\begin{table*}[t]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm}XXX@{}}
+    \toprule
+    要求 & 决定性条件 & 方法 & 相应证据 \\
+    \midrule
+    控制累计尾部 & 损失、分位水平及事前承诺明确 & 静态CVaR采样更新、状态增广 & 尾部估计误差与留出轨迹 \\
+    条件风险一致 & 条件映射、状态信息与递归目标匹配 & 嵌套风险Bellman更新 & 算子性质及条件风险估计 \\
+    覆盖环境变化 & 扰动位置、信息权限与集合结构明确 & 鲁棒规划、受扰训练、状态估计 & 模型覆盖、内层误差与压力测试 \\
+    平均成本达标 & 成本单位、初态、折扣及策略类明确 & 占用规划、原始--对偶与局部约束更新 & 最终策略的成本上界 \\
+    事件概率达标 & 事件、时域、条件预算一致 & 事件采样、概率递推、预算分配 & 完整事件记录与有效概率上界 \\
+    逐轨迹保持安全 & 误差范围有效、初态可行且保护输入存在 & 屏蔽、不变集、屏障与预测过滤 & 真实闭环符合证书全部前提 \\
+    可靠地作出判断 & 交付对象、运行协议和取证程序固定 & 留出验证、联合置信与持续复核 & 界与阈值比较，并标明信息不足 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{本章的要求、条件、方法与证据。算法的优化目标与交付时能够成立的保证是两件需要分别检查的事。}
+  \label{tab:rl-trustworthy-summary}
+\end{table*}
+
+数据支持不足或隐藏风险不可识别，回到第~\ref{chap:rl-information}~章检查信息条件；奖励是否表达了真正意图，回到第~\ref{chap:rl-reward}~章；新任务怎样识别与适应，由第~\ref{chap:rl-transfer}~章讨论；其他参与者如何响应，由第~\ref{chap:rl-multi-agent}~章提供模型。可信性并非求解器结束后附加的称号，而是对明确要求、适用前提与有效证据的持续对应。

@@ -1,0 +1,1048 @@
+\chapter{奖励受限下的强化学习}
+\label{chap:rl-reward}
+
+一台配送机器人已经学会移动和避障，却还不知道怎样才算完成一次好的配送。只在签收时给分，可能使早先拿错包裹的动作很难被纠正；按移动距离给分，又可能让机器人忙于绕路。请人示范一条路线能立即提供可用行为，但仍不能说明示范者究竟在意速度、能耗，还是包裹完好。这些困难都涉及奖励，却不是同一个问题。
+
+第~\ref{chap:rl-learning}章在期望奖励未知的情况下，仍假定每次交互可以取得奖励样本；第~\ref{chap:rl-information}章进一步考察信息与数据覆盖。本章改变的是反馈条件：没有可信的标量奖励时，可以从哪些记录学习行为目标？拿到轨迹总分以后，怎样形成局部更新信号？优化这些信号以后，又用什么证据检查行为是否符合要求？图~\ref{fig:rl-reward-map}把这三个并列问题接入同一个反馈闭环。它们可以同时存在，解决其中一个并不会自动消除另外两个。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-reward-map}
+  \caption{本章的知识关系与反馈闭环。实线表示三个分析视角为整合、更新和检验提供依据，不表示必须依次解决；虚线表示取得新行为、新反馈后的轮次迭代。停止判断包括证据满足要求、预算耗尽及无法补足关键目标信息等不同结论。}
+  \label{fig:rl-reward-map}
+\end{figure*}
+
+本章沿用$r_t$表示执行$a_t$后返回的奖励，$J(\pi)$表示未归一化的期望折扣回报。配送案例是独立的教学任务，不是前文随机网格的精确求解：机器人依次核对包裹、装载、搬运、交付，状态记录包裹身份、位置和完好情况；除特别说明外，四步任务的反馈在交付后给出。后文的人工数字均为教学假设。
+
+% Outline: 5.1
+\section{奖励信号的三类限制}
+\label{sec:rl-reward-limits}
+
+% Outline: 5.1.1
+\subsection{奖励观测受限}
+\label{sec:rl-reward-observation}
+
+不知道某条路线的平均耗电量，并不妨碍在执行后读取电表。只要样本可信，就可以沿用标准强化学习估计期望奖励。另一种情况是希望机器人“把包裹妥善交给收件人”，但日志只记下了移动距离，没有记录交付对象或破损。此时缺少的不是对已有随机变量的精确估计，而是能表达目标的观测。继续收集距离记录不能补回交付质量。
+
+\begin{definition}[替代反馈的形式与粒度]
+  \label{def:rl-reward-feedback}
+  \term{示范}记录某个决策者采取的行为，如状态上的动作或整条轨迹；\term{评分}为被评价对象赋予某个约定尺度上的数值；\term{偏好}给出在相同比较条件下两个或多个对象的相对顺序；\term{验证反馈}给出对象是否满足指定条件的判断及可能的检查证据。反馈的\term{粒度}是实际被评价的单位，可以是动作、步骤、轨迹片段或完整轨迹。反馈的时间戳与它评价的动作时刻可以不同。
+\end{definition}
+
+示范回答“当时做了什么”，不直接给未选动作打分。评分包含数值差距，但只有在尺度约定一致时才能比较差值；偏好不必提供绝对分数；验证器则只对它检查的条件负责。表~\ref{tab:rl-reward-forms}同时列出反馈的形式与访问条件，因为一份示范文件并不赋予学习者继续向专家提问的权限。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{17mm}*{5}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    形式 & 反馈对象 & 粒度 & 噪声来源 & 查询权限 & 可推断对象 \\
+    \midrule
+    示范 & 已执行动作与上下文 & 动作、轨迹 & 次优专家、漏记信息 & 固定日志或另行授权的专家查询 & 行为条件分布；附加理性假设下的奖励约束 \\
+    评分 & 单个被评价行为 & 步骤、片段、轨迹 & 尺度漂移、反应延迟 & 可只提供历史评分 & 该尺度下的评价函数 \\
+    偏好 & 同条件候选行为 & 一对片段或轨迹 & 次序效应、偏好异质性 & 固定比较或主动选对 & 比较概率、相对效用 \\
+    验证 & 产物或状态关系 & 步骤、结果 & 规则遗漏、执行误差、误判 & 可离线复查或在线调用 & 指定条件的通过情况 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{反馈形式决定记录的语义，查询权限决定还能获得哪些信息。人类、AI、规则和执行器是来源，可以分别产生多种反馈形式。}
+  \label{tab:rl-reward-forms}
+\end{table*}
+
+例如，人可以提供示范、数值评分和成对偏好；模型也可以生成这三种记录。规则可以把签收身份检查变成一个通过标记，执行器可以通过真实开箱操作返回破损检查结果。因此，“人类反馈”和“偏好反馈”不应被放在同一张互斥分类表中：前者说明谁判断，后者说明判断以什么形式记录。
+
+% Outline: 5.1.2
+\subsection{奖励归因受限}
+\label{sec:rl-reward-credit-limit}
+
+假设配送日志已准确记录最终包裹完好且交付成功。这个结果仍未指出，成功主要来自核对身份、平稳搬运，还是恰好遇到容易的路线。\term{奖励归因}研究怎样把长期结果用于评价先前决策的贡献。第~\ref{chap:rl-learning}章的回报、TD误差和优势估计已经提供计算工具；这里进一步考察这些工具可以依据什么信号工作。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{27mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    现象 & 缺口 & 主要影响 & 不能直接推出什么 \\
+    \midrule
+    非零奖励很少 & 多数尝试没有区分信号 & 难以探索到成功轨迹 & 一旦成功就能正确归因 \\
+    反馈延迟长 & 行动与反馈相隔许多步 & 时间信用传播慢、回报方差增大 & 反馈语义必然错误 \\
+    只有轨迹总分 & 局部贡献未被观测 & 无关动作也可能分享相同结果 & 每一步都有独立监督 \\
+    反馈噪声大 & 相同行为的判断不稳定 & 估计方差和误排序增加 & 噪声一定来自时间延迟 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{归因困难可以叠加。稀疏性、延迟、粒度和噪声分别描述不同性质，不能用一个“奖励稀疏”概括全部原因。}
+  \label{tab:rl-reward-credit-limits}
+\end{table*}
+
+表~\ref{tab:rl-reward-credit-limits}提示两种不同的诊断。机器人从未找到收件人时，增加探索或提供一条成功示范可能有用；日志中已有很多成功配送，但身份核对与无关的扫码动画总是同时出现时，问题变成辨认哪个动作影响结果。盲目增加相同类型的成功轨迹未必能区分二者。即使为每次播放动画都给分，反馈变密集了，也没有更正确地分配贡献。
+
+% Outline: 5.1.3
+\subsection{奖励与行为目标不匹配}
+\label{sec:rl-reward-mismatch-limit}
+
+如果每移动一米就得一分，机器人绕圈时也可能正确地提高训练目标。这不是优化器没有收敛，而是训练数值缺少对“完成配送”的约束。为了描述这种情况，需要分开行为要求与它的数值编码。
+
+\begin{definition}[奖励、回报、效用与行为要求]
+  \label{def:rl-reward-objective}
+  单步奖励$r_t$是交互协议返回的标量，累计回报$G_0=\sum_t\gamma^t r_t$由约定的时间聚合规则得到。\term{效用}表示决策者对结果或结果分布的评价，可记为$u(\tau)$或策略评价泛函$\mathcal U(\pi)$，不预设它一定等于$J(\pi)$。\term{行为要求}是希望实际发生的事情及其条件，例如交给正确收件人、包裹完好和能耗可接受。\term{代理奖励}是为训练而编码的数值标准，它是否充分表达行为要求需要独立检验。
+\end{definition}
+
+即时、准确的里程计分没有观测延迟，却遗漏任务目标。只在终局返回的“正确收件人且完好”标记可以忠实表达一个明确的成功条件，却有很长的归因路径。专家示范了有效路线，则可能帮助行动，但不能唯一说明各项奖励权重。三种情形还可以组合：示范没有破损记录，终局评分延迟，训练又按里程给辅助分。
+
+选择机制之前，应判断缺的是可靠信号、局部贡献，还是目标标准。训练损失下降只说明所选优化问题正在被求解；它不证明反馈覆盖充分、归因正确或目标编码完整。独立的交付身份、完好情况和能耗检查应在优化前约定，否则可以通过随时更换评价标准把任何行为解释成成功。
+
+% Outline: 5.2
+\section{奖励观测受限下的强化学习}
+\label{sec:rl-reward-alternative}
+
+拿不到可靠的逐步奖励，并不意味着必须先恢复一个唯一奖励函数才能行动。示范可以直接拟合策略，偏好可以约束相对效用，验证结果可以构造策略梯度。本节固定反馈的语义，考察不同记录支持哪些推断，以及这些推断需要什么额外假设。
+
+% Outline: 5.2.1
+\subsection{替代反馈与可推断对象}
+\label{sec:rl-reward-inference}
+
+同一次配送，示范轨迹显示专家选择了电梯；偏好标签显示收件人更喜欢平稳但较慢的配送；身份验证只说明包裹交给了正确的人。电梯动作本身不等于“慢一些更好”，身份通过也不代表没有破损。把三种记录都改成一个“正例”会丢失它们能够排除哪些候选解释的信息。
+
+策略$\pi(a\mid s)$描述在某状态怎样行动，占用度量$d^\pi(s,a)$描述长期会访问哪些状态和动作。价值$V^\pi,Q^\pi$是给定奖励和策略后的长期预测，奖励$R(s,a)$规定单步计分，效用则表达评价者看重什么。它们之间存在依赖，但反馈对其中一个对象施加约束，不会自动唯一确定其余对象。表~\ref{tab:rl-reward-inference}列出常见映射。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm}*{4}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    反馈 & 候选推断对象 & 额外假设 & 训练交互 & 最终输出 \\
+    \midrule
+    状态动作示范 & 策略 & 输入足以解释动作，覆盖可用 & 行为克隆不需要 & 动作分布 \\
+    专家与策略轨迹 & 占用、软价值 & 共同环境，轨迹采样口径一致 & 占用匹配通常需要 & 策略或价值函数 \\
+    专家轨迹 & 奖励、特征期望 & 专家理性、奖励函数类、动态模型 & 需规划或采样权限 & 奖励候选及策略 \\
+    标量评分 & 评价函数 & 尺度、对象与时间归属明确 & 拟合本身不需要 & 评分预测器 \\
+    成对偏好 & 效用差、策略 & 比较模型与共同条件 & 拟合可离线；在线RL另需新采样 & 奖励模型或偏好策略 \\
+    过程、结果验证 & 条件通过概率 & 规则有效、检查前提满足 & 在线更新需可调用验证 & 验证信号与策略 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{反馈到学习对象是多对多关系。“不需要交互”仅描述拟合阶段，不保证固定数据覆盖未来行为。}
+  \label{tab:rl-reward-inference}
+\end{table*}
+
+在只有左、右两个动作的单步任务中，专家总选左。奖励$(R(\text{左}),R(\text{右}))=(1,0)$与$(10,9)$都使这个行为最优；若只观察确定的排序，效用$(3,2,1)$和$(100,2,0)$也都支持甲优于乙、乙优于丙。后者不表示它们在指定随机偏好模型下产生相同的比较概率：排序比概率提供的信息更少，即使完整比较概率已知，通常仍保留共同加法常数等不唯一性。
+
+固定数据只能约束已经提出的问题。允许主动查询时，可以比较之前未比较的两条路线，或向专家询问当前策略偏离后的动作。增加旧记录的重复数量能降低采样误差，却不能消除对从未涉及的要求的歧义。这与第~\ref{chap:rl-information}章的区分一致：先指定要识别的结论，再判断可用数据是否足够。
+
+% Outline: 5.2.2
+\subsection{从示范直接学习策略}
+\label{sec:rl-reward-bc-dagger}
+
+当专家动作本身已经可用，最直接的目标是让策略在类似输入上复现它。\term{行为克隆}（behavioral cloning, BC）把决策当作条件监督学习：输入是专家看到的状态或记录历史，标签是专家动作。设有限时域为$t=0,\ldots,H-1$，$\nu_t^{\mathrm E}$为专家在时刻$t$的状态分布。离散动作的总体目标为
+\begin{equation}
+  L_{\mathrm{BC}}(\bm{\theta})
+  =-\frac1H\sum_{t=0}^{H-1}
+  \mathbb E_{\substack{s\sim\nu_t^{\mathrm E}\\
+              a\sim\pi_{\mathrm E}(\cdot\mid s)}}
+       \log\pi_{\bm{\theta}}(a\mid s).
+  \label{eq:rl-reward-bc}
+\end{equation}
+用示范数据$\mathcal D_{\mathrm E}$的平均负对数似然替代期望，再做
+$\bm{\theta}^{(k+1)}=\bm{\theta}^{(k)}
+-\eta\nabla_{\bm{\theta}}\widehat L_{\mathrm{BC}}$，
+就是一次拟合更新。数据来自专家而不是当前策略；一次遍历的主要代价是对全部记录计算策略概率和梯度，不需要奖励或环境回放。
+
+连续动作常用平方误差$\mathbb E\lVert f_{\bm{\theta}}(s)-a\rVert_2^2$，它在无限容量下拟合条件均值。若绕障时专家以相同概率向左或向右转，动作分别为$-1$和$1$，回归均值为$0$，却可能意味着直撞障碍。此时应表示多模态动作分布，而不是把均值当成专家动作。相同观测对应不同动作，也可能因为日志漏记了任务指令；更复杂的策略网络无法凭空恢复这个信息。
+
+行为克隆的另一个困难来自执行分布。专家很少进入错误走廊，克隆策略一旦误入，就需要在没有示范覆盖的状态继续决策。下面用一个保守界说明误差怎样沿时间累积。
+
+\begin{theorem}[行为克隆的首次分歧界]
+  \label{thm:rl-reward-bc}
+  考虑共同初始分布、共同转移核的有限时域任务，每步成本$c_t(s,a)\in[0,1]$，总成本记为
+  $C_H(\pi)=\mathbb E_\pi\sum_{t=0}^{H-1}c_t(s_t,a_t)$。
+  专家$\pi_{\mathrm E}$为确定性策略。若学习策略在每个专家状态分布上均满足
+  \[
+    \mathbb E_{s\sim\nu_t^{\mathrm E}}
+    \bigl[1-\pi(\pi_{\mathrm E}(s)\mid s)\bigr]\leq\varepsilon,
+  \]
+  则
+  \[
+    C_H(\pi)-C_H(\pi_{\mathrm E})
+    \leq \frac{H(H+1)}2\varepsilon.
+  \]
+  非平稳专家可把时间加入状态，结论不变。
+\end{theorem}
+
+\begin{proof}
+  在同一概率空间生成两条轨迹：初始状态相同；只要此前动作相同，就让环境使用同一份转移随机性。在专家轨迹每个$s_t^{\mathrm E}$上，还抽取一个服从$\pi(\cdot\mid s_t^{\mathrm E})$的候选动作。记候选动作与专家动作不同的事件为$B_t$，由假设$\mathbb P(B_t)\leq\varepsilon$。
+
+  在首次分歧之前，学习者与专家的状态、动作及成本相同。因此，截至时刻$t$发生实际分歧的事件，包含于$\bigcup_{j=0}^{t}B_j$；并集界给出其概率至多$(t+1)\varepsilon$。发生分歧后不要求两条轨迹重新一致，但由于单步成本在$[0,1]$内，学习者在时刻$t$的额外成本至多为这个分歧事件的指示变量。取期望并求和，
+  \[
+    C_H(\pi)-C_H(\pi_{\mathrm E})
+    \leq\sum_{t=0}^{H-1}(t+1)\varepsilon
+    =\frac{H(H+1)}2\varepsilon.
+  \]
+  这里没有把“尚未分歧”条件下的错误率直接当作$\varepsilon$，而是在完整专家轨迹上取并集，因而不需要额外的条件分布假设。
+\end{proof}
+
+成本总差本来还不超过$H$，故可以把右端截为两者的较小值。二次项表示早期错误可能影响很多后续步骤，不是说每个任务一定二次恶化。能够快速恢复的环境可以远好于此界。
+
+要改善执行分布上的覆盖，可以让专家标注学习者实际访问的状态。\term{数据集聚合}（Dataset Aggregation, DAgger）正是反复执行、查询和重新拟合的过程。它增加的是偏离后的状态，而不只是更多专家原有轨迹；图~\ref{fig:rl-reward-dagger}区分了执行、查询与聚合的箭头。该归约及其在线学习分析由Ross等给出\scite{ross2011}
+
+\begin{algorithm}[一轮DAgger更新]
+  \label{alg:rl-reward-dagger}
+  \begin{algorithmic}[1]
+    \Require 已聚合数据$\mathcal D^{(k)}$，策略$\pi^{(k)}$，专家查询接口，轨迹预算$m$
+    \Ensure 新数据$\mathcal D^{(k+1)}$与候选策略$\pi^{(k+1)}$
+    \State 在获准环境中执行$m$条$\pi^{(k)}$轨迹，记录实际访问的状态
+    \State 对这些状态查询$a_{\mathrm E}=\pi_{\mathrm E}(s)$，保留失败及偏离后的状态
+    \State $\mathcal D^{(k+1)}\gets\mathcal D^{(k)}\cup\{(s,a_{\mathrm E})\}$
+    \State 在聚合数据上最小化模仿损失，得到$\pi^{(k+1)}$
+    \State 在独立轨迹上评价任务表现，并记录查询数与执行风险
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-reward-dagger}
+  \caption{专家轨迹与当前策略轨迹在同一起点后发生分歧。当前策略进入的新状态接受专家查询，其动作标签随聚合数据进入下一轮拟合；查询箭头不表示专家已经执行了该动作。}
+  \label{fig:rl-reward-dagger}
+\end{figure}
+
+例如，策略误入状态$s_{\text{偏}}$，专家给出的纠正动作为“返回”。若二动作策略以logit $z$表示返回概率$\sigma(z)$，当前$z=0$，这个样本的负对数似然梯度为$\sigma(0)-1=-1/2$。步长为$0.2$的一次更新得到$z=0.1$，返回概率从$0.5$变为约$0.525$。这条监督来自当前策略的错误状态，不会出现在只复读原示范的训练中。实际每轮还需要$mH$步执行、至多$mH$次专家查询及对增长数据集的拟合成本。
+
+\begin{theorem}[理想化DAgger的无遗憾归约]
+  \label{thm:rl-reward-dagger}
+  令$\bar\nu^{(k)}=H^{-1}\sum_t\nu_t^{\pi^{(k)}}$为第$k$轮当前策略自身的平均状态分布，定义
+  $\ell_k(\pi)=\mathbb E_{s\sim\bar\nu^{(k)}}\ell(\pi;s)$。
+  若$K$轮在线拟合满足
+  \[
+    \frac1K\sum_{k=1}^K\ell_k(\pi^{(k)})
+    -\min_{\pi\in\Pi}\frac1K\sum_{k=1}^K\ell_k(\pi)
+    \leq\varepsilon_{\mathrm{reg}},
+  \]
+  则至少一轮$k$满足
+  \[
+    \ell_k(\pi^{(k)})
+    \leq\min_{\pi\in\Pi}\frac1K\sum_{j=1}^K\ell_j(\pi)
+        +\varepsilon_{\mathrm{reg}}.
+  \]
+\end{theorem}
+
+证明的关键是把遗憾不等式移项，再用最小值不超过平均值：
+\[
+  \min_k\ell_k(\pi^{(k)})
+  \leq\frac1K\sum_k\ell_k(\pi^{(k)}).
+\]
+这里的比较策略在各轮分布上共同评价，不要求每轮分布相同。它首先是模仿损失结论。有限样本需要估计误差项，混合执行专家需要控制混合分布与自身分布的差异；若要转成任务成本界，还需损失控制动作错误，以及一次错误后专家恢复的额外成本有统一上界。不能从上述平均遗憾直接断言所有实现都具有线性时域成本界。
+
+SEARN把序贯预测归约成代价敏感学习，通常需要通过后续执行估计动作代价；AggreVaTe聚合访问状态上的专家后续成本信息，因而能区分“看似不同但成本接近”的动作。相比DAgger的动作标签，这些方法查询的信息更丰富，代价也更高。专家可能无法评价从未见过的状态，实际执行还可能有风险；固定示范协议不包含这些额外权限\scite{rl5-daume2009searn,rl5-ross2014aggrevate}
+
+% Outline: 5.2.3
+\subsection{从示范推断占用与奖励}
+\label{sec:rl-reward-occupancy-irl}
+
+逐状态拟合动作，并没有直接比较整条行为过程。配送策略可能在常见走廊上与专家一致，却花更多时间停留在装载区。以下采用$0\leq\gamma<1$的无限折扣口径；回合任务以零原始奖励的吸收状态延拓，终止后的占用也计入总质量。要比较长期访问差异，可以使用归一化折扣占用度量
+\begin{equation}
+  d^\pi(s,a)=(1-\gamma)\sum_{t=0}^{\infty}
+       \gamma^t\mathbb P_\pi(s_t=s,a_t=a).
+  \label{eq:rl-reward-occupancy}
+\end{equation}
+它既包括动作选择，也包括由环境动力学决定的可达性。在共同环境中，完整占用匹配比只在专家已见状态上拟合条件动作分布施加了更多约束；对平稳马尔可夫策略，在$d^\pi(s)>0$处可由$d^\pi(s,a)/d^\pi(s)$恢复动作分布。专家与策略样本还须按相同的折扣及吸收延拓口径加权；均匀抽取不同长度回合中的非终止转移，一般不直接得到这里的$d^\pi$。
+
+\term{生成对抗模仿学习}（generative adversarial imitation learning, GAIL）让一个判别器区分专家和学习策略产生的状态动作，再让策略产生更难区分的占用。为明确正负号，令$D_{\bm{\omega}}(s,a)$表示样本来自专家的概率。使用归一化占用时，一个熵正则化目标是
+\begin{equation}
+  \min_\pi\max_D
+  \left\{\mathbb E_{d^{\mathrm E}}\log D
+    +\mathbb E_{d^\pi}\log(1-D)
+    -\lambda\mathcal H_d(\pi)\right\},
+  \label{eq:rl-reward-gail}
+\end{equation}
+其中$\mathcal H_d(\pi)=\mathbb E_{d^\pi}[-\log\pi(a\mid s)]$。固定占用、逐点最大化判别器项，得到
+$D^*=d^{\mathrm E}/(d^{\mathrm E}+d^\pi)$；
+代回后是$-\log4+2\operatorname{JS}(d^{\mathrm E}\Vert d^\pi)$，其中$\operatorname{JS}$为两个分布与其均值分布之间的平均KL散度。因此判别器在衡量访问分布的差异，不是在发现唯一真实奖励\scite{rl5-ho2016gail}
+
+一次GAIL更新包括：用当前策略采集轨迹；将专家样本标为1、策略样本标为0，更新判别器的交叉熵；冻结判别器，以
+$\widetilde r_t=-\log(1-D_{\bm{\omega}}(s_t,a_t))$
+构造奖励，再调用策略优化器。这个符号对应式~\eqref{eq:rl-reward-gail}的最小化方向。两条策略样本若分别有$D=0.8$和$D=0.2$，所得信号约为$1.609$与$0.223$，前者更像专家，但不是被证实更符合未记录的配送要求。把$\mathbb E_{d^\pi}\widetilde R$换为未归一化目标时必须使用
+$\widetilde J(\pi)=(1-\gamma)^{-1}\mathbb E_{d^\pi}\widetilde R$，
+其中$\widetilde J$特指判别奖励的回报；
+同乘常数不改变最优策略，却会影响梯度尺度和正则化权重的对应。
+
+这条路线通常需要环境交互来刷新策略占用，专家则可以只提供固定轨迹。其主要成本是新轨迹和交替优化；判别器过拟合、占用支持几乎不交叠以及策略更新滞后都会影响学习。占用相同也不代表全部轨迹性质相同，例如某些次序要求需要扩展状态才能表达。
+
+另一种做法是直接学习软动作价值。\term{逆软Q学习}（Inverse soft-Q Learning, IQ-Learn）利用软Bellman关系，把奖励和策略都表示成同一个$Q$的函数。在有限离散动作、熵温度取1时，
+\begin{equation}
+  \begin{aligned}
+    V_Q(s)&=\log\sum_a\exp Q(s,a),\\
+    \pi_Q(a\mid s)&=\exp\{Q(s,a)-V_Q(s)\},\\
+    R_Q(s,a)&=Q(s,a)-\gamma\mathbb E_{s'\mid s,a}V_Q(s').
+  \end{aligned}
+  \label{eq:rl-reward-iq}
+\end{equation}
+学习目标用专家转移和选定的分布距离正则项约束$Q$，不必维持一个独立奖励网络与策略网络之间的对抗循环。在线版本可用新策略转移，离线版本使用固定专家等转移数据，仍受其支持限制；连续动作通常再用参数化行动者近似软策略。式~\eqref{eq:rl-reward-iq}是表示关系，不是声称对任意$Q$做普通TD回归就完成了IQ-Learn，也不说明导出的$R_Q$有唯一语义\scite{rl5-garg2021iq}
+
+如果目标不只是复现行为，还要解释专家为何选择这些动作，就进入\term{逆强化学习}（inverse reinforcement learning, IRL）：寻找使专家行为合理的奖励。Ng与Russell的表述把专家最优性转成对奖励的约束；例如已知模型和专家策略时，要求对每个备选动作有$Q_R^{\pi_{\mathrm E}}(s,\pi_{\mathrm E}(s))\geq Q_R^{\pi_{\mathrm E}}(s,a)$。仅有这些不等式时，零奖励也能使所有动作并列最优，因而需要奖励函数类、幅度约束或间隔准则；次优专家还需要明确容许误差\scite{ng2000irl}
+
+学徒学习把“恢复原奖励”放宽成“在一类奖励下表现接近专家”。假设$R_{\bm w}(s,a)=\bm w^\top\bm\phi(s,a)$，定义归一化特征期望$\bm m_\pi=\mathbb E_{d^\pi}\bm\phi(s,a)$。则
+\begin{equation}
+  J_{\bm w}(\pi)-J_{\bm w}(\pi_{\mathrm E})
+  =\frac{\bm w^\top(\bm m_\pi-\bm m_{\mathrm E})}{1-\gamma}.
+  \label{eq:rl-reward-feature}
+\end{equation}
+若$\lVert\bm w\rVert_2\leq1$且特征期望差不超过$\delta$，Cauchy--Schwarz不等式给出绝对回报差至多$\delta/(1-\gamma)$。这保证的是所选线性奖励类，未编码的破损要求不在保证中；求策略特征期望需要模型规划或环境采样\scite{rl5-abbeel2004apprentice}
+
+最大熵逆强化学习用概率模型解释示范中的变化。在固定起点、有限时域和确定性动力学的简化设定下，对可行轨迹取
+\[
+  p_{\bm w}(\tau)=\frac{\exp\{\bm w^\top\bm f(\tau)\}}{Z(\bm w)},
+  \qquad \bm f(\tau)=\sum_t\gamma^t\bm\phi(s_t,a_t).
+\]
+平均对数似然的梯度为
+$\mathbb E_{\mathcal D_{\mathrm E}}\bm f-\mathbb E_{p_{\bm w}}\bm f$，
+所以更新把模型特征期望拉向示范。配分函数及模型期望需要动态规划或采样近似。在随机动力学中，简单地对整条未来轨迹加权可能改变环境噪声的分布，不能当成智能体可控制的选择；最大因果熵表述需保留真实转移、只优化可因果执行的动作分布\scite{rl5-ziebart2008maxent}
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{25mm}*{4}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    路线 & 观测输入 & 学习对象 & 输出 & 所需权限 \\
+    \midrule
+    直接模仿 & 专家状态动作 & 条件动作分布 & 策略 & BC可只用日志；DAgger另需执行与查询 \\
+    占用匹配 & 专家及策略轨迹 & 占用差异、判别器 & 策略 & 通常持续采样环境 \\
+    软价值学习 & 专家及可用转移 & 软$Q$及隐含奖励 & 价值、策略 & 离线或在线版本分开 \\
+    特征期望匹配 & 示范特征与模型行为 & 特征期望差 & 一类奖励下可用的策略 & 规划或采样候选策略 \\
+    奖励推断 & 专家行为与理性模型 & 奖励参数 & 奖励候选及对应策略 & 动态模型或可估计的转移信息 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{从示范学习的不同输出。奖励函数作为中间计算对象，不意味着它已经被唯一识别。}
+  \label{tab:rl-reward-imitation}
+\end{table*}
+
+表~\ref{tab:rl-reward-imitation}中的方法有不同的承诺。专家在两条路线中选电梯，可能因为“每步能耗低”，也可能因为“包裹保持水平”；在当前示范上二者一致。电梯停运后，这两个奖励却可能选择不同替代路线。恢复原环境中的可用策略与恢复可跨环境使用的奖励，是不同强度的结论，具体反例见第~\ref{sec:rl-reward-ambiguity}节。
+
+% Outline: 5.2.4
+\subsection{从评分与偏好学习奖励或策略}
+\label{sec:rl-reward-preference}
+
+有时评价者不便示范，却能评价机器人刚才的行为。TAMER把人工标量反馈用于拟合评价函数，再据此选择动作；反馈的反应延迟需要另行建模，不能把按键到达时刻直接当作被评价动作时刻。这种评分学习的目标是预测人的评价，并不自动等于环境长期回报\scite{rl5-knox2009tamer}
+
+若“这一段值几分”很难统一，比较两段行为通常能提出更明确的问题：固定同一包裹与路线条件，哪次配送更符合既定要求？令$x,y$为被比较的片段，$u_{\bm{\omega}}(x)$为其标量效用，$\sigma(z)=(1+\exp(-z))^{-1}$。\term{Bradley--Terry模型}用效用差表达成对胜出的概率：
+\begin{equation}
+  \mathbb P_{\bm{\omega}}(x\succ y)
+    =\sigma\!\left(u_{\bm{\omega}}(x)-u_{\bm{\omega}}(y)\right).
+  \label{eq:rl-reward-bt}
+\end{equation}
+这是一个可检验的比较噪声假设，不是偏好定义本身；模型以正强度之比表示成对选择概率，取强度的对数就得到效用差形式\scite{rl5-bradley1952paired}
+
+若标签$b=1$表示选$x$，$b=0$表示选$y$，记$\Delta_j=u_{\bm{\omega}}(x_j)-u_{\bm{\omega}}(y_j)$，条件独立样本的负对数似然为
+\begin{equation}
+  L_{\mathrm{pref}}(\bm{\omega})
+  =-\frac1n\sum_{j=1}^n
+    \left[b_j\log\sigma(\Delta_j)
+      +(1-b_j)\log\sigma(-\Delta_j)\right],
+  \label{eq:rl-reward-bt-loss}
+\end{equation}
+对$\Delta_j$的导数是$(\sigma(\Delta_j)-b_j)/n$，因此标签与预测的差直接决定效用差的更新方向。把两个效用都加同一常数不会改变似然；若还同时学习噪声温度，效用尺度与温度也可能互相混淆。
+
+一种局部奖励参数化是
+$u_{\bm{\omega}}(x)=\sum_{t=0}^{L_x-1}\gamma^t
+\widehat R_{\bm{\omega}}(s_t,a_t)$，
+其中片段起点重编号为0，$L_x$为片段长度。它额外假定效用可分解为这样的局部和。比较长度不同时，“总量较大”与“平均质量较高”不是同一标准；用平均分替代总分改变了模型。标注者差异可通过分组或条件变量建模，显示顺序应随机化并记录。稳定的循环偏好不能由一个固定标量效用的严格排序表达；偶尔出现循环标签则可能来自随机噪声。不能把这两种情况都通过删除标签解决。
+
+在Deep RL from Human Preferences中，轨迹片段比较用于拟合奖励，再让强化学习策略产生新片段，反馈与行为分布因而可以相互更新。相应的语言模型训练常称为\term{基于人类反馈的强化学习}（reinforcement learning from human feedback, RLHF）：监督微调提供初始策略，偏好数据拟合奖励模型，随后优化带参考策略约束的奖励，最后独立评价行为。偏好数据拟合和策略优化是不同阶段，奖励模型准确率并不替代策略评价\scite{christiano2017}
+
+为写清粒度，令$q$为固定输入，$y=(y_0,\ldots,y_{T-1})$为回答，包含结束符；生成时$s_t=(q,y_{<t})$，$a_t=y_t$。这里假设回答在给定最大长度内自然结束；强制长度截断的评分和续接规则需另行声明，不能默认等同于生成结束符。这一段采用有限序列的未折扣总分，相当于$\gamma=1$，不使用无限折扣占用公式。奖励模型$\widehat r_{\bm{\omega}}(q,y)$读入完整回答并输出一个序列分数，价值模型$V_{\bm{\psi}}(s_t)$预测前缀之后的回报，策略$\pi_{\bm{\theta}}$逐token采样。图~\ref{fig:rl-reward-rlhf}把三者分开；序列末尾的一个评价不会因回传到所有token就变成逐token独立标签。经典语言模型RLHF流程可参见InstructGPT\scite{ouyang2022instructgpt}
+
+例如冻结当前轮的旧策略$\mu=\pi^{(k)}$、奖励模型及参考策略$\pi_{\mathrm{ref}}$，在旧策略样本上构造
+\begin{equation}
+  \widetilde r_t
+  =\mathbf1\{t=T-1\}\widehat r_{\bm{\omega}}(q,y)
+  -\beta\log\frac{\mu(a_t\mid s_t)}
+                      {\pi_{\mathrm{ref}}(a_t\mid s_t)}.
+  \label{eq:rl-reward-token-reward}
+\end{equation}
+这里假设每个允许前缀上的旧策略与参考策略在共同的合法token集合上均为正，新策略也不超出该支持。第二项是采样的对数概率比，可以为负；在给定前缀、按$\mu$采样动作时，其期望才是非负KL。以$V_{\bm{\psi}}(s_T)=0$为自然结束条件，计算
+$\delta_t=\widetilde r_t+V_{\bm{\psi}}(s_{t+1})-V_{\bm{\psi}}(s_t)$
+及$\widehat A_t=\sum_{j=t}^{T-1}\lambda^{j-t}\delta_j$。
+令$\varrho_t(\bm{\theta})=\pi_{\bm{\theta}}(a_t\mid s_t)/\mu(a_t\mid s_t)$，PPO式策略更新最大化样本平均
+\begin{equation}
+  \sum_{t=0}^{T-1}
+  \min\!\left\{\varrho_t\widehat A_t,\,
+  \operatorname{clip}(\varrho_t,1-\epsilon,1+\epsilon)\widehat A_t\right\}.
+  \label{eq:rl-reward-ppo}
+\end{equation}
+价值参数另用回报目标做回归，优势和奖励在这次策略更新中视为固定。下一轮刷新轨迹与旧策略。奖励KL的处理也可以放进显式损失，但需要相应推导，不能在两个位置重复计罚。序列采样、参考策略概率、奖励打分和价值拟合构成主要计算开销。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-reward-rlhf}
+  \caption{PPO式RLHF中的评价粒度。偏好标签训练完整回答评分器；旧策略逐token生成并记录采样概率，价值模型读取前缀提供基线。序列分数、旧策略概率与参考概率按式\eqref{eq:rl-reward-token-reward}构造逐token奖励，再经回报和优势估计进入策略更新；参考偏移不在更新器中重复计罚。图中连线表示数据和训练信号，不表示通过离散采样端到端反向传播。}
+  \label{fig:rl-reward-rlhf}
+\end{figure*}
+
+长度影响可以从KL链式法则看出：
+\[
+  \operatorname{KL}(\pi(\cdot\mid q)\Vert\pi_{\mathrm{ref}}(\cdot\mid q))
+  =\mathbb E_\pi\sum_{t<T}
+    \log\frac{\pi(a_t\mid s_t)}{\pi_{\mathrm{ref}}(a_t\mid s_t)}.
+\]
+教学上若两个回答奖励同为1，长度分别为2和4，每个token采样对数比恰为$0.1$，取$\beta=0.5$，惩罚后的分数为$0.9$与$0.8$。这是累加KL产生的长度相关差异，不等于奖励模型明确偏好短回答；真实样本的对数比也不必同号或恒定。把KL或策略损失按长度平均，会重新加权长短回答，不能声称一种归一化在所有任务中都正确。
+
+偏好标签也可以由模型提供。Constitutional AI依据明确原则生成批评和修订，将监督修订与AI偏好反馈结合，再据AI偏好学习奖励并优化策略\scite{bai2022constitutional}
+更换评价者不改变给定评分函数后的优化形式，却会改变评分的判断依据与误差；第~\ref{sec:rl-reward-sources}节会分别讨论这些来源条件。下面先固定评分，考虑一个可以精确求解的理想问题，以理解偏好拟合与奖励优化的联系。
+
+\begin{theorem}[KL正则化奖励最大化的最优策略]
+  \label{thm:rl-reward-kl}
+  固定输入$q$，输出集合$\mathcal Y$有限，奖励$r(q,y)$有限，参考策略对每个$y\in\mathcal Y$均满足$\pi_{\mathrm{ref}}(y\mid q)>0$，且$\beta>0$。在所有概率分布上最大化
+  \[
+    F_q(\pi)=\mathbb E_{y\sim\pi(\cdot\mid q)}r(q,y)
+     -\beta\operatorname{KL}(\pi(\cdot\mid q)\Vert
+                                      \pi_{\mathrm{ref}}(\cdot\mid q))
+  \]
+  的唯一解为
+  \begin{equation}
+    \begin{aligned}
+      \pi^*(y\mid q)&=
+        \frac{\pi_{\mathrm{ref}}(y\mid q)\exp(r(q,y)/\beta)}{Z(q)},\\
+      Z(q)&=\sum_{z\in\mathcal Y}\pi_{\mathrm{ref}}(z\mid q)
+                                \exp(r(q,z)/\beta).
+    \end{aligned}
+    \label{eq:rl-reward-kl-optimum}
+  \end{equation}
+\end{theorem}
+
+\begin{proof}
+  有限性与正支持保证$0<Z(q)<\infty$且$\pi^*$处处为正。由定义
+  $r(q,y)=\beta\log[\pi^*(y\mid q)/\pi_{\mathrm{ref}}(y\mid q)]
+  +\beta\log Z(q)$。代入目标并合并两个对数项，
+  \[
+    F_q(\pi)=\beta\log Z(q)
+       -\beta\sum_y\pi(y\mid q)\log\frac{\pi(y\mid q)}{\pi^*(y\mid q)}.
+  \]
+  KL非负，且仅当两个分布相同时为零；第一项与$\pi$无关，故$\pi^*$为唯一最大化解。零概率项按$0\log0=0$取连续延拓。
+\end{proof}
+
+这不是把奖励贪心地换成最高分输出：参考概率和$\beta$共同决定如何分配质量。教学上令两种输出的参考概率均为$1/2$，奖励为$(\log3,0)$，$\beta=1$，则$Z=2$，最优概率为$(3/4,1/4)$。参考策略若对某输出为零，有限KL的策略不能给它正概率；上述全空间结论必须缩到参考支持上。
+
+现在假设同一输入下的偏好满足以$r$为效用的Bradley--Terry模型。将刚才的奖励表达式代回差值，
+\begin{equation}
+  \begin{aligned}
+    r(q,y_{\mathrm w})-r(q,y_{\mathrm l})
+    =\beta\left[
+      \log\frac{\pi^*(y_{\mathrm w}\mid q)}
+                    {\pi_{\mathrm{ref}}(y_{\mathrm w}\mid q)}
+      -\log\frac{\pi^*(y_{\mathrm l}\mid q)}
+                    {\pi_{\mathrm{ref}}(y_{\mathrm l}\mid q)}
+    \right].
+  \end{aligned}
+  \label{eq:rl-reward-dpo-change}
+\end{equation}
+归一化常数消去，是因为两条回答属于同一输入；不同输入的$Z(q)$一般不能抵消。用参数化策略替代$\pi^*$，记方括号内的量为$z_{\bm{\theta}}(q,y_{\mathrm w},y_{\mathrm l})$，得到\term{直接偏好优化}（direct preference optimization, DPO）：
+\begin{equation}
+  L_{\mathrm{DPO}}(\bm{\theta})
+  =-\mathbb E_{(q,y_{\mathrm w},y_{\mathrm l})\sim\mathcal D_{\mathrm{pref}}}
+         \log\sigma\!\left(\beta z_{\bm{\theta}}\right).
+  \label{eq:rl-reward-dpo}
+\end{equation}
+这里$y_{\mathrm w}$与$y_{\mathrm l}$分别是胜出和落选回答。一次更新计算两条完整回答在策略与固定参考下的对数概率，按式~\eqref{eq:rl-reward-dpo}求梯度并下降，不采集新轨迹，也不训练显式价值模型。梯度为
+$-\beta\sigma(-\beta z_{\bm{\theta}})
+[\nabla\log\pi_{\bm{\theta}}(y_{\mathrm w}\mid q)
+-\nabla\log\pi_{\bm{\theta}}(y_{\mathrm l}\mid q)]$。
+沿用均匀参考的两输出教学例，策略logit差就是$z$。当$z=0$、$\beta=1$时，单个偏好样本梯度为$-1/2$，步长$0.2$把$z$更新为$0.1$，偏好输出的概率变为约$0.525$\scite{rafailov2023dpo}
+
+显式奖励模型加PPO会给新采样行为评分，并沿在线交互分布优化策略；标准DPO直接在固定偏好对上最小化分类式损失。DPO与KL正则化最优策略有上述换元关系，但它本身不是通常意义上的在线强化学习。有限模型类可能无法表示$\pi^*$，有限数据不能覆盖全部回答，偏好还可能不满足Bradley--Terry模型，因此理想换元不保证实际训练精确恢复奖励最优策略。外层若反复采样和标注再运行DPO，就构成迭代式偏好学习；新信息来自外层采样协议，而不是分类损失凭空提供了在线访问。
+
+% Outline: 5.2.5
+\subsection{从过程与结果验证构造策略更新}
+\label{sec:rl-reward-verification}
+
+对于具有明确答案或可执行产物的任务，取得反馈不一定需要逐对询问偏好。程序可以执行测试，数学答案可以按指定等价规则比较，配送结果可以核对签收身份。这些判断的优势是标准可重复，边界则由被检查的条件决定。
+
+\begin{definition}[过程反馈与结果反馈]
+  \label{def:rl-reward-verification}
+  \term{结果反馈}评价完整行为结束后的产物或状态，如答案是否等价、包裹是否正确签收。\term{过程反馈}评价某个中间状态、动作或步骤间关系，如装载后身份是否一致、推导是否由前提合法推出。\term{可验证奖励}是依据明示验证规则产生的奖励；“可验证”相对于该规则、输入前提和实现成立，不表示完整行为目标已被验证。
+\end{definition}
+
+一个推导可能使用非法除法，却偶然给出正确答案；结果检查通过不能证明中间过程有效。反过来，每步变换都合法也可能只是把题目反复改写，没有回答问题。表~\ref{tab:rl-reward-verifiers}按检查能力比较验证器，避免把“自动”误解成“没有偏差”。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{21mm}*{4}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    检查器 & 可检查对象 & 检查前提 & 反馈粒度 & 主要漏检 \\
+    \midrule
+    规则验证器 & 格式、身份、答案等价 & 解析与等价规则符合标准 & 字段、步骤、结果 & 格式正确但内容错误；解析漏洞 \\
+    执行器 & 代码、操作的实际结果 & 沙箱、测试输入、执行环境有效 & 工具调用或整次运行 & 未测试输入、超时与资源副作用 \\
+    形式检查器 & 形式命题及证明 & 形式化忠实，公理和检查内核可信 & 推理步骤、完整证明 & 证明了错误形式化的命题 \\
+    模型评判器 & 开放式内容与解释 & 训练覆盖、提示及标准适用 & 片段、回答 & 风格偏好、位置偏差、共同模型盲点 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{验证反馈的可靠范围。执行通过不等于全部输入正确，形式通过也不自动证明需求翻译无误。}
+  \label{tab:rl-reward-verifiers}
+\end{table*}
+
+用验证得分更新策略时，一种办法是对同一输入采样多个候选，相互比较其得分。\term{组相对策略优化}（group relative policy optimization, GRPO）用组内得分作为基准，省去单独拟合价值基线的步骤。沿用有限序列、未折扣设定，令旧策略$\mu$对输入$q$独立采样$m$个回答$y_i$，验证或奖励模型得分为$v_i$。为避免与时刻$t$的奖励混淆，不把这些组样本分数写为$r_t$。定义
+\begin{equation}
+  \bar v=\frac1m\sum_{i=1}^m v_i,\qquad
+  s_v=\sqrt{\frac1m\sum_{i=1}^m(v_i-\bar v)^2},\qquad
+  \widehat A_i=\frac{v_i-\bar v}{s_v+\epsilon_{\mathrm{num}}},
+  \label{eq:rl-reward-grpo-advantage}
+\end{equation}
+其中明确采用分母$m$的组内标准差，$\epsilon_{\mathrm{num}}>0$为数值稳定项。结果监督下，可把同一个$\widehat A_i$用于该回答的每个token。它表示相对这组候选的好坏，不是状态价值函数估计。
+
+令$T_i$为回答长度，$\varrho_{i,t}=\pi_{\bm{\theta}}(y_{i,t}\mid q,y_{i,<t})/
+\mu(y_{i,t}\mid q,y_{i,<t})$，$\ell_{i,t}^{\mathrm{clip}}$为式~\eqref{eq:rl-reward-ppo}中将$\widehat A_t$换为$\widehat A_i$后的项。一个常见token级GRPO代理目标为
+\begin{equation}
+  \widehat{\mathcal L}_{\mathrm{GRPO}}
+  =\frac1m\sum_{i=1}^m\frac1{T_i}
+      \sum_{t=0}^{T_i-1}
+       \left(\ell_{i,t}^{\mathrm{clip}}-\beta k_{i,t}\right),
+  \label{eq:rl-reward-grpo}
+\end{equation}
+其中$k_{i,t}$是参考KL的选定估计或局部近似。常用
+$k=\exp(-\ell)+\ell-1$，$\ell=\log(\pi_{\bm{\theta}}/\pi_{\mathrm{ref}})$；
+若两分布在同一合法token集合上均为正，且动作确实采自$\pi_{\bm{\theta}}$，则在给定前缀下$\mathbb E_{\pi_{\bm{\theta}}}\exp(-\ell)=1$，故$k$的期望等于前向KL。重复利用旧策略样本时，不经分布校正就不能把同一个样本均值当成精确KL，更不能由此推出精确约束保证。这里的长度平均、剪裁和采样KL均是代理目标的组成部分，不应与无近似的期望奖励梯度混同。
+
+\begin{example}[一组验证得分的更新信号]
+  \label{ex:rl-reward-grpo}
+  假设$m=4$，得分为$(1,1,0,0)$。则$\bar v=0.5$，$s_v=0.5$；忽略极小数值稳定项时，相对信号为$(1,1,-1,-1)$。取单步二动作策略、成功动作概率$p=\sigma(z)$，当前$z=0$，没有KL惩罚且处于未剪裁区。这个样本组的logit梯度为
+  \[
+    \frac14\{2(1)(1-p)+2(-1)(-p)\}=\frac12.
+  \]
+  梯度上升步长$0.2$给出$z'=0.1$，成功动作概率约为$0.525$。若四个样本全为1或全为0，中心化分子全为0，稳定项使计算有限，但不会创造奖励梯度；如保留KL项，仍可能存在正则化梯度。
+\end{example}
+
+组内标准化不是无偏真实优势。即使不除标准差，基准包含被评价样本本身也会改变期望。对固定$q$、独立同分布样本和得分函数$v$，记$\bm g_i=\nabla\log\pi(y_i\mid q)$，利用$\mathbb E\bm g_i=0$可得
+\[
+  \mathbb E\left[\frac1m\sum_i(v_i-\bar v)\bm g_i\right]
+  =\left(1-\frac1m\right)\nabla\mathbb E_\pi v.
+\]
+因为$\bar v$中自己的那一项与$\bm g_i$相关，其余样本的交叉期望为零。再除以随机$s_v$会引入与成功比例相关的权重；使用不含自身的组均值可消除这个特定缩放，但不能自动消除标准化、剪裁和旧样本带来的偏差。二值奖励的混合组中，较少见的结果还会取得较大的标准化绝对值。
+
+同一更新形式可以使用不同来源的$v_i$。DeepSeekMath提出GRPO，并讨论结果奖励模型、过程奖励模型及迭代刷新，其反馈不局限于规则判分\scite{rl5-shao2024deepseekmath}
+DeepSeek-R1原始技术报告中的R1-Zero及R1推理训练使用正确性和格式等规则奖励，但R1完整多阶段流程还包含监督微调，以及面向一般数据的模型奖励。推理阶段的反馈设定不能代表全部训练阶段\scite{deepseek2025r1}
+
+基于可验证奖励的强化学习常简写为RLVR，它描述反馈机制，而GRPO描述更新方式。验证器的假阳性、答案解析偏差、测试泄漏或对某种长度与表达方式的偏爱，都会变成策略可优化的信号。增加同一输入采样数可以改善组内比较，却不能补齐验证器未检查的要求。多轮工具任务还需记录评价单位：动作格式正确、工具返回成功、最终任务完成是三种不同结果；把终局成功平均分给工具调用，不等于得到了动作级正确性标签。更长交互中的前沿问题由第~\ref{chap:rl-overview}章概述，语言模型实现细节留给应用卷。
+
+% Outline: 5.2.6
+\subsection{反馈来源与目标可辨识性}
+\label{sec:rl-reward-sources}
+
+从示范得到可用策略、从偏好预测胜负、从验证规则判断通过，分别回答不同问题。可识别性应相对于要输出的结论来判断：即使奖励不可唯一恢复，所有合理奖励在当前可选动作上也可能同意；反之，偏好预测很准确，也不能说明评价者未提到的要求已经被学会。
+
+人类与AI反馈的区别主要落在判断依据、成本和误差结构，而不是记录形式必然不同。同一对行为的胜负标签可以来自人，也可以来自模型；相同的记录形式不保证相同的判断质量。
+
+\term{基于AI反馈的强化学习}（reinforcement learning from AI feedback, RLAIF）让AI承担部分评价工作；\term{原则指导反馈}（constitutional feedback）说明评价或修订以明确原则为依据。原则可以用于产生批评、修订示范或偏好，不是与示范、偏好互斥的新记录类型；原则的选择仍是外部目标约定。
+
+\begin{table*}[t]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm}*{5}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    来源或协议 & 判断依据 & 相关偏差 & 可追溯性 & 查询成本 & 外部校验 \\
+    \midrule
+    人类反馈 & 任务知识、个人偏好、指南 & 疲劳、群体差异、顺序效应 & 需保留指南与标注群体 & 人工时间 & 交叉复核、真实结果 \\
+    RLAIF & AI知识与提示中的标准 & 共享训练偏差、风格偏好 & 需记录模型和提示版本 & 推理及抽查成本 & 独立人评、规则或执行 \\
+    原则指导反馈 & 显式原则及其解释 & 原则遗漏、冲突解释 & 原则可见不等于执行透明 & 原则维护与评价成本 & 逐原则反例测试 \\
+    模型评判器 & 学得评分或比较函数 & 分布外失准、位置与长度偏差 & 需记录训练数据和模型版本 & 批量打分与刷新 & 留出来源、实物或程序检查 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{反馈来源和协议的比较。RLAIF可以使用原则指导的模型评判器，因此这些行不是互斥类别。}
+  \label{tab:rl-reward-sources}
+\end{table*}
+
+设人工标注员与模型都只看配送终点照片，二者一致认为“已送达”，却共同漏掉包裹内部破损。两者的判断都受同一观测盲点限制，不能因判断一致就认定包裹完好。若一位收件人偏好更快、另一位偏好更省电，他们的分歧也可能是真实价值差异，不应一律当噪声删除。
+
+表~\ref{tab:rl-reward-sources}中的外部校验决定结论能外推到哪里。仅在完整、短距离配送记录上验证过的评价器，不足以支持长路线、身份缺失或新型包裹上的判断。当前可以说的是某策略在这些输入和标准下得到支持；奖励等价类与实际失配怎样区分，还需考察未见行为上的排序。
+
+% Outline: 5.3
+\section{奖励归因受限下的强化学习}
+\label{sec:rl-reward-credit}
+
+现在暂时固定行为目标与反馈语义，只问怎样让已有结果更有效地影响局部更新。从终局结果回溯、添加过程判断、变换原奖励和使用辅助目标，都能产生更近的学习信号，但它们改变的信息和保持原目标的条件并不相同。
+
+% Outline: 5.3.1
+\subsection{基于长期结果回溯构造局部学习信号}
+\label{sec:rl-reward-redistribution}
+
+在四步配送中，核对身份决定是否拿对包裹，中间搬运可能只是执行已选方案。终局成功回报可以通过REINFORCE或多步回报更新核对动作，但也会出现在搬运、播放提示等动作的回报中。基线减少共同波动，自举缩短传播路径，却不直接提供“这个动作改变了多少结果”的因果标签。相应通用估计方法见第~\ref{chap:rl-learning}章。
+
+\term{奖励重分配}把同一结果在轨迹上的记账位置重新安排，以缩短需要学习的时间联系。若要保持本来采用的折扣目标，一条轨迹上的新旧奖励必须满足
+\begin{equation}
+  \sum_{t=0}^{H-1}\gamma^t\widetilde r_t
+    =\sum_{t=0}^{H-1}\gamma^t r_t.
+  \label{eq:rl-reward-redistribution}
+\end{equation}
+逐轨迹成立是保持各策略期望回报的充分条件；较弱的条件是该期望相等对所有待比较策略成立。新信号若依赖整段历史，通常不再是原状态上的马尔可夫奖励，需要检查表示是否足够。若它还依赖记账时刻之后的结果，仅把过去历史加入状态也不能使反馈变成因果可得。
+
+例如取$H=4$、$\gamma=0.9$，原奖励为$(0,0,0,1)$，初始回报为$0.9^3=0.729$。若把全部终局奖励移到$t=0$，应改为$(0.729,0,0,0)$；若移到$t=1$，应改为$(0,0.81,0,0)$。直接移成$(1,0,0,0)$保持了未折扣总和，却没有保持原目标。对所有轨迹都使用同样错误的处理，在长度可变时还会改变快慢路径的比较。
+
+总回报相等也不保证可以直接改用新的reward-to-go。若终局结果取决于最后一个动作，却被全部记到$t=0$，新奖励的末步回报为0；直接用它更新末步策略，就丢掉了这个动作对成功的影响。第~\ref{chap:rl-learning}章删除过去奖励的推导依赖因果性，不能用于这种事后前移的信号。保持完整轨迹总回报与整条轨迹的对数概率梯度相乘，仍可保留原目标的梯度；若要使用更局部的更新，则须另证重分配与该估计器的配套条件。
+
+一种结果预测方法估计前缀的最终回报预测值$m_t$，把相邻预测变化$m_t-m_{t-1}$解释为新增信息。取$m_{-1}=0$、$m_{H-1}=G_0$，这些差的和等于$G_0$；若要用作折扣局部奖励且$0<\gamma\leq1$，可令$\widetilde r_t=\gamma^{-t}(m_t-m_{t-1})$。末端预测不精确时还需补上残差，否则连总目标也没有保持。这个表达揭示了重分配的记账条件，实际算法还要控制估计误差与$\gamma^{-t}$放大；RUDDER利用回报预测与贡献分析的机制入口已在第~\ref{chap:rl-learning}章介绍。
+
+预测贡献不是干预贡献。设每次正确核对身份后屏幕都会闪一下，训练日志中闪光与成功高度相关；关闭闪光不改变交付，而拿错包裹必然失败。只凭相关性，归因模型可能把信号分给闪光。检验应保留任务结果，改变无关标记并对关键动作作受控比较，而不能仅用回报预测误差下降证明归因正确。
+
+% Outline: 5.3.2
+\subsection{基于过程反馈构造局部学习信号}
+\label{sec:rl-reward-process}
+
+若日志没有显示核对身份是否正确，可以新增一次装载前的身份检查。它提供原终局分数没有显式包含的中间证据，不只是把同一个总分拆小。步骤边界必须先定义：评价的是读码动作、装载后的身份关系，还是到达时的包裹状态，决定反馈能够监督哪些决策。
+
+图~\ref{fig:rl-reward-process}在同一轨迹上布置人工标注、规则检查、执行记录和模型步骤评价。每种反馈只覆盖相应步骤及其明示关系。例如执行记录证明“包裹已放入箱内”，并不证明箱内包裹身份正确；模型评价“搬运方式看起来平稳”也不能替代实际破损检查。过程监督在推理任务中的一个代表实例是逐步骤验证，但其标签标准与标注范围仍需明确\scite{lightman2023verify}
+
+局部正确还可能无法组合成全局成功。机器人每次搬运都满足速度限制，每次放置都平稳，却在两个中间站之间往返，没有交到收件人手中。过程条件全部通过，但“最终交付”没有满足；若身份检查各自只核对某一字段，还可能遗漏跨步骤身份一致性。局部奖励的求和必须说明它与整体要求的关系，不能因为步骤都有标准就取消终局检查。
+
+新增过程反馈的成本通常随步骤数增加，且不同标注者可能采用不同的步骤切分。模型生成的过程反馈如果存在系统偏差，会在很多位置重复传播。应比较补标关键步骤与标注所有步骤的成本，统一标准版本，并在独立结果上检查局部信号是否有帮助。若发现标准本身遗漏了要求，应进入目标修订，而不是仅调整归因权重。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-reward-process}
+  \caption{过程反馈缩短部分决策到评价的路径。上方为按时间执行的配送步骤，下方为评价来源；由反馈指向更新对象的虚线表示学习信号。未标注步骤仍依赖终局回报传播，局部通过不取代最终身份和完好检查。}
+  \label{fig:rl-reward-process}
+\end{figure*}
+
+% Outline: 5.3.3
+\subsection{基于奖励变换构造局部学习信号}
+\label{sec:rl-reward-shaping}
+
+另一种思路是不增加外部判断，而是利用已知目标构造即时信号。给“更接近终点”奖励很有吸引力，但直接奖励接近可能诱导反复靠近、离开。\term{潜势型奖励塑形}（potential-based reward shaping）对相邻状态的势值作有折扣的差，限制这种附加奖励怎样累计。
+
+\begin{definition}[潜势型塑形]
+  \label{def:rl-reward-shaping}
+  给定与任务相同的折扣$\gamma$及状态势函数$\Phi:\mathcal S\to\mathbb R$，定义
+  \[
+    F(s,a,s')=\gamma\Phi(s')-\Phi(s),\qquad
+    r'_t=r_t+\gamma\Phi(s_{t+1})-\Phi(s_t).
+  \]
+  $\Phi$是人为或学习得到的状态评分；附加项是相邻势值的折扣差，而不是任意启发式分数。
+\end{definition}
+
+下面的结果说明这种差分为什么能保持标准期望回报的策略排序。它源于策略不变奖励变换的经典分析\scite{rl5-ng1999shaping}
+
+\begin{theorem}[无限折扣时域的塑形不变性]
+  \label{thm:rl-reward-shaping}
+  设$0\leq\gamma<1$，$\Phi$有界，原折扣回报存在且可积，各待比较策略使用相同初始分布$\rho_0$。则塑形后的回报满足
+  \[
+    G'_0=G_0-\Phi(s_0),\qquad
+    J'(\pi)=J(\pi)-\mathbb E_{\rho_0}\Phi(s_0).
+  \]
+  因而所有策略在标准期望折扣回报下的排序不变。
+\end{theorem}
+
+\begin{proof}
+  对长度$H$的有限前缀展开附加回报，逐项相消：
+  \begin{align*}
+    \sum_{t=0}^{H-1}\gamma^t r'_t
+    &=\sum_{t=0}^{H-1}\gamma^t r_t
+       +\sum_{t=0}^{H-1}
+          \bigl[\gamma^{t+1}\Phi(s_{t+1})
+                          -\gamma^t\Phi(s_t)\bigr]\\
+    &=\sum_{t=0}^{H-1}\gamma^t r_t
+       -\Phi(s_0)+\gamma^H\Phi(s_H).
+  \end{align*}
+  若$|\Phi(s)|\leq M$，则末端项的绝对值不超过$\gamma^H M$，随$H$趋于无穷而趋零；$\gamma=0$时从$H\geq1$起末端项即为零。于是逐轨迹有$G'_0=G_0-\Phi(s_0)$。有界性也保证差值可积，取期望后偏移只依赖共同初始分布，与策略无关，故任意两策略的期望回报差保持不变。
+\end{proof}
+
+这个定理不要求$\Phi$是精确价值函数。即使它把某条慢路线误评为接近终点，只要有界并以同一折扣差加入，排序结论仍成立；学习速度和有限样本表现却可能变差。随机初始状态下，$-\Phi(s_0)$是随机偏移，可能改变回报方差以及条件风险价值（CVaR）等尾部准则的排序，不能把期望结论直接推广到第~\ref{chap:rl-trustworthy}章的风险目标。
+
+有限时域应允许时间相关势$\Phi_t$，采用
+$r'_t=r_t+\gamma\Phi_{t+1}(s_{t+1})-\Phi_t(s_t)$。
+同样相消得到
+\begin{equation}
+  \sum_{t=0}^{H-1}\gamma^t r'_t
+  =\sum_{t=0}^{H-1}\gamma^t r_t
+      -\Phi_0(s_0)+\gamma^H\Phi_H(s_H).
+  \label{eq:rl-reward-shaping-terminal}
+\end{equation}
+该恒等式对有限时域的$\gamma=1$也成立。设$\Phi_H=0$是消除末端项的充分条件；固定$H$时，终端势是与策略无关的共同常数也足够。若$\gamma=0$，终端项不影响目标，但不能据此忽略其他折扣下的边界。
+
+自然终止与时间截断需要分别处理。回合自然终止且停止记账时，应使所有终止状态势为零，或显式抵消$\gamma^T\Phi_T(s_T)$；仅令终端势为相同非零常数，在可变终止时刻$T$且$\gamma<1$时仍可能偏爱不同长度。若把终止状态作为吸收状态并无限继续计算塑形奖励，尾项可以继续相消，但不能只保留进入吸收状态的奖励而省掉之后的塑形项。训练批次的时间截断则未必是任务终止：需要保留原续接价值，并使用相应塑形价值$V'(s)=V(s)-\Phi(s)$，或明确改变了所求有限时域目标。未计算的续接价值不能默认为零。
+
+\begin{example}[遗漏终端势会改变排序]
+  \label{ex:rl-reward-terminal}
+  假设单步任务$H=1$、$\gamma=0.9$，从同一起点可达终点甲或乙，原奖励均为0，$\Phi_0(s_0)=0$。若$\Phi_1(\text{甲})=1$、$\Phi_1(\text{乙})=0$且直接停止记账，两条路径的新回报为$0.9$与0，原来的并列关系被改变。反之，把两个终端势都设为0，即使中间势很不准确，满足定理条件时也不会改变期望策略排序。
+\end{example}
+
+塑形保持的是共同起点下相差固定势值的回报，重分配可要求逐轨迹折扣回报完全相等，一般辅助奖励则未必保持任一性质。它们都可以产生密集信号，但这些代数保持条件并没有说明局部信号等于真实因果贡献。
+
+% Outline: 5.3.4
+\subsection{基于辅助目标构造局部学习信号}
+\label{sec:rl-reward-auxiliary}
+
+有些学习信号既不来自新评分，也不是原回报的等价变换。让机器人预测下一时刻的位置，可以帮助表示保留动力学信息；为每次到达装载区额外给分，则直接改变了策略追求的回报。这两种做法都称“辅助”容易掩盖它们作用位置的差异。
+
+设共享表示参数为$\bm{\eta}$，策略或价值的任务损失为$L_{\mathrm{task}}$，下一状态预测损失为$L_{\mathrm{aux}}$。联合训练可采用
+$\bm{\eta}^{(k+1)}=\bm{\eta}^{(k)}
+-\alpha\nabla_{\bm{\eta}}(L_{\mathrm{task}}+\lambda L_{\mathrm{aux}})$。
+辅助预测损失改变表示学习，但评价仍用原任务回报。若另给辅助奖励$b_t$并改为$r'_t=r_t+\lambda b_t$，则优化目标成为
+$J'(\pi)=J(\pi)+\lambda\mathbb E_\pi\sum_t\gamma^t b_t$，
+除非$b_t$满足额外的不变条件，否则目标已经改变。图~\ref{fig:rl-reward-auxiliary}用两条更新路径对照这种区别。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-reward-auxiliary}
+  \caption{辅助预测损失与辅助奖励的干预位置。左侧虚线为损失对共享表示的梯度；右侧辅助奖励先进入回报，再产生策略更新信号。两种训练的最终行为都应按未掺入辅助分数的原任务标准评价。}
+  \label{fig:rl-reward-auxiliary}
+\end{figure*}
+
+训练课程改变训练任务的分布，例如先在短路线练习，再增加搬运距离；人为子目标改变决策组织，例如先到装载区再到收件处。它们不必增加奖励，也不等于潜势塑形。时间抽象的方法见第~\ref{chap:rl-learning}章，目标重标记与HER由第~\ref{chap:rl-transfer}章讨论。
+
+假设进入装载区即可得到辅助分，机器人可能反复进出装载区而不交付。问题不是子目标太容易优化，而是辅助得分没有被主任务进展或次数条件约束。调整$\lambda$、切换课程或训练后移除辅助信号，应分别报告原始交付成功与辅助预测、子目标完成情况。即使表示预测更准确，也不能据此认定动作贡献判断正确；共享梯度还可能与任务更新冲突。
+
+% Outline: 5.3.5
+\subsection{奖励归因方法的误差与适用边界}
+\label{sec:rl-reward-credit-boundaries}
+
+表~\ref{tab:rl-reward-credit-methods}把四类局部信号放在共同坐标下。选择时需要同时问：新增了什么信息，改写了什么目标，又在哪个条件下仍然评价原任务？
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{23mm}*{5}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    路线 & 额外反馈成本 & 所需轨迹信息 & 局部信号 & 原目标保持条件 & 主要失效 \\
+    \midrule
+    长期结果回溯 & 可无新标签；需拟合 & 前缀、终局结果 & 回报预测变化或重分配 & 同一折扣下的回报相等，或全策略期望相等 & 相关标记代替贡献、残差遗漏 \\
+    过程反馈 & 关键步骤标注或检查 & 被评步骤及上下文 & 局部评分或通过标记 & 若加入回报，须另证聚合后仍保持原策略排序 & 局部正确不能组合为成功 \\
+    奖励变换 & 势函数构造成本 & 相邻状态、终止类型 & 折扣势差 & 有界势、共同初始分布、正确终端项 & 截断当终止、折扣不一致 \\
+    辅助目标 & 预测标签、额外任务 & 表示或子任务信息 & 辅助梯度、额外奖励 & 预测损失不改评价；额外奖励另证等价 & 梯度冲突、子目标循环 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{奖励归因路线的适用条件。过程反馈和一般辅助奖励没有自动保持原目标的代数保证。}
+  \label{tab:rl-reward-credit-methods}
+\end{table*}
+
+归因模型错误、有限样本误差和反馈标准错误需要不同检验。模型错误是把一个已经明确的成功结果归给无关动作；有限样本误差是现有证据不足以分清贡献；标准错误则是所谓成功本身遗漏破损等要求。增加样本可能改善第二类，却未必改变第一类模型假设，更不能凭重复错误标准解决第三类。
+
+在同一个配送任务上，可以保持策略架构和预算，移除身份过程标签，观察身份错误是否重新出现，以检验中间信息的作用；打乱不影响环境的屏幕闪光，观察归因与策略是否改变，以检验相关性捷径；保持原奖励不变，只核查自然终止和时间截断的势值处理，以排除目标被意外改写。三项实验都应保留原交付结果及误差分类，不能只比较加入辅助分后的总奖励曲线。本节补充的是局部信号的来源和语义，通用信用传播仍复用前章工具；目标标准的缺口需要单独诊断。
+
+% Outline: 5.4
+\section{奖励与行为目标不匹配}
+\label{sec:rl-reward-mismatch}
+
+反馈可以很多、归因也可以很精细，却仍推动错误的行为。本节把目标写清、检测偏差、判断根因和修订标准连成诊断过程。目标修订后必须重新检测，不能用更换奖励名称结束诊断。
+
+% Outline: 5.4.1
+\subsection{明确行为目标和代理奖励}
+\label{sec:rl-reward-proxy}
+
+对于配送，希望发生的是正确、完好、可接受代价的交付；训练代理可能只有终点图像分数。若评价仍只调用同一个图像评分器，就不能检测包裹内部破损这一遗漏。表~\ref{tab:rl-reward-requirements}把要求、训练编码与独立证据逐项对应，未覆盖部分不隐藏在平均总分中。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}*{4}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    行为要求 & 训练编码 & 独立评价 & 未覆盖条件 \\
+    \midrule
+    交给正确收件人 & 终点照片评分 & 签收身份与包裹编号双重核对 & 照片不含身份时仍缺证据 \\
+    包裹完好 & 平稳搬运过程分 & 独立开箱检查或有效传感记录 & 隐性破损与传感盲区 \\
+    能耗可接受 & 电量成本或偏好权重 & 校准电表、同负载路线比较 & 新载荷、不同电池状态 \\
+    按时交付 & 终局成功或到达时间分 & 固定截止时间下的完成记录 & 长尾延迟与未完成轨迹 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{先建立行为要求到证据的对应，再选择数值聚合。某项无法观测意味着结论受限，不意味着它可以从目标中消失。}
+  \label{tab:rl-reward-requirements}
+\end{table*}
+
+有些要求之间存在真实取舍。高收益配送可能更耗电，单一总分会隐藏决策者选取的偏好。用向量奖励保留这些目标，可以把“怎样优化”与“怎样取舍”分开。
+
+\begin{definition}[向量奖励、标量化与Pareto最优]
+  \label{def:rl-reward-pareto}
+  令$\bm r_t=(r_{t,1},\ldots,r_{t,d})^\top$记录$d$个目标，期望回报向量为
+  $\bm J(\pi)=\mathbb E_\pi\sum_t\gamma^t\bm r_t$。
+  \term{标量化}用给定函数把多目标评价转成标量，例如在回报向量上取$\bm w^\top\bm J(\pi)$，$\bm w\geq0$。
+  在指定策略类$\Pi$中，若不存在$\pi'\in\Pi$使每个目标都满足$J_j(\pi')\geq J_j(\pi)$且至少一个严格大于，则称$\pi$为\term{Pareto最优}。这里所有分量约定为越大越好，能耗可用负能耗表示。
+\end{definition}
+
+图~\ref{fig:rl-reward-pareto}用四个候选策略演示收益与能耗的取舍。教学点为甲$(2,4)$、乙$(4,7)$、丙$(6,8)$、丁$(5,5)$，坐标依次为能耗和收益，因此越向左上越好。丁被乙支配，甲、乙、丙在这四个候选中不被支配；例如取“收益减能耗”，三者得分分别为2、3、2，选择乙。前沿依赖策略类，允许随机混合后可达集合还会变化。非线性标量化也需区分“先对回报取期望再变换”与“先变换随机回报再取期望”，二者一般不等价。多目标策略集的方法可作延伸阅读\scite{rl5-vanmoffaert2014pareto}
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-reward-pareto}
+  \caption{收益越大、能耗越小越好。实心点是在四个教学候选策略中的非支配点，空心方块丁被乙支配；虚线只帮助识别候选前沿，不断言连线上的策略全部可实现。}
+  \label{fig:rl-reward-pareto}
+\end{figure}
+
+预先给定偏好后求一个策略，与保留多种策略让决策者之后选择不同。多个反馈源估计同一个“完好交付”目标，也不是多目标优化；把能耗规定为必须满足的上限，则成为约束，而不是可以无限用收益补偿的权重。约束求解和执行保护由第~\ref{chap:rl-trustworthy}章展开。
+
+% Outline: 5.4.2
+\subsection{检测行为与代理奖励的偏差}
+\label{sec:rl-reward-detection}
+
+检测既应在训练前检查奖励定义是否遗漏要求，也应在更新后检查策略是否进入原反馈未覆盖的区域。开始优化前，固定独立指标、留出反馈来源和必须检查的行为情形；例如按路线长度、身份是否完整和包裹类型分层，而不是只从训练策略常见的成功轨迹中随机抽样。
+
+图~\ref{fig:rl-reward-overoptimization}是解析构造的示意：代理分数随优化强度上升，独立表现却可能先升后降。它表达一种需要检测的关系，不是任何方法必然遵循的训练曲线。在真实实验中还要报告采样预算、误差范围及模型选择过程；关于奖励模型过度优化的经验研究可参见Gao等，但不能把本图的示意数值当成该论文测量\scite{gao2022overoptimization}
+
+反例测试针对已经怀疑的遗漏，如“照片看似送达但身份错误”；压力测试增加路线长度、载荷或重复次数，检查长时交互和极端输入；对抗测试主动寻找能骗过代理而破坏要求的行为，如展示别人的签收码；人工审查则解释开放式、难以形式化的失败。记录应保留具体行为、输入条件、评分与验证器版本，避免只记一个无法复查的总分。
+
+留出证据一旦用于反复调整奖励或挑选策略，就已经参与开发。下一轮需要新的独立检查，或诚实声明现有测试被复用，不能继续按完全未见数据解释其结果。没有检测到偏差只支持已测范围内的结论，不能证明所有未见行为都符合要求。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-reward-overoptimization}
+  \caption{代理与独立表现可能分离的双面板示意。横轴$x\in[0,1]$是归一化优化强度，曲线分别由$p(x)=0.2+0.7x$与$b(x)=0.2+1.2x-x^2$构造，纵轴为任意单位；不是实验结果，也不表示固定的普遍动力学。}
+  \label{fig:rl-reward-overoptimization}
+\end{figure*}
+
+% Outline: 5.4.3
+\subsection{区分奖励歧义与行为目标偏差}
+\label{sec:rl-reward-ambiguity}
+
+奖励不唯一有两种不同含义。第~\ref{sec:rl-reward-shaping}节的势差在边界条件满足时保持所有策略的标准期望回报排序，因而只是不同的奖励表示。另一种奖励只在已见示范上与原奖励相容，却会在未见路径上改变排序；这会限制从示范外推目标的能力，但仍不能直接证明当前行为已经失配。
+
+\begin{example}[示范相容不等于新路径等价]
+  \label{ex:rl-reward-ambiguity}
+  假设训练环境中只能选专家路径$E$与路径$B$，两个终局奖励都给它们$(2,0)$，故均解释专家选择$E$。测试环境关闭$E$，开放此前不可行、也未经专家比较的路径$C,D$。奖励$R_1$给$(C,D)$赋值$(1,-1)$，奖励$R_2$赋值$(-1,1)$，而$B$仍为0。两个奖励在训练环境的全部可行动作上完全一致，却在测试环境分别选择$C$和$D$。训练时再收集一万次相同选择，也不能区分这个目标解释。
+\end{example}
+
+这个例子区分了三个目标：恢复原环境中可用的策略，解释专家的奖励，以及恢复可跨环境重用的奖励。第三个要求最强。若新状态上始终没有反馈，唯一拟合解也可能只是正则化或模型结构选出的一个答案，不是数据本身识别出的答案。
+
+\term{对抗逆强化学习}（adversarial inverse reinforcement learning, AIRL）尝试通过结构分离奖励与塑形项。例如判别器使用
+\begin{equation}
+  \begin{aligned}
+    D(s,a,s')&=\frac{\exp f(s,a,s')}
+                         {\exp f(s,a,s')+\pi(a\mid s)},\\
+    f(s,a,s')&=g(s,a)+\gamma h(s')-h(s).
+  \end{aligned}
+  \label{eq:rl-reward-airl}
+\end{equation}
+专家转移与新策略转移训练判别器，策略再使用判别器导出的信号更新；迁移时希望重用$g$而不是整个$f$。可迁移解释依赖具体结构条件：原论文的奖励恢复分析考虑状态奖励、确定性动态、相应状态连通条件、最大熵专家及理想优化等假设。一般的状态动作奖励、随机动态和有限次优示范不能仅凭这个分解就获得无条件恢复保证\scite{rl5-fu2018airl}
+
+这里还需注意塑形与环境变化的关系。若保留转移上的奖励形式
+\[
+  R(s,a,s')+\gamma\Phi(s')-\Phi(s),
+\]
+在新环境的实际后继上重新计算势差，不变性仍可成立。若先在旧环境把后继势取期望，保存成固定的状态动作奖励
+$R(s,a)+\gamma\mathbb E_{P_{\mathrm{old}}}\Phi(s')-\Phi(s)$，
+再直接搬到新动态下，旧期望一般不能继续望远镜相消。AIRL希望分离的正是这类与旧环境及专家行为纠缠的部分，不是证明所有势差在新环境都会失效。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{25mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    根因 & 可观察症状 & 不能仅凭什么判断 & 补充验证 \\
+    \midrule
+    代理定义遗漏 & 高分行为违反未编码要求 & 训练集评分准确率 & 要求到证据审计、针对遗漏的反例 \\
+    目标信息不充分 & 多个相容奖励在新行为上分歧 & 奖励参数不唯一 & 有区分力的专家选择或偏好查询 \\
+    反馈模型分布外误差 & 新策略行为评分与独立评价不符 & 旧分布拟合误差小 & 新行为重标、覆盖与校准检查 \\
+    优化器利用漏洞 & 更新后反复产生某种虚假高分行为 & 单次异常或代理单独上涨 & 固定漏洞复现、版本对照、修补后再测 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{同一种行为偏差可能来自多个根因。奖励歧义本身不等于目标错误，唯一拟合也不能证明标准正确。}
+  \label{tab:rl-reward-causes}
+\end{table*}
+
+表~\ref{tab:rl-reward-causes}中的后两类经常相互强化。\term{奖励投机}（reward hacking）指策略利用代理的缺陷获得高分，却没有实现原行为要求；\term{过度优化}（overoptimization）描述继续加强代理优化时独立目标可能恶化。策略改变访问分布，代理在新区域出错，优化又偏向这些误差，构成反馈过程。并非每个分布外误差都已经被利用，也并非每次奖励不唯一都造成错误行为；应以具体反例和独立要求判断。
+
+% Outline: 5.4.4
+\subsection{修订行为目标并约束策略更新}
+\label{sec:rl-reward-revision}
+
+诊断之后，修订应对应根因。新增“包裹内部完好”要求改变了此前不完整的目标约定；对同一完好标准补充标签说明，只改变操作性标注规则；重训评分器是在估计既定标准；修补允许空字符串通过的验证器则是在修正实现。每次都应保留目标、标注、验证器与策略版本，避免把这些改变都描述为“奖励模型升级”。
+
+仍有估计误差时，可以惩罚模型不确定性，用多奖励模型的分歧发现缺口，或限制策略更新幅度。不确定性惩罚只对可估计的不确定性有效，多模型可能共享盲点；保守更新降低进入未见区域的速度，也可能限制真实改进。KL约束控制相对参考策略的偏移，不能把参考策略本来也遗漏的要求补回来，平均KL小也不是每个罕见状态都不变的保证。
+
+对抗数据收集应围绕已经出现的反例展开。例如发现用旧签收照片骗取分数，就新增照片与当前包裹身份的一致性检查，并收集相似但不同的伪造案例。刷新模型后，既要重测原反例，也要测未参与修补的新变体；还应报告真实任务改善、保守更新的性能代价及新增反馈成本，不能只报告旧训练集拟合更高。
+
+图~\ref{fig:rl-reward-revision}把目标修订与估计修订分开后重新接到检测。一个反例被修复并不关闭其他要求；风险、约束违反和运行时保护仍需第~\ref{chap:rl-trustworthy}章的工具。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-reward-revision}
+  \caption{目标与代理的诊断回路。检测传递具体反例，根因判断决定改变要求、修订估计还是限制更新；修订后的策略产生新行为，必须重新接受独立检测。}
+  \label{fig:rl-reward-revision}
+\end{figure*}
+
+% Outline: 5.5
+\section{三类奖励限制叠加时的反馈学习}
+\label{sec:rl-reward-loop}
+
+真实训练通常同时拥有少量示范、部分偏好、过程记录和不完备的验证器。本节把这些材料放入一轮可以复查的学习过程：确定本轮的行为要求，将反馈转成相应训练目标，再用新行为检验要求是否得到满足，并决定停止还是获取新反馈。每次修改都应对应具体证据；迭代本身不能消除未被反馈表达的目标歧义。
+
+% Outline: 5.5.1
+\subsection{整合已有反馈形成当前反馈约束}
+\label{sec:rl-reward-integration}
+
+一条可用反馈记录至少应包含任务输入、被评价行为、反馈值及形式、来源、采样策略和标准版本。轨迹评分还要保留步骤范围与终止原因，偏好记录要保留两个候选及呈现顺序。没有这些字段，就难以判断冲突来自行为差异、尺度变化还是标准变更。
+
+本节用“反馈约束”概括这些记录对候选行为和评价模型施加的限制，但落实到算法时，需要分清三类内容。行为要求说明怎样才算完成任务，例如交给正确收件人；训练目标说明怎样利用记录拟合模型，例如示范动作的负对数似然、偏好比较损失；策略更新限制说明本轮允许策略改变多少，或哪些行为必须排除。偏好标签通常作为带噪观测进入损失，不自动成为必须逐条满足的不等式。若要把身份要求作为硬约束，还须给出可检查的条件及执行机制。
+
+表~\ref{tab:rl-reward-records}给出配送任务的一轮整合。这里没有先把所有反馈变成一个总分；同一数据可以约束不同模型，但不能在没有说明的情况下把行动标签、排序和正确性相加。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}*{5}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    反馈记录 & 约束对象 & 可靠范围 & 冲突处理 & 本轮用途 \\
+    \midrule
+    专家装载动作 & 条件动作分布 & 指令完整的已见状态 & 检查隐含指令与次优示范 & 行为克隆初始化或局部纠正 \\
+    同包裹路线偏好 & 相对效用 & 同一偏好群体与标准 & 保留来源分层，不强行平均 & 拟合路线效用差 \\
+    装载身份检查 & 步骤关系正确性 & 可读编号且检查器有效 & 与终点身份联合复核 & 提供局部信号 \\
+    签收验证 & 最终身份条件 & 签收记录可信 & 排除旧记录与解析漏洞 & 终局反馈；另留独立样本 \\
+    少量完好评分 & 包裹状态评价 & 评分尺度一致 & 复核尺度与开箱依据 & 校准反馈模型 \\
+    独立开箱审查 & 未覆盖要求的证据 & 被抽查任务范围 & 不用于本轮拟合 & 检查代理遗漏 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{同一轮反馈记录的五项对应。独立证据应按样本和用途隔离，不能一边参与拟合一边称为留出检验。}
+  \label{tab:rl-reward-records}
+\end{table*}
+
+假设专家示范走楼梯，而偏好标签选择电梯。应先检查包裹是否易碎、专家当时能否使用电梯，以及评价者是否强调节能；只有条件和标准相同，才需要判断谁更可靠或专家是否次优。又如装载过程通过、终局身份失败，可能是中途换包导致跨步骤关系断裂，而不是任何一个局部标签随机出错。按粒度追查比直接平均正负分更能定位缺口。
+
+本轮应分别确定行为要求、模型训练目标和策略更新限制。例如，行为要求可以是“正确身份优先，在通过身份条件的行为间比较完好与能耗”；动作示范用于策略拟合，路线偏好与完好评分分别训练比较模型和评分模型；策略更新时还可规定相对参考策略的KL惩罚或约束，并明确采用哪一种。身份优先这一要求本身并未给出可靠的动作过滤器，是否能够硬性执行还须另行验证。各项约定都应带上适用输入范围和仍未解决的分歧。
+
+若确实存在互不兼容的真实偏好，可以保留条件化策略或多个候选，不借加权平均把争议命名为“真实目标”。必须聚合分数时，应交代单位、尺度、权重以及这些权重代表的取舍。
+
+% Outline: 5.5.2
+\subsection{依据反馈约束联合更新模型与策略}
+\label{sec:rl-reward-joint-update}
+
+行为要求和各项训练目标确定以后，先用对应记录拟合奖励、效用或通过概率模型，再由归因机制把轨迹结果变为局部信号。策略利用这些信号，在本轮规定的惩罚或约束下更新，随后产生下一批行为。价值基线用于降低更新方差或支持自举；哪些行为更好仍由已约定的评价标准决定。所谓联合更新可以是交替拟合，也可以只改其中一项，并不要求所有参数同时反向传播。图~\ref{fig:rl-reward-update}标出本轮冻结的标准和参考策略。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-reward-update}
+  \caption{一轮模型与策略更新的数据依赖。反馈记录约束反馈模型，轨迹结果经归因机制形成局部信号，策略产生下一批轨迹；虚线边界表示本轮冻结的目标标准和参考策略。检验数据不沿训练箭头进入拟合。}
+  \label{fig:rl-reward-update}
+\end{figure*}
+
+反馈来源改变与优化器改变不是同一件事。RLHF与RLAIF可以使用同样的策略优化器，只是评价者不同；迭代式偏好优化可以在每轮新偏好对上运行DPO；在线RLVR则让当前策略采样并即时调用规则验证。表~\ref{tab:rl-reward-loops}按刷新时机比较这些闭环。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{23mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    路线 & 本轮更新对象 & 本轮固定对象 & 采样与反馈刷新 \\
+    \midrule
+    PPO式RLHF & 奖励模型、策略及价值可分阶段更新 & 标注标准、参考策略；策略阶段冻结奖励 & 当前策略采样，按预算补人类偏好 \\
+    RLAIF & 反馈模型与策略，依实现可有价值模型 & AI评价模型、提示与标准的指定版本 & 新样本交由AI评价，独立抽查 \\
+    迭代式偏好优化 & 偏好对上的策略参数 & 单轮偏好集与参考策略 & 外层采样和标注刷新，内层可离线DPO \\
+    在线RLVR & 策略；基线依更新器而定 & 验证规则、答案或测试集 & 新策略候选逐批验证 \\
+    DAPO & 无独立评论家的策略更新 & 当前验证规则、旧策略批次概率 & 动态采样补充混合得分组，按token聚合损失 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{反馈闭环而非互斥算法分类。DAPO是在线可验证反馈的一种具体实现，RLAIF也可以组合不同的策略优化器。}
+  \label{tab:rl-reward-loops}
+\end{table*}
+
+这里的DAPO指Decoupled Clip and Dynamic sAmpling Policy Optimization。它使用规则结果奖励，去掉其所讨论训练设置中的参考KL项，以不同上下剪裁阈值调整策略更新，并动态补充组内既有成功又有失败的输入。它还把式~\eqref{eq:rl-reward-grpo}的“各序列先平均再组平均”改为按全部有效token聚合。若记剪裁项为$\ell_{i,t}$，两种加权分别为
+\begin{equation}
+  \frac1m\sum_i\frac1{T_i}\sum_t\ell_{i,t},
+  \qquad
+  \frac1{\sum_iT_i}\sum_i\sum_t\ell_{i,t}.
+  \label{eq:rl-reward-dapo-weight}
+\end{equation}
+前者每个回答总权重相同，后者每个token权重相同，因此长度不同的回答取得不同总权重。超长惩罚及截断处理还影响反馈语义；论文将其称为reward shaping，不代表它满足本章潜势型不变定理。DAPO已发表于NeurIPS 2025，其经验结果属于所报告的模型、数学任务和预算，不是上述组件在所有任务上的保证\scite{rl5-yu2025dapo}
+
+动态采样能减少零相对信号组，但也改变本轮训练输入的分布，并消耗被丢弃候选的采样和验证预算。整组失败的困难题被过滤，不等于该题已经解决。提高剪裁上界改变的是代理目标梯度的饱和位置，也不是给每个动作概率施加一个硬上限。比较实现时必须同时报告样本选择、组内标准差口径、长度分母和验证器版本。
+
+\begin{example}[一轮可复查的更新记录]
+  \label{ex:rl-reward-round}
+  教学轮次$k=3$使用反馈数据$D3$、身份与完好标准$S2$、反馈模型$M3$、旧策略$P3$和参考策略$P0$。$D3$包含20条装载动作、12对偏好和8条完好评分；动作记录用于策略拟合，后两类记录分别以比较和评分损失拟合$M3$。本轮策略更新冻结$S2,M3,P0$，独立审查记录不在$D3$内。
+
+  取两条等长四步轨迹，以本轮已声明的综合代理$\widetilde R$评分，结果为1和0，$\gamma=0.9$，无中间奖励，则两个$t=0$回报为$0.729$和0。取冻结基线$0.3645$，回报减基线的样本优势为$0.3645$和$-0.3645$。只更新起点的二动作logit，其余动作规则固定；若初始logit为0，且两条轨迹分别从这两个动作产生，样本平均梯度为$0.18225$。令步长$0.2$、KL系数$0.1$，当前策略与参考恰相同，精确KL梯度此时为零；一次未剪裁更新给出logit $0.03645$、正优势动作概率约$0.5091$，记为候选$P4$。
+
+  本轮记录优化目标为“轨迹代理回报的PPO式改进减参考KL”，并预留至多40个访问状态动作标签、20对比较、100次验证和10次人工审查的查询预算。$M3$拟合更好与$P4$行为更好是两个待分别检验的结论；这些数字是教学记录，不是实测性能。
+\end{example}
+
+% Outline: 5.5.3
+\subsection{用更新后行为检验反馈约束的有效性}
+\label{sec:rl-reward-loop-check}
+
+新策略必须产生新的被检验行为，而不能只重算旧日志分数。检查仍使用本轮开始前约定的标准：是否进入反馈覆盖之外的状态，局部信号是否支持正确归因，代理改进是否伴随独立要求改善。表~\ref{tab:rl-reward-checks}把每类检查需要的证据分开。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{20mm}*{4}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    检查 & 输入行为 & 独立证据 & 失效判据 & 仍未覆盖范围 \\
+    \midrule
+    观测与覆盖 & 新策略访问状态、长短轨迹 & 新状态专家标签、留出来源评分 & 无支持区域仍被赋予高置信评价 & 未采到的输入和动作 \\
+    局部归因 & 关键步骤与相关标记 & 受控扰动、过程复核、终局结果 & 无关标记改变信号，关键错误不受罚 & 不可干预步骤的因果贡献 \\
+    目标匹配 & 代理高分的新行为 & 独立身份、完好和成本检查 & 违反已约定要求或独立指标退化 & 未形式化与难观测要求 \\
+    来源一致性 & 同行为的多来源判断 & 第三方执行或事实核对 & 分歧无法由条件差异解释 & 一致来源的共同盲点 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{检验必须说明未覆盖范围。来源一致性可以暴露冲突，却不能替代外部事实证据。}
+  \label{tab:rl-reward-checks}
+\end{table*}
+
+可以得到三种不同诊断。若$P4$在预定的短路线、身份可读范围内完成全部规定检查，且估计精度达到预设要求，证据支持当前反馈在该范围有效。若仅检查了三次配送且都成功，却尚未覆盖长路线或达到样本精度要求，只能说暂未发现失败。若发现代理高分但交错收件人，则已有明确反例，不因平均成功率较高而降格为“证据不足”。
+
+反馈应返回具体缺口：新状态无标签时补访问覆盖；关键步骤的局部信号错误时修订归因；完好要求从未编码时修订标准或代理。一次失败不应无差别触发全部模型重训。反例一旦用于下一轮修订，就转入开发数据，其后续独立检验身份也必须更新。
+
+% Outline: 5.5.4
+\subsection{依据检验结果与反馈预算决定停止或继续}
+\label{sec:rl-reward-stopping}
+
+停止条件不能在看到结果后临时设定。训练前应约定独立行为指标的接受标准、必要覆盖、统计精度或不确定性要求，以及各类反馈预算上限。有限测试可以支持有限范围内的接受，不能用“没见过失败”代替对未测范围的保证。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{23mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    证据状态 & 允许的后续动作 & 必须保留的结论范围 & 所需信息 \\
+    \midrule
+    达到预设充分性与接受标准 & 停止训练，保留复核入口 & 只接受已测任务、标准和策略版本 & 已完成覆盖、精度及成本记录 \\
+    未发现失败但证据不足 & 有预算则定向查询；否则停止或收窄范围 & 未证实原范围满足要求；预算停止不等于成功 & 缺少的场景、样本或独立来源 \\
+    已发现明确失效 & 暂停对该范围的接受，修订后再测；或终止 & 记录反例与不适用范围 & 根因、修补方案、验证与查询成本 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{停止训练是一种行动，接受行为是一个证据结论，二者不能混同。}
+  \label{tab:rl-reward-stopping}
+\end{table*}
+
+表~\ref{tab:rl-reward-stopping}使“够了”有不同含义：满足要求可以停止；预算耗尽也可以停止，但后者可能带着未解决缺口。若允许的查询根本不能观察包裹内部，重复终点照片评价不会提高这项要求的可识别性，应收窄结论或改变信息接口。
+
+决定下一批反馈是否值得获取时，要说明它预期改善什么：当前状态覆盖、候选目标排序、关键过程贡献，还是验证规则遗漏。可以用候选模型分歧减少量或决策可能改变的程度辅助选择，再与人工、采样和执行成本比较；没有校准数据时，这些是启发式决策依据，不能声称获得了数值化信息价值保证。更换目标、修订反馈标准或显著改变策略访问分布后，原停止证据需要重新检查。
+
+\begin{algorithm}[反馈学习的继续与停止闭环]
+  \label{alg:rl-reward-loop}
+  \begin{algorithmic}[1]
+    \Require 目标标准、独立接受条件、必要覆盖、分项预算、初始反馈与策略
+    \Ensure 候选策略、结论范围、停止原因和未解决缺口
+    \While{尚未记录停止原因}
+      \State 整合兼容的反馈，固定本轮标准、数据范围及未解决分歧
+      \State 只更新有相应证据支持的反馈模型、归因机制或策略
+      \State 以新行为接受独立检查，分类为充分、证据不足或明确失效
+      \If{覆盖与精度充分，且满足预设接受条件}
+        \State 记录“在已检验范围满足要求”，停止本轮学习
+      \ElsIf{预算不足，或允许查询不能区分关键目标解释}
+        \State 记录“预算停止”或“识别受限”，收窄结论并停止
+      \Else
+        \State 按观测、归因或目标缺口选查询，必要时先修订目标标准
+        \State 获取新反馈，记录成本、生成策略与标准版本，返回整合
+      \EndIf
+    \EndWhile
+  \end{algorithmic}
+\end{algorithm}
+
+算法~\ref{alg:rl-reward-loop}不要求每轮所有模型都变化。明确失效时，下一步可以是修正要求而非立即采样；没有可解决缺口的查询时，停止继续优化错误代理也是合理结论。系统级部署审批与运行流程不由这个训练停止规则替代。
+
+% Outline: 5.5.5
+\subsection{针对反馈缺口获取新反馈}
+\label{sec:rl-reward-query}
+
+继续学习应从具体未决问题出发。表~\ref{tab:rl-reward-queries}将缺口映射到查询，列明新增记录能够排除哪些解释。问题不同，最有用的反馈形式也不同。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}*{4}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    具体缺口 & 查询方式 & 可以排除的解释 & 仍不能回答什么 \\
+    \midrule
+    偏离后不会恢复 & 当前访问状态上的专家动作 & 这些状态上的错误动作候选 & 唯一真实奖励与未查询状态 \\
+    新路径排序不确定 & 比较奖励候选意见不同的路径 & 对该比较给出相反排序的目标 & 其他输入或群体的偏好 \\
+    关键过程贡献不清 & 步骤标注、受控检查与结果对照 & 局部无效却被奖励的归因 & 未控制混杂下的完整因果结构 \\
+    验证标准遗漏 & 新结果检查、规则边界与对抗案例 & 会接受已知错误行为的验证器 & 未被形式化的全部要求 \\
+    来源共同偏差 & 独立来源和实际执行审查 & 仅依赖共同代理的解释 & 未审查行为的真实性 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{查询应增加能区分候选解释的信息，而不只是重复已经一致的反馈。}
+  \label{tab:rl-reward-queries}
+\end{table*}
+
+访问状态上的专家查询复用DAgger，主动偏好选择能改变候选排序的比较；不确定性采样选择反馈模型分歧较大的行为，在线验证按当前策略产物检查，对抗收集主动寻找代理漏洞。模型觉得不确定的样本未必对真实目标最有信息：共同盲点可以表现得很自信，纯粹的模糊措辞也可能产生很大模型分歧。应保留独立随机或分层抽查，检查主动选择是否遗漏重要行为区域。
+
+沿示例~\ref{ex:rl-reward-round}，若$P4$主要缺少错误走廊上的恢复动作，可以从剩余预算中查询6个访问状态的动作，并为新路线增加4对偏好、调用24次验证、进行2次人工审查；还要另记为取得这些候选采样了多少条轨迹、多少环境步。这些教学计数使用不同单位，不能加成“36条反馈”掩盖成本。每批记录附带$P4$、标准$S2$以及采样或筛选协议。
+
+新增反馈返回第~\ref{sec:rl-reward-integration}节时，先检查与旧标准是否兼容。保持$S2$的记录可以聚合；若改为$S3$并增加内部破损要求，旧的终点照片标签只能继续用于原来那部分条件，必要时重标或分开使用，不能自动视为$S3$下的完整正例。如果所有获准查询都只比较速度，仍无法区分重视完好与重视能耗的两个目标解释，应保留这项识别边界，而不是用闭环已运行很多轮替代新信息。
+
+% Outline: 5.6
+\section{本章小结}
+\label{sec:rl-reward-summary}
+
+没有及时、可信的标量奖励时，学习依据来自替代反馈及其附加假设。示范能约束动作和占用，评分与偏好能约束评价函数，验证能判断明确条件；这些记录既不相互等价，也不必全部还原成一个唯一奖励。行为克隆与DAgger的区别落在访问分布，奖励模型加策略优化与DPO的区别落在学习对象和采样协议，GRPO的组相对更新又与反馈是否来自规则相互独立。
+
+长期结果怎样用于早期动作，是另一项问题。回报回溯、过程监督、奖励变换和辅助目标有不同的信息成本与保持条件。潜势塑形的望远镜相消，在有界势、共同初始分布与正确终端处理下保持标准期望回报排序；这一性质既不是因果归因正确的证明，也不是风险目标或学习速度的保证。
+
+奖励表示不唯一与行为目标错误尤其需要分开。某些变换对所有策略保持排序，另一些奖励只解释同一批反馈，却会在未比较行为上分歧。拟合成功不能证明标准完整，奖励歧义也不意味着无法选择当前范围内的好策略。可持续的反馈学习需要每轮明确固定标准、更新对象、独立证据和新增信息；停止时说明是已在给定范围满足要求，还是因预算或识别边界而停止。反馈更密集、模型更大或迭代更多，都不能替代这些条件。
