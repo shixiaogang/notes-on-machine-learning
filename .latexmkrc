@@ -1,6 +1,8 @@
 $pdf_mode = 5;
 $xelatex = 'xelatex %O %S';
 $out_dir = 'build';
+$biber = 'biber %O %S';
+$makeindex = 'texindy -L general -C utf8 -M ../tex/styles/book-index.xdy %O -o %D %S';
 
 # 最高压缩等级会反复压缩大幅 PNG 和嵌入字体。日常使用快速无损压缩，
 # release 模式通过环境变量恢复等级 9；不降低分辨率或更换字体。
