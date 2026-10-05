@@ -4,7 +4,7 @@
 
 本文件为[研究课题分类及应用专题](recommendation-and-search-research-topics.md)和后续章纲提供任务、研究脉络和代表方法的来源。检索截止于2026年10月5日，主要覆盖2016—2026年；另补经典基础材料，支持协同过滤、隐式反馈排序和特征交互的首次讲解。文献以能够解释应用问题、提供方法对照或揭示评价边界为纳入依据，来源采用正式论文集、出版社、作者机构页面及作者公开稿。材料数量不用于判断研究趋势，代表材料也不等同领域的完整目录。
 
-下列182项材料按检索来源与主要任务列出：搜索35项、推荐94项、广告28项、混排与体验5项、共同评价与环境7项和经典基础13项。各项的大纲落点对应[当前十章大纲](recommendation-and-search-outline.md)；按个性化及共同问题组织的入口见研究课题分类。搜索与推荐共享的偏差和评价材料集中列一次。年份优先采用正式发表年份；链接指向arXiv时另注明发表信息或仅核验到的预印本状态。正式发表的核验不等于每项实验都已复现；本文件不转录未经独立复核的提升百分比或跨平台效果结论。
+下列229项材料按检索来源与主要任务列出：搜索41项、推荐125项、广告33项、混排与体验5项、共同评价与环境12项和经典基础13项。各项的大纲落点对应[当前十章大纲](recommendation-and-search-outline.md)；按个性化及共同问题组织的入口见研究课题分类。搜索与推荐共享的偏差和评价材料集中列一次。年份优先采用正式发表年份；链接指向arXiv时另注明发表信息或仅核验到的预印本状态。正式发表的核验不等于每项实验都已复现；本文件不转录未经独立复核的提升百分比或跨平台效果结论。
 
 重要模型在任务下设独立编号小节，具体计算、训练与使用随模型展开；同类论文及评价材料提供对照。每项应回答“它解决什么应用问题、怎样形成输出、结论依赖什么条件”；网络层、优化器和通用范式的完整机制回指前文。
 
@@ -346,6 +346,73 @@ M02的网页发布日期及自动引文显示2024，但论文PDF标为AAAI-23、
 | R93 | [MACR: Model-Agnostic Counterfactual Reasoning for Eliminating Popularity Bias in Recommender System](https://arxiv.org/abs/2010.15363) | KDD 2021；作者预印本2020；DOI 10.1145/3447548.3467289 | 联合训练匹配、用户及物品分支；服务扣除匹配被置为参考常数时的反事实分数，调整流行度对候选次序的影响。 | 差值是排序分数；因果含义依赖结构函数、分支解释及参考值，未包含的质量与曝光因素仍需检验。 | 4.3.3.5.1 |
 | R94 | [DICE: Disentangling User Interest and Conformity for Recommendation with Causal Embedding](https://fi.ee.tsinghua.edu.cn/~gaochen/papers/WWW2021-DICE.pdf) | WWW 2021；作者预印本2020；DOI 10.1145/3442381.3449788 | 以流行度关系构造辅助偏好约束，分离用户和物品的兴趣、从众嵌入；默认服务将两个内积分数相加。 | 依赖两原因结构、独立性、加性评分及热门度代理；未点击可能未曝光，嵌入分离不证明潜在原因已唯一识别。 | 4.3.3.5.2 |
 
+## 跨域、多行为与结构化偏好补充
+
+| 编号 | 原始论文及入口 | 年份与版本 | 问题与解决思路 | 适用条件 | 大纲落点 |
+| --- | --- | --- | --- | --- | --- |
+| R95 | [Cross-Domain Recommendation: An Embedding and Mapping Approach](https://www.ijcai.org/proceedings/2017/343) | IJCAI 2017 | EMCDR：两域分别以MF／BPR学习因子，用重叠用户或物品训练线性／MLP映射，再计算目标域匹配分数。 | 需来源域表示及对齐实体；映射与目标偏好关系变化会造成负迁移，不覆盖任意无重叠域。 | 2.3.1.5；复用3.2.1、4.3.4.4 |
+| R96 | [CoNet: Collaborative Cross Networks for Cross-Domain Recommendation](https://arxiv.org/abs/1804.06769) | CIKM 2018 | CoNet：共享用户、独立物品目录及预测头，双向连接两域隐藏层，以两域交叉熵联合训练；SCoNet对连接加稀疏约束。 | 原设定共享用户；联合网络并不保证无重叠域、零反馈或领域差异下有效，候选相关计算仍需保留。 | 2.3.1.6；复用3.2.1、4.3.4.4 |
+| R97 | [Neural Multi-Task Recommendation from Multi-Behavior Data](https://fi.ee.tsinghua.edu.cn/~gaochen/papers/ICDE2019-NMTR.pdf) | ICDE短文 2019 | NMTR：共享用户物品嵌入、独立行为交互函数，将前项预测加到后项logit，再联合各行为交叉熵。 | 需预定行为顺序；加法级联不是条件概率相乘，不保证概率单调，也不等同业务多目标决策。 | 4.2.1.4；复用2.2.1、3.2.1.13 |
+| R98 | [Multi-behavior Recommendation with Graph Convolutional Networks](https://fi.ee.tsinghua.edu.cn/~gaochen/papers/SIGIR2020-MBGCN.pdf) | SIGIR 2020 | MBGCN：用户物品传播学习行为强度，行为相关物品传播学习行为语义，内积与历史物品关系项合成分数，以目标行为BPR训练。 | 多行为输入不能共用目标标签；完整分数并非只有内积，未观测目标行为不等于拒绝。 | 3.2.1.13；复用2.2.1、4.2.1.4 |
+| R99 | [A Neural Influence Diffusion Model for Social Recommendation](https://le-wu.com/files/Publications/CONFERENCES/diffnet.pdf) | SIGIR 2019 | DiffNet：属性与ID融合后逐层传播用户社交邻域，末层用户表示叠加本人历史物品均值，按候选内积及成对监督学习。 | 原模型用户侧社交传播不含DiffNet++的物品传播；计算传播不识别真实社会影响。 | 3.2.1.14；复用2.1、2.3.1 |
+| R100 | [Self-Supervised Multi-Channel Hypergraph Convolutional Network for Social Recommendation](https://arxiv.org/abs/2101.06448) | WWW 2021 | MHCN／S²-MHCN：社交、联合、购买三类模式构超图并分通道传播，融合协同图表示；BPR及层次互信息辅助目标学习内积匹配。 | 超边表达高阶关系，非群组共同选择任务；自监督版为S²-MHCN，不能把辅助目标写成所有版本均有。 | 3.2.1.15；复用2.1、3.4.1 |
+| R101 | [Time Interval Aware Self-Attention for Sequential Recommendation](https://jiachengli1995.github.io/files/wsdm20.pdf) | WSDM 2020 | TiSASRec：按最小非零时间间隔缩放并截断两两间隔，在注意键和值中加入间隔与位置表示，以前缀下一物品二元交叉熵训练。 | 缩放与截断改变时间粒度；不能使用未来事件，时间相关权重不提供因果识别。 | 2.2.1.18；复用3.2.1、2.3.2 |
+| R102 | [STAN: Spatio-Temporal Attention Network for Next Location Recommendation](https://arxiv.org/abs/2102.04095) | WWW 2021 | STAN：轨迹事件注意聚合与历史候选时空关系匹配保留个体访问频率，均衡采样训练下一地点分数。 | 原候选时间关系使用目标访问时刻，应用需检验请求时可用性；签到覆盖和硬可达性另行处理。 | 2.2.1.19；复用3.2.1、3.3.2 |
+| R103 | [Attentive Group Recommendation](https://doi.org/10.1145/3209978.3209998) | SIGIR 2018 | AGREE：候选相关成员注意聚合加群组ID表示，以个人和群组交互联合学习候选分数；作者代码辅助核验聚合与训练。 | 候选相关聚合不能直接当独立群组塔；注意权重非真实决策权，新群组ID需要另处理。 | 2.2.1.20；复用4.1、5.2.1、6.1.1 |
+| R104 | [GroupIM: A Mutual Information Maximization Framework for Neural Group Recommendation](https://sundaram.cs.illinois.edu/pubs/2020/2020sankar_group.pdf) | SIGIR 2020 | GroupIM：成员历史编码与群组聚合，成员非成员判别最大化互信息，判别权重将成员历史用于群组目录预测监督。 | 需要有效成员历史及群组关系；信息判别和共同选择预测不证明群组决策机制或成员公平。 | 2.2.1.21；复用3.2.1、4.1、6.1.1 |
+| R105 | [Variational Autoencoders for Collaborative Filtering](https://arxiv.org/abs/1802.05814) | WWW 2018 | Mult-VAE：目录交互向量编码高斯潜变量，以多项分布似然及部分KL约束重建；潜在均值解码为目录logits选择候选。 | 多项分布相对分配不是独立CTR；空历史缺少个体行为依据、固定目录维度，不保留序列顺序。 | 3.2.1.16；复用1.4、3.4.1 |
+| R106 | [RecVAE: a New Variational Autoencoder for Top-N Recommendations with Implicit Feedback](https://arxiv.org/abs/1912.11160) | WSDM 2020 | RecVAE：混合标准高斯及旧后验的复合先验，按交互量缩放KL，交替训练编码器及解码器，并采用非对称去噪输入。 | 训练交替不等于请求时重训，复合先验不校正曝光；固定目录及空历史等边界仍存在。 | 3.2.1.17；复用3.2.1.16、3.4.1 |
+| R107 | [Diffusion Recommender Model](https://arxiv.org/abs/2304.04971) | SIGIR 2023 | DiffRec：保留个体信息的低噪声交互扩散，按步数预测原交互，以恢复项及加权去噪误差学习，推断从历史带噪状态恢复目录分数。 | 交互去噪不证明真实噪声或观测偏差已被识别；目录维度及反向步数决定计算代价。 | 3.2.1.18；复用1.5、3.4.1 |
+| R108 | [Generate What You Prefer: Reshaping Sequential Recommendation via Guided Diffusion](https://proceedings.neurips.cc/paper_files/paper/2023/hash/4c5e2bcbf21bdf40d75fddad0bd43dc9-Abstract-Conference.html) | NeurIPS 2023 | DreamRec：历史Transformer作为恢复条件，以正目标嵌入加噪恢复及无分类器引导生成连续向量，再按物品内积访问目录。 | 生成向量仍需真实物品检索，不是标识生成；无需训练负采样不等于无曝光偏差或真实心理识别。 | 3.2.1.19；复用1.5、3.2.2、3.4.1 |
+
+## 展示、主动交互与闭环决策补充
+
+| 编号 | 原始论文及入口 | 年份与版本 | 问题与解决思路 | 适用条件 | 大纲落点 |
+| --- | --- | --- | --- | --- | --- |
+| R109 | [Predictive Relevance Uncertainty for Recommendation Systems](https://www.amazon.science/publications/predictive-relevance-uncertainty-for-recommendation-systems) | WWW 2024 | PRU：分类别损失GMM选择预测相关样本，正则隐藏空间分类别高斯密度与混合似然，单次前向不确定性接口 | 不等于pCTR校准、置信区间或集合风险保证；依赖表征、密度与样本覆盖 | 4.3.4.1.1；复用5.3.2、6.2.3.3、8.4 |
+| R110 | [Calibrated Recommendations](https://doi.org/10.1145/3240323.3240372) | RecSys 2018 | Calibrated Recommendations：基础相关性与历史类别分布的平滑KL差异加权，贪心构造列表 | 校准列表构成而非响应概率；历史选择、短列表整数粒度和候选覆盖限制匹配 | 5.2.1.10；复用2.2、6.2、8.2 |
+| R111 | [Calibrated Recommendations as a Minimum-Cost Flow Problem](https://research.atspotify.com/publications/calibrated-recommendations-as-a-minimum-cost-flow-problem) | WSDM 2023 | Minimum-Cost Flow Calibration：槽位、物品拆分与类别计数增量代价的最小费用流求解 | 图目标最优不等于任意多标签计数或满意度最优；核验流路由与类别统计一致性及规模代价 | 5.2.1.11；复用5.2.2、6.2 |
+| R112 | [PRINCE: Provider-side Interpretability with Counterfactual Explanations in Recommender Systems](https://arxiv.org/abs/1911.08378) | WSDM 2020 | PRINCE：PPR异质图推荐下，利用行为边评分差贡献寻找改变首选的最小删除集合 | 依赖PPR结构；模型输入反事实不自动解释真实心理或现实干预 | 5.2.3.1；复用5.2.5、5.3.3 |
+| R113 | [Counterfactual Explainable Recommendation](https://arxiv.org/abs/2108.10539) | CIKM 2021 | CountER：固定属性评分模型，最小属性幅度及数量改变使目标退出Top-K，稀疏与铰链松弛后核验 | 松弛求解不保证成功或全局最小；属性可行性和真实因果需另证 | 5.2.3.2；复用5.2.5、5.3.3 |
+| R114 | [Conversational Recommender System](https://arxiv.org/abs/1806.03277) | SIGIR 2018 | CRM：属性信念跟踪、FM候选评分与会话策略梯度，选择询问属性或触发推荐 | 属性空间与语言理解影响策略；原一次推荐会话不能直接等价多次拒绝的反复更新 | 5.2.5.1；复用2.3.1、7.1、8.2 |
+| R115 | [Estimation–Action–Reflection: Towards Deep Interaction Between Conversational and Recommender Systems](https://arxiv.org/abs/2002.09102) | WSDM 2020 | EAR：FM物品/属性联合偏好，熵、偏好、反馈和候选规模策略状态，拒绝负例在线更新 | 主要用户模拟与结构属性，语言误差未进入原实验，拒绝负例语义及更新损害需检查 | 5.2.5.2；复用2.3.1、5.3.1、7.1 |
+| R116 | [RecMind: Large Language Model Powered Agent For Recommendation](https://aclanthology.org/2024.findings-naacl.271/) | Findings of NAACL 2024 | RecMind：个人/对象记忆，SQL、检索与摘要工具，保留各探索分支的Self-Inspiring规划 | 主要离线五项任务；工具规划不等于已学习主动询问、购买执行或真实长期效果 | 5.2.5.3；复用1.4、1.5、8.2.2.4、8.2 |
+| R117 | [Cascading Bandits for Large-Scale Recommendation Problems](https://www.auai.org/uai2016/proceedings/papers/96.pdf) | UAI 2016 | CascadeLinUCB／CascadeLinTS：特征线性吸引概率，UCB或参数采样组成列表，仅用首点击及其前缀更新 | 依赖级联检查、线性泛化与相应置信条件，不直接覆盖多点击和兴趣转移 | 5.3.2.1；复用2.3.1、3.3.1、7.2.2 |
+| R118 | [Neural Contextual Bandits with UCB-based Exploration](https://proceedings.mlr.press/v119/zhou20a.html) | ICML 2020 | NeuralUCB：神经奖励均值、参数梯度与累计矩阵置信项选择行动，反馈后正则平方学习 | 通用上下文bandit的推荐接口；原宽度、噪声和训练条件，列表需另定义反馈 | 5.3.2.2；复用2.3.1、7.2.2 |
+| E08 | [Recommendation Systems with Distribution-Free Reliability Guarantees](https://proceedings.mlr.press/v204/angelopoulos23a.html) | COPA 2023，PMLR 204 | Distribution-Free Reliability：固定成对模型质量分数，独立校准数据的Learn then Test控制集合平均FDR并校准多样性规则 | 高概率控制未来请求平均错误率；需同分布独立校准和有效测试，不保证逐请求逐群体风险 | 6.2.3.3；复用4.3.4.1、5.2.1、8.4 |
+| E09 | [How Algorithmic Confounding in Recommendation Systems Increases Homogeneity and Decreases Utility](https://arxiv.org/abs/1710.11214) | RecSys 2018 | Algorithmic Confounding：固定潜在效用模拟，比较一次与重复训练的行为同质化、效用及数据循环 | 闭环诊断非新策略模型；行为同质化不证明潜在偏好改变，模拟不能覆盖任意真实平台 | 7.1.1.1；复用4.3.4.3、7.3.2、8.4 |
+| E10 | [Degenerate Feedback Loops in Recommender Systems](https://arxiv.org/abs/1902.10730) | AIES 2019 | Degenerate Feedback Loops：定义并分析兴趣动态退化，模拟策略、探索和目录增长对退化速度的作用 | 依赖明确动态及无限时间条件；探索不在任意条件下阻止退化 | 7.1.1.2；复用5.3.2、7.3.2 |
+| R119 | [Towards Content Provider-Aware Recommendation Systems: A Simulation Study on Interplays among User and Provider Utilities](https://research.google/pubs/towards-content-provider-aware-recommendation-systems-a-simulation-study-on-interplays-among-user-and-provider-utilities/) | WWW 2021 | EcoAgent：用户/提供者RNN累计效用与提供者推荐增量，REINFORCE共同目标 | 增量简化依赖未被选者后果不随其他被选身份变化；主要模拟，总效用提高不保证存续增多 | 7.2.2.3；复用6.1.1、7.1.2、7.3.2 |
+| R120 | [Performative Recommendation: Diversifying Content via Strategic Incentives](https://proceedings.mlr.press/v202/eilat23a.html) | ICML 2023 | Performative Recommendation：预判创作者为评分而修改内容的可微最优响应，以排序质量及修改后差异共同训练 | 模型化理性响应、特征修改与成本；合成及半合成证据不识别真实市场均衡 | 7.2.2.4；复用6.1.1、7.1.2、7.3.2 |
+| E11 | [AgentRecBench: Benchmarking LLM Agent-based Personalized Recommender Systems](https://proceedings.neurips.cc/paper_files/paper/2025/hash/e2d6f7249add096e26679eade1b4cc6f-Abstract-Datasets_and_Benchmarks_Track.html) | NeurIPS 2025 Datasets and Benchmarks | AgentRecBench：Amazon/Yelp/Goodreads文本工具环境、动态可见性与常规/兴趣窗口/冷启动基准 | 原20候选离线命中，不直接建模或识别策略导致的真实兴趣变化、对话体验和生态 | 8.2.2.4；复用5.2.5.3、8.2、8.4 |
+
+## 搜索条件与广告效果测量补充
+
+| 编号 | 原始论文及入口 | 年份与版本 | 问题与解决思路 | 适用条件 | 大纲落点 |
+| --- | --- | --- | --- | --- | --- |
+| S36 | [Composing Text and Image for Image Retrieval — An Empirical Odyssey](https://research.google/pubs/composing-text-and-image-for-image-retrieval-an-empirical-odyssey/) | CVPR 2019；arXiv初稿2018 | TIRG：门控与残差组合参考图和文字修改，度量训练后通过图像向量目录取得候选。 | 组合距离不能保证属性或指向条件全部满足，保留Fashion-200k、MIT-States及CSS任务范围。 | 9.2.2.1.12；复用9.2.1、9.3 |
+| S37 | [Image Retrieval on Real-Life Images With Pre-Trained Vision-and-Language Models](https://arxiv.org/abs/2108.04024) | ICCV 2021 | CIRPLANT：预训练视觉语言模型更新参考图全局词元，软三元组损失学习组合查询到目标图的目录访问。 同文CIRR提供组合查询与细粒度子集基准。 | 主体、背景、隐含保留条件和误负例需分开检查；CIRR是同文数据集。 | 9.2.2.1.13；9.3.1；复用9.2.1、9.3 |
+| S38 | [Personalizing Search Results Using Hierarchical RNN with Query-aware Attention](https://arxiv.org/abs/1908.07600) | CIKM 2018；arXiv作者稿2019 | HRNN：会话内与会话间RNN形成短长期表示，查询对历史赋权，LambdaRank训练已有候选的个性化重排。 | 点击监督有曝光偏差，历史必须先于请求，查询要求不能被长期偏好覆盖。 | 9.2.3.13；复用9.2.1、2.2.1、9.3 |
+| S39 | [Knowledge Enhanced Personalized Search](https://www.microsoft.com/en-us/research/publication/knowledge-enhanced-personalized-search/) | SIGIR 2020 | KEPS：个性化实体链接、记忆网络与成对间隔排序；本轮反馈修正过去链接供后续请求使用。 | 知识覆盖与链接错误限制意图理解，不使用未来反馈；AOL及原候选条件限定实验。 | 9.2.3.14；复用9.2.1、9.2.5、9.3 |
+| S40 | [Interleaving Retrieval with Chain-of-Thought Reasoning for Knowledge-Intensive Multi-Step Questions](https://aclanthology.org/2023.acl-long.557/) | ACL 2023；arXiv初稿2022 | IRCoT：已有材料生成下一句推理，再以该句检索，累计片段至停止；原方案无需额外训练。 | 错误推理影响查询，证据覆盖、调用预算及下游答案分开评价；语言机制回指NLP。 | 9.2.5.4；复用9.2.2、9.3 |
+| S41 | [HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models](https://arxiv.org/abs/2405.14831) | NeurIPS 2024 | HippoRAG：语言模型抽取图索引，检索编码器链接查询节点，PPR传播并汇总片段分数。 | PPR个性化指查询种子；抽取、链接及图边错误限制证据，不等于答案生成。 | 9.2.5.5；复用9.2.2、9.3 |
+| A29 | [CausCF: Causal Collaborative Filtering for Recommendation Effect Estimation](https://arxiv.org/abs/2105.13881) | CIKM 2021；DOI10.1145/3459637.3481901 | CausCF：用户、对象、处理的成对张量项，事实购买交叉熵训练；比较有无推荐预测支持增量排序。 | 原推荐任务迁移广告需重定处理；因果假设与浏览停止点断点局部条件保持。 | 10.5.2.2；复用4.3、8.3、10.2.2.2 |
+| A30 | [MOTTO: A Mixture-of-Experts Framework for Multi-Treatment, Multi-Outcome Treatment Effect Estimation](https://scholars.duke.edu/publication/1683356) | KDD 2025 Research Track；DOI10.1145/3711896.3737056 | MOTTO：多层共享及专属专家按处理—结果路由，事实结果监督与处理共享表示的选择性对齐。 | 正文未取得，以机构摘要和作者公开实现核验；预测多结果不自动识别多处理因果效应。 [作者实现](https://github.com/yilingmialiu/MOTTO)。 | 10.5.2.3；复用6.2、8.3、10.2.2.2 |
+| A31 | [Differentially Private Ad Conversion Measurement](https://petsymposium.org/popets/2024/popets-2024-0044.pdf) | PoPETS 2024(2):124–140 | Differentially Private Ad Conversion Measurement：归因规则、相邻关系、贡献限制范围与执行点的有效配置分类及带噪归因统计。 | 统计协议，无需训练预测模型；DP保护口径及敏感度条件不同于因果增量识别。 | 10.5.3.1；复用10.5.1、8.4 |
+| A32 | [Bayesian Methods for Media Mix Modeling with Carryover and Shape Effects](https://research.google/pubs/bayesian-methods-for-media-mix-modeling-with-carryover-and-shape-effects/) | Google Research技术论文，非已核验会议／期刊 2017 | Bayesian MMM：聚合花费与销量经滞后和饱和回归，MCMC形成回报及边际回报后验，支持预算比较。 | 渠道相关、混杂、样本量、先验敏感性和曲线外推限制因果解释与预算稳定性。 | 10.5.3.2；复用10.3.1.3、10.5.2 |
+| A33 | [Media Mix Model Calibration With Bayesian Priors](https://research.google/pubs/media-mix-model-calibration-with-bayesian-priors/) | Google Research技术论文；作者稿首页2023年11月 2024 | ROAS先验校准：将ROAS重参数化为MMM参数，通过对应实验或领域先验校准，联合聚合观测估计后验。 | 实验窗口、花费水平、滞后、重复信息和外推须对应；无会议归属，保留两种日期。 | 10.5.3.3；复用10.3.1.3、10.5.2、8.3.2 |
+
+## 增量排序与可信学习条件补充
+
+| 编号 | 原始论文及入口 | 年份与版本 | 问题与解决思路 | 适用条件 | 大纲落点 |
+| --- | --- | --- | --- | --- | --- |
+| R121 | [Unbiased Learning for the Causal Effect of Recommendation](https://arxiv.org/abs/2008.04563) | RecSys 2020 | DLCE：用处理与对照的逆倾向贡献构造因果平均名次目标，学习增量排序。 | 需要无混杂、处理与对照覆盖和正确观测；截断有偏差，分数不等于校准个体效应。 | 4.2.3.1；复用8.1、10.5.2 |
+| R122 | [A federated graph neural network framework for privacy-preserving personalization](https://www.nature.com/articles/s41467-022-30714-9) | Nature Communications 2022 | FedPerGNN：本地图训练、受保护更新聚合及匿名邻居扩展，形成协同评分。 | 更新保护、第三方信任、图扩展和服务表示各有条件；本地保存不等于零泄漏。 | 4.3.3.6.1；复用T07、8.4.4 |
+| R123 | [Adversarial Personalized Ranking for Recommendation](https://arxiv.org/abs/1808.03908) | SIGIR 2018 | APR：在BPR训练上加入范数受限的最坏参数扰动损失，原文以AMF实现。 | 参数稳定性不等于对恶意交互和客户端投毒的完整防御。 | 4.3.3.7.1；复用4.2.2、8.4.4 |
+| R124 | [FedRecAttack: Model Poisoning Attack to Federated Recommendation](https://arxiv.org/abs/2204.01499) | ICDE 2022 | FedRecAttack：借公开交互近似用户表示，由恶意客户端上传目标物品导向的投毒梯度。 | 攻击诊断须固定信息、控制与更新预算；不是防御或隐私算法。 | 4.3.3.7.2；复用4.3.3.6、8.4.4 |
+| R125 | [Recommendation Unlearning](https://arxiv.org/abs/2201.06820) | WWW 2022 | RecEraser：均衡协同分片、独立子模型及自适应聚合，撤回时重训受影响子模型与聚合器。 | 完整流水线等价性还需检查分片、预训练表示和派生产物；撤回与差分隐私不同。 | 4.3.4.5.1；复用8.4.4.1 |
+| E12 | [CURE4Rec: A Benchmark for Recommendation Unlearning with Deeper Influence](https://papers.nips.cc/paper_files/paper/2024/hash/b364953e402d7d92e13830383677efb5-Abstract-Datasets_and_Benchmarks_Track.html) | NeurIPS Datasets and Benchmarks 2024 | CURE4Rec：比较用户级撤回的完整性、推荐效用、公平性与全程成本，用成员推断检验近似方法。 | 经验成员推断不是严格保证；基准不是算法，用户级设置不能直接外推全部撤回单位。 | 8.4.4.1；复用4.3.4.5.1 |
+
 ## 由文献形成的研究脉络
 
 以下分组是教材组织判断，不是互斥的研究阶段。多数路线长期并存，列出的年份是代表材料的发表年份，不是整个方向的起源。
@@ -371,8 +438,15 @@ M02的网页发布日期及自动引文显示2024，但论文PDF标为AAAI-23、
 | 单次收益怎样满足整个周期约束 | A08—A12建立约束机制，A20—A26学习价值、反馈与生成轨迹控制，A27提供多竞价者环境 | 离线动作覆盖、代理价值误差、实际支出、约束违反、机会及竞争变化和模拟范围 |
 | 生成创意怎样形成可验证收益 | A02、A13、A14处理关键词、素材组合及个性化标题 | 事实一致性、冷启动测试流量、创意疲劳、维护成本和真实增量 |
 | 可观察的成交怎样支持效果结论 | A15—A17与E01、H02区分路径信用、随机增量和日志估计 | 未观测混杂、实验干扰、跨设备及跨渠道缺失、有限支撑和长期影响 |
+| 跨域、行为、社交与群组证据怎样共同利用 | R95—R104比较映射、共享、输出级联、行为图、社交关系及时空与群组输入 | 重叠实体、负迁移、稀疏成员历史、输入时刻与真正共同选择 |
+| 生成训练怎样保持目录可访问 | R105—R108重建交互分布或生成连续目标 | 固定目录维度、空历史、真实对象映射、反向步数与目录访问成本 |
+| 怎样主动取得信息并解释选择 | R110—R118比较构成校准、反事实解释、会话、工具与反馈受限探索 | 历史曝光、模型忠实性、动作可执行性、交互成本及探索假设 |
+| 怎样验收可信性与数据撤回 | R109、E08、R122—R125与E12分别研究不确定性、集合风险、隐私、污染、删除维护及基准 | 分布与交换条件、攻击者能力、隐私累计、派生影响与完整重训参照 |
+| 用户、训练数据和供给怎样共同演化 | E09、E10诊断循环，R119、R120调整生态与创作响应，E11检验工具及历史可见性 | 模拟真实性、行为与数据变化的分离、提供者间干扰及真实长期对照 |
+| 当前查询怎样限制历史与证据访问 | S36—S41比较图文修改、查询条件兴趣、实体消歧、迭代与图证据 | 隐含保留条件、历史冲突、中间事实错误、图误差及调用成本 |
+| 增量目标与受限追踪怎样支持预算 | R121、A29、A30比较增量排序与多处理结果，A31—A33比较归因统计、聚合媒体及实验校准 | 处理覆盖、未观测混杂、隐私口径、渠道相关、先验敏感及实验外推 |
 
-隐私受限条件下的聚合效果测量、跨场景联合个性化和长期广告负载仍需补充材料。新增M01—M05支持混排、频次和负反馈的任务定义及方法对照，不足以全面评价长期营销感。正文写作时若展开营销组合模型、特定增量学习算法或完整频次优化，需要继续补充相应原始论文。
+本次补充跨域、多行为、社交与群组、生成训练、主动交互、可信学习和闭环决策，并以A29—A33补齐处理效应与追踪受限测量。CIRR与CIRPLANT共享一篇来源，基准角色单独说明。M01—M05支持混排、频次和负反馈，不足以单独评价长期营销感；该问题还需结合第7章持续状态与第8章长期对照。代表工作保留各自假设，不据此宣称已覆盖所有应用条件。
 
 ## 使用文献时的易混边界
 
@@ -387,5 +461,12 @@ M02的网页发布日期及自动引文显示2024，但论文PDF标为AAAI-23、
 - 全展示空间训练不自动保证CVR无偏，ESMM和ESCM²应并列说明目标、信息与假设。
 - 归因信用、预测移除效应与因果增量分别解释；购买预测准确也不自动证明广告效果识别准确。
 - BRIGHT与FollowIR采用2025正式发表年份；eBay节奏控制标为WWW Companion；OneRec及HLLM-Creator仅按本次核验到的预印本状态使用。
+
+- 多行为输入、多任务输出及业务多目标分别定义；个人社交推荐与成员共同使用的群组推荐不是同一请求。
+- 交互集合重建、连续向量生成与物品标识生成分别标明最终目录接口，不由训练名称决定。
+- 概率校准、兴趣构成校准、预测不确定性与集合风险控制具有不同目标和保证条件。
+- 忠实于评分模型的反事实解释不直接证明用户心理原因；会话或工具基准的成功不证明真实长期干预收益。
+- 隐私、参数稳定性、恶意更新诊断和撤回各有范围；CURE4Rec的经验成员推断不构成严格删除证明。
+- 反馈循环诊断、生态策略和动态评价基准分别登记；MOTTO机制以机构摘要及作者实现核验，正式全文未取得，未登记其未经核验公式或理论保证。
 
 这些区别应进入对应任务的正文解释与例子，不另行堆成一组通用方法章节。
