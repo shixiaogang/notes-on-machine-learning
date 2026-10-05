@@ -1,0 +1,7 @@
+# 元学习架构的最后字重修订
+
+2026-10-05，内置 image_gen（未返回精确模型版本）。输入/输出为本轮候选 v1r3-meta-learning.png；只改变原生字重，未覆盖文字。
+
+Change ONLY the typography of this already correct scientific architecture illustration. Every existing letter, Chinese character, number, and mathematical symbol is currently TOO BOLD. Redraw ALL existing text as elegant NORMAL REGULAR-WEIGHT clean sans serif: Chinese visual reference Source Han Sans / Noto Sans CJK SC Regular (400), Latin Source Sans 3 Regular (400), formulas regular weight. All glyph strokes must visibly become about HALF AS THICK as in the input. NO BOLD, NO SEMIBOLD, no black-heavy lettering anywhere, including short headings. Use dark slate gray text rather than pure black. Keep all label wording, capitalization, formulas and punctuation exactly identical and preserve positions, horizontal baselines, original size and legibility. Keep every icon, all architecture, line widths, fills, arrows and every scientific relationship unchanged. Do not add or erase labels, titles or symbols. Render the lighter text DIRECTLY IN THE OUTPUT IMAGE; no blank bands. In particular 元训练, 元测试, 共同起点, 已学起点, 支持样本, 检查样本, 评分 and every example Chinese character must become visibly more slender, with 45–50% of current stroke thickness. Preserve all parameter symbols and tau subscripts, prime marks, loss L, all arrows and feedback routes exactly.
+
+检查：阶段名、样本字和共同起点标签更纤细；支持样本与起点分别进入适配参数，检查样本和适配参数分别进入损失，只有元训练损失回传起点；公式和路由保持原意。

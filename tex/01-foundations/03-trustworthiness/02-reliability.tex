@@ -9,6 +9,15 @@
 
 不确定性输出为这一判断提供线索：模型是否知道自己可能出错，所给范围是否反映尚未确定的结果。但线索本身也可能失真。第~\ref{sec:reliability-uncertainty}节说明不确定性的来源与估计；第~\ref{sec:reliability-evaluation}节从输出的数值含义、决策用途和适用范围检验这些估计；第~\ref{sec:reliability-guarantee}节再讨论如何在明确假设下构造满足覆盖或决策风险要求的程序。估计回答模型表达了什么，检验回答这种表达是否得到数据支持，保证则回答什么条件能够支持进一步的使用承诺。
 
+图~\ref{fig:trust-reliability-review}把可靠性问题放回邮件处理场景：证据足够时按规则自动隔离，证据不足时转交复核。图标只是当前教学情景中的不同线索，不能把“带有宣传内容”直接当成垃圾邮件的判据。分流是否有价值，要在第~\ref{sec:reliability-selection-evaluation}节同时检查自动处理的比例与接受部分的风险。
+
+\begin{figure}[!htb]
+  \centering
+  \bookdraftgraphic{figures/scenes/v1r3-reliability-story.png}
+  \caption{按判断依据分配自动处理与复核。单个标记表示当前规则接受的判断，两个不同形状的标记表示仍待辨别的候选；上方邮件进入可恢复的隔离文件夹，下方交给人工。此图引入邮件处理情景，分流本身不证明可靠，也不假定人工无误；处理比例与选择性风险的计数见图~\ref{fig:trust-selective-risk-coverage}。}
+  \label{fig:trust-reliability-review}
+\end{figure}
+
 \section{不确定性的来源与估计}
 \label{sec:reliability-uncertainty}
 
@@ -26,6 +35,15 @@
 对邮件分类器，可以固定可见特征来理解这一区别。一种情况是同样的文字既可能出现在正常通知中，也可能被用于诈骗；即使充分掌握这类文字的统计规律，仅凭这些特征仍无法唯一判断。另一种情况是某种新语言的训练邮件很少，多个模型对相同内容给出不同判断；增加有标签的相关邮件，可能减少这部分知识不足。前者需要表达给定信息下的结果分布，后者需要表达对预测规律的把握程度。
 
 区分来源并不意味着能直接测出各自大小。真实条件分布通常未知，模型还可能遗漏重要因素，因此实践中得到的是依赖模型假设的估计。参数后验、模型集成和条件分布学习都是建立这种估计的手段；它们本身不构成新的不确定性类别。近似计算也会产生误差，但这种估计误差应与被估计的不确定性分开。
+
+图~\ref{fig:trust-uncertainty-sources}固定邮件任务比较两种信息缺口：左侧缺少区分真实意图的特征，右侧缺少能够约束候选模型的相关数据。增加同一类训练记录可能减少后者，却不自动补上前者缺少的观测信息。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/trust-uncertainty-sources}
+  \caption{偶然不确定性与认知不确定性的区别。左侧同一可见特征可能对应正常通知或诈骗意图，固定模型也需表达结果分布；右侧相关样本不足，三个候选模型给出不同预测，$p_m$简写$p_m(y=1\mid\bm x)$。概率0.2、0.5、0.8为教学构造，条长示意预测分歧，不是实测值或后验抽样。两种来源均相对于当前观测与模型假设而言。}
+  \label{fig:trust-uncertainty-sources}
+\end{figure*}
 
 \subsection{认知不确定性的估计}
 \label{sec:reliability-epistemic-estimation}
@@ -133,6 +151,16 @@ Gal和Ghahramani从这一思路解释了特定设置下的dropout训练，并提
 
 一个始终输出总体正例比例的预测器也可能校准，却不能区分不同输入。校准性与区分能力需要分别检查；同样，平均覆盖、个体信息量和决策损失也承担不同职责。Guo等对现代神经网络校准性的研究说明，较好的分类表现并不自动带来恰当的概率表达\scite{guo2017calibration}。
 
+图~\ref{fig:trust-calibration-discrimination}展示了这种区别。即使概率与总体频率相符，也仍要检查分数能否区分具有不同风险的输入。
+
+\begin{figure*}[t]
+  \centering
+  \input{figures/trust-calibration-discrimination}
+  \caption{校准性与区分能力的区别。左侧实线是理想校准关系，虚线是构造的过度自信曲线，二者不来自实验。右侧假设两个等大群体的正例比例分别为20\%和80\%；始终输出0.5的预测器在总体上校准，按组输出0.2与0.8的预测器同样校准，却能区分两组的风险。}
+  \label{fig:trust-calibration-discrimination}
+\end{figure*}
+\FloatBarrier
+
 \paragraph{概率校准的经验修正}
 
 若分类排序较好而概率偏大，可以在独立校准数据上拟合后处理参数。例如，温度缩放用正数$t$调整未归一化类别对数分数$z_k(\bm{x})$（logit）：
@@ -181,15 +209,6 @@ Gal和Ghahramani从这一思路解释了特定设置下的dropout训练，并提
 
 概率数值不够准确的分数，也可能把易错样本排在前面；反过来，总体校准的常数概率不能区分哪些输入更危险。因此，需要直接检验不确定性与实际损失的关系。这里固定预测模型和不确定性分数，观察拒绝较不确定的输入后，留下部分的损失是否降低，以及为此放弃了多少自动处理。
 
-图~\ref{fig:trust-reliability-review}把这一问题放回邮件处理流程：证据足够时按规则自动隔离，证据不足时转交复核。图中的图标只表示教学情景中的不同线索，不能把“带有宣传内容”直接当成垃圾邮件的判据。真正需要验证的是，被自动处理的邮件是否具有较低风险，以及转交后增加了多少工作量和延迟。
-
-\begin{figure}[!htb]
-  \centering
-  \bookdraftgraphic{figures/trust-reliability-review.png}
-  \caption{按判断依据分配自动处理与复核。单个标记表示当前规则接受的判断，两个不同形状的标记表示仍待辨别的候选；上方邮件进入可恢复的隔离文件夹，下方交给人工。分流本身不证明可靠，也不假定人工无误。}
-  \label{fig:trust-reliability-review}
-\end{figure}
-
 若系统允许拒答，可以用接受函数$g(\bm{x})\in\{0,1\}$表示是否自动处理。记损失为$\ell(f(\bm{x}),y)$，则处理比例与接受部分的风险分别为
 \begin{equation}
  \begin{aligned}
@@ -217,7 +236,25 @@ Gal和Ghahramani从这一思路解释了特定设置下的dropout训练，并提
 假设十封测试邮件中有两封被分错，使用零一损失。分数甲把这两封排为最不确定，拒绝它们后自动处理八封，经验风险为0。分数乙却把两封预测正确的邮件排为最不确定，同样处理八封时风险为$2/8=25\%$，高于全部处理时的$20\%$。若随机拒绝两封，留下八封的期望错误率仍为$20\%$。这个构造例子检验的是分数与错误的对应关系，与分数是否具有校准的概率含义不同。
 \end{example}
 
+图~\ref{fig:trust-selective-risk-coverage}把同一批邮件按两种分数分别排序，接受区中的编号直接对应式~\eqref{eq:reliability-empirical-selective-risk}的分母。两种分数都让八封邮件进入接受区，但其中保留下来的错误数不同。因此，减少自动处理只有在分数确实识别了错误时，才会改善这次测试的接受部分风险。
+
+\begin{figure*}[!htb]
+  \centering
+  \input{figures/trust-selective-risk-coverage}
+  \caption{选择性预测的处理比例与风险。沿用示例~\ref{ex:reliability-risk-ranking}的十封邮件，$\times$标出错误的9与10号，$\checkmark$标出正确预测；两行按不确定性递增排列。蓝色区接受八封，灰色区拒绝两封。$\hat c(t)$以全部邮件为分母，$\hat R_{\mathrm{sel}}(t)$以接受邮件为分母，分别估计$c(g_t)$与$R_{\mathrm{sel}}(f,g_t)$。样本零风险不保证总体风险为零。}
+  \label{fig:trust-selective-risk-coverage}
+\end{figure*}
+
 曲线用于比较筛选能力，具体使用承诺还需检验实际采用的工作点。例如，在验证集上确定阈值后，固定该阈值，在独立测试集上报告接受样本数、条件风险及其区间估计。样本中零错误不等于总体风险为零；接受样本太少时，即使曲线点看起来很好，也可能不足以支持目标风险要求。把测试曲线上最有利的一点直接选作部署阈值，会重新引入选择偏差。
+
+图~\ref{fig:trust-risk-coverage-curve}进一步计算两种排序的全部十个工作点。随着接受范围扩大，甲直到第九封才纳入错误，乙从第一封就纳入错误；两条曲线在全部接受时回到相同的$2/10$。曲线走向取决于具体排序，不能预先假定筛选后的风险一定随阈值单调变化。
+
+\begin{figure}[!htb]
+  \centering
+  \input{figures/trust-risk-coverage-curve}
+  \caption{同一十封邮件上的风险—处理比例曲线。采用图~\ref{fig:trust-selective-risk-coverage}的完整排序，对接受1至10封分别计算经验风险；空心圆为甲，三角形与虚线为乙。80\%处理比例对应0与25\%风险，全部处理时两者均为20\%。每个点都是教学计数的精确比例，不含测量误差；接受零封时风险无定义，因此不画零处理比例的数据点。}
+  \label{fig:trust-risk-coverage-curve}
+\end{figure}
 
 这种允许模型只处理部分输入的设置称为\term{选择性预测}（selective prediction）。其最简单实现是按最大类别概率设阈值，但概率最大的样本未必是行动风险最小的样本。若误删正常邮件的代价高于放过垃圾邮件，接受规则应考虑类别及代价；同一个0.9，对“自动隔离”和“提醒用户检查”可能支持不同决策。
 
@@ -292,6 +329,15 @@ Gal和Ghahramani从这一思路解释了特定设置下的dropout训练，并提
 回归中可以取$s(\bm{x},y)=|y-f(\bm{x})|$，得到区间$[f(\bm{x})-q,f(\bm{x})+q]$。分类中可取$s(\bm{x},y)=1-p(y\mid\bm{x})$，保留偏差不超过$q$的类别。评分越能反映局部难度，相同覆盖目标下的集合越可能有用，但较小集合仍需实际比较。
 
 这个定理不保证每个固定输入都有$1-\alpha$覆盖，也不保证每一批固定校准数据都产生同样好的条件覆盖。分组构造需要足够组内样本；变化环境下则需要额外的分布联系或不同的在线目标。将“分布无关”理解成不需要任何数据关系，会误用保证。
+
+图~\ref{fig:trust-conformal-construction}将评分函数的训练、校准排序和新输入的集合构造分开。覆盖承诺依赖校准样本与新样本的交换性，不能从图中区间的宽度直接读出。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/trust-conformal-construction}
+  \caption{分割共形预测的构造。评分函数先由独立训练数据确定，再用校准分数选择阈值。图中采用教学残差$0.1,0.2,\ldots,0.9$，取$n=9$、$\alpha=0.2$，故$k=8$、$q=0.8$；绝对残差评分产生右侧回归区间。数值说明排序与集合构造，不是覆盖率的实验测量。}
+  \label{fig:trust-conformal-construction}
+\end{figure*}
 
 \paragraph{自适应范围与条件覆盖边界}
 
