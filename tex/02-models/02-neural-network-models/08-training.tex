@@ -297,7 +297,17 @@ AdaGrad的累计历史不遗忘，早期大梯度可能长期压低后续步长�
     \eta_t\frac{\hat{\bm m}^{(t)}}{\sqrt{\hat{\bm v}^{(t)}}+\epsilon}\text{。}
   \label{eq:training-adam}
 \end{align}
-$\beta_1,\beta_2\in[0,1)$为平滑系数。若梯度统计量在早期近似平稳，零初始化使滑动平均带有$1-\beta^t$的缩小因子，偏差修正除去这一初始效应。它不消除抽样偏差，也不使随参数变化的历史统计等同于当前精确矩\scite{kingma2015adam}
+$\beta_1,\beta_2\in[0,1)$为平滑系数。分母中的修正因子来自零初值：把$\bm m^{(0)}=\bm0$代入递推，假设第1至$t$步梯度具有相同的有限均值$\mathbb E[\bm g^{(s)}]=\bm\mu$，就有
+\begin{equation}
+  \begin{aligned}
+    \bm m^{(t)}&=(1-\beta_1)\sum_{s=1}^{t}\beta_1^{t-s}\bm g^{(s)},\\
+    \mathbb E[\bm m^{(t)}]
+      &=(1-\beta_1)\sum_{s=1}^{t}\beta_1^{t-s}\bm\mu
+        =(1-\beta_1^t)\bm\mu\text{。}
+  \end{aligned}
+  \label{eq:training-adam-bias-correction}
+\end{equation}
+第二行只用期望的线性性质与等比求和，不要求各步梯度相互独立。有限步的权重和是$1-\beta_1^t$，尚未达到1；除以它，便在上述同均值假设下得到$\mathbb E[\hat{\bm m}^{(t)}]=\bm\mu$。同理，若各步的逐坐标非中心二阶矩均为$\bm\nu=\mathbb E[\bm g^{(s)}\odot\bm g^{(s)}]$且有限，零初值$\bm v^{(0)}=\bm0$给出$\mathbb E[\bm v^{(t)}]=(1-\beta_2^t)\bm\nu$。这里没有减去梯度均值，$\bm\nu$不是梯度方差。偏差修正消除的是零初始化的权重缺口；实际梯度统计随参数变化，它既不消除抽样偏差，也不使历史平均等同于当前精确矩\scite{kingma2015adam}
 
 这里的二阶矩是$g_j^2$的平均，Hessian是损失对参数的二阶导数。前者即使在负曲率区域也非负，且包含梯度均值和噪声方差；后者可以有负特征值。Adam属于用一阶梯度统计构造更新的方法。它仍需全局学习率和调度，在不同问题上也不能无条件保证比经过调节的SGD更快或泛化更好。
 
@@ -511,7 +521,7 @@ K-FAC的优势是以层结构保留比对角方法更多的方向关系，同时
     Lion & 当前梯度 & 方向，一组$p$维量 & 混合后取符号；舍去幅度信息 \\
     \bottomrule
   \end{tabularx}
-  \caption{从输入、状态、计算规则和输出比较常见逐坐标方法。各行均使用当前参数和全局学习率，表中仅突出不同的梯度输入与状态；$p$为总参数数，Adafactor一行仅对应$m\times d$矩阵块且不使用完整动量。裁剪和调度可以与这些方法组合。}
+  \caption{从输入、状态、计算规则和输出比较常见逐坐标方法。各行均使用当前参数，步长及缩放约定见各方法正文，表中仅突出不同的梯度输入与状态；原始AdaDelta没有独立的全局学习率，此处Adafactor采用相对步长。$p$为总参数数，Adafactor一行仅对应$m\times d$矩阵块且不使用完整动量。裁剪和调度可以与这些方法组合。}
   \label{tab:training-first-order-comparison}
 \end{table*}
 \FloatBarrier
@@ -634,7 +644,17 @@ K-FAC的优势是以层结构保留比对角方法更多的方向关系，同时
   \end{aligned}
   \label{eq:training-batchnorm}
 \end{equation}
-训练中一个样本的输出依赖其他统计伙伴。推理时通常使用运行均值$\bar\mu_j$和运行方差$\bar v_j$，例如按$\bar\mu_j\gets\rho\bar\mu_j+(1-\rho)\mu_j$更新。批内方差与运行方差的校正约定可能不同，$\rho$与接口中所谓momentum也可能采用相反约定，必须按实际定义对应。
+训练时用本批的$\mu_j,v_j$计算输出，所以一个样本的输出依赖其他统计伙伴。同时维护供推理使用的\term{运行均值}（running mean）和\term{运行方差}（running variance），即随训练批次更新、保存在模型中的滑动统计量。令$\rho\in[0,1)$为旧统计量的保留系数，一种更新约定为
+\begin{equation}
+  \begin{aligned}
+    \bar\mu_j^{(t)}&=\rho\bar\mu_j^{(t-1)}+(1-\rho)\mu_j^{(t)},\\
+    \bar v_j^{(t)}&=\rho\bar v_j^{(t-1)}+(1-\rho)\widetilde v_j^{(t)}\text{。}
+  \end{aligned}
+  \label{eq:training-batchnorm-running}
+\end{equation}
+这里$t$标记训练批次。式\eqref{eq:training-batchnorm}用于当前前向的$v_j^{(t)}$以$m=bhw$为分母；更新运行方差所用的$\widetilde v_j^{(t)}$则须按实现约定：可以使用同一批方差，也可以在$m>1$时使用$m v_j^{(t)}/(m-1)$。后一种是独立同分布观测下的无偏方差估计，不能在空间观测相关时直接称为无偏，也不能把它与前向的分母$m$混为一谈。接口中的momentum可能指$\rho$，也可能指新批权重$1-\rho$，需查明定义。
+
+采用运行统计的常规BN在推理时冻结$\bar\mu_j,\bar v_j$，既不重新计算推理批次的均值、方差，也不继续更新滑动统计；只把式\eqref{eq:training-batchnorm}中的$\mu_j,v_j$换成保存值。因而同一输入的BN输出不再随推理批次的伙伴改变。运行统计是历次批统计的加权估计，还受初始化、采样和训练中参数变化影响，不是当前小批量统计，也不等于在最终参数下遍历全训练集得到的精确统计。关闭运行统计跟踪等配置会改变这一行为，不能只凭“推理模式”推断所用参照。
 
 若统计集合只有一个元素，中心化后为0，归一化不能保留该元素的变化。卷积中即使$b=1$，空间位置仍可提供多个元素，但高度相关的位置并不等同于独立样本。小批量、单类别采样或相邻视频帧都可能使统计量偏离预期使用分布。选择伙伴比只查看名义批量更重要。
 
@@ -664,6 +684,7 @@ BatchNorm调节表示尺度，并通过重参数化影响梯度与优化形状�
 
 \term{批再归一化}（batch renormalization）把批标准化结果改为$\hat x=r(x-\mu_B)/\sigma_B+d$。$r$由批标准差与运行标准差之比得到，$d$由两种均值之差得到，二者均按调度裁剪并停止梯度。未裁剪时，前向等于使用运行统计；反向仍通过批内统计求导。它缓解两种参照的差异，却增加运行状态和校正范围的选择。
 
+\Needspace{18\baselineskip}
 \paragraph{流式与历史统计。}
 
 在流式或微批量条件下，\term{在线归一化}（OnlineNorm）沿样本流维护统计并设计相应的反向校正；\term{PowerNorm}用运行平方均值和近似反向处理管理Transformer中的批尺度波动\scite{chiley2019onlinenorm,shen2020powernorm}它们让参照跨时间积累，代价是状态次序、重置规则与分布变化后的滞后。完整方法不能简化为随意加入一个移动平均，也不能使用当前预测时尚不可见的未来样本。
@@ -789,11 +810,13 @@ NormFormer增加归一化位置与尺度调节，DeepNorm配合残差缩放和�
 
 组归一化后再接激活，会让两步导数共同进入反向传播。上文EvoNorm系列中的S0直接联合这两部分，采用$y_j=\gamma_jx_j\sigma(a_jx_j)/\sqrt{v_G+\epsilon}+\zeta_j$，其中$v_G$是样本内通道组的中心化方差，$a_j$可学习，$\sigma$为Sigmoid。它使用组统计，分子却不减均值，因此不是先GroupNorm再SiLU。联合计算需要作为完整模块替换，不能随意重复添加相同激活。
 
-图~\ref{fig:training-normalization-axes}用同一构造数据比较已讨论的批、层、实例和组统计。选择统计伙伴改变数值结果，也改变式\eqref{eq:training-normalization-jacobian}中哪些特征共同参与导数。
+图~\ref{fig:training-normalization-axes}用同一构造数据比较已讨论的批、层、实例和组统计。图中采用常见轴名$N,C,H,W$，分别对应前文的批量$b$、通道$c$、高$h$和宽$w$；元素索引写作$(n,c,h,w)$。图将$(h,w)$展开为行、通道$c$排成列，两张小表分别表示样本$n=1,2$。轮廓内的着色格共同计算均值与方差，圈出的目标元素始终不变，因而可以直接比较哪些伙伴被加入或排除。
+
+BN固定$c$，跨$n,h,w$统计；IN固定$n,c$，只跨$h,w$，并不跨实例。GN固定$n$和通道组，跨组内$c$及$h,w$。图中的LN明确采用图像整样本约定：固定$n$，统计全部$C,H,W$。Transformer的逐词元LN则固定样本$n$和词元位置$t$，只沿特征$C$（前文记为$d$）统计；不能把图中整幅图像的LN范围照搬到整个序列。选择统计伙伴改变数值结果，也改变式\eqref{eq:training-normalization-jacobian}中哪些特征共同参与导数。
 \begin{figure*}[htbp]
   \centering
   \input{figures/training-normalization-axes}
-  \caption{对同一元素$X_{1,2,2}=6$比较统计伙伴。两个样本各有3个空间位置、4个通道，空间维已展平为$p$；数值按样本、位置、通道依次取1到24。紫色格参与统计，橙圈为目标元素。BatchNorm跨样本与位置，整样本LayerNorm跨该样本全部通道与位置，InstanceNorm只跨该通道的位置，GroupNorm使用通道1、2及其位置。图中均值用于复核范围，未加入仿射变换。}
+  \caption{在$N=2,C=4,H=W=2$的图像张量上，对同一元素$X_{1,2,1,2}=6$比较统计伙伴。按样本、空间行、通道的展示顺序填入教学数值1至32，每行标出$(h,w)$；并非按张量存储顺序编号。蓝、紫、青、橙分别标出BN、LN、IN、GN的统计集合，边界轮廓与固定／统计索引提供颜色之外的读法，深色圈为目标元素。GN取通道组$\{1,2\}$；LN统计整幅图像的$CHW$，不是Transformer逐词元的特征维LN。均值用于核对范围，未加入仿射变换。}
   \label{fig:training-normalization-axes}
 \end{figure*}
 \FloatBarrier
@@ -973,10 +996,10 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
 \subsection{残差连接}
 \label{sec:training-residual}
 
-式\eqref{eq:training-jacobian-chain}中若每步都只能经过可学习变换，任何一步的方向收缩都会进入长乘积。残差连接增加直接路径，让梯度有机会绕过部分分支。\term{残差连接}（residual connection）在可学习变换外保留直接路径。设输入输出同维，写为
+式\eqref{eq:training-jacobian-chain}中若每步都只能经过可学习变换，任何一步的方向收缩都会进入长乘积。\term{残差连接}（residual connection）在可学习变换外增加直接路径，让梯度有机会绕过变换分支。设输入输出同维，写为
 \begin{equation}
   \bm h^{(l+1)}=\bm h^{(l)}+a_lF_l(\bm h^{(l)}),\qquad
-  \bm J_l=\bm I+a_l\bm J_{F_l}\text{。}
+  \bm J_{l+1}=\bm I+a_l\bm J_{F_l}\text{。}
   \label{eq:training-residual-jacobian}
 \end{equation}
 其中$a_l$为分支尺度，$\bm J_{F_l}$为分支雅可比。原来的纯变换连乘改为含恒等项的连乘；分支在初始阶段较小时，网络可以从接近恒等映射的状态开始学习调整。这是传播路径的改变，并非对每一层输出强制归一化。
@@ -988,7 +1011,7 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
 \subsection{门控连接}
 \label{sec:training-gates}
 
-恒等捷径总是保留同样比例的信息，而不同输入可能需要不同保留长度。门控把路径系数变成输入相关变量，在写入新信息与维持旧状态之间作动态选择。固定保留路径无法根据输入决定哪些信息应留下。\term{门控连接}（gated connection）用取值在一定范围内的门控制不同路径的比例。一个耦合门形式为
+恒等捷径以固定系数传递输入，不能根据当前内容选择保留哪些信息。\term{门控连接}（gated connection）把路径系数变成输入相关变量，在保留原状态与使用新计算之间调节比例。一个耦合门形式为
 \begin{equation}
   \bm h^{(l+1)}=(\bm1-\bm g_l)\odot\bm h^{(l)}
                    +\bm g_l\odot F_l(\bm h^{(l)}),

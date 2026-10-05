@@ -43,7 +43,7 @@
 \end{equation}
 矩阵$\bm{W}_{L+1}\in\mathbb{R}^{q\times d_L}$和向量$\bm{b}_{L+1}\in\mathbb{R}^{q}$参与学习，输出变换$g$由任务决定。$g$可以是恒等映射，也可以把得分转换为概率。用$\bm{\theta}\in\mathbb{R}^{p}$收集全部权重与偏置，模型记为$\bm{f}_{\bm{\theta}}(\bm{x})=\widehat{\bm{y}}$；标量输出时写$f_{\bm{\theta}}$。
 
-图~\ref{fig:ffn-architecture}展示了这种分层依赖。输入层只提供数据，不计算一组新的可学习参数；隐藏层的每个坐标都是一次式\eqref{eq:ffn-unit}的计算。通常称这种具有一个或多个全连接隐藏层的网络为\term{多层感知机}（multilayer perceptron, MLP），即用多层非线性变换构造表示的前馈网络。这个名称不意味着现代MLP必须使用早期感知机的硬阈值激活。
+图~\ref{fig:ffn-architecture}展示了这种分层依赖。输入层只提供数据，不计算一组新的可学习参数；隐藏层的每个坐标都是一次式\eqref{eq:ffn-unit}的计算。这就是前章引入的多层感知机：具有一个或多个全连接隐藏层、用非线性变换构造表示的前馈网络。这个名称不意味着现代MLP必须使用早期感知机的硬阈值激活。
 
 \begin{figure*}[htb]
   \centering
@@ -217,7 +217,7 @@ Leaky ReLU适合希望保留负响应且不增加待学习参数的隐藏层，P
   \end{cases}
   \label{eq:ffn-selu}
 \end{equation}
-其中常用常数为$\alpha\approx1.6733$、$\kappa\approx1.0507$。它用于\term{自归一化网络}（self-normalizing neural network），即在规定假设下让层间激活的均值与方差趋向受控范围的前馈网络。相应分析依赖输入与权重的统计条件；常配合输入标准化、方差$1/\mathrm{fan\text{-}in}$的初始化，以及为保持统计量设计的AlphaDropout。它不是把ReLU换成SELU后就无条件得到的归一化保证，也不能随意混用初始化和丢弃规则\scite{klambauer2017selu}
+其中常用常数为$\alpha\approx1.6733$、$\kappa\approx1.0507$。它用于\term{自归一化网络}（self-normalizing neural network），即在规定假设下让层间激活的均值与方差趋向受控范围的前馈网络。相应分析依赖输入与权重的统计条件；常配合输入标准化、权重方差为$1/\mathrm{fan\text{-}in}$的初始化，以及为保持统计量设计的AlphaDropout。这里fan-in是一个单元的输入连接数，初始化的具体说明见第~\ref{sec:ffn-initialization}节。自归一化不是把ReLU换成SELU后就无条件得到的保证，也不能随意混用初始化和丢弃规则\scite{klambauer2017selu}
 
 如果目标是输出严格正值而又保持平滑，可以使用\term{Softplus函数}：
 \begin{equation}
@@ -627,51 +627,73 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
 
 输出层的起点由任务决定。采用式\eqref{eq:ffn-regression-loss}时，$\delta^{(L+1)}=a-y$；采用二元交叉熵时，$\delta^{(L+1)}=p-y$；采用多类交叉熵时，第$k$个坐标为$p_k-\mathbb{I}\{y=k\}$，其中$\mathbb{I}$是事件成立时为$1$的指示函数。概率输出与交叉熵合并后得到的简洁导数，是两者配合的结果。若Sigmoid输出后使用平方损失，导数还包含$s'(a)$，不能沿用$p-y$。
 
-图~\ref{fig:ffn-backpropagation}说明了前向值与反向梯度的区别。前向计算提供各层的预激活和表示；反向计算从损失开始，重复利用这些值与局部导数。梯度向上游传播不会改变本次前向预测已经使用的输入，也不会给预测网络增加有向环。
+图~\ref{fig:ffn-backpropagation}把下面算例的$2$-$3$-$1$网络展开，说明前向值与反向梯度的区别。前向计算提供各层的预激活和表示；反向计算从损失开始，重复利用这些值与局部导数。梯度向上游传播不会改变本次前向预测已经使用的输入，也不会给预测网络增加有向环。
 
 \begin{figure*}[htb]
   \centering
   \input{figures/feedforward-backpropagation}
-  \caption{一个隐藏层上的前向值与反向梯度。圆点展示向量坐标，预激活与隐藏表示两列对应同一隐藏层，紫色箭头表示逐坐标激活；细线表示仿射层的全连接。下方赭色虚线从损失对自身的导数$1$开始回传，与上方变量逐列对应，并标出局部求导规则。$\sigma_1'$在保存的$\bm{z}^{(1)}$处计算。底部由敏感度与前层活动值形成参数梯度，待所有梯度计算完成后才更新参数。}
+  \caption{示例~\ref{ex:ffn-numerical-backpropagation}中$2$-$3$-$1$网络的计算图。上方实线从两个输入经过三个ReLU单元，到达输出得分及二元交叉熵；预激活与隐藏表示是同一隐藏层的两种数值，不是两个隐藏层。下方赭色虚线反向传播梯度，向量坐标按上方节点从上到下排列。第三个单元通过输出权重$0.5$收到梯度，第二个单元的梯度被负半轴上的ReLU截断。数值按更新前参数计算，梯度和概率保留四位小数。}
   \label{fig:ffn-backpropagation}
 \end{figure*}
 
 \begin{example}[一次前向与反向计算]
   \label{ex:ffn-numerical-backpropagation}
-  沿用异或的二值输入，取一个隐藏层、两个ReLU单元及一个二分类输出。下面的参数是教学构造：
+  沿用异或的二值输入，使用图~\ref{fig:neural-minimal-mlp}中的$2$-$3$-$1$结构：一个隐藏层含三个ReLU单元，输出得分经Sigmoid变成二分类概率。下面的参数是教学构造，不是已训练好的异或分类器：
   \[
     \begin{aligned}
-      \bm{W}_1&=\begin{pmatrix}1&-1\\-1&1\end{pmatrix},
-      &\bm{b}_1&=\begin{pmatrix}0.2\\0.2\end{pmatrix},\\
-      \bm{W}_2&=\begin{pmatrix}1&1\end{pmatrix},
+      \bm{W}_1&=\begin{pmatrix}1&-1\\-1&1\\1&1\end{pmatrix},
+      &\bm{b}_1&=\begin{pmatrix}0.2\\0.2\\-0.2\end{pmatrix},\\
+      \bm{W}_2&=\begin{pmatrix}1&1&0.5\end{pmatrix},
       &b_2&=-0.5\text{。}
     \end{aligned}
   \]
   对样本$\bm{x}=(1,0)^{\top}$、$y=1$，前向结果为
   \[
-    \bm{z}^{(1)}=(1.2,-0.8)^{\top},\quad
-    \bm{h}^{(1)}=(1.2,0)^{\top},\quad a=0.7\text{。}
-  \]
-  因而$p=s(0.7)\approx0.6682$，二元交叉熵$\ell=-\log p\approx0.4032$。非零偏置让本例的两个预激活值都远离ReLU的不可微点。
-
-  输出敏感度为$\delta^{(2)}=p-1\approx-0.3318$。第一个隐藏单元处于正半轴，第二个处于负半轴，于是
-  \[
     \begin{aligned}
-      \bm{\delta}^{(1)}&\approx(-0.3318,0)^{\top},\\
-      \nabla_{\bm{W}_1}\ell&\approx
-      \begin{pmatrix}-0.3318&0\\0&0\end{pmatrix},
-      &\nabla_{\bm{b}_1}\ell&\approx
-      \begin{pmatrix}-0.3318\\0\end{pmatrix}\text{。}
+      \bm{z}^{(1)}&=(1.2,-0.8,0.8)^{\top},\\
+      \bm{h}^{(1)}&=(1.2,0,0.8)^{\top},\\
+      a&=1\times1.2+1\times0+0.5\times0.8-0.5=1.1\text{。}
     \end{aligned}
   \]
-  输出参数的梯度为$\nabla_{\bm{W}_2}\ell\approx(-0.3982,0)$、$\partial\ell/\partial b_2\approx-0.3318$。第一层第一个单元对$x_2$的权重梯度为零，是因为这个样本的$x_2=0$；第二个单元的梯度为零，则来自负半轴上的激活导数。两种零梯度有不同原因。
+  因而$p=s(1.1)\approx0.7503$，二元交叉熵$\ell=-\log p\approx0.2873$。本例三个预激活值都远离ReLU的不可微点，局部导数依次为$1,0,1$。
 
-  若仅用该样本、不加正则项，并以学习率$0.1$同时更新所有参数，新的原始得分约为$0.8500$，正类概率约为$0.7006$，损失约为$0.3559$。这一次更新提高了该正例的概率；它不能说明四个异或样本的总损失也一定下降，更不能说明新数据上的风险已经降低。
+  输出敏感度为$\delta^{(2)}=p-1\approx-0.2497$。先乘输出权重的转置，再逐坐标乘激活导数，得到
+  \[
+    \begin{aligned}
+      \nabla_{\bm{h}^{(1)}}\ell
+        &\approx(-0.2497,-0.2497,-0.1249)^{\top},\\
+      \bm{\delta}^{(1)}&\approx(-0.2497,0,-0.1249)^{\top},\\
+      \nabla_{\bm{W}_1}\ell&\approx
+      \begin{pmatrix}-0.2497&0\\0&0\\-0.1249&0\end{pmatrix},
+      &\nabla_{\bm{b}_1}\ell&\approx
+      \begin{pmatrix}-0.2497\\0\\-0.1249\end{pmatrix}\text{。}
+    \end{aligned}
+  \]
+  例如第三个隐藏单元的第一条输入权重，其梯度是
+  \[
+    \frac{\partial\ell}{\partial(\bm{W}_1)_{3,1}}
+    =(p-1)\times0.5\times1\times x_1
+    \approx-0.1249\text{。}
+  \]
+  这四个因子依次来自输出损失、输出连接、ReLU局部导数和输入值。输出参数的梯度为$\nabla_{\bm{W}_2}\ell\approx(-0.2997,0,-0.1998)$、$\partial\ell/\partial b_2\approx-0.2497$；继续回传到输入则有$\nabla_{\bm{x}}\ell\approx(-0.3746,0.1249)^{\top}$。第一层第一、第三个单元对$x_2$的权重梯度为零，是因为这个样本的$x_2=0$；第二个单元的输入权重梯度为零，则来自负半轴上的激活导数。两种零梯度有不同原因。
+
+  若仅用该样本、不加正则项，并以学习率$0.1$同时更新所有参数，即每项参数减去$0.1$倍的对应梯度，则更新后的参数为
+  \[
+    \begin{aligned}
+      \bm{W}_1^{(1)}&\approx
+        \begin{pmatrix}1.0250&-1\\-1&1\\1.0125&1\end{pmatrix},
+      &\bm{b}_1^{(1)}&\approx
+        \begin{pmatrix}0.2250\\0.2\\-0.1875\end{pmatrix},\\
+      \bm{W}_2^{(1)}&\approx\begin{pmatrix}1.0300&1&0.5200\end{pmatrix},
+      &b_2^{(1)}&\approx-0.4750\text{。}
+    \end{aligned}
+  \]
+  参数上标$(1)$表示一次更新。用未舍入的梯度重算该输入，隐藏表示约为$(1.2499,0,0.8250)^{\top}$，得分约为$1.2414$，正类概率约为$0.7758$，损失约为$0.2539$。该正例的损失下降，不代表全部异或样本的总损失或新样本风险也降低。
 \end{example}
 
 训练目标通常包含多个样本，它们共享同一组参数，因此梯度需要相加。若本次更新读取一个索引集合$B\subseteq\{1,\ldots,n\}$，称为\term{小批量}（mini-batch），其平均数据梯度为
 \begin{equation}
-  \bm{g}_\ell=
+  \bm{G}_\ell=
   \frac1{|B|}\sum_{i\in B}
   \bm{\delta}_i^{(\ell)}(\bm{h}_i^{(\ell-1)})^{\top},
   \qquad
@@ -679,13 +701,13 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
   \frac1{|B|}\sum_{i\in B}\bm{\delta}_i^{(\ell)}\text{。}
   \label{eq:ffn-minibatch-gradients}
 \end{equation}
-这里$\bm{g}_\ell$和$\bm{r}_\ell$分别对应权重与偏置，每个样本的$\bm{\delta}_i^{(\ell)}$按未除以批量大小的单样本损失计算。若反向起点已经使用批平均损失，便不应在这里再次除以$|B|$。矩阵实现可将样本按列排列，用同样的矩阵乘法一次计算这些外积之和；样本按行排列的实现会相应改变转置位置。
+这里$\bm{G}_\ell\in\mathbb R^{d_\ell\times d_{\ell-1}}$是权重梯度矩阵，$\bm{r}_\ell\in\mathbb R^{d_\ell}$是偏置梯度向量。每个样本的$\bm{\delta}_i^{(\ell)}$按未除以批量大小的单样本损失计算。若反向起点已经使用批平均损失，便不应在这里再次除以$|B|$。矩阵实现可将样本按列排列，用同样的矩阵乘法一次计算这些外积之和；样本按行排列的实现会相应改变转置位置。
 
-若$\Omega=\frac12\sum_\ell\lVert\bm{W}_\ell\rVert_{\mathrm{F}}^2$，其中$\lVert\cdot\rVert_{\mathrm{F}}$是矩阵各元素平方和开方得到的Frobenius范数，则权重总梯度为$\bm{g}_\ell+\lambda\bm{W}_\ell$，未被惩罚的偏置不加这一项。给定学习率$\eta_t>0$，普通梯度更新为
+若$\Omega=\frac12\sum_\ell\lVert\bm{W}_\ell\rVert_{\mathrm{F}}^2$，其中$\lVert\cdot\rVert_{\mathrm{F}}$是矩阵各元素平方和开方得到的Frobenius范数，则权重总梯度为$\bm{G}_\ell+\lambda\bm{W}_\ell$，未被惩罚的偏置不加这一项。给定学习率$\eta_t>0$，普通梯度更新为
 \begin{equation}
   \begin{aligned}
     \bm{W}_\ell^{(t+1)}
-      &=\bm{W}_\ell^{(t)}-\eta_t(\bm{g}_\ell+\lambda\bm{W}_\ell^{(t)}),\\
+      &=\bm{W}_\ell^{(t)}-\eta_t(\bm{G}_\ell+\lambda\bm{W}_\ell^{(t)}),\\
     \bm{b}_\ell^{(t+1)}&=\bm{b}_\ell^{(t)}-\eta_t\bm{r}_\ell\text{。}
   \end{aligned}
   \label{eq:ffn-gradient-update}
@@ -715,6 +737,14 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
 算法~\ref{alg:ffn-minibatch-learning}把求导和更新分成两步。如果在尚未完成反向计算时就改写某层权重，前后各层的梯度可能对应不同的参数，便不再是同一个目标在同一点的梯度。停止规则可以包含最大更新次数和验证指标的停止条件；优化器、学习率安排及更广泛的训练问题将在训练章比较。
 
 反向传播的计算量与前向矩阵运算同阶，因为每层主要计算转置矩阵乘法和外积，而不是为每个参数重新运行网络。它通常还要保存各层的活动值，单样本隐藏激活的存储量与$\sum_\ell d_\ell$同阶，小批量时随批量大小增长。逐层导数相乘也解释了小梯度和大梯度如何累积：能够正确求出梯度，并不保证这个梯度具有适合更新的尺度。
+
+用十次连乘就能看清这种累积。只考虑一条经过$10$个Sigmoid单元的标量路径，并假设路径上各权重的绝对值不超过$1$。由于每个激活导数至多为$0.25$，沿这条路径回传的敏感度，其绝对值至多乘上
+\[
+  0.25^{10}=\frac{1}{1048576}\approx9.54\times10^{-7}\text{。}
+\]
+这只是该路径的上界，不是任意网络完整梯度的值：多个路径的贡献需要相加，较大的权重也可能放大信号。对串联的$10$个Sigmoid向量层，若各层权重矩阵的谱范数均不超过$1$，回传向量穿过这$10$层后，其范数也至多乘上这个因子。谱范数衡量一次线性变换对向量长度的最大放大倍数，这个条件不能仅由每项权重不超过$1$替代。梯度经过多层后变得很小、使上游参数难以获得有效更新，称为\term{梯度消失}（vanishing gradients）。
+
+反过来，若一条标量路径经过$10$个处于正半轴的ReLU单元，每条权重均为$2$，则这些单元的激活导数为$1$，路径上的回传倍数为$2^{10}=1024$。这是权重与激活状态持续配合造成的放大，展示了\term{梯度爆炸}（exploding gradients）的机制；一个权重较大，并不保证完整梯度必然爆炸。两种算术都说明，判断梯度尺度必须检查整条路径上的乘积，而不能只看单个激活是否可导。
 
 \subsection{自动梯度计算}
 \label{sec:ffn-autodiff}
@@ -803,7 +833,7 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
 
 前章的异或例子是一个精确表示结论：指定输入集合上存在某组参数，输出规则与标签一致。面对一般连续输入，常见问题则是能否让网络与目标函数的误差足够小。\term{表达性}（expressivity）描述网络族能够表示或逼近哪些函数；它的判断对象是整类可选参数形成的函数，而不是某次训练得到的参数。
 
-一个重要存在性结论是\term{通用逼近}（universal approximation）：允许适当增加网络规模时，可以逼近规定函数类中的任意目标。为避免把它理解成固定小网络的保证，下面明确给出目标域、误差尺度和允许变化的量。
+一个重要存在性结论是\term{通用逼近}（universal approximation）：允许适当增加网络规模时，可以逼近规定函数类中的任意目标。下面把输入限制在紧集内；在有限维实数空间中，这就是闭且有界的集合，例如$[0,1]^d$。我们要求范围内每个输入的绝对误差都小于给定精度，而不只是训练样本的平均误差小，这称为一致误差控制。定理将明确这一误差要求下允许怎样选择网络规模。
 
 \begin{theorem}[单隐藏层的通用逼近]
   \label{thm:ffn-universal-approximation}

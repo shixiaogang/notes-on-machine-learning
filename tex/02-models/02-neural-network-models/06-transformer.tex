@@ -127,7 +127,9 @@ Transformer把序列中的信息传递从时间递推转为位置间读取与层
 \subsection{注意力层}
 \label{sec:transformer-attention}
 
-第\ref{sec:transformer-attention-history}节已经介绍了注意力怎样根据当前需求读取信息。这里把输入固定为“猫／追／狗”，建立统一的计算表示。更新“追”的表示时，网络需要结合谁在追、追的是谁；更新“猫”时，所需的上下文组合又可能不同。注意力为每个位置分别计算读取权重。同一个位置在读取别人和被别人读取时承担不同作用。\term{查询}（query）表示当前要匹配什么，\term{键}（key）提供被匹配的特征，\term{值}（value）提供匹配后要聚合的信息。三者由可学习投影得到，查询与键用于评分，值用于输出；它们不需要具有相同含义。
+第\ref{sec:transformer-attention-history}节已经介绍了注意力怎样根据当前需求读取信息。可以先把一次读取类比为查字典：手中待查的词是\term{查询}（query, Q），字典里用于匹配条目的词头是\term{键}（key, K），找到条目后读取的释义是\term{值}（value, V）。查询说明要找什么，键供查询比较，值提供读出的内容；键不是条目在数组中的整数下标。
+
+注意力把这种查询推广为连续的软匹配。它不检查两个字符串是否完全相同，而用可学习投影产生查询、键和值向量，再由查询与键的连续相似度得分决定读取权重，对多个值软加权求和。投影参数随训练调整，匹配方式也随之改变。这里把输入固定为“猫／追／狗”：更新“追”的表示时，网络需要结合谁在追、追的是谁；更新“猫”时，所需的上下文组合又可能不同。同一个位置在读取别人和被别人读取时承担不同作用，查询与键用于评分，值用于输出，三者不需要具有相同含义。
 
 设查询输入为$\bm H_{\mathrm q}\in\mathbb R^{n_q\times d}$，被读取输入为$\bm H_{\mathrm s}\in\mathbb R^{n_s\times d}$。暂省略偏置，单头投影为
 \begin{equation}
@@ -668,6 +670,16 @@ FFN沿用前馈求导，LN在一行内部耦合坐标。若归一化输出为$\b
 \end{equation}
 其中$k=0,\ldots,d/2-1$，向量坐标从1开始，$i$采用本章从1开始的位置编号；改从0开始时需统一输入约定。不同频率使坐标随位置以不同速度变化，无需学习位置表，任意整数位置都可以求值。
 
+图~\ref{fig:transformer-position-waves}把这个变化画成波形。为在同一位置区间内看清快慢，这里取$d=8$，只画$k=0,1$对应的前四个坐标：两对角频率分别为1和0.1弧度／位置。它与图~\ref{fig:transformer-position-example}的四维手算例采用相同公式，但宽度不同；四维例子的第二对频率是0.01，不能把两组参数混用。每对正弦与余弦具有相同周期，彼此相差四分之一周期；高频坐标随位置较快振荡，低频坐标变化较慢。一个位置的编码要在同一横坐标处读取各维的幅值，而不是选择其中一条曲线。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-position-waves}
+  \caption{固定正弦编码中选定坐标随输入位置的变化。取$d=8$，上图为坐标1、2（$k=0$），下图为坐标3、4（$k=1$）；两图横轴范围相同，幅值无量纲。实线为正弦，虚线为同频余弦，周期分别约为6.28和62.83个位置。连续曲线帮助观察波形，实际序列只在整数位置取值；本图仅示意选定维度，不是完整八维编码或训练结果。}
+  \label{fig:transformer-position-waves}
+\end{figure}
+\FloatBarrier
+
 对固定距离$\Delta$，加法公式把$\bm p_{i+\Delta}$写为$\bm p_i$各坐标对的线性变换。这使相对位移在编码中有规律可循，但不意味着整个注意力只依赖相对距离。把内容和位置相加后，投影点积还包含内容与位置的交叉项；网络需要学习如何使用这些项。函数能在新位置求值，与预测能在训练长度外保持可靠，是不同结论。
 
 \subsubsection{相对位置向量与距离偏置}
@@ -1020,46 +1032,17 @@ Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共
 \subsection{归一化的扩展}
 \label{sec:transformer-normalization-extensions}
 
-归一化需要回答三个问题：哪些元素共同计算统计量，是否减均值，以及它位于哪条路径。前两项决定表示中的哪些变化被消去，后一项影响残差与梯度。本节把常见的批、层、实例、组和均方根归一化放在同一坐标系中比较，再补充尺度与权重归一化；它们并非都适合直接替换因果Transformer中的LayerNorm。
+第\ref{sec:transformer-residual-normalization}节已经给出逐位置LayerNorm及其残差块形式。扩展时仍需分别检查统计范围、是否减均值，以及归一化位于哪条路径：前两项决定消去哪些表示变化，后一项影响残差与梯度。通用归一化公式、批归一化（BatchNorm）、实例归一化（InstanceNorm）和组归一化（GroupNorm）的完整说明见第\ref{sec:training-normalization}节，统计轴对照见表~\ref{tab:training-normalization-axes}。这里集中讨论Transformer中的因果限制、RMSNorm与残差位置。
 
-\subsubsection{统计范围：批、层、实例与组归一化}
+\subsubsection{统计范围与因果限制}
 
-为避免名称掩盖计算轴，设批量激活为$\bm X\in\mathbb R^{b\times n\times d}$，三个轴分别是样本、位置和特征，元素写为$X_{a,i,k}$。图像前端可把空间位置展平为$n$，通道作为$d$。对某个元素，令$S_{a,i,k}$为与它共同统计的索引集合，中心化归一化写为
-\begin{equation}
-  \begin{aligned}
-    \mu_S&=\frac1{|S|}\sum_{(a',i',k')\in S}X_{a',i',k'},\\
-    s_S^2&=\frac1{|S|}\sum_{(a',i',k')\in S}
-                    (X_{a',i',k'}-\mu_S)^2,\\
-    Y_{a,i,k}&=\gamma_k\frac{X_{a,i,k}-\mu_S}
-                              {\sqrt{s_S^2+\varepsilon}}+\beta_k\text{。}
-  \end{aligned}
-  \label{eq:transformer-normalization-set}
-\end{equation}
-这里$S=S_{a,i,k}$，仿射参数按特征共享；具体实现还可选择其他仿射范围或关闭仿射。区别主要体现在集合$S$怎样取，而不是公式中出现了不同的除法。
+对批量激活$\bm X\in\mathbb R^{b\times n\times d}$，三个轴分别是样本、位置和特征。式\eqref{eq:transformer-layernorm}固定样本和位置，只沿$d$个特征统计；不同位置不交换均值与方差，训练与预测均使用当前行的统计量，不需要运行均值。LayerNorm的“层”并不表示把整批或整段的元素放在一起。
 
-\term{批归一化}（batch normalization, BatchNorm）在这里对每个特征$k$，跨样本与有效位置计算均值和方差，即固定$k$，统计$(a',i')$。卷积前端通常也跨批与空间统计。训练输出因此依赖同批其他输入，预测通常改用训练时累积的运行统计；小批量、不同长度与分布变化都可能使统计不稳定，填充不能按真实观测计入\scite{ioffe2015batchnorm}
+完整已知的图像或离线编码可以使用跨空间、跨位置统计；因果解码则要求位置$i$的统计量不能包含$j>i$的激活。只要均值或方差读取了未来，即使注意力有三角掩码也会泄漏。把BatchNorm、InstanceNorm或GroupNorm设为跨整段统计时，必须另行设计满足因果条件的统计方案，不能直接替换逐位置归一化。训练用全段统计、预测用前缀统计还会引入额外不一致；填充也不能作为有效观测参与统计。
 
-\term{层归一化}固定样本$a$和位置$i$，只沿特征$k'$统计，正是式\eqref{eq:transformer-layernorm}的逐位置形式。不同位置不交换统计量，变长序列也不改变一行的统计范围，因此可直接与因果掩码配合。训练与预测均按当前行计算，不需要运行均值。LayerNorm的“层”并不表示把整批、整段的所有元素放在一起。
+\subsubsection{不减均值的RMSNorm}
 
-\term{实例归一化}（instance normalization, InstanceNorm）固定样本$a$和特征$k$，跨位置$i'$统计；一张图像的一个通道内部便是一组。它消去单个样本各通道的均值与尺度，原工作将其用于图像风格化，训练与测试均使用实例统计\scite{ulyanov2016instancenorm} 将同样定义用于文本序列时，它会混合整段位置的统计，而不是像LayerNorm那样处理一个词元的全部特征。只有一个有效位置时，中心化方差为0，特征也会失去区分，这说明替换不能只看“是否依赖批量”。
-
-\term{组归一化}（group normalization, GroupNorm）把特征轴分成$g$组，在一个样本内跨同组特征与全部位置统计。它不依赖批量大小，却仍依赖位置范围\scite{wu2018groupnorm} 当$g=d$时，每组一个特征，统计范围与InstanceNorm相同；当$g=1$时，它覆盖一个样本的全部位置和特征，与把$(n,d)$一起归一化的LayerNorm范围相同，却不等于Transformer通常使用的逐位置LayerNorm。即使统计范围一致，仿射参数的形状也需核对。
-
-图~\ref{fig:transformer-normalization-axes}始终圈出同一个元素$X_{1,2,2}=6$，只改变与它共同计算均值和方差的格子。BN选出$\{2,6,10,14,18,22\}$，均值为12；逐位置LN选出$\{5,6,7,8\}$，均值为6.5；IN选出$\{2,6,10\}$，均值为6；每组两个特征的GN选出$\{1,2,5,6,9,10\}$，均值为5.5。相同的激活值因此会减去不同均值，随后也会除以不同的标准差。
-
-对于完整已知图像或离线编码，跨空间或位置统计可以合法使用；因果解码中，若位置$i$的均值或方差包含$j>i$的激活，就已经读到未来信息，即使注意力本身有三角掩码也会泄漏。跨整段的BatchNorm、InstanceNorm和GroupNorm要改用满足因果条件的统计方案，不能直接替换逐位置归一化。训练用全段统计、预测用前缀统计还会引入额外不一致。
-
-\begin{figure*}[p]
-  \centering
-  \input{figures/transformer-normalization-axes}
-  \caption{四种中心化归一化如何为同一个元素选择统计伙伴。每个网格是一条样本序列，行对应猫、追、狗三个位置，列为四个特征；第二个样本也有三个位置。橙圈标出$X_{1,2,2}=6$，紫色格共同计算均值与方差。按图中假设数值，BN、逐位置LN、IN及每组两特征的GN分别得到均值12、6.5、6、5.5；图未画后续标准差缩放和仿射变换。}
-  \label{fig:transformer-normalization-axes}
-\end{figure*}
-\FloatBarrier
-
-\subsubsection{尺度统计：RMSNorm与ScaleNorm}
-
-中心化不是调整尺度的唯一方式。\term{均方根归一化}（root mean square normalization, RMSNorm）保留均值，只按坐标均方根缩放：
+中心化不是调整尺度的唯一方式。\term{均方根归一化}（root mean square normalization, RMSNorm）不减去均值，而按坐标均方根缩放：
 \begin{equation}
   \operatorname{RMSNorm}(\bm x)
     =\bm\gamma\odot\frac{\bm x}
@@ -1068,37 +1051,7 @@ Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共
 \end{equation}
 这里采用常见的无平移形式。它与逐位置LayerNorm均只读取当前行，但少了均值计算和相减。给各坐标加同一常数时，LayerNorm的中心化结果不变，RMSNorm的结果一般会变；忽略$\varepsilon$时，二者都消去正比例整体缩放，实际耗时仍由实现与形状决定\scite{zhang2019rmsnorm}
 
-\Needspace{42mm}
-若只希望约束整行的欧氏长度，可用\term{尺度归一化}（ScaleNorm），以一个可学习标量$c$代替逐特征缩放，写为$\operatorname{ScaleNorm}(\bm x)=c\bm x/\max(\lVert\bm x\rVert_2,\varepsilon)$。分母的截断避免零向量除零；在范数高于阈值时，输出范数为$|c|$。它也不减均值，但各特征共用一个尺度，不能像RMSNorm的$\bm\gamma$那样逐坐标调整\scite{nguyen2019scalenorm}
-
-\subsubsection{参数范围：权重归一化}
-
-前述方法归一化激活，\term{权重归一化}（weight normalization, WeightNorm）则把权重向量重新参数化为$\bm w=c\bm v/\lVert\bm v\rVert_2$，分别学习非零方向参数$\bm v$和尺度$c$。矩阵投影可以逐输出方向使用这一形式；它不读取同批样本或未来位置的激活，却也不保证输出均值、方差或范数固定\scite{salimans2016weightnorm} 因此，权重归一化可以与激活归一化并用，不能因为名称相同就把它视作LayerNorm的等价替代。
-
-\subsubsection{归一化方法的比较与选择}
-
-表~\ref{tab:transformer-normalization-comparison}统一比较计算范围与使用条件。对文本因果网络，逐位置LN、RMSNorm或ScaleNorm不会通过统计量跨位置；图像或卷积混合前端则可以根据批量和空间结构考虑BN、IN或GN。选择还需检查任务是否应保留均值、幅度和样本间差异：去除尺度可以改善参数化，也可能删去有用信号。
-
-\begin{table*}[htbp]
-  \centering
-  \small
-  \begin{tabular}{@{}p{24mm}p{43mm}p{21mm}p{24mm}p{39mm}@{}}
-    \toprule
-    方法 & 本节统计或作用范围 & 减均值？ & 跨样本？ & 因果性与训练／预测 \\
-    \midrule
-    BatchNorm & 同特征的样本与位置 & 是 & 训练时是 & 全段统计可泄漏；预测通常用运行统计 \\
-    LayerNorm & 单样本单位置的全部特征 & 是 & 否 & 逐位置可用；两阶段使用同类统计 \\
-    InstanceNorm & 单样本单特征的全部位置 & 是 & 否 & 全段统计可泄漏；通常使用实例统计 \\
-    GroupNorm & 单样本的同组特征及位置 & 是 & 否 & 全段统计可泄漏；无运行统计依赖 \\
-    RMSNorm & 单位置的特征均方根 & 否 & 否 & 逐位置可用；逐特征可学习缩放 \\
-    ScaleNorm & 单位置的欧氏范数 & 否 & 否 & 逐位置可用；共享标量缩放 \\
-    WeightNorm & 一个输出方向的权重向量 & 否 & 否 & 参数重写，不统计激活；不保证输出尺度 \\
-    \bottomrule
-  \end{tabular}
-  \caption{归一化方法比较。激活采用$b\times n\times d$布局，BN、IN、GN的范围按正文约定；改变布局或归一化轴会改变性质。可学习仿射不是统计范围的一部分，具体实现还需核对参数形状和是否使用运行统计。}
-  \label{tab:transformer-normalization-comparison}
-\end{table*}
-\FloatBarrier
+逐位置统计满足这一局部因果条件，却不保证归一化保留了任务需要的均值或幅度。只调整整行长度的尺度归一化（ScaleNorm）见第\ref{sec:training-scalenorm}节；直接重参数化权重、而非统计激活的权重归一化（WeightNorm）见第\ref{sec:training-weightnorm}节。它们改变的对象不同，不能仅凭名称作为LayerNorm的等价替代。
 
 \subsubsection{归一化位置：Pre-LN、Post-LN与组合}
 
@@ -1140,7 +1093,7 @@ Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共
 
 模块也可以交替堆叠。例如用状态空间模块压缩历史，用注意力层在保留位置之间进行显式检索；或者先用循环网络处理陆续到达的观测，再在给定窗口内交换信息。串联改变后一个模块接收到的表示，注意力无法恢复前端已经丢掉的细节。并行分支则可以分别形成局部与全局表示，再相加或拼接，维度、位置对齐和因果规则仍需一致。
 
-混合结构的成本不能只取其中最便宜的模块：只要保留稠密注意力层，它在相应长度上仍有平方位置对计算和缓存；固定状态模块的存储优势也只覆盖该模块。前端、交替与并行是不同组织方式，应围绕任务需要的局部模式、精确历史读取、延迟和计算预算选择。
+混合结构的成本不能只取其中最便宜的模块：只要保留稠密注意力层，整段处理仍有平方量级的位置对计算；生成时，该层需保存随历史长度线性增长的KV缓存。训练中间存储另取决于实现，FlashAttention不必保存完整的平方规模注意力矩阵；固定状态模块的存储优势也只覆盖该模块。前端、交替与并行是不同组织方式，应围绕任务需要的局部模式、精确历史读取、延迟和计算预算选择。
 
 图~\ref{fig:transformer-hybrid}比较前端、交替与并行三种组织。它们分别改变输入粒度、层间分工与融合方式，使用哪一种都需要保持位置对应和信息可见规则。
 
@@ -1226,7 +1179,7 @@ Softmax雅可比$\bm J=\operatorname{diag}(\bm a)-\bm a\bm a^{\top}$的谱范数
 
 查询键范数控制得分尺度，值与输出投影范数控制读取结果，前馈层和归一化缩放影响后续敏感度。参数总数给出一个粗略的容量尺度，但共享投影在所有位置使用，不能简单按$n$乘上参数量；计算图随长度增长也并未因此从分析中消失。控制参数范数、分类间隔或适合任务的有效自由度，可以提供比总参数数目更有条件的描述。
 
-训练算法还决定实际选择了哪个参数。正则化、停止时间和步长会改变样本替换对输出的影响；若能证明一致稳定性系数为$\epsilon_{\mathrm{stab}}$，第\ref{thm:stability-expected-generalization}条定理将它联系到期望泛化间隙。存在稳定性工具不意味着Transformer训练天然稳定：还需控制注意力、归一化和优化轨迹的敏感度。模型选择若多次查看验证集，也应将选择过程纳入评估，而不能只分析最后一组固定参数。
+训练算法还决定实际选择了哪个参数。正则化、停止时间和步长会改变样本替换对输出的影响；若能证明均匀稳定性系数为$\epsilon_{\mathrm{stab}}$，第\ref{thm:stability-expected-generalization}条定理将它联系到期望泛化间隙。存在稳定性工具不意味着Transformer训练天然稳定：还需控制注意力、归一化和优化轨迹的敏感度。模型选择若多次查看验证集，也应将选择过程纳入评估，而不能只分析最后一组固定参数。
 
 \subsubsection{网络结构与外推边界}
 

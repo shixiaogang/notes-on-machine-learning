@@ -108,7 +108,9 @@
 \subsubsection{异步序列到序列}
 \label{sec:rnn-encoder-decoder}
 
-把一段输入转换为另一段序列时，两者可能长度不同，也没有已知的逐位置对应。\term{编码器—解码器}（encoder--decoder）把读取输入和产生输出分成两套计算：编码器形成上下文，解码器以此为条件生成目标。设目标长度为$S$，目标符号来自大小为$K$的词表；用$\bm{e}(y)$表示符号嵌入，用$\bm{s}^{(j)}$表示解码状态，基本形式为
+把一段输入转换为另一段序列时，两者可能长度不同，也没有已知的逐位置对应。\term{编码器—解码器}（encoder--decoder）把读取输入和产生输出分成两套计算：编码器形成上下文，解码器以此为条件生成目标。设目标长度为$S$，目标符号来自大小为$K$的词表，约定词表包含起止符号BOS和EOS。
+
+符号本身不能直接参与向量运算，可以为每个符号保存一个$d_e$维的可学习向量，并将它们排成嵌入矩阵$\bm{E}\in\mathbb{R}^{d_e\times K}$。若$y$是符号的词表索引，\term{符号嵌入}（symbol embedding）就是查表取出的那一列，即$\bm{e}(y)=\bm{E}_{:,y}$；索引只用于选列，其数值大小不表示符号间的距离。用$\bm{s}^{(j)}$表示解码状态，基本形式为
 \begin{equation}
   \begin{aligned}
     \bm{c}_{\mathrm{enc}}&=\bm{h}^{(T)},\qquad
@@ -120,7 +122,7 @@
   \end{aligned}
   \label{eq:rnn-encoder-decoder}
 \end{equation}
-$\psi$将编码状态映射到解码状态空间，编码器与解码器可以使用不同参数和宽度。起始符号$y_0=\mathrm{BOS}$为第一步提供输入，终止符号$\mathrm{EOS}$表示生成结束。下文把$y_S=\mathrm{EOS}$计入目标序列。
+$\psi$将编码状态映射到解码状态空间，编码器与解码器可以使用不同参数和宽度。起始符号$y_0=\mathrm{BOS}$为第一步提供输入，终止符号$\mathrm{EOS}$表示生成结束；它们也有各自的嵌入列。下文把$y_S=\mathrm{EOS}$计入目标序列。使用真实前缀训练时，$y_{j-1}$来自目标序列；生成时，它来自上一步概率分布中选出或采样的符号。两种情况都先查表得到$\bm{e}(y_{j-1})$再输入解码器，并非把整组类别概率当作这个嵌入；嵌入矩阵与其他网络参数一起通过训练更新。
 
 目标序列的条件概率按生成次序分解：
 \begin{equation}
@@ -165,7 +167,7 @@ $\psi$将编码状态映射到解码状态空间，编码器与解码器可以�
 \end{equation}
 $\odot$表示逐元素乘法。第一项来自当前读出，第二项来自后续状态；即使当前没有标签，后续损失仍可通过第二项监督这一步。若只在末状态分类，$t<T$的$\bm{g}^{(t)}$均为零，但相应$\bm{\delta}^{(t)}$未必为零。
 
-每次调用都对共享参数产生一个局部贡献，累积后得到
+每次调用都对共享参数产生一个局部贡献。求这一局部贡献时，将该步读入的上一状态视为独立输入；跨步依赖已经由$\bm{\delta}^{(t)}$汇总，不能再对上一状态重复求导。把所有调用的贡献累积起来，得到
 \begin{equation}
   \begin{aligned}
     \nabla_{\bm{U}}L&=\sum_{t=1}^{T}\bm{\delta}^{(t)}\bm{x}_t^{\top},
@@ -182,12 +184,25 @@ $\odot$表示逐元素乘法。第一项来自当前读出，第二项来自后�
 
 \begin{example}[两步递推中的梯度累积]
   \label{ex:rnn-shared-gradient}
-  为单独观察共享参数，暂用标量线性更新$h^{(t)}=w h^{(t-1)}+x_t$，取$h^{(0)}=0$、$x_1=1$、$x_2=0$、$w=1/2$，末步损失为$L=(h^{(2)})^2/2$。前向计算得到$h^{(1)}=1$、$h^{(2)}=1/2$。末步状态梯度为$1/2$，前一步状态梯度为$w/2=1/4$；参数梯度是
+  为单独观察共享参数，暂把Tanh换成恒等映射，使用标量更新$h^{(t)}=w h^{(t-1)}+x_t$；$w$是矩阵$\bm W$的一维情形。取固定初始状态$h^{(0)}=1$、$x_1=1$、$x_2=0$、$w=1/2$，只在末步计算损失$L=(h^{(2)})^2/2$。两次前向调用为
   \[
-    \frac{\partial L}{\partial w}
-      =\frac14 h^{(0)}+\frac12 h^{(1)}=\frac12\text{。}
+    \begin{aligned}
+      h^{(1)}&=\tfrac12\times1+1=\tfrac32,\\
+      h^{(2)}&=\tfrac12\times\tfrac32+0=\tfrac34\text{。}
+    \end{aligned}
   \]
-  第一步贡献为零，是因为它乘到零初始状态，并非第一步不属于共享计算。若初始状态可学习，其梯度为$w\times1/4=1/8$。
+  反向从$r^{(2)}=h^{(2)}=3/4$开始，再沿第二步的状态依赖得到$r^{(1)}=w r^{(2)}=3/8$。本例激活导数为一，故$\delta^{(t)}=r^{(t)}$。第二次调用对$w$的局部导数是$h^{(1)}$，第一次是$h^{(0)}$，所以共享参数收到两项贡献：
+  \[
+    \begin{aligned}
+      \frac{\mathrm dL}{\mathrm dw}
+        &=r^{(1)}h^{(0)}+r^{(2)}h^{(1)}\\
+        &=\tfrac38\times1+\tfrac34\times\tfrac32
+          =\tfrac38+\tfrac98=\tfrac32\text{。}
+    \end{aligned}
+  \]
+  第一项对应依赖路径$w\to h^{(1)}\to h^{(2)}\to L$，第二项对应$w\to h^{(2)}\to L$；梯度沿这些依赖逆向回传。两条路径的贡献最终相加，更新的仍是同一个$w$。直接展开$h^{(2)}=w(w+1)=w^2+w$，也有$\mathrm dL/\mathrm dw=(w^2+w)(2w+1)=3/2$，可与反向递推核对。
+
+  若改取$h^{(0)}=0$，第一步对$w$的贡献为零，因为$w$乘到零初态；这不表示第一步未参与共享计算。若将本例的$h^{(0)}=1$改为可学习初态，它收到的梯度为$w r^{(1)}=3/16$，与$w$的梯度分开更新。
 \end{example}
 
 \subsubsection{截断、裁剪与状态管理}
@@ -362,13 +377,19 @@ $\bm{W}_{\mathrm{res}}\in\mathbb{R}^{m\times m}$、$\bm{U}_{\mathrm{res}}\in\mat
 \end{equation}
 其中$v_i$是膜电位，$\tau_{\mathrm m}>0$是泄漏时间常数，$I_i$表示换算到同一电位尺度的外部驱动，$w_{i,j}$是固定连接权重，$\kappa_{\mathrm{syn}}*s_j$是此前脉冲经过突触滤波后的作用。膜电位达到阈值时发出脉冲并重置；这里省略不应期等细节。持续的膜电位、突触响应和反馈活动共同承载输入历史，当前输入停止后，内部影响仍可能延续。
 
-若第$i$个单元在时刻$\tau_{i,k}$发出脉冲，其脉冲列为$s_i(\tau)=\sum_k\delta(\tau-\tau_{i,k})$，$\delta$是Dirac脉冲。直接拿某个瞬间的脉冲值做普通回归不方便，可以用因果滤波核$\kappa_i$形成特征：
+若第$i$个单元在时刻$\tau_{i,k}$发出脉冲，其脉冲列为$s_i(\tau)=\sum_k\delta(\tau-\tau_{i,k})$，$\delta$是Dirac脉冲。它不是某一时刻的普通有限函数值，而是用积分记录一次单位事件：与连续权重函数相乘后积分，就取出该函数在发放时刻的值。因而可以用因果滤波核$\kappa_i$形成特征：
 \begin{equation}
   z_i(\tau)=\int_{-\infty}^{\tau}\kappa_i(\tau-u)s_i(u)\,\mathrm du,
   \qquad \kappa_i(v)=e^{-v/\tau_i}\mathbf 1_{\{v\geq0\}}\text{。}
   \label{eq:rnn-lsm-filter}
 \end{equation}
-$\tau_i>0$是特征衰减时间常数，$\mathbf 1$是指示函数。每次脉冲向$z_i$加入一个贡献，此后逐渐衰减。这一步是状态读取：把回路活动整理成有限维、可供后续计算的$\bm z(\tau)$。它未必完整包含膜电位和全部突触变量，因而不能自动重构整个回路。
+$\tau_i>0$是特征衰减时间常数，$\mathbf 1$是指示函数。采用事件发生后立即计入当前状态的约定，积分可以逐个发放时刻展开为
+\begin{equation}
+  z_i(\tau)=\sum_{k:\,\tau_{i,k}\leq\tau}
+    \exp\!\left(-\frac{\tau-\tau_{i,k}}{\tau_i}\right)\text{。}
+  \label{eq:rnn-lsm-event-sum}
+\end{equation}
+每次脉冲向$z_i$加入$1$，此后按已经过去的时间衰减；未来事件不参与求和。脉冲编码的进一步说明见第~\ref{sec:snn-coding}节。这一步是状态读取：把回路活动整理成有限维、可供后续计算的$\bm z(\tau)$。它未必完整包含膜电位和全部突触变量，因而不能自动重构整个回路。
 
 读出是从这些状态特征到任务预测的映射，作用相当于前馈网络的输出头。读取特征与产生任务答案是两步计算；一个常用读出为
 \begin{equation}
@@ -424,7 +445,7 @@ ESN主要以连续值激活表示状态，LSM利用脉冲时刻及其动态响�
 \end{equation}
 遗忘门名称容易造成误读：门值接近1是保留，接近0才是清除。新旧信息在记忆路径上相加，隐藏输出则经过Tanh和输出门，记忆状态可以保留当前未必需要输出的信息。遗忘门使持续运行的网络能够清除不再相关的旧内容\scite{gers2000}
 
-图~\ref{fig:rnn-lstm-cell}把各门的作用放在同一计算图中。门的系数取决于当前输入和此前状态，因此同一单元可以在不同输入位置采用不同的保留和写入策略。
+图~\ref{fig:rnn-lstm-cell}把各门的作用放在同一计算图中。三个Sigmoid模块输出门值，控制“通过多少”；与它们并排的Tanh模块产生候选记忆$\widetilde{\bm c}^{(t)}$，提供“写入什么”，数值可以为正或负。门与候选都取决于当前输入和此前状态，因此同一单元可以在不同输入位置采用不同的保留和写入策略。
 
 \begin{figure}[htb]
   \centering
@@ -433,20 +454,20 @@ ESN主要以连续值激活表示状态，LSM利用脉冲时刻及其动态响�
   \label{fig:rnn-lstm-cell}
 \end{figure}
 
-如果暂把门与候选值看作已给定量，记忆路径对旧记忆的直接导数为$\operatorname{diag}(\bm{f}^{(t)})$。沿这条路径从$s$到$t$的系数是各步遗忘门的逐坐标乘积。它不需要在每一步乘一个任意稠密状态矩阵，因此提供了容易保留梯度的路径；但完整状态的雅可比还包含$\bm{h}^{(t-1)}$影响各门和候选记忆的其他路径，不能把直接路径系数当作整个总导数。
-
-\begin{example}[门值决定保留和写入]
-  \label{ex:rnn-lstm-retention}
-  考察一个记忆坐标，假设旧值为$2$，本步遗忘门为$0.9$、输入门为$0.2$、候选值为$0.5$，则新值为$0.9\times2+0.2\times0.5=1.9$。若之后100步不写入且遗忘门都为$0.99$，原值沿直接路径的保留比例为$0.99^{100}\approx0.366$；门值为$0.9$时仅约$2.66\times10^{-5}$。加性记忆路径改善了可选择的传播方式，并不意味着遗忘门小于1时永不衰减。
-\end{example}
-
-长期保留具体发生在记忆路径上。暂固定门值时，沿这条直接路径有
+如果暂把门与候选值看作已给定量，记忆路径对旧记忆的直接导数为$\operatorname{diag}(\bm{f}^{(t)})$。沿这条路径从$s$到$t$有
 \begin{equation}
   \left.\frac{\partial\bm c^{(t)}}{\partial\bm c^{(s)}}\right|_{\mathrm{direct}}
     =\operatorname{diag}\!\left(\prod_{u=s+1}^{t}\bm f^{(u)}\right)\text{，}
   \label{eq:rnn-lstm-direct-memory}
 \end{equation}
-乘积按坐标进行。与普通RNN的$\bm D\bm W$相比，它用可学习的保留率替代直接路径上的反复稠密混合；需要保存的坐标可令$\bm f$接近1，并用较小输入门减少后续覆盖。这改变了式\eqref{eq:rnn-path-length-rate}中的逐步增益，通常没有缩短传播步数。
+乘积按坐标进行。与普通RNN的$\bm D\bm W$相比，这条路径用可学习的保留率替代反复稠密混合；需要保存的坐标可令遗忘门接近1，并用较小输入门减少覆盖。这改变了式\eqref{eq:rnn-path-length-rate}中的逐步增益，通常没有缩短传播步数。但完整状态的雅可比还包含$\bm h^{(t-1)}$影响各门和候选记忆的其他路径，不能把直接路径系数当作整个总导数。
+
+\begin{example}[门值决定保留和写入]
+  \label{ex:rnn-lstm-retention}
+  考察一个记忆坐标，假设旧值为$2$，本步遗忘门为$0.9$、输入门为$0.2$、候选值为$0.5$。沿图~\ref{fig:rnn-lstm-cell}读取，左上$\odot$保留$0.9\times2=1.8$，中间$\odot$写入$0.2\times0.5=0.1$，再由上方$+$得到新记忆$1.9$。若输出门为$0.5$，右侧$\odot$产生隐藏输出$0.5\tanh(1.9)\approx0.478$，而非直接输出记忆值$1.9$。
+
+  若之后100步不写入且遗忘门都为$0.99$，这份记忆沿直接路径的保留比例为$0.99^{100}\approx0.366$；门值为$0.9$时仅约$2.66\times10^{-5}$。加性记忆路径改善了可选择的传播方式，并不意味着遗忘门小于1时永不衰减。
+\end{example}
 
 记忆保持与信息读出仍要同时满足。即使直接路径没有明显衰减，过多写入也会覆盖证据；输出门较小或$\tanh(\bm c)$饱和时，任务损失仍可能难以作用于这段记忆。LSTM提供按任务选择保留、写入和读出的机制，完整梯度与预测表现需要对整个状态和读出分析。
 
@@ -454,6 +475,8 @@ ESN主要以连续值激活表示状态，LSM利用脉冲时刻及其动态响�
 
 变体通常改变某条信息通路。\term{窥孔连接}（peephole connections）让门额外读取记忆坐标；耦合输入门与遗忘门可令$\bm{i}^{(t)}=\bm{1}-\bm{f}^{(t)}$，减少一组自由门。这些变体改变了门的依赖或自由度，适合程度需要在具体任务上比较\scite{greff2017}
 
+% 避免两条完整变体引文在页底连续堆叠。
+\Needspace{10\baselineskip}
 若希望保留较宽记忆而减少循环映射成本，投影LSTM把记忆输出映射到更小的循环隐藏空间，使记忆宽度和循环宽度分开。它改变参数量与状态依赖，比较时不能再直接使用上述等宽单元的计数\scite{sak2014projection}
 
 \subsection{GRU}
@@ -777,9 +800,71 @@ S4采用的双线性离散化为
   \end{aligned}
   \label{eq:rnn-s4-generating-function}
 \end{equation}
-第二行适用于所写逆矩阵存在时。这样，逐次计算矩阵幂的问题转为在一组频率点计算矩阵逆的作用。双线性变换和低秩修正又把它转为对角分母求和，出现形如$1/(z_i-\lambda_j)$的\term{Cauchy核}（Cauchy kernel），其中$z_i$是变换后的频率点、$\lambda_j$是对角谱参数。这种结构允许使用专门的快速计算；在相应单位根上取得多项式的值，再用逆FFT恢复各个核系数。有限长度修正保留了截断边界，不能直接用无限序列的频率响应代替它。
+第二行适用于所写逆矩阵存在时，$T$表示有限核长度，矩阵上的$T$是幂次而非转置。要看清这个逆怎样利用DPLR结构，下面固定单输入单输出情形，记$\bm B=\bm b$、$\bm C=\bm c^*$，其中$\bm b,\bm c\in\mathbb C^m$；此时$\bm G_T$退化为标量多项式$G_T$，低秩$r$不随$m,T$增长。
 
-得到核后，LTI状态模块可用FFT卷积处理整段序列，单通道卷积的成本为$O(T\log T)$，核生成还有其自身成本。原始S4在相应快速结构算法下给出关于$m+T$的近线性核生成分析；这不意味着任意稠密SSM或任意实际实现都自动达到该复杂度。逐步预测改用同一组离散参数递推，无需保存全部历史输入。
+由双线性离散化，
+\[
+  \bm I-z\overline{\bm A}
+    =(\bm I-\tfrac{\Delta}{2}\bm A)^{-1}
+      \left[(1-z)\bm I-\frac{\Delta}{2}(1+z)\bm A\right]\text{。}
+\]
+对$z\neq-1$，提出方括号中的系数，可将离散逆矩阵作用改写为
+\begin{equation}
+  \begin{aligned}
+    \xi(z)&=\frac{2}{\Delta}\frac{1-z}{1+z},\\
+    (\bm I-z\overline{\bm A})^{-1}\overline{\bm b}
+      &=\frac{2}{1+z}(\xi(z)\bm I-\bm A)^{-1}\bm b\text{。}
+  \end{aligned}
+  \label{eq:rnn-s4-resolvent}
+\end{equation}
+其中$\overline{\bm b}=(\bm I-\Delta\bm A/2)^{-1}\Delta\bm b$。右侧的$(\xi\bm I-\bm A)^{-1}$称为预解矩阵（resolvent）。双线性变换把离散频率点$z$转为连续状态矩阵的频率变量$\xi$，上式仍以相关逆存在为前提。
+
+有限长度因子不能在这一步丢掉。在$T$个单位根
+$z_\ell=\exp(-2\pi\mathrm i\ell/T)$、$\ell=0,\ldots,T-1$上，$\mathrm i$为虚数单位，$z_\ell^T=1$，因此可以共用修正后的输出行
+\begin{equation}
+  \bm c_T^*=\bm c^*(\bm I-\overline{\bm A}^{T})\text{。}
+  \label{eq:rnn-s4-finite-readout}
+\end{equation}
+代入式\eqref{eq:rnn-s4-generating-function}与式\eqref{eq:rnn-s4-resolvent}，对$z_\ell\neq-1$得到
+\begin{equation}
+  G_T(z_\ell)=\frac{2}{1+z_\ell}
+    \bm c_T^*(\xi(z_\ell)\bm I-\bm A)^{-1}\bm b\text{。}
+  \label{eq:rnn-s4-root-evaluation}
+\end{equation}
+这里利用$z^T=1$才把修正行统一为$\bm c_T^*$；一般$z$处仍须保留$\bm I-(z\overline{\bm A})^T$，不能直接改用$\bm I-\overline{\bm A}^T$。
+
+现在代入$\bm A=\bm\Lambda-\bm P\bm Q^*$。记$\lambda_j$为$\bm\Lambda$的第$j$个对角元素，并令
+\[
+  \bm R_\xi=(\xi\bm I-\bm\Lambda)^{-1}
+    =\operatorname{diag}\!\left(
+       \frac1{\xi-\lambda_1},\ldots,\frac1{\xi-\lambda_m}\right)\text{。}
+\]
+Woodbury恒等式把原来的$m\times m$逆化为对角逆和一个$r\times r$逆：
+\begin{equation}
+  (\xi\bm I-\bm A)^{-1}
+    =\bm R_\xi-\bm R_\xi\bm P
+       (\bm I_r+\bm Q^*\bm R_\xi\bm P)^{-1}
+       \bm Q^*\bm R_\xi\text{。}
+  \label{eq:rnn-s4-woodbury}
+\end{equation}
+将其代入式\eqref{eq:rnn-s4-root-evaluation}，只需计算
+$\bm c_T^*\bm R_\xi\bm b$、$\bm c_T^*\bm R_\xi\bm P$、
+$\bm Q^*\bm R_\xi\bm b$和$\bm Q^*\bm R_\xi\bm P$，再作小矩阵求逆与乘法。每个对象的元素都是如下形式的求和：
+\begin{equation}
+  \bm u^*\bm R_\xi\bm v
+    =\sum_{j=1}^{m}\frac{\overline{u_j}v_j}{\xi-\lambda_j}\text{，}
+  \label{eq:rnn-s4-cauchy-sum}
+\end{equation}
+其中$\bm u$取$\bm c_T$或$\bm Q$的列，$\bm v$取$\bm b$或$\bm P$的列，$\overline{u_j}$表示复共轭。求和中的倒数因子$1/(\xi(z_\ell)-\lambda_j)$就是\term{Cauchy核}（Cauchy kernel）。因此加速的对象是许多频率点共享谱参数的这组求和，而不是为每个频率重新求一个一般稠密逆矩阵。
+
+上述分解要求$\xi\bm I-\bm\Lambda$及低秩修正中的逆存在。若某个采样点使中间表达式奇异，应回到有限多项式求值，或使用已消去可去奇点的等价形式。偶数$T$还会包含$z_{T/2}=-1$，此时不能直接计算$\xi$；由$\bm I+\overline{\bm A}=2(\bm I-\Delta\bm A/2)^{-1}$可单独得到
+\[
+  G_T(-1)=\frac{\Delta}{2}\bm c_T^*\bm b
+  \qquad(T\text{为偶数})\text{。}
+\]
+取得全部$T$个单位根处的值后，逆DFT恢复长度为$T$的核系数，可用FFT实现。这里保留的是有限多项式的值，不是无限序列频率响应的直接采样。
+
+固定秩下，逐点直接执行式\eqref{eq:rnn-s4-cauchy-sum}仍需$O(mT)$求和工作，形成$\bm c_T$也有成本；上述恒等式本身并未证明近线性核生成。原始S4在相应快速结构算法下给出关于$m+T$的近线性分析，具体算法与数值实现仍需另行核对。得到核后，LTI状态模块可用适当补零的FFT卷积处理整段序列，单通道卷积的成本为$O(T\log T)$，不能将它当成全部核生成成本。逐步预测改用同一组离散参数递推，无需保存全部历史输入。
 
 \subsubsection{完整层、训练与逐步预测}
 \label{sec:rnn-s4-architecture}
@@ -907,7 +992,7 @@ $\bm W_{\mathrm v},\bm W_{\mathrm z}\in\mathbb R^{d_{\mathrm{in}}\times d}$，$\
 \subsubsection{时间混合与加权状态}
 \label{sec:rnn-rwkv-time-mixing}
 
-设时间混合子模块的输入为$\bm{x}_t\in\mathbb{R}^{d}$，在完整层中它已由层归一化得到。时间混合先在当前与前一步输入之间逐坐标混合，再投影为键、值和接收向量：
+设时间混合子模块的输入为$\bm{x}_t\in\mathbb{R}^{d}$，在完整层中它已由\term{层归一化}（layer normalization, LN）得到。这里LN只对同一位置的$d$个特征坐标计算均值与方差，标准化后再作可学习的逐坐标缩放和平移，各位置共享这些参数；具体公式见式\eqref{eq:transformer-layernorm}。它不跨样本或时间位置统计，因此归一化本身不会读取未来输入。时间混合先在当前与前一步输入之间逐坐标混合，再投影为键、值和接收向量：
 \begin{equation}
   \bm{a}_t=\bm{W}_{\mathrm{a}}\!\left(
     \bm{\mu}_{\mathrm{a}}\odot\bm{x}_t
@@ -953,13 +1038,13 @@ $\bm W_{\mathrm v},\bm W_{\mathrm z}\in\mathbb R^{d_{\mathrm{in}}\times d}$，$\
 \end{equation}
 若内部宽度为$d_{\mathrm{ff}}$，则$\bm W'_{\mathrm k}\in\mathbb R^{d_{\mathrm{ff}}\times d}$、$\bm W'_{\mathrm v}\in\mathbb R^{d\times d_{\mathrm{ff}}}$，$\bm W'_{\mathrm r}\in\mathbb R^{d\times d}$。平方ReLU提供非线性通道变换，接收门调节其输出。混合系数是可学习参数，若没有额外约束，不保证它们一直处于$[0,1]$。
 
-图~\ref{fig:rnn-rwkv}先给出完整残差层，再用虚线把时间混合子模块A与其内部计算对应起来。下方的输出$\bm o_t$就是上方A送入第一个残差加法的量；通道混合B随后处理更新的表示。典型的归一化与残差关系为
+图~\ref{fig:rnn-rwkv}先给出完整残差层，再用虚线把时间混合子模块A与其内部计算对应起来。下方的输出$\bm o_t$就是上方A送入第一个残差加法的量；通道混合B随后处理更新的表示。在完整层公式中，$\bm x_t$改指归一化之前的层输入，$\bm s_t$表示第一次残差相加后的中间量，区别于WKV中的值向量$\bm v_t$。典型的归一化与残差关系为
 \begin{equation}
   \begin{aligned}
-    \bm v_t&=\bm x_t+\operatorname{TimeMix}
+    \bm s_t&=\bm x_t+\operatorname{TimeMix}
                     (\operatorname{LN}_1(\bm x_t)),\\
-    \bm u_t&=\bm v_t+\operatorname{ChannelMix}
-                    (\operatorname{LN}_2(\bm v_t))\text{。}
+    \bm u_t&=\bm s_t+\operatorname{ChannelMix}
+                    (\operatorname{LN}_2(\bm s_t))\text{。}
   \end{aligned}
   \label{eq:rnn-rwkv-residual-layer}
 \end{equation}
@@ -967,7 +1052,7 @@ LN是逐位置层归一化，状态更新在各子模块内部进行。时间混
 \begin{figure*}[p]
   \centering
   \input{figures/rnn-rwkv}
-  \caption{RWKV-4的完整残差层与时间混合子模块。上方在A、B之前分别归一化，并在各子模块之后作残差相加。下方只展开A，无箭头虚线表示对应关系；$\widetilde{\bm x}_t=\operatorname{LN}_1(\bm x_t)$是归一化后的特征。WKV聚合历史并更新状态，经接收门和输出投影产生$\bm o_t$，回到上方参与第一次残差相加。图中省略数值重缩放状态、移位缓存的保存箭头及B的内部计算。}
+  \caption{RWKV-4的完整残差层与时间混合子模块。上方在A、B之前分别归一化，并在各子模块之后作残差相加，第一次相加得到$\bm s_t$。下方只展开A，无箭头虚线表示对应关系；$\widetilde{\bm x}_t=\operatorname{LN}_1(\bm x_t)$是归一化后的特征。WKV聚合值向量$\bm v_t$与历史状态，经接收门和输出投影产生$\bm o_t$，回到上方参与第一次残差相加。图中省略数值重缩放状态、移位缓存的保存箭头及B的内部计算。}
   \label{fig:rnn-rwkv}
 \end{figure*}
 
@@ -1238,7 +1323,7 @@ $r<1$时几何和有统一上界，$r=1$时按$t$增长，$r>1$时该上界可�
 \subsection{序列分类}
 \label{sec:rnn-application-classification}
 
-以评论情感分类为例，一个样本是整段评论和类别$y$。将离散词元映射为嵌入$\bm{x}_t=\bm{E}_{:,v_t}$，其中$\bm{E}\in\mathbb{R}^{d\times K_{\mathrm{vocab}}}$，$v_t$是词表索引，再用RNN、LSTM或GRU编码。末状态或掩码平均形成整段表示，经Softmax分类头输出概率，训练时对独立评论的交叉熵取平均；嵌入、循环单元和分类头共同更新。
+以评论情感分类为例，一个样本是整段评论和类别$y$。沿用第~\ref{sec:rnn-encoder-decoder}节的嵌入查表方式，将离散词元映射为$\bm{x}_t=\bm{E}_{:,v_t}$，其中$\bm{E}\in\mathbb{R}^{d\times K_{\mathrm{vocab}}}$，$v_t$是词表索引，再用RNN、LSTM或GRU编码。末状态或掩码平均形成整段表示，经Softmax分类头输出概率，训练时对独立评论的交叉熵取平均；嵌入、循环单元和分类头共同更新。
 
 单向编码适合边读边更新状态，但如果目标是整段类别，预测仍需说明何时决定结果。双向编码在读到完整评论后利用前后上下文；使用末位置的双向状态时，不应误以为两向末位置都概括了全段，可分别取正向有效末状态与反向有效首状态，或聚合每个位置的双向表示。评估时保持分词、有效长度和聚合规则一致。
 
