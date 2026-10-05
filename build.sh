@@ -8,36 +8,39 @@ cd "$project_root"
 book_source=tex/main.tex
 book_output=build/main.pdf
 volume_slugs=(
-  01-foundations
-  02-models
-  03-paradigms
-  04-applications
-  05-systems
+  01-mathematical-preliminaries
+  02-foundations
+  03-models
+  04-paradigms
+  05-applications
+  06-systems
 )
 volume_sources=(
-  tex/01-foundations/main.tex
-  tex/02-models/main.tex
-  tex/03-paradigms/main.tex
-  tex/04-applications/main.tex
-  tex/05-systems/main.tex
+  tex/01-mathematical-preliminaries/main.tex
+  tex/02-foundations/main.tex
+  tex/03-models/main.tex
+  tex/04-paradigms/main.tex
+  tex/05-applications/main.tex
+  tex/06-systems/main.tex
 )
 volume_outputs=(
-  build/01-foundations.pdf
-  build/02-models.pdf
-  build/03-paradigms.pdf
-  build/04-applications.pdf
-  build/05-systems.pdf
+  build/01-mathematical-preliminaries.pdf
+  build/02-foundations.pdf
+  build/03-models.pdf
+  build/04-paradigms.pdf
+  build/05-applications.pdf
+  build/06-systems.pdf
 )
 
 usage() {
   printf '用法: %s [build|volume <slug>|volumes|all|watch|release|clean]\n' "${0##*/}"
   printf '  build          增量编译全集，使用快速无损压缩（默认）\n'
   printf '  volume <slug>  只编译指定单卷\n'
-  printf '  volumes        依次编译五个单卷\n'
-  printf '  all            依次编译全集和五个单卷\n'
+  printf '  volumes        依次编译六个单卷\n'
+  printf '  all            依次编译全集和六个单卷\n'
   printf '  watch          只监听全集，不打开新窗口\n'
   printf '  release        以最高压缩等级编译全集\n'
-  printf '  clean          清除全集与五个单卷的构建缓存和产物\n'
+  printf '  clean          清除全集与六个单卷的构建缓存和产物\n'
   printf '可用卷名：%s\n' "${volume_slugs[*]}"
 }
 

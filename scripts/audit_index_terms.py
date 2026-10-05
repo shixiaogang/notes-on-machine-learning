@@ -14,14 +14,15 @@ from typing import Iterator, NamedTuple, Sequence
 
 
 VOLUMES = (
-    "01-foundations",
-    "02-models",
-    "03-paradigms",
-    "04-applications",
-    "05-systems",
+    "01-mathematical-preliminaries",
+    "02-foundations",
+    "03-models",
+    "04-paradigms",
+    "05-applications",
+    "06-systems",
 )
-EXPECTED_CALLS = 1686
-EXPECTED_UNIQUE_TERMS = 1481
+EXPECTED_CALLS = 2291
+EXPECTED_UNIQUE_TERMS = 1965
 SHARED_TERM_FILES = (Path("tex/styles/environments.tex"),)
 VERBATIM_ENVIRONMENTS = {"verbatim", "Verbatim", "lstlisting", "minted"}
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")

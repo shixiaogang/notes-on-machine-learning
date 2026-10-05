@@ -37,9 +37,9 @@ BLUE, RED, YELLOW, GRAY = "#7998AD", "#D57B70", "#D6B35D", "#747A80"
 META = {"python": sys.version.split()[0], "matplotlib": matplotlib.__version__,
         "numpy": np.__version__, "fonts": ["SourceSans3-Regular.otf", "LXGWWenKai-Regular.ttf"],
         "mathtext": "stix", "pdf_font_encoding": "Type3 vector glyph programs: avoids CFF OpenType blank-glyph rendering in Type42; original fonts unchanged", "origin": "Explicit teaching constructions; no empirical data",
-        "sources": ["tex/01-foundations/02-learning-theory/01-statistical-learning-framework.tex",
-                    "tex/01-foundations/02-learning-theory/05-deep-learning-theory.tex",
-                    "tex/01-foundations/02-learning-theory/06-transfer-learning-theory.tex"],
+        "sources": ["tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex",
+                    "tex/02-foundations/02-learning-theory/05-deep-learning-theory.tex",
+                    "tex/02-foundations/02-learning-theory/06-transfer-learning-theory.tex"],
         "processing": "No filtering, missing values, random generation, aggregation or inference",
         "palette": {"blue": BLUE, "red": RED, "yellow": YELLOW, "neutral": GRAY},
         "figures": {}}

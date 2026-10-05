@@ -1,0 +1,1254 @@
+\chapter{Transformer}
+\label{chap:transformer}
+
+在第\ref{sec:rnn-attention}节中，解码器可以根据当前需求读取不同输入位置，不必把整段输入的细节都挤进一个末状态。但编码状态仍沿时间逐步形成，解码状态也依赖前一步。如果各位置已经全部可见，能否让它们直接交换信息，再通过层间计算逐步形成表示？如果输出尚未产生，这种计算又怎样遵守“只能读取已知内容”的约束？
+
+Transformer将这两个问题分开处理：注意力决定一个位置从哪些位置读取信息，层间堆叠决定这些信息怎样变成新的表示。输入顺序、预测目标和可见范围需要明确写进网络，而计算与存储代价也随读取方式改变。本章围绕这组关系建立网络结构和梯度计算，再比较位置、注意力、前馈与连接方式的扩展，分析学习结论的条件，并将它们接到分类、转换、生成和图像任务中。
+
+\section{Transformer概述}
+\label{sec:transformer-overview}
+
+Transformer把序列中的信息传递从时间递推转为位置间读取与层间更新。理解这一变化，需要同时看注意力的读取机制、网络架构的发展，以及并行计算与存储之间的取舍。
+
+\subsection{从循环计算到位置间读取}
+\label{sec:transformer-core-idea}
+
+循环注意力中的查询来自解码状态，候选表示来自编码状态；它使每一步可以重新选择上下文，却保留了状态递推。\term{自注意力}（self-attention）把查询和候选表示都取自同一组输入：每个位置根据自身表示，选择同一序列中其他位置的信息。例如，在“这部电影并不精彩”中，表示“精彩”的位置可以直接读取“并不”，形成带有上下文的表示。读取是否正确仍由训练决定，连接的存在只提供了计算路径。
+
+\term{Transformer}是一类以注意力进行位置间交互、以逐位置前馈网络进行特征变换的网络。一次自注意力可以同时更新所有已知位置；下一层再读取上一层得到的表示。这里的层间依赖与普通循环网络的时间递推不同：同层各位置不需要等前一个位置先更新完成。稠密自注意力在允许读取的任意位置对之间建立直接路径，但每个位置收到的是加权混合，仍需足够的特征容量和后续变换来保留任务相关区别。
+
+\subsection{注意力机制的发展}
+\label{sec:transformer-attention-history}
+
+注意力机制始终围绕一个问题展开：当前计算应该优先使用哪些信息？早期视觉模型通过选择观察位置分配处理资源，后来的序列模型通过可学习权重读取已有表示。沿着这两条相互交汇的路线，可以看清注意力如何从局部选择机制发展为Transformer中的基本运算。
+
+\paragraph{早期视觉注意力：选择在哪里观察}
+1985年，Koch与Ullman提出选择性视觉注意力的计算模型：不同视觉特征共同形成\term{显著图}（saliency map），即标出各位置有多突出的空间分布；模型选出突出位置，再抑制已选位置，使注意转向其他区域。这类模型着重解释视觉资源如何在空间中分配，还不是后文用查询、键和值进行加权聚合的运算\scite{koch1985attention}
+
+神经网络随后被用于学习观察策略。Schmidhuber与Huber在1991年的工作中，用神经控制器移动“人工中央凹”，即中心精细、外围粗略的局部观察区域，以逐步找到和跟踪目标。控制器借助学到的环境模型改进移动轨迹，而不是由教师逐步指定应看哪里\scite{schmidhuber1991attention} 2014年，Mnih等用循环网络整合多次局部观察，并学习下一次观察的位置。这种先采样位置、再读取局部输入的方式属于\term{硬注意力}（hard attention）；由于普通梯度不能直接穿过这种采样选择，论文使用强化学习方法训练位置策略\scite{mnih2014attention}
+
+\paragraph{机器翻译：从固定上下文到软对齐}
+序列转换遇到的是另一种信息瓶颈：编码器已经读完整句，但若只把一个固定向量交给解码器，每个目标词都要从同一压缩结果中恢复细节。Bahdanau、Cho与Bengio于2014年发布、2015年发表于ICLR的工作保留所有源位置的编码状态，在生成每个目标词之前，用此前的解码状态重新为这些源状态评分。得分经Softmax变成权重，再加权求和，形成随生成步变化的上下文。模型不必只选一个源位置，整个聚合过程可微，能和翻译目标一起训练；这就是\term{软注意力}（soft attention）形成的软对齐\scite{bahdanau2015}
+
+例如翻译“猫追狗”时，预测cat与预测dog所需的源信息不同，读取权重可以随之改变；“对齐”表示目标步与源位置之间学到的软对应，不要求人工提供逐词对齐标签。这项工作中的加性注意力用一个小前馈网络评估两种状态是否匹配，具体公式已见式\eqref{eq:rnn-additive-attention}。它解决了如何动态读取源表示的问题，编码器与解码器本身仍然逐步递推。
+
+2015年，Luong等系统比较了直接点积、带参数的双线性形式等评分方式，并区分读取全部源位置的全局注意力与只读取一个窗口的局部注意力。这使“怎样评分”和“允许读取哪些位置”成为可分别选择的设计；局部读取仍可以在窗口内部使用软权重，并不等于硬注意力\scite{luong2015} 同年，Xu等的Show, Attend and Tell将基于内容的注意力用于图像描述：生成不同词时，语言解码器可以对不同图像区域分配权重，论文同时研究了软聚合与随机硬选择。被读取对象由源词变为图像区域，按当前需求选择信息的作用保持不变\scite{xu2015showattend}
+
+\paragraph{自注意力：从读取另一序列到建立内部关系}
+注意力还可以用来联系同一序列中的位置。2016年，Cheng等在用于机器阅读的LSTM记忆网络中保存此前词元的表示，并让当前词元通过注意力读取这些记忆，建立序列内部关系。这种\term{序列内注意力}（intra-attention）是自注意力的一种早期实现，网络仍保留循环更新；因此，使用自注意力与取消循环结构是两个不同的设计选择\scite{cheng2016reading}
+
+这段发展可以区分三个设计问题：硬选择与软聚合决定怎样读取信息，加性与点积形式决定怎样计算匹配，交叉注意力与自注意力决定读取来自哪里。评分方式、信息来源和读取范围可以组合；第\ref{sec:transformer-attention}节将用查询、键和值统一描述这些角色，再展开Transformer采用的计算形式。
+
+\subsection{Transformer的提出与演进}
+\label{sec:transformer-architecture-history}
+
+注意力机制使解码器可以反复读取源表示，但这些表示最初仍由循环网络产生。1997年的LSTM通过记忆单元与控制门改善长距离信息的保留和梯度传递，更新仍沿时间进行\scite{hochreiter1997} 2014年，Sutskever等用LSTM编码器—解码器进行序列转换，将输入压缩到固定维表示\scite{sutskever2014seq2seq} 第\ref{sec:transformer-attention-history}节介绍的软对齐进一步减轻了固定表示的瓶颈，循环递推却仍限制整段输入表示的并行形成。
+
+2017年，Vaswani等在机器翻译中提出Transformer：源端以自注意力形成上下文，目标端以因果自注意力形成前缀表示，再用交叉注意力读取源端。位置表示提供顺序，多头读取形成多组聚合，逐位置前馈层变换特征。这一设计把位置间的循环更新改为注意力读取与层间堆叠，为已知序列提供批量矩阵计算方式\scite{vaswani2017}
+
+% 三条完整引文的边栏高度大于正文段落，预留共同阅读空间。
+\Needspace{165mm}
+后续发展又把网络结构与预训练目标结合。2018年，GPT用因果Transformer进行语言模型预训练，再适配有监督任务\scite{radford2018gpt} 同年发布、2019年发表于NAACL的BERT用双向编码器从被遮蔽的输入恢复词元，形成可用于多种理解任务的表示\scite{devlin2019} 2020年发表的T5研究把任务统一为文本输入到文本输出，采用编码器—解码器组织条件生成\scite{raffel2020t5} 第\ref{sec:transformer-common-architectures}节将比较这些架构；预训练数据和迁移范式由相关章节展开。
+
+\subsection{与RNN/LSTM的比较}
+\label{sec:transformer-recurrent-comparison}
+
+与RNN/LSTM相比，关键变化在于历史信息的组织方式。普通循环网络把过去压缩进固定宽度状态；LSTM增加记忆与门，改善保留方式，但仍需经中间时间步传递。稠密自注意力保留逐位置表示，让当前位置直接选择历史中的内容。它缩短了位置之间的结构路径，也增加了要保存和读取的信息。若循环网络另外配有注意力和源表示存储，就不再只有固定状态，不能将其与纯循环网络混为一类。表~\ref{tab:transformer-rnn-comparison}固定长度和宽度，比较三种基础结构。
+
+并行计算的条件是所需输入已经给定。训练自回归模型时，真实目标序列已知，可以一次送入移位后的目标，并用掩码限制各位置读取；生成时，下一个词元尚未确定，仍需根据已有前缀产生它，再继续下一步。因此，Transformer降低了网络内部沿位置更新的串行依赖，并没有使标准自回归输出一次全部产生。
+
+全局读取也有成本。设序列长为$n$，表示宽度为$d$，常规多头注意力的各头总宽度与$d$同阶，一层自注意力的位置对计算需要$O(n^2d)$次算术操作，投影另需$O(nd^2)$。直接保存各头权重需要$O(hn^2)$个元素，其中$h$为头数。与固定宽度的循环状态相比，Transformer保存和读取了更多逐位置信息；后文将区分减少连接、改变聚合公式和改善存储方式三种路线。适用场景包括文本、连续时间观测和图像块等可表示为向量序列的输入，但顺序、局部关系和可见范围不能只靠“向量序列”这一形式自动获得。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}p{28mm}p{39mm}p{40mm}p{48mm}@{}}
+    \toprule
+    比较维度 & 基础RNN & LSTM & 稠密Transformer自注意力 \\
+    \midrule
+    历史表示 & 固定宽度隐藏状态 & 隐藏状态与记忆单元 & 每层保留逐位置键和值 \\
+    顺序来源 & 时间递推 & 时间递推及门控 & 位置表示与可见性约束 \\
+    已知整段的计算 & 同层沿时间串行 & 同层沿时间串行 & 同层位置可并行，层间依赖仍在 \\
+    远位置的结构路径 & 经中间时间步，$O(n)$ & 经中间时间步，$O(n)$ & 允许直连时，一层内$O(1)$ \\
+    单层整段算术量 & $O(nd^2)$ & $O(nd^2)$，门增加常数 & $O(n^2d+nd^2)$ \\
+    生成时的历史存储 & $O(d)$ & $O(d)$ & 常规KV缓存为$O(nd)$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{固定输入及隐藏宽度同阶为$d$、序列长为$n$的结构比较。历史存储按单层、单样本统计，省略训练激活和参数；Transformer各头总宽度与$d$同阶。最短连接路径不保证实际依赖一定学会，算术量也不直接等于运行时间。三者在标准自回归生成时都逐步产生输出。}
+  \label{tab:transformer-rnn-comparison}
+\end{table*}
+\FloatBarrier
+
+\section{网络结构}
+\label{sec:transformer-structure}
+
+为看清各模块的职责，先用一段长度为$n$的输入建立共同记号。隐藏表示宽度为$d$，网络块数为$L$，第$l$个块后的矩阵为$\bm H^{(l)}\in\mathbb R^{n\times d}$，按行存放各位置的列向量，即$\bm H_{i,:}^{(l)}=(\bm h_i^{(l)})^{\top}$。括号上标表示层间更新编号，位置使用下标。这里讨论单个样本；批量计算另加样本维，并分别处理有效长度。
+
+\subsection{输入表示与位置编码}
+\label{sec:transformer-input}
+
+注意力接收向量，原始输入需要先转为统一宽度。文本中的\term{词元}（token）是分词系统采用的离散单位，可以是词、子词或符号。设词表大小为$v$，位置$i$的词元编号为$u_i$，嵌入矩阵为$\bm E\in\mathbb R^{v\times d}$，则$\bm e_i=(\bm E_{u_i,:})^{\top}$。同一词元共享同一行参数；经过网络后，隐藏表示还取决于它所在的上下文，不能把嵌入和上下文表示当成同一个对象。
+
+若输入是$\bm x_i\in\mathbb R^p$的连续观测，可以用$\bm e_i=\bm W_{\mathrm{in}}\bm x_i+\bm b_{\mathrm{in}}$投影到$d$维，其中$\bm W_{\mathrm{in}}\in\mathbb R^{d\times p}$。图像可以先分为小块，再把每块的像素或前端特征展平并投影。离散嵌入、连续投影和图像块投影改变输入接口，后面的注意力仍读取向量；时间间隔、空间坐标或观测缺失等信息则须另行表示。
+
+为什么RNN可以直接按顺序接收输入，Transformer却要额外表示位置？递推式$\bm h_i=f(\bm h_{i-1},\bm x_i)$已经使第$i$步接收到“处理过前$i-1$项”的状态，交换输入会改变后续计算。自注意力的共享投影只看到内容向量与内容匹配，矩阵的第几行并不会自动变成网络可用的特征。以“猫追狗”和“狗追猫”为例，若只有词元嵌入，两句话中同一个词元面对的内容集合相同；网络需要知道谁在动词之前、谁在之后，才能区分施事与受事。重复词元出现在不同位置时，也需要这种区别。
+
+这一缺口可以用计算性质精确表达。以不含位置表示和顺序掩码的自注意力为例，对输入行施加置换矩阵$\bm P$，查询、键、值也同步重排，得分矩阵变为$\bm P\bm S\bm P^{\top}$。逐行Softmax随之重排，因此
+\begin{equation}
+  \operatorname{SA}(\bm P\bm H)
+  =\bm P\operatorname{SA}(\bm H)\text{。}
+  \label{eq:transformer-permutation}
+\end{equation}
+共享的逐位置前馈层和归一化保留这一等变性。若再做平均读出，整段输出便对重排不变；“猫追狗”和“狗追猫”可能因只有相同内容向量而无法区分。因果掩码也会引入顺序约束，所以式\eqref{eq:transformer-permutation}的条件不能省略。但“只能看前面”与“相隔多远”是不同信息：掩码规定连接范围，并没有显式给出距离。某些因果网络可以利用边界与层间计算学习部分顺序，不能据此认为一般任务都无需位置表示。对于本来就是无序集合的输入，反而可能需要保留置换等变性，不应无条件添加任意编号。
+
+\term{位置编码}（positional encoding）把元素所在位置或位置之间的关系加入表示计算。最直接的做法为每个位置设置$\bm p_i\in\mathbb R^d$，并令
+\begin{equation}
+  \bm h_i^{(0)}=\bm e_i+\bm p_i\text{。}
+  \label{eq:transformer-input-position}
+\end{equation}
+这称为\term{绝对位置编码}（absolute positional encoding）：位置$i$本身有一个表示。可学习位置表与词元嵌入共同训练，正弦位置编码则按固定函数产生。相加要求维度一致，原始Transformer还对词元嵌入乘以$\sqrt d$，以调整内容与位置的相对尺度。这个缩放属于具体参数化选择，并不是所有输入接口都必须使用的规则。
+
+把这一步落到实际序列上，取“猫／追／猫”，暂把每个汉字当作一个词元；实际模型也可能采用子词等其他切分。两个“猫”查询同一行嵌入参数，因此位置1和3的内容向量相同。为便于手算，令嵌入宽度为4，猫的嵌入为$(0.20,-0.10,0.40,0.30)^{\top}$，追的嵌入为$(0,0.50,-0.20,0.10)^{\top}$。这些嵌入是教学设定，不是从训练模型提取的结果。
+
+图~\ref{fig:transformer-position-example}把内容与位置分成两条计算路径。假设词表给“猫”和“追”分配的编号分别是7和12，左路用词元编号$7,12,7$查嵌入表；右路从序列的先后顺序得到位置序号$1,2,3$，并代入四维正弦位置向量$\bm p_i=(\sin i,\cos i,\sin(0.01i),\cos(0.01i))^{\top}$，角度以弧度计。位置序号与词表编号不同，两个“猫”虽然查到同一个内容向量，仍会得到不同的位置向量。两路按对应坐标相加，输出形状保持为$3\times4$。这里采用向量相加；若沿特征维拼接，两个四维向量会变成八维，属于另一种输入构造。第\ref{sec:transformer-position-extensions}节会解释这些频率如何推广到任意偶数宽度，以及如何改为表示相对距离。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-position-example}
+  \caption{序列“猫／追／猫”的输入构造。左路用词元编号查嵌入表，右路把位置序号代入正弦、余弦函数，两组$3\times4$表示再逐元素相加。三个矩阵的行均按输入位置排列，每格是一个特征值。两个“猫”的内容相同、位置不同，输出的第1行与第3行因而不同。词元编号和嵌入为教学设定；位置向量按弧度计算，数值保留两位小数，最后一列看似相同是舍入所致。}
+  \label{fig:transformer-position-example}
+\end{figure}
+\FloatBarrier
+
+位置向量并不是把位置编号$i$重复填满所有坐标。例如，后文第\ref{sec:transformer-residual-normalization}节介绍的层归一化会减去一行的均值；若输入只加$i\bm1$并立即按行归一化，这个位置常数就会被消去。不同频率或可学习坐标提供了更丰富的位置差异。相加也不意味着网络已理解语法，它只是让后续计算能够利用内容和位置的联合信息。
+
+填充只是把不等长序列放入相同形状，不是新的观测。有效位置要有明确的集合或长度，填充位置在注意力、池化和损失中分别排除。若将多段独立文本装入同一矩阵，也需限制跨段读取，并明确位置编号的重置方式；矩阵中相邻不等于任务中连续。
+
+\subsection{注意力层}
+\label{sec:transformer-attention}
+
+第\ref{sec:transformer-attention-history}节已经介绍了注意力怎样根据当前需求读取信息。可以先把一次读取类比为查字典：手中待查的词是\term{查询}（query, Q），字典里用于匹配条目的词头是\term{键}（key, K），找到条目后读取的释义是\term{值}（value, V）。查询说明要找什么，键供查询比较，值提供读出的内容；键不是条目在数组中的整数下标。
+
+注意力把这种查询推广为连续的软匹配。它不检查两个字符串是否完全相同，而用可学习投影产生查询、键和值向量，再由查询与键的连续相似度得分决定读取权重，对多个值软加权求和。投影参数随训练调整，匹配方式也随之改变。这里把输入固定为“猫／追／狗”：更新“追”的表示时，网络需要结合谁在追、追的是谁；更新“猫”时，所需的上下文组合又可能不同。同一个位置在读取别人和被别人读取时承担不同作用，查询与键用于评分，值用于输出，三者不需要具有相同含义。
+
+设查询输入为$\bm H_{\mathrm q}\in\mathbb R^{n_q\times d}$，被读取输入为$\bm H_{\mathrm s}\in\mathbb R^{n_s\times d}$。暂省略偏置，单头投影为
+\begin{equation}
+  \begin{aligned}
+    \bm Q&=\bm H_{\mathrm q}\bm W_{\mathrm q},\qquad
+    \bm K=\bm H_{\mathrm s}\bm W_{\mathrm k},\\
+    \bm V&=\bm H_{\mathrm s}\bm W_{\mathrm v}\text{，}
+  \end{aligned}
+  \label{eq:transformer-qkv}
+\end{equation}
+其中$\bm W_{\mathrm q},\bm W_{\mathrm k}\in\mathbb R^{d\times d_k}$，$\bm W_{\mathrm v}\in\mathbb R^{d\times d_v}$；$\bm Q$、$\bm K$分别有$n_q$、$n_s$行和$d_k$列，$\bm V\in\mathbb R^{n_s\times d_v}$。若两侧宽度不同，只需分别调整投影的输入维度。下面分别说明评分公式、信息来源、可见范围与并行读取方式；这些维度可以组合，并非互斥的模型类别。
+
+\subsubsection{缩放点积注意力}
+
+\term{缩放点积注意力}（scaled dot-product attention）把所有查询与键的点积转为权重，再聚合值。令$\bm M\in\mathbb R^{n_q\times n_s}$为固定掩码：允许读取时$\bm M_{i,j}=0$，禁止读取时为$-\infty$。一次前向计算为
+\begin{equation}
+  \begin{aligned}
+    \bm S&=\frac{\bm Q\bm K^{\top}}{\sqrt{d_k}}+\bm M,\\
+    \bm A_{i,j}&=\frac{\exp(\bm S_{i,j})}
+      {\sum_{t=1}^{n_s}\exp(\bm S_{i,t})},\\
+    \bm Z&=\bm A\bm V\text{。}
+  \end{aligned}
+  \label{eq:transformer-attention}
+\end{equation}
+$\bm S,\bm A\in\mathbb R^{n_q\times n_s}$，$\bm Z\in\mathbb R^{n_q\times d_v}$。第$i$行输出是$\bm z_i=\sum_j\bm A_{i,j}\bm v_j$，其中$\bm v_j=(\bm V_{j,:})^{\top}$。Softmax沿键的位置归一化，每一行只在允许读取的位置上分配总量为1的权重；各行独立归一化，并不要求每列之和也为1。
+
+分母为什么是$\sqrt{d_k}$，而不是$d_k$或一个固定常数？问题在于点积累加了$d_k$个乘积：即使各坐标尺度没有变，累加结果的波动也会随宽度增加。下面用一个初始化时的简化模型说明这种增长，并把它与Softmax的梯度联系起来\scite{vaswani2017}
+
+\paragraph{从坐标方差得到缩放因子}
+暂时省略位置下标，设$\bm q,\bm k\in\mathbb R^{d_k}$相互独立，各自坐标也相互独立，且每个坐标均值为0、方差为1。令$s=\bm q^{\top}\bm k$。对第$r$个乘积，有
+\[
+  \mathbb E[q_rk_r]=\mathbb E[q_r]\mathbb E[k_r]=0,\qquad
+  \mathbb E[(q_rk_r)^2]=\mathbb E[q_r^2]\mathbb E[k_r^2]=1\text{。}
+\]
+不同坐标乘积之间的协方差为0，因此
+\begin{equation}
+  \begin{aligned}
+    \mathbb E[s]&=\sum_{r=1}^{d_k}\mathbb E[q_rk_r]=0,\\
+    \operatorname{Var}(s)
+      &=\sum_{r=1}^{d_k}\operatorname{Var}(q_rk_r)
+        +2\sum_{r<t}\operatorname{Cov}(q_rk_r,q_tk_t)\\
+      &=d_k,\\
+    \operatorname{Var}\!\left(\frac{s}{\sqrt{d_k}}\right)&=1\text{。}
+  \end{aligned}
+  \label{eq:transformer-attention-scale-variance}
+\end{equation}
+标准差是方差的平方根，所以点积的典型波动尺度为$\sqrt{d_k}$。用它作分母，可以消去由宽度引起的增长；若除以$d_k$，方差反而变成$1/d_k$，宽度越大，得分就越被压向0。
+
+\paragraph{得分尺度怎样影响Softmax}
+将一行得分记为$\bm s$、权重记为$\bm a=\operatorname{softmax}(\bm s)$，其导数为
+\begin{equation}
+  \frac{\partial a_j}{\partial s_t}
+      =a_j(\delta_{j,t}-a_t)\text{，}
+  \label{eq:transformer-softmax-scale-gradient}
+\end{equation}
+其中$\delta_{j,t}$在$j=t$时为1，否则为0。若某个得分远大于其余得分，对应权重接近1，其他权重接近0，这些导数都会很小。对于只有两个键的情况，令$\Delta=s_2-s_1$，则$a_2=1/(1+e^{-\Delta})$，且$\partial a_2/\partial\Delta=a_2(1-a_2)$；当$|\Delta|$很大时，导数趋于0。
+
+例如，取$d_k=64$，若未缩放的两个得分为$(0,8)$，第二个权重约为$0.9997$，对得分差的导数约为$0.00034$；除以$\sqrt{64}=8$后，得分为$(0,1)$，权重约为$0.7311$，对缩放后得分差的导数约为$0.1966$。若比较反传到同一个原始点积差$r$的梯度，还要计入缩放的导数：
+\[
+  a_2=\frac{1}{1+\exp(-r/\sqrt{d_k})},\qquad
+  \frac{\partial a_2}{\partial r}
+    =\frac{a_2(1-a_2)}{\sqrt{d_k}}\text{。}
+\]
+在本例$r=8$时，该导数约为$0.1966/8=0.02458$，仍大于未缩放时的$0.00034$。这组教学数值说明缩放如何缓解由维度放大造成的过早饱和；它不保证每个输入的导数都增大，也不要求所有注意力保持均匀。减去行最大值虽然能避免指数溢出，却不改变得分差，因此不能代替缩放。
+
+上述方差结论有明确前提。训练后的查询、键可能相关，坐标方差也未必为1；尤其自注意力的查询和键都来自输入表示，独立假设只是一种尺度分析。$1/\sqrt{d_k}$控制的是宽度带来的系统性变化，并不保证任意训练阶段的得分方差恰好为1。
+
+\begin{example}[同一查询在不同可见范围内的读取]
+  \label{ex:transformer-attention-numerical}
+  对“猫／追／狗”中第2个位置“追”发起的查询，设$d_k=1$、$q_2=1$，三个词元的键依次为$0,\log2,0$，值依次为$(1,0)^{\top}$、$(0,2)^{\top}$、$(1,1)^{\top}$。这些是投影后的教学数值，不表示真实模型必然这样关注句子。三个缩放得分为$(0,\log2,0)$，取指数后为$(1,2,1)$，归一化得到权重$(1/4,1/2,1/4)$。输出为
+  \[
+    \bm z_2=\tfrac14(1,0)^{\top}+\tfrac12(0,2)^{\top}
+                    +\tfrac14(1,1)^{\top}
+             =(1/2,5/4)^{\top}\text{。}
+  \]
+  这个向量是“追”的新表示，不是直接选出一个词。三个值都可能影响它，贡献大小由各自权重决定。若改成因果读取，当前位置尚不能看到“狗”，得分变成$(0,\log2,-\infty)$，权重相应变为$(1/3,2/3,0)$，输出为$(1/3,4/3)^{\top}$。掩码改变了归一化的候选范围，并不是算完权重后再把第三项直接清零。
+\end{example}
+
+图~\ref{fig:transformer-attention}先画出输入经三组参数投影得到查询、键和值，再把“追”的读取拆成评分、归一化和加权求和。查询与键决定“读多少”，值决定“读到什么”。值无需等于键，注意力输出也不必等于任一输入值；反向传播因此需要同时处理权重与值两条路径。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-attention}
+  \caption{展开“追”的一次缩放点积注意力。输入分别经三组投影产生查询$\bm Q$、键$\bm K$和值$\bm V$，三者各行依次对应猫、追、狗。突出显示的查询为$q_2=1$，与全部键匹配得到三个得分。Softmax产生权重后，下方三行分别列出各值向量的加权贡献，逐列求和得到$\bm z_2^{\top}=(0.50,1.25)$。蓝格表示投影数据，紫格表示中间结果，青格表示输出；$d_k=1$、$d_v=2$，数值均为教学设定。}
+  \label{fig:transformer-attention}
+\end{figure}
+\FloatBarrier
+
+
+\subsubsection{自注意力：同一序列内部读取}
+
+上下文理解需要让一个输入位置结合其他输入位置。自注意力在式\eqref{eq:transformer-qkv}中取$\bm H_{\mathrm q}=\bm H_{\mathrm s}=\bm H$，查询、键和值都由同一组位置投影，得分矩阵为$n\times n$。三组投影仍各有参数，所以“来自同一输入”不表示$\bm Q=\bm K=\bm V$。图~\ref{fig:transformer-self-attention}中，“猫”“追”“狗”各发起一次查询，对同一组值分别加权。灰蓝双向线表示两个位置都可以向对方读取，但不要求两个方向的权重相等。紫色箭头单独展开前例“追”的读取，起点是提供值的位置，终点是发起查询的位置。下方权重表按查询位置排列，第2行就是$(0.25,0.50,0.25)$。若同一组键对应的另外两个查询取$q_1=\log_2 3$、$q_3=-1$，就分别得到第1行$(0.2,0.6,0.2)$和第3行$(0.4,0.2,0.4)$。查询不同，即使候选键值相同，读取也可以不同。整段输入可见时，所有有效位置可以互相读取，但允许读取不等于分配相同权重。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-self-attention}
+  \caption{同一序列“猫／追／狗”上的自注意力。每个词元上方的四格条直接表示输入向量的特征坐标；这同一组表示分别投影为查询、键和值。灰蓝双向线表示两个位置可以互相读取，自环表示读取自身，两个方向的权重不必相等。紫色箭头从值的来源指向“追”的查询位置，对应下方权重矩阵框出的第2行。三个查询各自归一化，图中未另画输出序列；数值为教学设定。}
+  \label{fig:transformer-self-attention}
+\end{figure}
+\FloatBarrier
+
+\subsubsection{交叉注意力：从另一组表示读取}
+
+目标序列需要读取源序列时，双方长度和职责通常不同。\term{交叉注意力}（cross-attention）让$\bm H_{\mathrm q}$提供查询，另一组$\bm H_{\mathrm s}$提供键和值，得分矩阵为$n_q\times n_s$。例如翻译目标当前位置用自己的状态提出查询，读取已编码的源句；输出仍对应查询位置，而不是在两组输入之间各产生一份输出。以翻译“猫／追／狗”为例，图~\ref{fig:transformer-cross-attention}同时展开两个已知目标输入位置BOS和cat。BOS位置的输出用于预测cat，cat位置的输出用于预测chases；这两个目标状态产生两行查询，三个源编码状态产生三行键和值。源、目标长度不同，输出仍按目标查询排列，因此$\bm A$为$2\times3$，而$\bm Z$只有两行。
+
+为了逐项算出一次交叉读取，取$d_k=1$，设目标投影后的查询为$\bm Q=(0,1)^{\top}$，源投影后的键为$\bm K=(0,\ln8,0)^{\top}$，值沿用前例的三个二维向量。BOS的三个得分都为0，Softmax给出$(1/3,1/3,1/3)$；cat的得分为$(0,\ln8,0)$，取指数得到$(1,8,1)$，归一化后为$(0.1,0.8,0.1)$。两行分别乘以同一个$\bm V$，得到$\bm z_1=(2/3,1)^{\top}$和$\bm z_2=(0.2,1.7)^{\top}$。后者仍属于cat的查询位置，而不是源词“追”的输出。数值为教学构造，不意味着翻译注意力必然逐词对齐。交叉注意力也可用于一种模态读取另一种模态；信息来源改变，不要求评分公式改变。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-cross-attention}
+  \caption{两条不同序列的交叉注意力。目标输入BOS／cat的状态投影为两行查询，源输入猫／追／狗的编码状态分别投影为三行键和值。得分与权重矩阵的行对应目标查询、列对应源词元，因此形状均为$2\times3$；权重矩阵乘以$3\times2$的值矩阵后，输出为$2\times2$。较深的单元格突出cat这一目标位置从查询、评分、归一化到输出的对应关系。$d_k=1$，所有投影数值均为教学设定。}
+  \label{fig:transformer-cross-attention}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{因果注意力：只读取已知前缀}
+
+同一序列也可能包含尚不能用于当前预测的未来内容。\term{因果注意力}（causal attention）通常指带因果掩码的自注意力，规定位置$i$只能读取$j\leq i$的键值。图~\ref{fig:transformer-causal-attention}把“猫／追／狗”的可见范围直接排成矩阵。更新“追”时，“狗”所在格被屏蔽；“追”的输出经后续计算用于预测“狗”，因此输入位置和预测标签正好错开一步。它改变候选集合，投影与聚合公式仍为式\eqref{eq:transformer-attention}。训练时即使整个真实序列已放进矩阵，也必须让每层都遵守这一限制；只屏蔽最后一层不能消除前层已经混入的未来信息。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-causal-attention}
+  \caption{“猫／追／狗”的因果自注意力。行对应查询位置，列对应被读取的键；紫色格为可见位置的示例权重，浅灰叉号表示未来得分被设为$-\infty$、权重为0。“追”这一行经后续网络计算用于预测右侧的“狗”，却不能读取“狗”的输入，因而预测目标与当前输入错开一步；EOS为结束符。下方展开框出的这一行：先屏蔽未来得分，再在可见位置间归一化为$(1/3,2/3,0)$。数值沿用前例，均为教学设定。}
+  \label{fig:transformer-causal-attention}
+\end{figure}
+\FloatBarrier
+\term{填充掩码}（padding mask）阻止有效查询读取填充键；因果掩码排除未来位置。两者可以合并，前者排除不存在的输入，后者排除预测时尚不可知的信息。每个参与计算的查询必须至少有一个有效键，否则整行$-\infty$无法定义Softmax。填充查询可以跳过，或允许它得到一个随后弃用的输出，不能让未定义值进入后续计算。因果掩码允许读取当前输入，这与预测下一个目标的移位配合，才构成没有目标泄漏的生成模型。
+
+\subsubsection{多头注意力：并行形成不同的读取}
+
+单组权重把各值压缩为一个混合。\term{多头注意力}（multi-head attention, MHA）使用$h$组投影分别读取，再把结果拼接：
+\begin{equation}
+  \begin{aligned}
+    \bm Z_a&=\operatorname{Attention}(\bm Q_a,\bm K_a,\bm V_a),\\
+    \bm C&=\operatorname{Concat}(\bm Z_1,\ldots,\bm Z_h),\\
+    \operatorname{MHA}(\bm H_{\mathrm q},\bm H_{\mathrm s})
+      &=\bm C\bm W_{\mathrm o}\text{。}
+  \end{aligned}
+  \label{eq:transformer-multihead}
+\end{equation}
+头编号$a\in\{1,\ldots,h\}$，$\bm C\in\mathbb R^{n_q\times hd_v}$，$\bm W_{\mathrm o}\in\mathbb R^{hd_v\times d}$。常取$d_k=d_v=d/h$，使总投影宽度固定。各头可以形成不同权重，输出投影再混合它们的特征；结构没有规定某头必须对应语法或语义，也不保证各头一定形成互补分工。固定$d$时增加头数会减小每头宽度，不能把它理解为免费增加表示容量。
+
+图~\ref{fig:transformer-multihead}展开同一序列上的两个注意力头。三个位置的表示只输入一次，再交给每个头各自的查询、键和值投影；不同的投影使各头能够形成不同的读取权重和值特征。每个头都输出三行向量，拼接时对齐相同位置，只扩展特征维。例如，“追”在两个头中的输出拼为$[\bm z_{2,1}^{\top},\bm z_{2,2}^{\top}]$，而不是把“追”与其他位置连接成更长序列。输出投影$\bm W_{\mathrm o}$再混合这些特征。多头既可用于自注意力，也可用于交叉注意力；每头还可以施加因果或其他掩码。把“多头”和“因果”并列为互斥选项，会遗漏常见的因果多头自注意力。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-multihead}
+  \caption{同一输入序列上的两个注意力头。每个头分别学习$\bm W_{\mathrm q,a}$、$\bm W_{\mathrm k,a}$和$\bm W_{\mathrm v,a}$，独立完成评分、归一化和加权聚合，得到$\bm Z_a$。青色圆形$+$表示沿特征维拼接，两路输出的序列位置一一对齐；它不是残差相加。拼接矩阵$\bm C$再经$\bm W_{\mathrm o}$投影，得到多头输出$\bm Y$。各头的权重不直接平均，也没有预先指定的语法职责。}
+  \label{fig:transformer-multihead}
+\end{figure*}
+\FloatBarrier
+
+\subsection{前馈层}
+\label{sec:transformer-feedforward}
+
+注意力改变每个位置能读取什么，但读取结果还需转换为有用特征。\term{逐位置前馈网络}（position-wise feed-forward network, FFN）对每行单独使用同一组参数，在特征维上扩张、非线性变换，再恢复隐藏宽度：
+\begin{equation}
+  \operatorname{FFN}(\bm H)
+  =\phi(\bm H\bm W_1+\bm 1\bm b_1^{\top})\bm W_2
+      +\bm 1\bm b_2^{\top}\text{。}
+  \label{eq:transformer-ffn}
+\end{equation}
+其中$\bm W_1\in\mathbb R^{d\times d_f}$、$\bm W_2\in\mathbb R^{d_f\times d}$，$\bm b_1\in\mathbb R^{d_f}$、$\bm b_2\in\mathbb R^d$；$\bm 1$为$n$维全1向量，$\phi$逐元素作用。原始结构取$d_f=4d$并使用ReLU，其他结构可以采用第\ref{sec:ffn-activations}节介绍的激活函数和不同中间宽度。
+
+位置间共享不意味着各位置输出相同：输入行已经有不同内容和上下文。FFN在这一层不额外交换位置，它把已有上下文中的特征组合成新表示；下一次注意力再依据这些表示进行读取。若去掉非线性，两次仿射映射可以合成一次，扩张宽度本身就失去了增加非线性组合的作用。
+
+这一层的参数量约为$2dd_f$，整段算术量为$O(ndd_f)$。长序列的位置对计算可能占主导，短序列且$d_f$很大时，前馈层也可能占据大量计算和参数；分析Transformer代价时不能只看注意力矩阵。
+
+\subsection{残差连接与归一化}
+\label{sec:transformer-residual-normalization}
+
+反复覆盖表示会使已有信息和梯度只能经过新增变换。\term{残差连接}（residual connection）把子层输出加到输入上，要求两者形状一致；输入保留一条直接传递路径，子层学习增量。注意力输出投影和FFN的维度恢复，也使这种相加可以在统一的$d$维空间进行。
+
+不同位置的表示尺度还会影响点积和后续激活。\term{层归一化}（layer normalization, LayerNorm）在每个位置内部沿特征坐标计算均值和方差，不依赖其他样本或其他位置的统计量。对$\bm x\in\mathbb R^d$，令
+\begin{equation}
+  \begin{aligned}
+    \mu(\bm x)&=\frac1d\sum_{k=1}^d x_k,\qquad
+    s^2(\bm x)=\frac1d\sum_{k=1}^d(x_k-\mu(\bm x))^2,\\
+    \operatorname{LN}(\bm x)
+      &=\bm\gamma\odot
+        \frac{\bm x-\mu(\bm x)\bm 1}{\sqrt{s^2(\bm x)+\varepsilon}}
+        +\bm\beta\text{。}
+  \end{aligned}
+  \label{eq:transformer-layernorm}
+\end{equation}
+$\bm\gamma,\bm\beta\in\mathbb R^d$为可学习缩放和平移，$\varepsilon>0$避免分母为零，$\odot$表示逐元素乘法。应用于矩阵时按行计算，各位置共享$\bm\gamma,\bm\beta$。所以一行的归一化本身不会读取未来位置，因果性仍由位置间模块的可见范围保证\scite{ba2016layernorm}
+
+原始Transformer把归一化放在残差相加之后，称为\term{后置层归一化}（post-layer normalization, Post-LN）。一个编码器块为
+\begin{equation}
+  \begin{aligned}
+    \bm U^{(l)}&=\operatorname{LN}_{l,1}\!\left(
+       \bm H^{(l-1)}+\operatorname{MHA}_l(\bm H^{(l-1)},\bm H^{(l-1)})\right),\\
+    \bm H^{(l)}&=\operatorname{LN}_{l,2}\!\left(
+       \bm U^{(l)}+\operatorname{FFN}_l(\bm U^{(l)})\right)\text{。}
+  \end{aligned}
+  \label{eq:transformer-postln-block}
+\end{equation}
+实际训练还可在子层输出加入Dropout，预测时关闭；这里省略它以突出确定性结构。\term{前置层归一化}（pre-layer normalization, Pre-LN）先归一化子层输入，再将子层输出加入原表示：
+\begin{equation}
+  \begin{aligned}
+    \bm U^{(l)}&=\bm H^{(l-1)}+
+      \operatorname{MHA}_l(\widetilde{\bm H}^{(l-1)},\widetilde{\bm H}^{(l-1)}),\\
+    \widetilde{\bm H}^{(l-1)}&=\operatorname{LN}_{l,1}(\bm H^{(l-1)}),\\
+    \bm H^{(l)}&=\bm U^{(l)}+
+      \operatorname{FFN}_l(\operatorname{LN}_{l,2}(\bm U^{(l)}))\text{。}
+  \end{aligned}
+  \label{eq:transformer-preln-block}
+\end{equation}
+Pre-LN通常在整个堆叠末尾再归一化，之后交给输出层。图~\ref{fig:transformer-block}并列展开两种次序：Post-LN在残差相加后归一化，Pre-LN的跳跃路径则绕过归一化和子层；两者的学习性质将在第\ref{sec:transformer-normalization-extensions}节比较。每层通常使用自己的参数，位置间共享与层间共享是两种不同约定。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-block}
+  \caption{Post-LN与Pre-LN编码器块的计算次序。底部矩阵的三行对应“猫／追／狗”，列示意特征维度，格子数不代表实际宽度。自注意力在行间交换信息，FFN分别变换各行；圆形$+$表示逐元素残差相加，侧路圆点表示分支。省略Dropout与Pre-LN堆叠末尾的归一化。参考Bishop与Bishop（2024）图12.9的层内布局重绘，并增加Pre-LN对照。}
+  \label{fig:transformer-block}
+\end{figure*}
+\FloatBarrier
+
+\subsection{输出和网络架构}
+\label{sec:transformer-architectures}
+
+相同网络块可以用于不同预测过程，架构选择取决于输出对应哪些位置，以及这些位置在预测时能读取什么。\term{编码器}（encoder）通常让有效输入位置双向读取，形成整段上下文表示；\term{解码器}（decoder）在生成场景中使用因果自注意力，根据已知前缀预测后续输出。这里的“解码器”既可指原始编码器—解码器中的目标网络，也可指单独使用的因果网络，是否有交叉注意力需要另行说明。
+
+\subsubsection{序列到分类或回归}
+
+整段评论分类需要把$n$行表示转为一个向量。若最终输出表示为$\bm H$，有效位置集合为$V$，可以取$\bm r=|V|^{-1}\sum_{i\in V}\bm h_i$，再经分类头计算$\bm p=\operatorname{softmax}(\bm W_{\mathrm c}\bm r+\bm b_{\mathrm c})$。若有$c$类，$\bm W_{\mathrm c}\in\mathbb R^{c\times d}$，目标为$-\log p_y$。回归则用线性或受约束输出头形成数值，并选择与误差含义相符的损失。
+
+另一种方式是在输入中加入专用读出词元，例如CLS，使用其末层表示$\bm r$。这个位置经注意力读取整段，参数和读出方式共同学习如何汇总；它并非未经训练就能概括全部内容。平均池化显式对位置等权，专用读出位置允许网络学习汇总，两者都要保证只读取任务允许的上下文。
+
+\subsubsection{同步序列到序列}
+
+词性或实体标签与输入位置对齐，可以对每行使用共享分类头，得到$\bm p_i$，在有效监督位置上计算平均交叉熵。离线标注可以读取完整输入；在线预测则需要因果掩码，或明确规定可等待多少后续位置。若预测下一时刻数值，目标还需移位。输出逐位置对齐并不决定网络必须双向或单向，可见范围由实际预测条件确定。
+
+\subsubsection{异步序列到序列}
+
+机器翻译的目标长度和源长度不同。\term{编码器—解码器}（encoder--decoder）先形成源表示$\bm H_{\mathrm s}$，目标网络在每层执行因果自注意力、交叉注意力和FFN。目标查询由该层已有的目标表示产生，键和值由最终源编码表示投影；源端填充掩码与目标端因果掩码分别约束两类读取。图~\ref{fig:transformer-encoder-decoder}中，源表示供每个目标层重复读取，不必随着目标步重新编码。
+
+给定源序列$x$，目标为$y_1,\ldots,y_m$，并将EOS计入目标，则条件分解为
+\begin{equation}
+  \begin{aligned}
+    p_{\bm\theta}(y\mid x)
+      &=\prod_{i=1}^{m}p_{\bm\theta}(y_i\mid x,y_{<i}),\\
+    \ell(x,y)&=-\frac1m\sum_{i=1}^{m}
+          \log p_{\bm\theta}(y_i\mid x,y_{<i})\text{。}
+  \end{aligned}
+  \label{eq:transformer-conditional-loss}
+\end{equation}
+$\bm\theta$包含输入、网络块和输出层参数。\term{教师强制}（teacher forcing）在训练时把真实目标前缀送入网络；目标输入是BOS、$y_1,\ldots,y_{m-1}$，目标标签是$y_1,\ldots,y_m$。全段输入已知，各位置可以并行计算，因果掩码保证第$i$个输出没有读到待预测的$y_i$。
+
+条件生成也可用单个解码器：把源输入、分隔符和移位目标组织成同一序列，通常只在目标预测位置计算损失。使用全因果掩码时，源位置也只能读取其前缀；使用前缀掩码时，源位置可互相读取，目标位置可读取全部源前缀和此前目标。两种方式都能定义条件生成，但形成的源表示和注意力范围不同，不能与独立编码器—解码器逐层等同。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-encoder-decoder}
+  \caption{将“猫／追／狗”翻译为“cat／chases／dog”的整网结构。每个长条表示作用于整段序列的一层，中间省略的层数由网络配置决定；词元列保持位置对应。训练时右移的目标输入分别预测cat、chases、dog、EOS。左侧最终源表示经同一条侧路供每个解码器层的交叉注意力生成K、V，Q来自该层目标路径；不会把某个中间编码层与同编号解码层一一配对。省略层内残差、归一化与Dropout。参考Bishop与Bishop（2024）图12.20的布局重绘。}
+  \label{fig:transformer-encoder-decoder}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{序列续写与生成}
+
+单独的因果解码器省略源交叉注意力，将已有文本本身作为条件。对词元$u_1,\ldots,u_n$，从BOS开始预测时，联合概率为$\prod_{i=1}^n p_{\bm\theta}(u_i\mid u_{<i})$。若最终表示$\bm h_i$对应第$i$个已输入词元，则下一词元概率为
+\begin{equation}
+  \bm p_{i+1}=\operatorname{softmax}
+     (\bm W_{\mathrm{out}}\bm h_i+\bm b_{\mathrm{out}})\text{，}
+  \label{eq:transformer-vocabulary-head}
+\end{equation}
+其中$\bm W_{\mathrm{out}}\in\mathbb R^{v\times d}$。可令$\bm W_{\mathrm{out}}=\bm E$进行输入输出嵌入共享，但这会约束参数，并不是两个矩阵本来就具有相同职责。大词表投影还会产生$O(dv)$的单位置计算。
+
+生成从已知前缀开始，计算下一词元分布，按指定策略选择一个词元，将其加入输入，再继续，遇到EOS或最大生成长度停止。贪心选择只保证当前条件下的最大概率词元，不保证整段最优；采样改变输出分布。训练损失、预测时的选择策略和实际任务评价需分别说明。编码器适合已知完整上下文的理解，因果解码器适合按前缀生成，编码器—解码器使源与目标表示分开组织；这些对应关系仍受输入何时可见和计算预算约束。
+
+\subsection{常见Transformer架构}
+\label{sec:transformer-common-architectures}
+
+前面按输出形式组织了网络，这里进一步比较几种实际模型。同样面对“猫追狗”，BERT可以补回被遮蔽的“追”，GPT可以根据“猫追”续写“狗”，编码器—解码器则可以把整句翻译成另一种语言。它们共享注意力与前馈计算，但读取范围、监督位置和生成过程不同。以下架构图参考Bishop与Bishop第12章的分层表示：贯穿各个词元的长条表示作用于整段序列的一层，旁边的计算图展开该层内部的子层与残差。这样可以区分“词元之间怎样读取”和“网络层怎样堆叠”\scite{bishop2024deep} 各图都把中文例子按词划分，以便观察对应关系；这种教学划分不代表某个模型实际采用的子词分词器，图中的词元是监督目标或示例生成结果。
+
+\subsubsection{原始Transformer：源与目标分开建模}
+
+翻译时，源句通常已经完整给定，目标句却需要逐词产生。这两个条件不同，原始Transformer便用两组网络分别处理：编码器双向读取源句，解码器因果读取已有译文，再通过交叉注意力查询源表示。原论文基础模型的编码器和解码器各有6个块，隐藏宽度512，8个注意力头，FFN中间宽度2048，采用正弦位置编码、ReLU与Post-LN\scite{vaswani2017}
+
+图~\ref{fig:transformer-architecture-original}把“猫追狗”的翻译展开。训练时，解码器输入是右移的目标“BOS、cat、chases”，对应监督目标是“cat、chases、dog”。预测dog的目标位置可以读取cat和chases，同时通过交叉注意力读取源句中的“狗”；后者属于已知条件，不是未来译文，因此不构成答案泄漏。推理时没有正确译文可供右移，解码器把自己已经生成的词元作为后续输入。
+
+这种组织可以一次编码源句，并在多个解码步骤中复用源表示，源端也能充分结合左右语境，适合输入和输出边界明确的翻译、摘要等任务。代价是需要维护两组网络和交叉注意力；当任务只是从一个前缀继续写下去时，单一路径的因果模型通常更直接。两者的成本仍取决于源长、目标长、网络宽度和层数，不能仅凭是否有两个堆栈判断哪一个一定更省计算。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-architecture-original}
+  \caption{原始Transformer基础模型的层内计算与条件生成。浅色框内的编码器块和解码器块各堆叠6次；图展开一个块，Add \& Norm表示残差相加后逐位置LN。源端最终输出供每个解码器块的交叉注意力生成K、V，目标路径提供Q。三个目标输出是对应右移输入的监督标签，推理时逐步生成。省略Dropout、嵌入缩放和各头内部投影。参考Bishop与Bishop（2024）图12.9、12.19与12.20的布局重绘，结构依据Vaswani等（2017）。}
+  \label{fig:transformer-architecture-original}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{BERT：利用左右语境形成表示}
+
+若目标是判断句意或标注每个词元，当前位置常常需要后文。\term{BERT}保留双向编码器，并使用\term{遮蔽语言模型}（masked language model, MLM）预训练：先扰动部分输入，再从上下文恢复原词元。例如输入“猫 [MASK] 狗”时，被遮蔽位置必须结合“猫”和“狗”预测“追”。原始BERT还通过CLS位置的表示预测两个句段是否相邻，即下一句预测（next sentence prediction, NSP）。BERT Base为12层、宽度768、12个头，Large版本为24层、宽度1024、16个头；输入叠加词元、可学习位置和句段嵌入，块内使用GELU与Post-LN\scite{devlin2019}
+
+图~\ref{fig:transformer-architecture-bert}中，MLM只在选中的位置接受词元监督；用于分类时，则可以在CLS表示上接任务头。原始训练并非把每个选中位置都替换为[MASK]，还混合随机替换和保留原词，以减轻预训练输入与实际使用输入的差别。这里画出遮蔽分支，是为了突出双向上下文如何帮助恢复缺失内容。
+
+双向读取使BERT适合在完整输入上做分类、抽取和序列标注；各位置表示可以在一次前向计算中并行形成。它的限制来自学习目标：MLM没有直接给出GPT式的左到右联合概率，也没有定义下一步如何接着生成。把原始完整句子输入双向编码器，再用当前位置预测同一个词元，会给模型直接看到答案的机会；若要生成，需要另外设计目标和解码过程。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-architecture-bert}
+  \caption{BERT的双向编码器与预测位置。每列的词元、位置、句段嵌入逐元素相加，本例同属句段A；向量格条只示意特征维。每个长条是一整层双向自注意力与FFN计算，能够在所有有效词元之间交换信息，中间层省略。MLM头在遮蔽位置恢复“追”，CLS分类头用于任务适配；两者不要求同时使用。右侧展开一层的Post-LN与残差，省略输入归一化、Dropout与NSP头。参考Bishop与Bishop（2024）图12.18的整序列布局重绘，输入与训练目标依据Devlin等（2019）。}
+  \label{fig:transformer-architecture-bert}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{RoBERTa：改进双向编码器的预训练}
+
+BERT的效果还取决于预训练方式，而不仅是网络拓扑。\term{RoBERTa}保留BERT式双向编码器，主要改变训练配方：每次送入序列时重新抽取遮蔽位置，取消NSP，使用更大的批次、更多文本和更充分的训练，并改用字节级BPE词表。图~\ref{fig:transformer-architecture-roberta}展示动态遮蔽：同一句“猫追狗”在不同次训练中可以分别恢复“追”和“猫”，从而让模型接触不同的上下文恢复问题\scite{liu2019roberta}
+
+RoBERTa的意义是说明：保持核心结构不变，也能通过数据、目标和优化设置改善表示学习。与BERT相比，它不增加一种新的信息流，但预训练投入更大；论文中的收益属于整体训练方案，不能全部归因于取消NSP或动态遮蔽中的单个改动。两者在使用方式上仍然接近，都适合完整输入上的理解任务，也都需要额外设计才能作为自由续写模型。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-architecture-roberta}
+  \caption{RoBERTa对“猫追狗”的两次动态遮蔽。两组输入分别前向，使用同一套骨干参数，各长条只在所属样本内部进行双向读取；两次MLM监督分别恢复“追”和“猫”。词元与位置嵌入相加，中间层省略，右侧展开共用的Post-LN层。格条只示意特征维；[MASK]采用教学记号，省略实际特殊词元、输入归一化与Dropout。训练不使用NSP。参考Bishop与Bishop（2024）图12.18的布局重绘，训练差异依据Liu等（2019）。}
+  \label{fig:transformer-architecture-roberta}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{GPT：因果解码器及其版本演进}
+
+续写时，模型只能依据已经出现的内容预测下一项。\term{GPT}家族由这一任务发展而来；早期公开的GPT-1、GPT-2和GPT-3都采用只有解码器的组织，每个块包含因果自注意力与FFN，没有独立源编码器，也没有连接源表示的交叉注意力。版本之间既有块内计算的调整，也有规模、训练目标与使用方式的变化，需要沿着这些具体对象比较。
+
+\paragraph{GPT-1：建立预训练后微调的因果模型}
+
+初代GPT于2018年采用12层、宽度768、12个头的结构，配合可学习绝对位置、GELU与Post-LN；先用下一词元预测进行语言模型预训练，再针对下游任务微调。为便于与后续版本区分，这里称其为GPT-1\scite{radford2018gpt}
+
+图~\ref{fig:transformer-architecture-gpt}中，“猫”位置预测“追”，“追”位置预测“狗”。训练时三个位置可以一起计算，因为因果掩码已经阻止了未来信息进入各层表示；推理时则必须先选出“追”，才能把“猫追”作为下一步的前缀。把问题、示例或文档放在前缀中，后面接答案，就能沿同一条路径完成条件生成。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-architecture-gpt}
+  \caption{GPT的因果网络与下一词元监督。每列的词元与位置嵌入相加后，经过整序列网络层，再由LM头预测下一词元；“追”所在列只能读取“猫、追”，对应标签为“狗”。每条长条在内部应用因果掩码，中间层省略，LM头含词表投影与Softmax。右侧展开GPT-1的Post-LN层；GPT-2与GPT-3改用Pre-LN并在堆叠末尾归一化。格条只示意特征维，省略Dropout与KV缓存，推理仍逐步生成。参考Bishop与Bishop（2024）图12.15的布局重绘。}
+  \label{fig:transformer-architecture-gpt}
+\end{figure*}
+\FloatBarrier
+
+这条因果路径使训练目标与逐词生成直接对应，条件和输出可以采用统一的文本接口。它也限定了表示的可见范围：某个早期位置看不到后文，不能直接等同于BERT的双向词元表示；生成长输出仍需要多个依赖步骤。用于分类时，因果模型可以在读完整段后的末位置作判断，也可以生成类别名称，但这与BERT在CLS上使用固定类别头的损失和输出空间不同。
+
+\paragraph{GPT-2：调整归一化位置并扩大模型}
+
+GPT-2保留因果解码器，将归一化从子层残差相加之后移到子层入口，形成Pre-LN，并在整个堆栈末端增加归一化。这样的变化修改了深层残差路径中的计算顺序，具体梯度差异可结合第\ref{sec:transformer-residual-normalization}节理解。GPT-2还扩大模型和网页训练语料，进一步考察不更新参数时的零样本迁移。原论文最大配置为48层、宽度1600、约15亿参数，上下文长度由GPT-1的512提高到1024\scite{radford2019gpt2}
+
+% GPT-3论文的全作者边注较长，需在本段之前保留竖向空间。
+\Needspace{190mm}
+\paragraph{GPT-3：扩大规模并交替使用两种注意力连接}
+
+GPT-3沿用GPT-2的总体组织与Pre-LN，但在不同层中交替采用稠密和局部带状稀疏注意力。前者允许当前位置读取全部已有前缀，后者只保留规定的局部连接；两者都遵守因果约束。最大的公开配置为96层、宽度12288、96个头、1750亿参数，上下文长度2048。论文系统研究了\term{上下文学习}，即把少量任务示例放入前缀，而不在该任务的推理阶段更新模型参数\scite{brown2020}
+
+这一步同时涉及网络与使用方式：增加层数和宽度扩大了可学习参数，调整注意力连接改变了每层的信息路径，而在提示中提供示例改变的是当前输入。上下文学习不要求另添一种任务专用网络，也不能与通过梯度更新权重的微调混为一谈。
+
+% 为InstructGPT论文的全作者边注保留竖向空间。
+\Needspace{165mm}
+\paragraph{InstructGPT与GPT-3.5阶段：让生成服从指令和对话}
+
+模型会续写文本，不等于它会按照用户意图完成任务。InstructGPT在语言模型基础上加入人类示范的监督微调，再用人类偏好训练奖励模型并优化输出，使训练目标更贴近指令遵循\scite{ouyang2022instructgpt}2022年发布的ChatGPT则基于GPT-3.5系列模型进行了面向对话的微调。GPT-3.5是模型系列名称，ChatGPT是对话系统名称；这项演进主要说明后训练和交互方式的改变，不能据此推断它采用了一种新的、已完整公开的注意力拓扑\scite{openai2022chatgpt}
+
+\paragraph{GPT-4与GPT-4o：扩展输入输出模态}
+
+GPT-4的技术报告公开了图像与文本输入、文本输出，以及下一词元预训练和人类反馈后训练等信息，但明确未披露模型规模和详细内部架构。GPT-4o则进一步公开了文本、视觉与音频的端到端联合训练。因此，比较这些版本时，可以讨论输入输出模态和训练目标的变化，不能把未经公开的参数量、专家数量或位置编码画成确定的内部结构\scite{openai2023gpt4,openai2024gpt4o}
+
+\paragraph{GPT-5发布系统：在模型之间选择计算路径}
+
+2025年GPT-5发布时，官方将其在ChatGPT中的形态描述为一个统一系统：路由器在快速响应模型与更深入的推理模型之间选择。这里的路由器选择的是整个模型；后文的混合专家模型（MoE）则在一个网络层内，为各词元选择少量计算分支。两者的作用层级不同，发布说明也不足以确定各模型内部的层数、头数或稠密／稀疏结构\scite{openai2025gpt5}
+
+表~\ref{tab:transformer-gpt-generations}将各代变化对应到已经披露的对象。GPT-1至GPT-3可以比较具体块结构与配置；后续公开材料更多描述后训练、模态和系统组织，能够支持的比较也相应有所不同。
+
+\begin{table*}[p]
+  \centering
+  \small
+  \begin{tabular}{@{}p{25mm}p{64mm}p{66mm}@{}}
+    \toprule
+    代表版本 & 已公开的主要变化 & 阅读这些变化时应保留的区别 \\
+    \midrule
+    GPT-1（2018） & 因果解码器、Post-LN；12层、宽768；语言模型预训练后进行任务微调 & 预训练目标与下游任务监督可以不同 \\
+    GPT-2（2019） & 改用Pre-LN并增加末端归一化；最大约15亿参数；1024词元上下文 & 零样本任务提示不需要再训练一个专用输出头 \\
+    GPT-3（2020） & 延续Pre-LN；稠密与局部稀疏注意力交替；最大1750亿参数；2048词元上下文 & 提示中的少样本示例不等于梯度微调 \\
+    InstructGPT／GPT-3.5阶段（2022） & 人类示范与偏好用于后训练；ChatGPT采用对话交互 & 基座模型、后训练方法和对话产品分属不同层面 \\
+    GPT-4（2023） & 图像与文本输入，生成文本；内部架构细节未公开 & 多模态能力不提供确定参数量或专家数的证据 \\
+    GPT-4o（2024） & 文本、视觉、音频端到端联合训练 & 模态扩展不能直接还原为一张已知的逐层网络图 \\
+    GPT-5发布系统（2025） & 在快速响应与深入推理模型之间路由 & 系统级模型选择不等于层内词元级MoE \\
+    \bottomrule
+  \end{tabular}
+  \caption{GPT家族的代表性演进。参数与上下文数字指相应原论文的配置，GPT-4之后列出官方明确披露的能力或系统组织，不推测未公开的网络细节；表格也不用于比较当前产品的可用性。}
+  \label{tab:transformer-gpt-generations}
+\end{table*}
+\FloatBarrier
+
+\subsubsection{T5：把不同任务组织成文本到文本}
+
+翻译生成另一种语言，分类输出一个类别，摘要输出较短文本；这些任务可以共享“读入条件文本、生成目标文本”的接口。\term{T5}（Text-to-Text Transfer Transformer）使用编码器—解码器，把任务说明和输入交给双向编码器，由因果解码器生成答案并交叉读取条件。它保留原始Transformer的两条路径，但采用相对位置偏置、Pre-LN和简化的归一化；原始基础FFN使用ReLU\scite{raffel2020t5}
+
+T5的代表预训练任务是恢复被删去的连续片段。图~\ref{fig:transformer-architecture-t5}把“猫追狗”变成“猫$\langle S_1\rangle$狗”，解码器生成“$\langle S_1\rangle$追$\langle S_2\rangle$”。这些专用标记称为\term{哨兵词元}（sentinel token），作用是标明缺失片段及其边界。一个标记可以代替多个连续词元，因此目标长度可以变化；与BERT相比，T5将缺失内容作为一段序列生成，不是在原输入的每个遮蔽位置独立接一个预测头。
+
+这种接口使分类也能写成生成类别文本，任务之间不必各自规定一种输出头；源端双向理解与目标端因果生成的职责保持清楚。相应代价是仍要维护编码器、解码器与交叉注意力，生成式分类还需要规定合法类别词及其读出方式。统一文本接口方便复用训练流程，却不意味着所有任务的成本和评价方法也随之相同。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-architecture-t5}
+  \caption{T5的片段恢复任务与整网结构。$\langle S_1\rangle$替代源句中被删去的片段，目标中的同名标记引出该片段，$\langle S_2\rangle$标记恢复序列的结束；右侧输入已右移，START表示解码起始符。每个长条是一整层，编码器最终输出供各解码层的交叉注意力生成K、V。注意力内部使用相对位置偏置，输入不叠加绝对位置向量。省略层内残差、Pre-LN、Dropout与末尾EOS。参考Bishop与Bishop（2024）图12.20的布局重绘，结构与任务依据Raffel等（2020）。}
+  \label{fig:transformer-architecture-t5}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{架构之间如何取舍}
+
+表~\ref{tab:transformer-common-architectures}将比较标准固定为已知条件、输出过程与结构代价。对一个具体任务，先判断后文何时可见、结果是否需要逐步生成，再选择网络组织。BERT与RoBERTa的主要差异位于预训练方案；原始Transformer与T5共享编码器—解码器组织，却采用不同的位置表示、归一化和任务目标。因此，“模型名称不同”和“信息流类型不同”不是同一回事。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}p{24mm}p{34mm}p{47mm}p{50mm}@{}}
+    \toprule
+    代表模型 & 条件与读取规则 & 结构带来的便利 & 相应代价或使用边界 \\
+    \midrule
+    原始Transformer & 源双向；目标因果并交叉读取源 & 完整编码源句，生成时复用源表示 & 两组网络和交叉注意力；目标仍逐步产生 \\
+    BERT & 扰动输入内双向读取 & 一次形成利用左右语境的各位置表示 & MLM不直接定义自由续写；任务需要适配输出头 \\
+    RoBERTa & 与BERT同属双向编码 & 保持结构，改进预训练数据与优化方案 & 预训练投入增大；生成边界与BERT相似 \\
+    GPT & 单一路径因果读取 & 前缀与答案共享接口，直接学习逐词生成 & 早期位置不读后文；长输出需要多步解码 \\
+    T5 & 条件双向；目标因果并交叉读取条件 & 文本到文本接口统一多种任务 & 双堆栈成本；类别文本等仍需规定读出规则 \\
+    \bottomrule
+  \end{tabular}
+  \caption{代表架构的优势与边界。比较的是信息流和任务接口，不是在不同参数量、训练数据与硬件下比较实测速度或任务分数。同一家族的后续版本还可能修改位置编码、归一化和前馈层。}
+  \label{tab:transformer-common-architectures}
+\end{table*}
+\FloatBarrier
+
+架构规定了可计算的信息路径，训练数据决定模型见过什么，学习目标决定哪些行为受到奖励，解码与系统组织决定模型怎样被调用。判断两个模型的区别，需要把这些因素分别对应到具体机制，才能解释它们为何适合不同任务。
+
+
+\section{参数学习}
+\label{sec:transformer-learning}
+
+嵌入、注意力投影、前馈层、归一化和输出层由同一预测目标联合学习。一个批次中的样本可以具有不同有效长度，损失只覆盖监督位置；按样本平均与按词元平均会给予长序列不同权重，需要与目标风险的定义一致。本节重点说明尺度设置和注意力求导，优化器、学习率调度及通用正则化由训练与泛化章节展开。
+
+\subsection{参数初始化}
+\label{sec:transformer-initialization}
+
+第\ref{sec:ffn-initialization}节的对称性打破和方差传播原则仍然适用，但Transformer还需同时控制内容嵌入、点积得分与残差流的尺度。输入嵌入可从零均值分布初始化，不同词元独立采样；如果内容项使用$\sqrt d$缩放，初始方差应连同这一缩放考虑。可学习位置表也需要适当尺度，避免输入在尚未学习时被位置项完全主导。连续输入则应先明确量纲和训练数据归一化，再设置投影。
+
+对不带激活的投影$\bm Y=\bm X\bm W$，若输入坐标方差为$s_x^2$，权重独立、零均值且方差为$s_w^2$，输入宽度为$d_{\mathrm{in}}$，简化计算给出输出坐标方差$d_{\mathrm{in}}s_w^2s_x^2$。可用Glorot尺度兼顾输入输出宽度，或用与$d_{\mathrm{in}}^{-1}$同阶的方差控制前向尺度；ReLU前馈支路则可采用式\eqref{eq:ffn-he-initialization}的思路。具体选择还受激活、门控和残差参数化影响，不能给所有投影照搬同一个数值方差。
+
+查询与键的初始尺度直接影响Softmax。若二者每坐标方差分别为$s_q^2,s_k^2$，沿用坐标独立和零均值近似，缩放后点积方差为$s_q^2s_k^2$。因此，除以$\sqrt{d_k}$只抵消宽度因素；过大的投影范数仍会使得分过尖。值与输出投影则决定注意力支路加入残差的大小。FFN的第二次投影也位于残差支路末端，应与第一投影和非线性一起检查输出尺度。
+
+深度增加时，多次相加可能持续放大残差流。若一个简化子层写为$\bm h^{(l)}=\bm h^{(l-1)}+a_l\bm f^{(l)}$，且各增量与已有表示不相关、各坐标方差为$s_f^2$，则增量方差之和为$\sum_l a_l^2s_f^2$。取$a_l$与$L^{-1/2}$同阶可在这个近似下控制累积量；实际分支往往相关，还需检查梯度和归一化位置。缩小支路末端权重、显式残差缩放与可学习门控是不同参数化，后文会比较，不能把这个独立近似当成深网络稳定性的证明。
+
+归一化的缩放和平移常分别初始化为1和0；输出层按其输入宽度设置尺度。若输入输出共享嵌入，两处梯度会累积到同一参数，初始化也只执行一次。把整个投影都置零可能阻断上游学习：例如$\bm Q=\bm K=\bm0$时，得分对查询和键的局部梯度都为零。少量支路末端置零可以作为特定设计使用，但必须检查哪些参数在初始步骤能够收到非零梯度。
+
+\subsection{反向传播}
+\label{sec:transformer-backpropagation}
+
+注意力的参数既影响“读取什么”，也影响“怎样评分”。为把两条路径分清，采用矩阵梯度记号$\bm G_{\mathrm X}=\partial\ell/\partial\bm X$，其形状与$\bm X$相同，并以Frobenius内积定义微分$\mathrm d\ell=\langle\bm G_{\mathrm X},\mathrm d\bm X\rangle_{\mathrm F}$。从式\eqref{eq:transformer-attention}中单头的$\bm Z=\bm A\bm V$开始，若下游给出$\bm G_{\mathrm Z}$，则
+\begin{equation}
+  \bm G_{\mathrm V}=\bm A^{\top}\bm G_{\mathrm Z},\qquad
+  \bm G_{\mathrm A}=\bm G_{\mathrm Z}\bm V^{\top}\text{。}
+  \label{eq:transformer-aggregation-gradient}
+\end{equation}
+值梯度汇集所有查询对同一值的读取贡献；权重梯度比较不同值对当前输出变化的作用。即使注意力权重暂固定，值路径也会传递梯度，完整求导还需要继续沿得分路径回传。
+
+对第$i$行，把有效权重写为列向量$\bm a_i$，其Softmax雅可比为$\operatorname{diag}(\bm a_i)-\bm a_i\bm a_i^{\top}$。与该行的权重梯度相乘，得到
+\begin{equation}
+  (\bm G_{\mathrm S})_{i,j}
+   =\bm A_{i,j}\left((\bm G_{\mathrm A})_{i,j}
+       -\sum_{t=1}^{n_s}\bm A_{i,t}(\bm G_{\mathrm A})_{i,t}\right)\text{。}
+  \label{eq:transformer-softmax-gradient}
+\end{equation}
+被禁止的项取权重和得分梯度为零；这里是在有效集合上求导，而不是对无穷量作普通浮点运算。每行得分梯度之和为零，与Softmax对整行得分加同一常数不变的性质对应。使某个值权重增加的作用，必须与同一行其他值的平均作用比较，不能把每个位置的权重独立更新。
+
+\Needspace{45mm}
+\begin{example}[从聚合误差到评分误差]
+  \label{ex:transformer-gradient-numerical}
+  沿用示例~\ref{ex:transformer-attention-numerical}未加掩码的情形，令$\ell=(\bm z_2)_2$，即只考察“追”的输出向量的第二坐标，上游梯度为$(0,1)^{\top}$。三个权重的梯度为$0,2,1$，加权平均为$5/4$，得分梯度因此为$-5/16,3/8,-1/16$，总和为零。值梯度则分别为$(0,1/4)^{\top}$、$(0,1/2)^{\top}$和$(0,1/4)^{\top}$。若最小化此目标，评分路径倾向于降低第二个值的权重，值路径还可以直接降低被读取的第二坐标；两种变化共同影响输出。
+\end{example}
+
+掩码固定时，对缩放点积继续求导可得
+\begin{equation}
+  \bm G_{\mathrm Q}=\frac{\bm G_{\mathrm S}\bm K}{\sqrt{d_k}},\qquad
+  \bm G_{\mathrm K}=\frac{\bm G_{\mathrm S}^{\top}\bm Q}{\sqrt{d_k}}\text{。}
+  \label{eq:transformer-qk-gradient}
+\end{equation}
+查询梯度聚合相关键，键梯度聚合读取它的查询；固定因果掩码只删除禁止的贡献。若得分还包含可学习位置偏置，相应参数按其使用的所有位置对累积得分梯度。
+
+式\eqref{eq:transformer-qkv}的投影梯度为
+\begin{equation}
+  \begin{aligned}
+    \nabla_{\bm W_{\mathrm q}}\ell&=\bm H_{\mathrm q}^{\top}\bm G_{\mathrm Q},\\
+    \nabla_{\bm W_{\mathrm k}}\ell&=\bm H_{\mathrm s}^{\top}\bm G_{\mathrm K},\qquad
+    \nabla_{\bm W_{\mathrm v}}\ell=\bm H_{\mathrm s}^{\top}\bm G_{\mathrm V},\\
+    \bm G_{\mathrm H_{\mathrm q}}&=\bm G_{\mathrm Q}\bm W_{\mathrm q}^{\top},\\
+    \bm G_{\mathrm H_{\mathrm s}}&=\bm G_{\mathrm K}\bm W_{\mathrm k}^{\top}
+                      +\bm G_{\mathrm V}\bm W_{\mathrm v}^{\top}\text{。}
+  \end{aligned}
+  \label{eq:transformer-projection-gradient}
+\end{equation}
+交叉注意力的两侧接到不同上游模块；自注意力的两侧是同一矩阵，所以查询、键、值三条输入梯度需要相加。加入投影偏置时，其梯度为对应矩阵梯度沿位置求和。共享词元嵌入也按词元编号把各出现位置的贡献相加。
+
+多头输出若为$\bm Y=\bm C\bm W_{\mathrm o}$，则$\nabla_{\bm W_{\mathrm o}}\ell=\bm C^{\top}\bm G_{\mathrm Y}$，$\bm G_{\mathrm C}=\bm G_{\mathrm Y}\bm W_{\mathrm o}^{\top}$。按拼接的列范围拆开$\bm G_{\mathrm C}$，各头分别执行上述求导，再将共同输入的梯度求和。各头参数通常不同，不能把头梯度平均后只更新一组权重。
+
+残差相加把同一上游梯度送入直接路径和子层路径。对Pre-LN子层$\bm y=\bm x+F(\operatorname{LN}(\bm x))$，列向量记号下有
+\begin{equation}
+  \bm g_{\mathrm x}=\bm g_{\mathrm y}
+     +\bm J_{\operatorname{LN}}^{\top}\bm J_F^{\top}\bm g_{\mathrm y}\text{。}
+  \label{eq:transformer-preln-gradient}
+\end{equation}
+FFN沿用前馈求导，LN在一行内部耦合坐标。若归一化输出为$\bm y$，令$\widehat{\bm x}=(\bm x-\mu\bm1)/\sqrt{s^2+\varepsilon}$、$\bm u=\bm g_{\mathrm y}\odot\bm\gamma$，以横线表示坐标平均，则
+\begin{equation}
+  \bm g_{\mathrm x}
+   =\frac{\bm u-\overline u\bm1
+             -\widehat{\bm x}\,\overline{u\widehat x}}
+          {\sqrt{s^2+\varepsilon}}\text{。}
+  \label{eq:transformer-layernorm-gradient}
+\end{equation}
+缩放和平移的梯度分别由$\bm g_{\mathrm y}\odot\widehat{\bm x}$和$\bm g_{\mathrm y}$沿位置、样本累积。训练中若使用Dropout，还需按前向使用的同一随机掩码回传。至此，输出损失可以经注意力的读取与评分、逐位置变换和残差路径，传到全部可训练参数；能求出梯度仍不意味着优化一定成功。
+
+\section{Transformer的扩展}
+\label{sec:transformer-extensions}
+
+标准网络将输入表示、位置读取、特征变换和残差更新组合起来。扩展方法可以改变其中某个计算，也可以只改变同一计算的执行与存储方式。比较时需要说明目标：更合适的位置关系、更有选择性的表示、更少的位置对计算、更小的中间激活，或更紧凑的生成缓存。这些目标会影响不同资源，因而可以组合，也可能相互制约。
+
+\subsection{位置编码的扩展}
+\label{sec:transformer-position-extensions}
+
+顺序信息可以加到输入，也可以进入位置对评分。前者给每个位置一个表示，后者让读取直接依赖相对距离；旋转则提供了把位置变换嵌入点积的实现机制。下面固定内容投影，比较位置到底在哪里参与计算。
+
+\subsubsection{绝对位置编码}
+
+可学习位置表$\bm P\in\mathbb R^{n_{\max}\times d}$直接提供式\eqref{eq:transformer-input-position}中的$\bm p_i$，参数量为$n_{\max}d$。长度上限外没有对应行，即使扩充或插值，也需要解释新位置如何获得训练支持。固定正弦编码对偶数宽度$d$定义
+\begin{equation}
+  \begin{aligned}
+    (\bm p_i)_{2k+1}&=\sin(i\omega_k),\\
+    (\bm p_i)_{2k+2}&=\cos(i\omega_k),\qquad
+    \omega_k=10000^{-2k/d},
+  \end{aligned}
+  \label{eq:transformer-sinusoidal-position}
+\end{equation}
+其中$k=0,\ldots,d/2-1$，向量坐标从1开始，$i$采用本章从1开始的位置编号；改从0开始时需统一输入约定。不同频率使坐标随位置以不同速度变化，无需学习位置表，任意整数位置都可以求值。
+
+图~\ref{fig:transformer-position-waves}把这个变化画成波形。为在同一位置区间内看清快慢，这里取$d=8$，只画$k=0,1$对应的前四个坐标：两对角频率分别为1和0.1弧度／位置。它与图~\ref{fig:transformer-position-example}的四维手算例采用相同公式，但宽度不同；四维例子的第二对频率是0.01，不能把两组参数混用。每对正弦与余弦具有相同周期，彼此相差四分之一周期；高频坐标随位置较快振荡，低频坐标变化较慢。一个位置的编码要在同一横坐标处读取各维的幅值，而不是选择其中一条曲线。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-position-waves}
+  \caption{固定正弦编码中选定坐标随输入位置的变化。取$d=8$，上图为坐标1、2（$k=0$），下图为坐标3、4（$k=1$）；两图横轴范围相同，幅值无量纲。实线为正弦，虚线为同频余弦，周期分别约为6.28和62.83个位置。连续曲线帮助观察波形，实际序列只在整数位置取值；本图仅示意选定维度，不是完整八维编码或训练结果。}
+  \label{fig:transformer-position-waves}
+\end{figure}
+\FloatBarrier
+
+对固定距离$\Delta$，加法公式把$\bm p_{i+\Delta}$写为$\bm p_i$各坐标对的线性变换。这使相对位移在编码中有规律可循，但不意味着整个注意力只依赖相对距离。把内容和位置相加后，投影点积还包含内容与位置的交叉项；网络需要学习如何使用这些项。函数能在新位置求值，与预测能在训练长度外保持可靠，是不同结论。
+
+\subsubsection{相对位置向量与距离偏置}
+
+若任务更关心“相隔多远”而非“位于第几位”，可以直接让位置对得分依赖$j-i$。\term{相对位置编码}（relative positional encoding）为位置之间的关系提供表示。设$\bm r_{j-i}^{\mathrm k}\in\mathbb R^{d_k}$、$\bm r_{j-i}^{\mathrm v}\in\mathbb R^{d_v}$为距离对应的键和值修正，则一种形式为
+\begin{equation}
+  \begin{aligned}
+    S_{i,j}&=\frac{\bm q_i^{\top}(\bm k_j+\bm r_{j-i}^{\mathrm k})}
+                        {\sqrt{d_k}}+M_{i,j},\\
+    \bm z_i&=\sum_j A_{i,j}(\bm v_j+\bm r_{j-i}^{\mathrm v})\text{。}
+  \end{aligned}
+  \label{eq:transformer-relative-position}
+\end{equation}
+这里$S_{i,j},M_{i,j},A_{i,j}$是对应矩阵元素的简写，$\bm q_i,\bm k_j,\bm v_j$是各行转置后的向量。键修正改变匹配，值修正把距离信息带入输出。Shaw等采用截断距离，共享过远位置的相对向量；这样限制参数数量，也合并了某些距离差异\scite{shaw2018relative}
+
+若只需修改评分，可以使用标量偏置$b_{j-i}$，将其加到缩放点积上。偏置表可按距离截断或分桶，后者让一组距离共享参数；它比每个距离存储一个向量更紧凑，但表达形式也不同。\term{线性偏置注意力}（attention with linear biases, ALiBi）在因果读取中采用
+\begin{equation}
+  S_{i,j}^{(a)}=\frac{\bm q_{i,a}^{\top}\bm k_{j,a}}{\sqrt{d_k}}
+                 -m_a(i-j),\qquad j\leq i\text{，}
+  \label{eq:transformer-alibi}
+\end{equation}
+其中$m_a>0$是第$a$头的预设斜率，未来位置仍由掩码排除。距离越远，扣除越多；不同斜率提供不同距离偏好。它无需训练长度对应的位置表，原论文在特定语言建模设置中检验了长度外推。这个结果依赖模型、数据与长度范围，线性距离偏好也可能不符合需要精确远距离访问的任务\scite{press2021alibi}
+
+回到“猫／追／狗”，图~\ref{fig:transformer-position-extensions}把相对位置写成可逐格检查的距离矩阵。“追”读取“狗”对应$j-i=1$；若整段句子在更长文本中同时后移5位，距离仍为$8-7=1$。ALiBi进一步把距离变成得分修正：图中“狗”读取三个位置时分别扣除$1.0,0.5,0$，之后才做Softmax。图~\ref{fig:transformer-position-example}是在输入上相加，而这里是在每一对位置的评分上相加，两个操作作用于不同对象。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-position-extensions}
+  \caption{“猫／追／狗”的相对位置。左图行是查询位置$i$、列是键位置$j$，格内为$j-i$，正负号区分左右方向。右图取“狗”为查询、斜率$m=0.5$，演示ALiBi如何修正教学得分并重新归一化；显示数值保留两位小数，真实计算使用未舍入值。}
+  \label{fig:transformer-position-extensions}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{旋转位置编码}
+
+绝对位置向量加到输入上之后，点积中会出现内容与位置的交叉项。若希望直接控制点积中的相对位置关系，可以换一种构造：分别根据位置$i$、$j$变换查询和键，但要求变换后的点积只通过$j-i$依赖位置。\term{旋转位置编码}（rotary position embedding, RoPE）用旋转实现这一要求：位置决定旋转角度，两向量的相对角度进入点积\scite{su2021roformer}
+
+\paragraph{为什么旋转能表示位移}
+先考虑二维向量。希望位置每增加1，就施加同一个变换，而且连续移动$i$步再移动$j$步，应等价于移动$i+j$步。平面旋转满足这种组合规律，还能保留向量长度。设每步旋转$\omega$弧度；单位横轴旋转$\theta$后变为$(\cos\theta,\sin\theta)^{\top}$，单位纵轴变为$(-\sin\theta,\cos\theta)^{\top}$。把它们作为两列，就得到
+\begin{equation}
+  \bm R(\theta)=
+  \begin{pmatrix}
+    \cos\theta&-\sin\theta\\
+    \sin\theta&\cos\theta
+  \end{pmatrix}\text{。}
+  \label{eq:transformer-rope-rotation}
+\end{equation}
+对尚未施加本层RoPE旋转的查询$\bm q_i=(q_{i,1},q_{i,2})^{\top}$，令
+\[
+  \widetilde{\bm q}_i=\bm R(i\omega)\bm q_i
+  =\begin{pmatrix}
+     q_{i,1}\cos(i\omega)-q_{i,2}\sin(i\omega)\\
+     q_{i,1}\sin(i\omega)+q_{i,2}\cos(i\omega)
+   \end{pmatrix}\text{；}
+\]
+键同样取$\widetilde{\bm k}_j=\bm R(j\omega)\bm k_j$。这里旋转的是投影后的查询和键，内容向量仍决定旋转前的方向和长度。
+
+\paragraph{从两个绝对角度推到相对位置}
+矩阵转置把旋转角取反。再利用三角函数的和角公式，逐项相乘可得
+\begin{equation}
+  \begin{aligned}
+    \bm R(\alpha)^{\top}&=\bm R(-\alpha),\\
+    \bm R(\alpha)\bm R(\beta)&=\bm R(\alpha+\beta),\\
+    \bm R(i\omega)^{\top}\bm R(j\omega)
+      &=\bm R((j-i)\omega)\text{。}
+  \end{aligned}
+  \label{eq:transformer-rope-composition}
+\end{equation}
+令$\Delta=j-i$，代入两向量的点积，有
+\begin{equation}
+  \begin{aligned}
+    \widetilde{\bm q}_i^{\top}\widetilde{\bm k}_j
+      &=\bm q_i^{\top}\bm R(\Delta\omega)\bm k_j\\
+      &=(q_{i,1}k_{j,1}+q_{i,2}k_{j,2})\cos(\Delta\omega)\\
+      &\quad +(q_{i,2}k_{j,1}-q_{i,1}k_{j,2})\sin(\Delta\omega)\text{。}
+  \end{aligned}
+  \label{eq:transformer-rope-two-dimensional}
+\end{equation}
+这就把“相对”落到了具体公式：内容通过两个乘积组合保留下来，位置只以$\Delta$出现。若保持内容向量固定，把$i$和$j$同时加上$c$，差值不变，点积也不变。这是位置变换本身的性质；改变整段上下文可能改变查询和键，不能据此断言整个模型的输出不变。
+
+图~\ref{fig:transformer-rope}给出可手算的例子。取“追”的位置$i=2$、“狗”的位置$j=3$，并令$\bm q_i=\bm k_j=(1,0)^{\top}$、$\omega=\pi/6$。旋转后
+\[
+  \begin{aligned}
+    \widetilde{\bm q}_i&=(1/2,\sqrt3/2)^{\top},\qquad
+    \widetilde{\bm k}_j=(0,1)^{\top},\\
+    \widetilde{\bm q}_i^{\top}\widetilde{\bm k}_j
+      &=\sqrt3/2=\cos((3-2)\pi/6)\text{。}
+  \end{aligned}
+\]
+两个向量分别转过$60^\circ$和$90^\circ$，点积由$30^\circ$的夹角决定。这里的频率为画图方便而选取；一般内容向量原本就有自己的夹角，旋转在其上叠加位置差带来的角度。
+
+\paragraph{从二维构造完整注意力头}
+若$d_k$为偶数，将坐标按$(1,2),(3,4),\ldots,(d_k-1,d_k)$两两配对。第$u$对使用频率$\omega_u=10000^{-2u/d_k}$，其中$u=0,\ldots,d_k/2-1$。把各旋转块放在对角线上，定义
+\[
+  \bm R_i=\operatorname{diag}\!\left(
+    \bm R(i\omega_0),\ldots,\bm R(i\omega_{d_k/2-1})\right)\text{。}
+\]
+各对坐标独立旋转，完整点积就是它们各自点积之和，因此二维推导逐块成立：
+\begin{equation}
+  \begin{aligned}
+    \widetilde{\bm q}_i&=\bm R_i\bm q_i,\qquad
+    \widetilde{\bm k}_j=\bm R_j\bm k_j,\\
+    \widetilde{\bm q}_i^{\top}\widetilde{\bm k}_j
+      &=\bm q_i^{\top}\bm R_i^{\top}\bm R_j\bm k_j
+       =\bm q_i^{\top}\bm R_{j-i}\bm k_j\text{。}
+  \end{aligned}
+  \label{eq:transformer-rope-relative}
+\end{equation}
+随后仍按式\eqref{eq:transformer-attention}除以$\sqrt{d_k}$、加掩码并做Softmax。由于$\bm R_i^{\top}\bm R_i=\bm I$，旋转保留查询和键的范数。实现只需逐坐标对计算正弦、余弦和乘加，不必构造稠密的$d_k\times d_k$矩阵；也可以只旋转其中一部分坐标。本文按相邻坐标配对；其他配对方式须使向量坐标、投影参数与缓存的约定一致。
+
+\paragraph{生成时怎样复用旋转结果}
+标准用法旋转查询与键，不旋转值。在后文介绍的KV缓存中，第$t$个位置到来时，只需计算$\widetilde{\bm q}_t=\bm R_t\bm q_t$和$\widetilde{\bm k}_t=\bm R_t\bm k_t$，将旋转后的键与原值$\bm v_t$追加保存。新查询与旧键$\widetilde{\bm k}_j$做点积，式\eqref{eq:transformer-rope-relative}自然给出相对位移$j-t$；已经旋转过的旧键无需再按当前步旋转。缓存的物理存储位置可以变化，编码使用的仍应是词元的逻辑位置。这种复用要求位置编号、旋转频率与位置缩放规则保持一致；若改变这些规则，旧缓存也需要相应转换或重算。
+
+多频率提供了不同的角度变化速度，却不保证每个点积都随距离单调衰减。例如前述单位向量的得分是$\cos(\Delta\omega)$，它会随距离振荡。RoPE在新位置可以求值，预测仍可能遇到训练未覆盖的相位和距离分布；调整频率或位置尺度会改变读取规律，需要在预期长度范围重新检验。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-rope}
+  \caption{RoPE在一个二维坐标对中的作用。左图两个内容向量重合；右图“追”的查询和“狗”的键按各自位置旋转，夹角为$(3-2)\omega=30^\circ$，点积因此依赖相对位置。示例频率为$\pi/6$，用于演示几何关系；实际模型对多个坐标对采用不同频率，并保留各自的内容向量。}
+  \label{fig:transformer-rope}
+\end{figure}
+\FloatBarrier
+
+绝对与相对描述的是位置关系，旋转描述的是注入机制，所以它们不是三个完全互斥的标签。可学习绝对表有显式长度参数，固定正弦和RoPE无需位置表，距离偏置由距离覆盖或斜率决定参数量；这些资源差异都不能单独推出长度外推保证。图像还需要保留二维位置，连续时间数据需要处理实际时间间隔，单一序列编号未必足够。
+
+
+
+\subsection{注意力机制的扩展}
+\label{sec:transformer-attention-extensions}
+
+完整序列计算同时有$n$个查询；逐步解码通常只增加一个查询，但仍要读取历史键和值。\term{键值缓存}（key--value cache, KV cache）保存每层已有位置的键和值，生成时只计算新位置的投影并追加。固定参数、位置编号和因果掩码时，旧位置表示不依赖未来输入，所以其键值可以复用；如果前缀内容或可见规则改变，原缓存未必继续有效。
+
+对$L$层、$h$头、每头$d_k=d_v$、当前长度$n$的单序列，标准缓存有$2Lnhd_k$个元素，字节量还要乘以每元素的存储字节数和批量大小。缓存省去重算历史投影与历史网络块，但新查询仍需读取$n$个键和值，其位置对算术量为$O(nhd_k)$。将长度从1生成到$n$时，稠密注意力累计仍有平方量级的位置对读取。预填充（prefill）是一次处理已知前缀并建立缓存，逐步解码（decoding）则复用缓存产生后续内容；两者的并行规模和存储瓶颈不同。
+
+\subsubsection{支持不同信息来源与可见范围}
+
+交叉注意力改变键值来源，因果注意力改变允许的连接，两者可以同时出现于同一目标块。\term{前缀注意力}（prefix attention）让给定条件前缀内部互相读取，而目标位置读取前缀和此前目标；前缀不能读取待生成目标，否则缓存前缀就需要随着目标重新计算。图~\ref{fig:transformer-masks}固定“猫／追／狗／EOS”四个位置，对比三种掩码。前缀方案把“猫追”设为已知条件，两位置内部可以互读；生成“狗”时可以读取这段条件，而“狗”的信息不能反向进入已缓存的条件表示。掩码表达实际已知信息，不应只按模型名称选取。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-masks}
+  \caption{四个位置的读取范围。行表示查询位置$i$，列表示键位置$j$，着色格允许读取，带叉白格禁止读取。左为全部有效输入间的双向读取，中为$j\leq i$的因果读取，右为前两个位置构成条件前缀的读取：前缀内部双向，目标读取全部前缀与截至当前位置的目标输入。目标输入已移位，因此读取当前输入不等于读取当前待预测标签。}
+  \label{fig:transformer-masks}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{优化动态信息选择：门控注意力}
+
+Softmax每行必须把总权重1分配给可见值，即使这些值都不适合当前更新。\term{门控注意力}（gated attention）增加一个输入相关的控制量，调节特征或聚合结果的通过程度。例如，对第$a$头在位置$i$的结果，可以令
+\begin{equation}
+  \bm g_{i,a}=\sigma(\bm W_{\mathrm g,a}^{\top}\bm h_i+\bm b_{\mathrm g,a}),\qquad
+  \widetilde{\bm z}_{i,a}=\bm g_{i,a}\odot\bm z_{i,a}\text{，}
+  \label{eq:transformer-gated-attention}
+\end{equation}
+其中$\bm W_{\mathrm g,a}\in\mathbb R^{d\times d_v}$，Sigmoid门与头输出同宽。每头一个标量门则把整头共同缩放。注意力权重选择“从哪些位置读取”，输出门决定“这次读取的哪些特征应通过”，两者作用对象不同。
+
+门也可置于值投影之后或最终输出投影之后，这些位置通常不等价。值门改变不同来源的内容，查询相关的输出门改变接收端结果。Qiu等比较了门的位置和粒度，并在所测试的大语言模型配置中观察到聚合后Sigmoid门对训练与表示行为的改善；这些实验不能提升为任意架构的稳定性保证。逐坐标门增加非线性和参数，也要考虑饱和造成的梯度减弱\scite{qiu2025gated}
+
+图~\ref{fig:transformer-gated-attention}接着使用“追”的聚合结果$(0.5,1.25)^{\top}$。若当前表示生成的门为$(0.2,0.8)^{\top}$，逐坐标相乘得到$(0.1,1.0)^{\top}$，分别保留第一维的20\%与第二维的80\%。位置权重在此前已经完成归一化，这里控制的是混合后的特征，不再重新分配三个来源词元的概率。门接在输出上，不会删除键值缓存或减少标准点积的连接数。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-gated-attention}
+  \caption{以“追”为查询的聚合后门控。左支路从整段序列读取内容，右支路仅由当前词元表示产生Sigmoid门。教学数值中，聚合结果$(0.5,1.25)$与门$(0.2,0.8)$逐坐标相乘，得到$(0.1,1.0)$。门控制的是输出特征，而不是三个来源位置的概率；图中固定一个头并省略头索引、多头拼接和输出投影，数值并非训练测量。}
+  \label{fig:transformer-gated-attention}
+\end{figure}
+\FloatBarrier
+
+\subsubsection{降低位置连接的计算量：稀疏注意力}
+
+\term{稀疏注意力}（sparse attention）只计算保留的连接。例如每个位置读取$w$个窗口位置，再加少量全局位置，若各头保留连接总数为$e_{\mathrm{att}}$，评分和聚合需要$O(e_{\mathrm{att}}(d_k+d_v))$算术操作，权重存储为$O(e_{\mathrm{att}})$。窗口大小和全局连接数固定时，连接数随$n$线性增长；若窗口本身随$n$增长，则不能称为相同的线性代价。Sparse Transformer采用特定稀疏分解，使连接数达到$O(n\sqrt n)$量级，说明“稀疏”并不自动等于$O(n)$\scite{child2019sparse}
+
+删除连接也改变传播范围。只有窗口连接时，一层无法读取窗口之外的信息，跨层传播可扩大范围，却增加依赖路径长度；全局位置使远处信息有较短通路，但也可能形成汇总瓶颈。连接模式需要与任务所需信息匹配，而不是仅由稀疏比例判断。
+
+\subsubsection{降低聚合计算量：线性注意力}
+
+\term{线性注意力}（linear attention）把位置对核改写为有限维特征内积，以改变聚合次序。设$\phi(\bm q),\phi(\bm k)\in\mathbb R^r$，内积非负且分母为正，则可定义
+\begin{equation}
+  \begin{aligned}
+    \bm T&=\sum_{j=1}^n\phi(\bm k_j)\bm v_j^{\top},\qquad
+    \bm b=\sum_{j=1}^n\phi(\bm k_j),\\
+    \bm z_i^{\top}&=\frac{\phi(\bm q_i)^{\top}\bm T}
+                           {\phi(\bm q_i)^{\top}\bm b}\text{。}
+  \end{aligned}
+  \label{eq:transformer-linear-attention}
+\end{equation}
+$\bm T\in\mathbb R^{r\times d_v}$和$\bm b\in\mathbb R^r$先汇总键值，再被所有查询读取。除特征映射和输入输出投影外，单头算术量为$O(nrd_v+nr)$，中间汇总存储为$O(rd_v+r)$；这里“线性”指固定$r,d_v$时对$n$线性，不是整个网络对输入为线性函数。保存所有位置的激活和训练梯度还需额外存储。
+
+因果读取把上述和限制到$j\leq i$，得到$\bm T^{(i)}=\bm T^{(i-1)}+\phi(\bm k_i)\bm v_i^{\top}$、$\bm b^{(i)}=\bm b^{(i-1)}+\phi(\bm k_i)$。它可用固定大小的状态逐步生成，也可在整段输入上做前缀扫描。Katharopoulos等给出了这类计算与循环形式的联系；固定维特征通常改变标准Softmax注意力的核，或者对它作近似，不能仅靠乘法结合律把任意Softmax原样变为固定维线性注意力\scite{katharopoulos2020linear}
+
+\subsubsection{压缩位置交互表示：低秩注意力}
+
+\term{低秩注意力}（low-rank attention）用较小的交互表示代替全部位置。例如Linformer在位置维上用$\bm E_{\mathrm k},\bm E_{\mathrm v}\in\mathbb R^{r\times n}$分别压缩键和值，形成$\overline{\bm K},\overline{\bm V}$，再计算$n\times r$的注意力。固定各头配置时，位置压缩、评分和聚合的量级可降为$O(nr(d_k+d_v))$。它依赖低秩近似是否适合输入，并改变了可读取的表示\scite{wang2020linformer}
+
+位置维的压缩若混入未来键值，给压缩后的矩阵简单添加三角掩码不能消除泄漏；因果用法必须另行设计。压缩矩阵还可能绑定最大长度，$r$若为保持精度随$n$增长，实际复杂度也随之改变。减少连接、改变核与压缩位置分别牺牲不同结构自由度，应该在相同任务和有效长度下比较。
+
+图~\ref{fig:transformer-efficient-attention}把三条路线放回同一句“猫在院里追狗”，按字分成6个位置。(a)只保留当前位置及其左右邻居，把36个位置对减到16个；“追”这一行可以读取“里、追、狗”，却不能在本层直接读取“猫”。(b)为键特征和值设置可手算的二维数值。六项外积累加为$\bm T=\bigl[\begin{smallmatrix}6&3\\3&6\end{smallmatrix}\bigr]$，键特征相加为$\bm b=(4,4)^{\top}$；查询特征$(1,1)^{\top}$因而得到$(9/8,9/8)^{\top}$。这里各位置共同贡献一个固定大小的状态，查询再从状态读取。
+
+(c)则直接压缩位置：教学投影把前三个位置、后三个位置分别取平均，形成两个键值槽。所有6个查询仍各有一行，但每行只向两个槽评分。图中为便于核对令$\bm E_{\mathrm k}=\bm E_{\mathrm v}=\bm E$；Linformer的投影可以学习，也不必采用局部平均。这三幅图分别改变连接、核与可读取的表示，不能仅凭矩阵变小就认为保留了同一种注意力。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-efficient-attention}
+  \caption{三条效率路线的具体读法，序列均为“猫／在／院／里／追／狗”。(a)着色格保留相邻位置的连接，紫框为查询“追”；白格被删除。(b)给定教学键特征和值后，先累加外积和特征，再对查询归一化，数值由式\eqref{eq:transformer-linear-attention}复核。(c)示例投影把6个位置压成2个槽，右侧每行表示一个查询对两槽评分，颜色只表示存在连接。所有数值及压缩权重均为教学设定；三种方法并非对同一Softmax结果的等价改写。}
+  \label{fig:transformer-efficient-attention}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{优化中间存储与访存：FlashAttention}
+
+前面三条路线改变了读取规则或公式。\term{FlashAttention}保留标准稠密注意力的数学结果，通过分块计算和在线归一化，避免把完整得分、概率矩阵写入大容量显存。它利用较小的片上存储反复处理查询和键值块，让数据读取与中间结果的存储更紧凑；反向传播再按需要重算部分块，而不是保存全部概率\scite{dao2022flashattention}
+
+理解在线Softmax可以只看一个查询。已处理的键集合上，维护最大得分$m$、归一化分母$s=\sum_j\exp(S_j-m)$和未归一化输出$\bm u=\sum_j\exp(S_j-m)\bm v_j$。新键块集合为$B$，块内最大值为$m_B$，更新为
+\begin{equation}
+  \begin{aligned}
+    m'&=\max(m,m_B),\qquad c=\exp(m-m'),\\
+    s'&=cs+\sum_{j\in B}\exp(S_j-m'),\\
+    \bm u'&=c\bm u+\sum_{j\in B}\exp(S_j-m')\bm v_j\text{。}
+  \end{aligned}
+  \label{eq:transformer-online-softmax}
+\end{equation}
+旧统计乘以$c$，是在新最大值下重新表达同一批指数。遍历全部有效块后，输出为$\bm u/s$。初始为空时直接用第一个非空有效块建立统计，避免在全被掩码的块上做$-\infty-(-\infty)$。
+
+沿用示例~\ref{ex:transformer-attention-numerical}，先处理得分$0,\log2$，得到$m=\log2$、$s=3/2$、$\bm u=(1/2,2)^{\top}$；再加入得分0和值$(1,1)^{\top}$，得到$s'=2$、$\bm u'=(1,5/2)^{\top}$，仍输出$(1/2,5/4)^{\top}$。分块没有把不同块分别归一化后简单求和，而是维护全局共同分母。
+
+在固定头数和宽度下，FlashAttention把需要保存的注意力中间量从平方规模降到线性规模，实际训练还需保存其他模块激活。稠密位置对仍然存在，算术量仍为$O(n^2d)$；浮点运算顺序改变，结果可能有舍入差异。“精确”表示没有另引入稀疏或核近似，不表示逐位比特相同。速度收益依赖块大小、硬件和输入形状，访存优化不能直接改写为算术复杂度降低。
+
+图~\ref{fig:transformer-flashattention}对比“保存整个中间矩阵”与“算完一块就合并”。上图突出显示“追”这一查询的得分行和概率行；下图先读“猫、追”，再读“狗”，把前述数值示例逐步展开。第二块接着更新同一组$m,s,\bm u$，因此最终分母覆盖所有键；它并没有把两次局部Softmax结果直接相加。对其他查询块重复这一过程，就能得到完整输出，而无需让完整得分、概率矩阵在大容量显存中落地。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-flashattention}
+  \caption{FlashAttention保留稠密注意力结果，改变中间结果的存储与合并方式。上图将$\bm Q,\bm K$生成的得分经Softmax变为概率，再与$\bm V$相乘；常规实现保存完整的两个$n\times n$中间矩阵，圆点代表未展开的其他行。下图让同一查询$\bm q_2$依次读取两个键值块，把前一块的$m,s,\bm u$统计合并到新统计，最终仍得$(1/2,5/4)^{\top}$。数值为教学设定；图只展开查询“追”，省略片上存储搬运和反向重算细节。}
+  \label{fig:transformer-flashattention}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{减少KV缓存容量与读取带宽：MQA与GQA}
+
+解码时，标准MHA为每头保存一套键和值。\term{多查询注意力}（multi-query attention, MQA）保留多个查询头，让它们共享一组键值；\term{分组查询注意力}（grouped-query attention, GQA）将$h$个查询头分组，共享$g$组键值，其中$1\leq g\leq h$。设映射$\rho(a)$把查询头$a$分到键值组，则该头读取$\bm K_{\rho(a)},\bm V_{\rho(a)}$，仍有自己的一行Softmax和输出。
+
+当$d_k=d_v$时，缓存元素数由$2Lnhd_k$变为$2Lngd_k$；MQA对应$g=1$，MHA对应$g=h$。例如$L=24$、$n=4096$、$h=16$、$d_k=64$、每元素2字节的单序列MHA缓存约为384 MiB，$g=4$的GQA约为96 MiB，MQA约为24 MiB。这个教学计算只统计键值，不包含权重、其他激活和内存分配开销。
+
+图~\ref{fig:transformer-kv-sharing}固定3个历史位置“猫、追、狗”和4个新查询头，逐项数缓存中的键值对。MHA为每头保留3对，共12对；两组GQA保留6对；MQA只保留3对。图中的“猫”在MHA中出现4次，表示同一历史位置经过4组不同投影后产生的4对键值，并不是把同一个向量机械复制4份。共享后，不同查询仍分别与所读键匹配，所以可能得到不同的概率和输出。
+
+\begin{figure*}[p]
+  \centering
+  \input{figures/transformer-kv-sharing}
+  \caption{相同历史序列在MHA、GQA和MQA中的缓存布局。每个带词元名的小格代表该位置在一组投影下的一对键和值；大框是一整组历史缓存，箭头指向读取它的查询头。4个查询头分别使用4组、2组或1组键值时，缓存为12、6或3对。共享发生在键值表示及其存储上，各查询头仍独立计算注意力权重。图只计一层的一条序列，不含当前新位置追加的缓存。}
+  \label{fig:transformer-kv-sharing}
+\end{figure*}
+\FloatBarrier
+
+Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共享程度与质量之间的中间选择。共享减少了键值投影和缓存自由度，但查询头仍需分别匹配；算术量并不按$g/h$等比例减少。缓存读取若能在实现中复用，带宽需求才会相应改善，质量和速度都需要在给定模型与硬件上评价\scite{shazeer2019mqa} GQA还可由已有多头模型进行参数转换并继续训练，转换本身并不保持原模型的所有输出\scite{ainslie2023gqa}
+
+\subsubsection{提高KV缓存内存利用率：PagedAttention}
+
+缓存容量之外，还存在分配问题：不同请求的长度持续增长，为每个请求预留连续最大空间会留下空闲区域，共同前缀还可能被多次保存。\term{分页注意力}（PagedAttention）把缓存划分为固定容量块，用块表把序列的逻辑位置映射到实际存储位置；序列增长时追加块，而不要求整段缓存连续。共同前缀可以引用同一批块，分叉后按需要复制，避免直接修改仍被其他请求读取的数据\scite{kwon2023pagedattention}
+
+若每块容纳$b$个位置，长度$n$需要$\lceil n/b\rceil$块，最后一块的内部空余少于$b$个位置，另有块表和管理开销。原来连续存储中的外部碎片和重复前缀可由此减少，但真实键值元素数没有凭空消失。PagedAttention改变缓存寻址和共享，MQA/GQA改变键值组数，FlashAttention改变注意力中间结果的执行方式；三者处理不同问题，可在兼容实现中组合。块调度、并发服务和硬件算子的细节由系统卷展开。
+
+图~\ref{fig:transformer-pagedattention}用两个请求演示块表的作用。为便于说明，把“请／解释／注意力／机制”和“请／解释／位置／编码”各视为4个词元，每块放2个位置。本图的词元位置与逻辑块均从0编号。A按物理块$3\rightarrow1$读取，B按$3\rightarrow4$读取，两者共享前缀块3，物理块2仍可供其他请求使用。读取A中位置$i=1$的“解释”时，逻辑块为$\lfloor1/2\rfloor=0$，块内偏移为1；查A块表索引0得到物理块3，再从其中的偏移1取出键和值。逻辑块号、物理块号和词元位置承担不同职责，移动物理存储不会改变词元的位置编码。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-pagedattention}
+  \caption{分页键值缓存的具体寻址。上方两条请求按逻辑顺序分块，并用块表保存物理块编号；下方为实际缓存布局。蓝色共同前缀只保存一份，A、B的后续各占一块，无需保持物理连续。底部展开一次“位置$\rightarrow$逻辑块$\rightarrow$物理块及偏移”的查找。词元位置、逻辑块和表索引从0开始；物理块编号用1至4标识。框中的词仅标记其对应的KV内容，并非把原始文本当作键值向量。}
+  \label{fig:transformer-pagedattention}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{不同扩展方向的比较}
+
+表~\ref{tab:transformer-attention-extensions}把模型变化与实现变化分开。若瓶颈是长序列位置对算术量，FlashAttention与分页本身不会将其改成线性；若瓶颈是解码缓存，减少训练中的概率矩阵又不等于减少历史键值。门控、GQA、FlashAttention和分页可以在兼容实现中组合，因为它们分别作用于特征选择、键值组织、块内计算和缓存寻址。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}p{30mm}p{37mm}p{39mm}p{49mm}@{}}
+    \toprule
+    方法 & 主要改善对象 & 改变标准稠密读取？ & 代价或限制 \\
+    \midrule
+    前缀等掩码 & 可用信息与任务约束 & 改变允许连接 & 需防止目标或跨段泄漏 \\
+    门控注意力 & 输入相关的特征选择 & 增加乘性调制 & 增加参数；不自动减少连接 \\
+    稀疏注意力 & 位置对算术量 & 删除部分连接 & 范围受限；依赖连接模式 \\
+    线性注意力 & 聚合算术量及历史状态 & 改变核或近似Softmax & 依赖特征维$r$与核表达能力 \\
+    低秩注意力 & 交互维度与算术量 & 压缩键值位置 & 近似误差；因果性需另设计 \\
+    FlashAttention & 中间存储与显存访存 & 保持公式，舍入可能不同 & 稠密算术仍为平方量级 \\
+    MQA/GQA & KV容量与解码带宽 & 跨头共享键值参数 & 改变自由度；评分仍按查询头 \\
+    PagedAttention & 缓存分配与前缀共享 & 保持逻辑读取规则 & 块表管理；真实键值仍占空间 \\
+    \bottomrule
+  \end{tabular}
+  \caption{注意力扩展的主要目标与取舍。比较以相同有效输入、隐藏宽度与预测条件为前提；具体算术和存储量见各方法正文。降低算术量、减少访存、缩小KV缓存和减少内存碎片是不同指标，实际速度还取决于实现与硬件。}
+  \label{tab:transformer-attention-extensions}
+\end{table*}
+\FloatBarrier
+
+\subsection{前馈层的扩展}
+\label{sec:transformer-ffn-extensions}
+
+普通FFN先扩张特征，再用统一激活筛选。若希望同一输入同时决定候选特征和通过程度，可以设置两条投影分支。\term{门控线性单元}（gated linear unit, GLU）用Sigmoid分支逐坐标调制另一分支；应用于Transformer前馈层的一般形式为
+\begin{equation}
+  \begin{aligned}
+    \bm B&=\bm H\bm W_b+\bm1\bm b_b^{\top},\qquad
+    \bm D=\bm H\bm W_g+\bm1\bm b_g^{\top},\\
+    \operatorname{GFFN}(\bm H)&=(\bm B\odot\psi(\bm D))\bm W_o
+                          +\bm1\bm b_o^{\top}\text{。}
+  \end{aligned}
+  \label{eq:transformer-gated-ffn}
+\end{equation}
+两条输入投影均从$d$到$d_g$，输出投影从$d_g$恢复$d$。GLU取$\psi=\sigma$，\term{GEGLU}取GELU，\term{SwiGLU}取SiLU，后两者分别用平滑激活调制特征。GELU或SiLU可以输出负值且不限定在$[0,1]$，因此这里“门控”表示乘性调制，不完全等同于LSTM中的保留比例\scite{shazeer2020glu}
+
+忽略偏置时，普通FFN约有$2dd_f$个参数，门控FFN约有$3dd_g$个参数。若保持这一参数预算，可取$d_g\approx2d_f/3$；比较同样中间宽度会同时改变参数和计算量。门控增加表达形式，但也增加乘法分支和尺度选择，不能仅凭名称判断泛化效果。
+
+图~\ref{fig:transformer-gated-ffn}把“追”这一行的两条分支展开：候选特征$(2,-4)$与调制量$(0.5,2)$相乘，得到$(1,-8)$，再经输出投影恢复$d$维。第二维被放大，说明GEGLU、SwiGLU中的调制量不只是保留比例。这里用二维数值演示乘法，实际中间宽度由$d_g$决定；各位置仍独立处理，没有新增跨位置读取。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-gated-ffn}
+  \caption{门控前馈层对“追”的一次逐位置计算。候选特征$(2,-4)$与激活后的调制量$(0.5,2)$相乘为$(1,-8)$，再经输出投影恢复隐藏宽度。数值是教学假设；大于1的调制量适用于GEGLU或SwiGLU的解释，GLU的Sigmoid门则限制在0与1之间。猫、追、狗使用同一套参数分别计算，不发生跨位置读取。}
+  \label{fig:transformer-gated-ffn}
+\end{figure}
+\FloatBarrier
+
+\subsection{混合专家：按输入选择计算路径}
+\label{sec:transformer-moe-extensions}
+
+逐位置计算还可以按输入选择不同前馈网络。\term{混合专家}（mixture of experts, MoE）设置多个专家和一个路由器，让不同位置使用不同专家组合。\term{专家}（expert）是可训练的特征变换网络，\term{路由器}（router）根据位置表示分配专家权重。设共有$e$个专家，单位置为$\bm h$，路由概率为$\bm p=\operatorname{softmax}(\bm W_{\mathrm r}^{\top}\bm h)$，$\bm W_{\mathrm r}\in\mathbb R^{d\times e}$。若只保留分数最大的$k$个专家集合$T_k(\bm h)$，可以计算
+\begin{equation}
+  \operatorname{MoE}(\bm h)
+    =\sum_{a\in T_k(\bm h)}\widetilde p_a\,F_a(\bm h)\text{，}
+  \label{eq:transformer-moe}
+\end{equation}
+其中$\widetilde p_a$可取选中概率重新归一化后的权重，也可按具体方法保留原概率；训练性质依赖这一约定。总专家参数随$e$增长，一次位置计算主要激活$k$个专家，加上路由器及共享模块的开销，不能把总参数量直接当作每次计算量\scite{shazeer2017}
+
+路由可能把大量位置分给少数专家，造成容量不足或计算负载不均。容量限制决定多余位置如何处理，负载均衡辅助目标约束专家使用分布；它们会改变训练目标或输出过程。Top-$k$选择是离散的，常规反向传播只能在当前选择内对连续权重和专家求导，跨越选择边界的行为需要单独设计。若$k=1$并将唯一概率重新归一化为1，仅从这条乘权路径无法训练路由器，尤其需要保留可学习权重或其他训练信号。专家分工是学习结果，不能预先认定某个专家必然掌握某类知识；并行通信和调度代价也不能用稀疏激活参数量替代。
+
+图~\ref{fig:transformer-moe}把路由决策与专家计算分开。对“追”的同一个隐藏表示，假设路由概率为$(0.1,0.6,0.1,0.2)$。Top-2选择专家2和4，再除以所选概率之和$0.8$，得到权重$0.75$和$0.25$。两个专家都读取原隐藏表示$\bm h$，而不是读取路由概率；假设它们分别输出$(2,0)^{\top}$和$(0,4)^{\top}$，加权相加后才得到$(1.5,1)^{\top}$。专家1、3在本次没有执行，参数仍属于模型。这里的概率与输出只供手算，不表示某个专家已被指定为某类词的专家。
+
+专家通常替换部分块中的FFN，注意力与残差仍可共享。不同位置可以选择不同专家，也可能选择相同专家；路由均衡关系到并行负载，并不等于专家应等权输出。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-moe}
+  \caption{Top-2混合专家的一次完整计算，概率与二维专家输出均为教学设定。上方路由器选出专家2、4并给出重新归一化的权重；下方实线传递隐藏表示及专家结果，虚线向乘法节点提供标量权重。专家输入始终是同一个$\bm h$，加权发生在专家输出之后，最终$0.75(2,0)^{\top}+0.25(0,4)^{\top}=(1.5,1)^{\top}$。灰色专家1、3本次不计算；图省略容量限制、辅助训练目标及块外残差。}
+  \label{fig:transformer-moe}
+\end{figure*}
+\FloatBarrier
+
+\subsection{归一化的扩展}
+\label{sec:transformer-normalization-extensions}
+
+第\ref{sec:transformer-residual-normalization}节已经给出逐位置LayerNorm及其残差块形式。扩展时仍需分别检查统计范围、是否减均值，以及归一化位于哪条路径：前两项决定消去哪些表示变化，后一项影响残差与梯度。通用归一化公式、批归一化（BatchNorm）、实例归一化（InstanceNorm）和组归一化（GroupNorm）的完整说明见第\ref{sec:training-normalization}节，统计轴对照见表~\ref{tab:training-normalization-axes}。这里集中讨论Transformer中的因果限制、RMSNorm与残差位置。
+
+\subsubsection{统计范围与因果限制}
+
+对批量激活$\bm X\in\mathbb R^{b\times n\times d}$，三个轴分别是样本、位置和特征。式\eqref{eq:transformer-layernorm}固定样本和位置，只沿$d$个特征统计；不同位置不交换均值与方差，训练与预测均使用当前行的统计量，不需要运行均值。LayerNorm的“层”并不表示把整批或整段的元素放在一起。
+
+完整已知的图像或离线编码可以使用跨空间、跨位置统计；因果解码则要求位置$i$的统计量不能包含$j>i$的激活。只要均值或方差读取了未来，即使注意力有三角掩码也会泄漏。把BatchNorm、InstanceNorm或GroupNorm设为跨整段统计时，必须另行设计满足因果条件的统计方案，不能直接替换逐位置归一化。训练用全段统计、预测用前缀统计还会引入额外不一致；填充也不能作为有效观测参与统计。
+
+\subsubsection{不减均值的RMSNorm}
+
+中心化不是调整尺度的唯一方式。\term{均方根归一化}（root mean square normalization, RMSNorm）不减去均值，而按坐标均方根缩放：
+\begin{equation}
+  \operatorname{RMSNorm}(\bm x)
+    =\bm\gamma\odot\frac{\bm x}
+       {\sqrt{d^{-1}\sum_{k=1}^d x_k^2+\varepsilon}}\text{。}
+  \label{eq:transformer-rmsnorm}
+\end{equation}
+这里采用常见的无平移形式。它与逐位置LayerNorm均只读取当前行，但少了均值计算和相减。给各坐标加同一常数时，LayerNorm的中心化结果不变，RMSNorm的结果一般会变；忽略$\varepsilon$时，二者都消去正比例整体缩放，实际耗时仍由实现与形状决定\scite{zhang2019rmsnorm}
+
+逐位置统计满足这一局部因果条件，却不保证归一化保留了任务需要的均值或幅度。只调整整行长度的尺度归一化（ScaleNorm）见第\ref{sec:training-scalenorm}节；直接重参数化权重、而非统计激活的权重归一化（WeightNorm）见第\ref{sec:training-weightnorm}节。它们改变的对象不同，不能仅凭名称作为LayerNorm的等价替代。
+
+\subsubsection{归一化位置：Pre-LN、Post-LN与组合}
+
+归一化的位置改变残差路径。Post-LN子层$\bm y=\operatorname{LN}(\bm x+F(\bm x))$的雅可比为$\bm J_{\mathrm{LN}}(\bm I+\bm J_F)$，直接路径也要经过LN；Pre-LN的雅可比为$\bm I+\bm J_F\bm J_{\mathrm{LN}}$，恒等路径绕过LN。Xiong等在特定初始化与模型分析下比较了两者的梯度尺度，并解释了原始Post-LN训练中学习率预热的重要性；Pre-LN改善该问题的条件不能扩写为所有深度和优化设置都更优\scite{xiong2020layernorm}
+
+也可以在子层前和输出端分别归一化，控制输入与支路输出的尺度。例如，把子层的归一化输入记为$\bm u$，计算
+\begin{equation}
+  \begin{aligned}
+    \bm u&=\operatorname{Norm}_{\mathrm{in}}(\bm x),\\
+    \bm y&=\bm x+\operatorname{Norm}_{\mathrm{out}}(F(\bm u))\text{。}
+  \end{aligned}
+  \label{eq:transformer-combined-normalization}
+\end{equation}
+它与$\operatorname{Norm}(\bm x+F(\bm x))$不同，恒等路径是否经过归一化仍需按真实公式判断。RMSNorm可放在前或后，LayerNorm也可采用不同位置；“采用何种统计量”与“放在何处”不应混作一种分类。归一化分母、可学习缩放、残差累积和末端读出共同影响信号，任何单一局部机制都不足以保证整网梯度稳定。
+
+\subsection{深层连接的扩展}
+\label{sec:transformer-deep-connections}
+
+直接堆叠残差块仍可能积累过大的更新或使深层分支难以学习。一般子层可写为$\bm h^{(l)}=b_l\bm h^{(l-1)}+a_lF_l(\bm h^{(l-1)})$，其中$a_l$控制新增变换，$b_l$控制原表示的传递。固定缩放可以与深度相关，可学习缩放则让训练决定每条分支的影响；它们都要与归一化和初始化共同考虑。
+
+\term{ReZero}给每条残差支路设置一个初始化为0的可学习标量$a_l$，使用$\bm h^{(l)}=\bm h^{(l-1)}+a_lF_l(\bm h^{(l-1)})$。在该残差堆叠不含其他破坏恒等路径的操作时，初始映射和局部雅可比都是恒等。初始步骤中支路内部参数梯度受$a_l=0$抑制，但门参数有梯度$\partial\ell/\partial a_l=\langle\bm g^{(l)},F_l(\bm h^{(l-1)})\rangle$，门偏离0后支路开始收到监督。它调整新增层何时参与计算，不等于将支路内部全部权重置零\scite{bachlechner2020rezero}
+
+门也可以是逐特征向量或输入相关函数，形成不同粒度的残差控制。向量门增加参数，自适应门增加计算和新的梯度路径；Sigmoid门如果希望初始接近关闭，偏置与饱和程度就需配合。更广的跨层连接还可把早期层的表示相加或拼接到深层，相加要求维度匹配，拼接会增加宽度并通常需要投影。这些改变影响表示复用、保存激活的数量和梯度路径，不能只依据最短路径长度评价整网优化。
+
+图~\ref{fig:transformer-residual-extensions}对照归一化位置与支路缩放。把Norm移到子层之前，保留的是绕过Norm的恒等路径；在支路加入标量，控制的是新增变换的强度。这两个选择可以同时使用。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/transformer-residual-extensions}
+  \caption{把恒等路径放在同一水平线上比较三种残差组织。Post-LN的原输入在相加后仍通过LN；Pre-LN只有下方变换支路经过LN，恒等路径可以直接到达输出。第三行以$a_l$缩放新增变换，$a_l=0$时该子层输出等于输入；ReZero采用这一初值，图中省略可选归一化。各行上方路径传递原表示，下方路径计算新增变换，$+$为逐元素相加。}
+  \label{fig:transformer-residual-extensions}
+\end{figure}
+\FloatBarrier
+
+\subsection{混合网络结构}
+\label{sec:transformer-hybrid}
+
+注意力擅长显式读取位置，但没有默认的局部窗口或固定容量历史状态。若输入具有稳定局部模式，可以用卷积前端提取特征、降低分辨率，再把特征位置送入Transformer；窗口内部的卷积共享与注意力的内容相关读取承担不同职责。下采样减少序列长度，会明显改变后续平方位置对成本，也可能丢失细粒度信息，输出任务需要保留或恢复相应分辨率。
+
+模块也可以交替堆叠。例如用状态空间模块压缩历史，用注意力层在保留位置之间进行显式检索；或者先用循环网络处理陆续到达的观测，再在给定窗口内交换信息。串联改变后一个模块接收到的表示，注意力无法恢复前端已经丢掉的细节。并行分支则可以分别形成局部与全局表示，再相加或拼接，维度、位置对齐和因果规则仍需一致。
+
+混合结构的成本不能只取其中最便宜的模块：只要保留稠密注意力层，整段处理仍有平方量级的位置对计算；生成时，该层需保存随历史长度线性增长的KV缓存。训练中间存储另取决于实现，FlashAttention不必保存完整的平方规模注意力矩阵；固定状态模块的存储优势也只覆盖该模块。前端、交替与并行是不同组织方式，应围绕任务需要的局部模式、精确历史读取、延迟和计算预算选择。
+
+图~\ref{fig:transformer-hybrid}比较前端、交替与并行三种组织。它们分别改变输入粒度、层间分工与融合方式，使用哪一种都需要保持位置对应和信息可见规则。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-hybrid}
+  \caption{三种混合结构改变的是不同环节。左图以窗口2、步长2的卷积前端将6个输入位置变成3个特征位置，再交给注意力；中图对猫、追、狗递推状态，并将各位置输出交给注意力层，随后继续交替；右图对同一序列并行计算局部卷积和注意力，再按位置融合。图只展示组织方式，不规定具体模型或性能；并行卷积分支采用保持长度的位置对齐设置，所有分支还需满足任务的因果约束。}
+  \label{fig:transformer-hybrid}
+\end{figure*}
+\FloatBarrier
+
+\section{理论分析}
+\label{sec:transformer-theory}
+
+短的信息路径、可微的运算和共享参数说明了计算如何构成，还没有回答训练能否达到目标、所得规则能否用于新样本。这里沿用机器学习理论部分的风险与优化框架，将注意力、归一化、长度和结构约束放入相应条件。结论的对象需要分清：梯度的局部尺度、经验目标的下降与未见输入上的风险分别需要不同依据。
+
+\subsection{收敛性}
+\label{sec:transformer-convergence}
+
+Softmax雅可比$\bm J=\operatorname{diag}(\bm a)-\bm a\bm a^{\top}$的谱范数不超过$1/2$。可由每行绝对值之和$2a_j(1-a_j)\leq1/2$以及对称性得到这一界。它控制的是对得分的局部敏感度；当权重接近单点时，雅可比还可能趋近零。因此，Softmax本身不会无限放大得分梯度，却可能使某些评分参数难以收到足够梯度。
+
+注意力对输入的敏感度还包含查询、键和值的变化。单头记$\bm Z=\bm A\bm V$，固定掩码时微分为
+\begin{equation}
+  \begin{aligned}
+    \mathrm d\bm Z&=(\mathrm d\bm A)\bm V+\bm A\,\mathrm d\bm V,\\
+    \mathrm d\bm S&=\frac{(\mathrm d\bm Q)\bm K^{\top}
+                              +\bm Q(\mathrm d\bm K)^{\top}}{\sqrt{d_k}}\text{。}
+  \end{aligned}
+  \label{eq:transformer-attention-differential}
+\end{equation}
+结合逐行Softmax界和矩阵范数不等式，可得局部估计
+\begin{equation}
+  \begin{aligned}
+    \lVert\mathrm d\bm Z\rVert_{\mathrm F}
+    &\leq\frac{\lVert\bm V\rVert_2}{2\sqrt{d_k}}
+       \left(\lVert\bm K\rVert_2\lVert\mathrm d\bm Q\rVert_{\mathrm F}
+             +\lVert\bm Q\rVert_2\lVert\mathrm d\bm K\rVert_{\mathrm F}\right)\\
+    &\quad+\lVert\bm A\rVert_2\lVert\mathrm d\bm V\rVert_{\mathrm F}\text{，}
+  \end{aligned}
+  \label{eq:transformer-attention-local-bound}
+\end{equation}
+其中矩阵$\lVert\cdot\rVert_2$为谱范数，$\lVert\cdot\rVert_{\mathrm F}$为Frobenius范数。输入到投影的敏感度还乘以各$\bm W$的范数。行权重和为1控制了单个输出是值的凸组合，却不保证$\lVert\bm A\rVert_2\leq1$：所有查询都读取同一个值时，该值的影响会在多行重复，谱范数可以达到$\sqrt n$。用最大行向量范数分析可能得到另一种长度依赖，不能跨范数直接替换结论。
+
+归一化的分母含$\varepsilon$，其局部导数还受可学习缩放和行内方差影响。残差堆叠则包含多个$\bm I+\bm J_l$的乘积，即使直接路径存在，其他分支仍可能累积放大、衰减或抵消。Pre-LN、残差缩放和门控改变这一乘积，但不自动保证全部奇异值接近1。深度增加、输入长度变长或投影尺度改变，都可能使原来合理的学习率不再适合。
+
+把这些局部因素转为优化结论，需要明确经验目标和轨迹条件。令$J(\bm\theta)$为确定性的全批量经验目标，假定它有下界$J_{\inf}$，并在包含迭代点及更新线段的区域内具有$\beta$-Lipschitz梯度。对学习率$0<\eta\leq1/\beta$的梯度下降，下降引理给出
+\begin{equation}
+  \begin{aligned}
+    J(\bm\theta^{(t+1)})
+      &\leq J(\bm\theta^{(t)})-\frac\eta2
+                   \lVert\nabla J(\bm\theta^{(t)})\rVert_2^2,\\
+    \min_{0\leq t<T}\lVert\nabla J(\bm\theta^{(t)})\rVert_2^2
+      &\leq\frac{2(J(\bm\theta^{(0)})-J_{\inf})}{\eta T}\text{。}
+  \end{aligned}
+  \label{eq:transformer-stationary-convergence}
+\end{equation}
+第二行来自第一行求和。它保证迭代中出现小梯度点，不保证参数序列收敛到同一个点，更不保证全局最优或训练误差很小。对有界参数、固定最大长度、光滑激活和正归一化分母的网络，可以在适当紧区域控制光滑常数；ReLU拐点、离散专家路由、随机Dropout或缓存近似不能未经说明直接套用这个光滑全批量结论。
+
+要进一步保证目标差距下降，例如需要沿轨迹满足$\lVert\nabla J\rVert_2^2\geq2\mu(J-J_*)$的Polyak--Łojasiewicz条件，其中$\mu>0$且$J_*$为所比较的最优值，才可由上式得到几何下降。真实Transformer并不普遍满足该条件。
+\BookTheoremRef{thm:ntk-training-convergence}{第二卷“基础、理论和可信性”的“深度学习的可学习性”章“固定NTK下的训练收敛”定理}
+给出的固定核附近分析也依赖宽度、初始化和核特征值等条件，不能直接覆盖有限宽度中的任意特征学习。
+
+随机梯度的结论另需无偏性、方差和步长条件；Adam类自适应更新也有不同的假设。实践中的损失没有尖峰，只说明观察到的训练行为平稳；收敛到驻点描述优化梯度；较小训练误差还要求模型与数据相容并且算法找到相应参数。这三种说法应在各自条件下使用。
+
+\subsection{泛化能力}
+\label{sec:transformer-model-generalization}
+
+以序列分类为例，一个样本$z=(x,y)$包含完整输入序列和标签。若训练集$S=\{z_1,\ldots,z_N\}$由同一分布独立抽取，期望风险为$R(f)=\mathbb E\ell(f(x),y)$，经验风险为$\widehat R_S(f)=N^{-1}\sum_{j=1}^N\ell(f(x_j),y_j)$。这里$N$是独立序列数，$n$是单序列长度，不能混用。序列内部位置相关，不会仅因为有$Nn$个词元就自动变成$Nn$个独立样本。
+
+在抽样前固定模型族$\mathcal F$、允许长度和损失范围，令$\mathcal G=\{z\mapsto\ell(f(x),y):f\in\mathcal F\}$，若损失取值于$[0,1]$且满足可测性条件，
+\BookTheoremRef{thm:rademacher-risk-bound}{第二卷“基础、理论和可信性”的“二分类学习的可学习性”章“Rademacher复杂度给出的期望风险上界”定理}
+给出以至少$1-\delta$的概率同时成立的界
+\begin{equation}
+  R(f)\leq\widehat R_S(f)+2\widehat{\mathfrak R}_S(\mathcal G)
+       +3\sqrt{\frac{\log(2/\delta)}{2N}}\text{。}
+  \label{eq:transformer-generalization-bound}
+\end{equation}
+这不是Transformer独有的界；该网络的输入范围、投影范数、层数、头数和读出方式进入损失函数族的复杂度。交叉熵一般无界，不能不加条件套用$[0,1]$版本，可以在概率下界成立时控制损失，或另用适合无界损失的理论。上界宽松时，它只能提供条件分析，不能作为测试错误率的数值预测。
+
+\subsubsection{输入与数据}
+
+序列长度同时改变可见证据、计算图规模和数据分布。若每行输入范数不超过$b$，整个矩阵Frobenius范数仍可能达到$\sqrt n\,b$；位置表示的尺度也要计入。第\ref{eq:transformer-attention-local-bound}式说明，谱范数分析可能把这些长度因素带入敏感度和复杂度。另一方面，长度变长也可能提供更多有用信息，所以不能仅由某个界随$n$增大就断言任务风险必然变差。
+
+样本量需要与依赖结构匹配。独立文档可以作为样本，而同一连续记录中的重叠窗口、同一用户的多段文本或同一图像的多个块可能相关；数据划分和风险定义应反映这些关系。输入尺度过大、词元频率变化、噪声位置增加或训练与测试长度分布不同，都会改变预测器实际遇到的条件。注意力能够连接两个位置，也不能弥补训练中缺少相关任务模式。
+
+\subsubsection{参数与学习过程}
+
+查询键范数控制得分尺度，值与输出投影范数控制读取结果，前馈层和归一化缩放影响后续敏感度。参数总数给出一个粗略的容量尺度，但共享投影在所有位置使用，不能简单按$n$乘上参数量；计算图随长度增长也并未因此从分析中消失。控制参数范数、分类间隔或适合任务的有效自由度，可以提供比总参数数目更有条件的描述。
+
+训练算法还决定实际选择了哪个参数。正则化、停止时间和步长会改变样本替换对输出的影响；若能证明一致稳定性系数为$\epsilon_{\mathrm{stab}}$，
+\BookTheoremRef{thm:stability-expected-generalization}{第二卷“基础、理论和可信性”的“一般学习的可学习性”章“均匀稳定性与期望风险”定理}
+将它联系到期望泛化间隙。存在稳定性工具不意味着Transformer训练天然稳定：还需控制注意力、归一化和优化轨迹的敏感度。模型选择若多次查看验证集，也应将选择过程纳入评估，而不能只分析最后一组固定参数。
+
+\subsubsection{网络结构与外推边界}
+
+深度提供多轮交互和变换，宽度和头数改变可保留的特征、评分及聚合形式；固定总宽度时，更多头同时减少每头宽度。稀疏连接减少允许的交互，门控和专家路由增加条件计算自由度，位置编码引入顺序与距离规律。这些设计可能与数据结构相匹配，也可能排除任务需要的函数。限制函数族可以降低某些复杂度，却可能提高逼近误差，需要同时考虑。
+
+\term{同分布泛化}（in-distribution generalization）要求新样本来自训练所对应的分布；\term{长度外推}（length extrapolation）要求在训练未覆盖的更长输入上复用规则；\term{分布外泛化}（out-of-distribution generalization）则改变输入或任务条件。一个模型在同长度新文本上低风险，不能推出它会在更长文本中执行相同算法，也不能推出领域变化后的可靠性。
+
+固定正弦、ALiBi和RoPE提供可用于新位置的计算规律，长度外推还涉及内容分布、距离分布、聚合稀释、层数是否足够及读出规则。因果生成只依赖此前词元，也不保证模型能维持任意长的语义一致性。机器学习理论部分的
+\BookSectionRef{sec:deep-learning-boundaries}{第二卷“基础、理论和可信性”的“深度学习的可学习性”章“学习设定扩展的理论边界”节}
+说明，跨任务学习与长度外推需要重新明确任务、目标分布和预测过程；本章的结构比较提供这些分析所需的具体计算对象。
+
+\section{常见应用}
+\label{sec:transformer-applications}
+
+应用中的完整模型需要把输入单位、可见信息、输出含义和监督位置对应起来。以下沿用前文的网络块与损失，只展开从样本到预测的路径；数据构建、任务专用结构与评价方法由应用卷细化。
+
+\subsection{文本分类与序列标注}
+\label{sec:transformer-text-applications}
+
+评论情感分类的样本是文本和类别。分词后查表形成嵌入，加位置表示，使用双向编码器得到上下文表示，再采用CLS或掩码池化读出，经Softmax分类。以“这部电影并不精彩”为例，编码器给“精彩”的表示可以读取否定上下文，整段分类头据此输出类别。这个任务动机不代表某个注意力头必然学习了否定规则，仍需用独立样本检验预测。
+
+训练对评论计算交叉熵，嵌入、编码器和分类头共同更新；如果先使用已有模型，再训练任务头或微调部分层，需要明确哪些参数更新。推理使用同一分词与有效位置规则，输出整段概率。截断长评论会删除可能有用的证据，应在输入策略和测试条件中保持一致。
+
+实体标注则将每个有效位置表示送入共享分类头，计算对应标签损失。若一个词被拆成多个子词，标签需选择监督首个子词、监督所有子词，或先聚合为词表示，推理时也用同一规则。逐位置Softmax可以预测标签概率，却不显式保证跨位置标签组合合法；需要结构约束时可增加相应输出模型。离线标注读取整段，流式标注使用因果或有限延迟范围，这个约束比“采用编码器还是解码器”的名称更直接。
+
+\subsection{序列转换与生成}
+\label{sec:transformer-generation-applications}
+
+机器翻译训练使用源句$x$和包含EOS的目标$y$。源嵌入和编码器产生$\bm H_{\mathrm s}$，目标输入右移，因果自注意力读取真实目标前缀，交叉注意力读取有效源位置，以式\eqref{eq:transformer-conditional-loss}更新两侧嵌入、所有网络块和词表输出层。源目标不要求逐词对齐，也无需给注意力另加一个必须满足的对齐标签。
+
+推理时源端只编码一次，各目标层还可预先缓存该层交叉注意力的源键值。目标从BOS开始，经过各层生成词表分布，选择词元后追加该层自注意力缓存，再继续，遇到EOS或长度上限停止。不同层的投影参数不同，因此源交叉键值与目标自注意力键值都按层保存。束搜索存在多个候选前缀时，可以共享未变的缓存内容，分叉后的修改则需各自维护或按写入时复制处理。
+
+文本续写不需要独立源编码器。已给定提示先做预填充，末位置输出预测提示后的第一个词元；把选出的词元作为新输入，在各层追加缓存，得到下一词元分布。续写中采用完整已生成前缀，是模型定义的一部分，不能将训练时真实前缀与生成时自身前缀的差异忽略。选择温度、采样或搜索策略会影响输出，评价需使用实际采用的生成过程。
+
+\subsection{图像分类}
+\label{sec:transformer-vision-applications}
+
+图像没有天然的一维词元序列，但可以把小块作为输入单位。\term{视觉Transformer}（Vision Transformer, ViT）将图像分成块，分别嵌入后进行位置间注意力，再读出图像类别\scite{dosovitskiy2020vit}
+
+设图像高宽为$H,W$、通道数为$c$，块边长为$p$，并暂设$H,W$可被$p$整除，则块数为$n=HW/p^2$，每块展平向量$\bm x_i\in\mathbb R^{p^2c}$。投影后的输入为
+\begin{equation}
+  \bm h_i^{(0)}=\bm W_{\mathrm p}^{\top}\bm x_i+\bm b_{\mathrm p}+\bm p_i,
+  \qquad \bm W_{\mathrm p}\in\mathbb R^{p^2c\times d}\text{。}
+  \label{eq:transformer-vit-input}
+\end{equation}
+位置索引按固定网格顺序排列，位置表示须保留块与空间位置的对应。加入专用分类位置后，共有$n+1$行表示，经编码器、末端归一化和分类头产生概率，以图像标签交叉熵训练。图~\ref{fig:transformer-vit}把图像块、序列表示与分类输出连接起来。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/transformer-vit}
+  \caption{ViT将图像组织为序列的过程。示意图像有$4\times4$个像素，切成四个$2\times2$图像块，按从左到右、从上到下的顺序编号；每块展平后通过同一线性投影形成$\bm e_i$。在开头加入可学习CLS表示，为五行分别加入位置向量，再送入双向编码器。分类头只读取末层CLS行，其他图像块通过注意力参与其形成。图中像素色块仅为结构示意，并非真实识别样本。}
+  \label{fig:transformer-vit}
+\end{figure*}
+\FloatBarrier
+
+图像块之间可直接交互，但块内部结构在原始ViT中经一次线性投影进入表示，没有逐层卷积的局部共享假设。较小的$p$保留更细的位置划分，同时使$n$增长；固定图像尺寸时，稠密注意力位置对数与$p^{-4}$同阶，前馈层的块数成本则与$p^{-2}$同阶。改变图像分辨率会改变网格和位置数量，可学习位置表常需按空间网格插值；插值只是提供新输入表示，分类质量仍应检验。数据量、预训练、局部模块和增强会影响实际效果，不能从架构名称直接推出比卷积网络更适合任何图像数据。
+
+\Needspace{125mm}
+\section{本章小结}
+\label{sec:transformer-summary}
+
+Transformer把序列中的位置依赖转为显式读取：内容表示给出查询、键和值，位置表示和掩码约束怎样匹配以及哪些位置可见，多头注意力形成不同聚合，逐位置前馈网络再组合这些特征。残差和归一化让这套计算能够层层堆叠。与循环注意力相比，它不再要求已知位置沿时间逐个更新；输出尚未产生时，自回归条件仍要求逐步生成，缓存只是复用已经完成的计算。
+
+结构与资源的选择需要同时看任务。双向读取适合完整输入理解，因果读取满足在线与生成条件，交叉注意力将源目标表示分开。位置扩展提供不同距离规律，门控和专家改变特征选择；稀疏、线性和低秩路线改变读取结构或公式，FlashAttention保留稠密计算而减少中间访存，MQA/GQA缩小键值组数，PagedAttention改善缓存分配与共享。减少哪一种开销、改变哪一种表示自由度，决定了这些方法的组合与取舍。
+
+梯度推导说明读取路径和评分路径怎样共同接收监督，却没有取消优化与泛化的条件。得分尺度、归一化分母、残差深度和长度共同影响学习，独立样本数、参数约束、数据分布和评价目标共同约束风险结论。由此可以回答章首的问题：直接位置交互使已知输入的计算更易并行，但可靠预测还取决于可见范围是否正确、任务信息是否保留，以及学习结果是否在实际使用条件下得到检验。

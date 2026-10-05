@@ -597,13 +597,15 @@ check_cross_volume_refs() {
 }
 
 volume_slugs=(
-  01-foundations
-  02-models
-  03-paradigms
-  04-applications
-  05-systems
+  01-mathematical-preliminaries
+  02-foundations
+  03-models
+  04-paradigms
+  05-applications
+  06-systems
 )
 volume_titles=(
+  数学准备
   基础、理论和可信性
   模型
   范式
@@ -611,6 +613,7 @@ volume_titles=(
   系统
 )
 volume_english_titles=(
+  'Mathematical Preliminaries'
   'Foundations, Theory and Trustworthiness'
   Models
   'Learning Paradigms'
@@ -625,11 +628,12 @@ done
 
 expected_outputs=(
   build/main.pdf
-  build/01-foundations.pdf
-  build/02-models.pdf
-  build/03-paradigms.pdf
-  build/04-applications.pdf
-  build/05-systems.pdf
+  build/01-mathematical-preliminaries.pdf
+  build/02-foundations.pdf
+  build/03-models.pdf
+  build/04-paradigms.pdf
+  build/05-applications.pdf
+  build/06-systems.pdf
 )
 for output in "${expected_outputs[@]}"; do
   check_fixed build.sh "$output" "构建产物 $output"
@@ -646,11 +650,11 @@ check_make_target all './build.sh all'
 check_make_target test './tests/check-index-terms.sh'
 check_command_error \
   'volume 缺少卷名' \
-  '缺少卷名.*01-foundations' \
+  '缺少卷名.*01-mathematical-preliminaries' \
   ./build.sh volume
 check_command_error \
   'volume 未知卷名' \
-  '未知卷名.*not-a-volume.*01-foundations' \
+  '未知卷名.*not-a-volume.*01-mathematical-preliminaries' \
   ./build.sh volume not-a-volume
 
 check_file tex/book.tex '共享文档驱动'
@@ -1035,7 +1039,7 @@ check_latexmk_tool_commands
 check_index_pipeline
 check_term_pdfstring
 check_cross_volume_refs
-check_fixed tex/01-foundations/01-basics/02-machine-learning-models.tex \
+check_fixed tex/02-foundations/01-basics/02-machine-learning-models.tex \
   '\term[k近邻]{$k$近邻}' \
   '数学开头词条使用稳定排序键'
 check_block_fixed \
@@ -1203,4 +1207,4 @@ if ((failures > 0)); then
   exit 1
 fi
 
-printf '结构检查通过：全集与五个单卷接口完整。\n'
+printf '结构检查通过：全集与六个单卷接口完整。\n'

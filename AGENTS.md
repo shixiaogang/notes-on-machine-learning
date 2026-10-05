@@ -39,23 +39,29 @@
 
 书籍采用“卷—部分—章—节”结构。`tex/` 下按卷设置带两位序号的英文目录，每卷以 `volume.tex` 为入口；卷内各部分再使用带两位序号的英文子目录，以 `part.tex` 为入口。目录前缀按所属层级从 01 开始，书中的部分号和章号则全书连续编号。
 
-1. `tex/01-foundations/`：第一卷“基础、理论和可信性”
+1. `tex/01-mathematical-preliminaries/`：第一卷“数学准备”
+   - `01-mathematical-language-analysis-optimization/`：数学语言、分析与最优化
+   - `02-linear-algebra-and-geometry/`：线性代数与几何
+   - `03-probability-stochastic-processes-statistics/`：概率、随机过程与统计
+   - `04-discrete-mathematics-and-graph-theory/`：离散数学与图论
+   - `05-dynamical-systems-control-and-decision/`：动力系统、控制与决策
+2. `tex/02-foundations/`：第二卷“基础、理论和可信性”
    - `01-basics/`：机器学习基础
    - `02-learning-theory/`：机器学习理论
    - `03-trustworthiness/`：机器学习可信性
-2. `tex/02-models/`：第二卷“模型”
+3. `tex/03-models/`：第三卷“模型”
    - `01-classic-models/`：经典模型
    - `02-neural-network-models/`：神经网络模型
    - `03-probabilistic-graphical-models/`：概率图模型
-3. `tex/03-paradigms/`：第三卷“范式”
+4. `tex/04-paradigms/`：第四卷“范式”
    - `01-reinforcement-learning/`：强化学习
    - `02-efficient-knowledge-use/`：知识的高效利用
    - `03-knowledge-evolution-and-transfer/`：知识的演进与迁移
-4. `tex/04-applications/`：第四卷“应用”
+5. `tex/05-applications/`：第五卷“应用”
    - `01-natural-language-processing/`：自然语言处理
    - `02-image-processing/`：图像处理
    - `03-recommendation-and-search/`：推荐与搜索
-5. `tex/05-systems/`：第五卷“系统”
+6. `tex/06-systems/`：第六卷“系统”
    - `01-machine-learning-systems/`：机器学习系统；承接数据、训练与部署相关内容。
 
 “机器学习理论”部分依次介绍统计学习框架、二分类、多分类、凸学习与算法稳定性、深度学习理论和迁移学习理论，详细规划见 `plans/learning-theory-outline.md`。全书分卷、内容边界与迁移约定见 `plans/book-structure.md`。

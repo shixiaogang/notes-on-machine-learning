@@ -64,7 +64,7 @@ Scientific constraints: central nervous system neurons, do not draw Schwann-cell
 - 文件：`neural-overview-biological-neuron.png`。
 - 生成日期：2026-10-02。
 - 生成方式：内置 `image_gen.imagegen` 工具；工具未公开具体模型名称或版本。
-- 使用位置：`tex/02-models/02-neural-network-models/01-overview.tex`，由 `neural-overview-biological-neuron.tex` 复用三次并添加中文标注及连接箭头。
+- 使用位置：`tex/03-models/02-neural-network-models/01-overview.tex`，由 `neural-overview-biological-neuron.tex` 复用三次并添加中文标注及连接箭头。
 - 参考一：用户提供的灰度神经元示意图（原附件 `codex-clipboard-1cb846c4-e579-40dd-8541-539f2d85726a.png`），仅用于形态和构图参考，重新生成插画；附件来源和许可证未提供，未直接嵌入书中。
 - 参考二：本书第三章 `paradigms-transfer-learning.png`，仅用于扁平插画风格和全书配色参考。
 - 后处理：复制原始 PNG，保留透明通道；未修改图像像素。文字、引导线、连接与方向箭头均用 TikZ 另行排版。
