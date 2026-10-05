@@ -50,7 +50,7 @@ Logistic曲线的历史早于统计分类。Verhulst在1838年用它描述受增
 \subsubsection{参数学习}
 \label{sec:classification-logistic-learning}
 
-对独立样本，模型给出的标签概率为$p_i^{y_i}(1-p_i)^{1-y_i}$，其中$p_i=\sigma(\bm{w}^{\top}\bm{x}_i+b)$。\term{极大似然估计}（maximum likelihood estimation, MLE）选择使已观察标签最可能出现的参数。其条件对数似然为
+对独立样本，模型给出的标签概率为$p_i^{y_i}(1-p_i)^{1-y_i}$，其中$p_i=\sigma(\bm{w}^{\top}\bm{x}_i+b)$。\term{最大似然估计}（maximum likelihood estimation, MLE）选择使已观察标签最可能出现的参数。其条件对数似然为
 \begin{equation}
   \label{eq:classification-logistic-likelihood}
   \ell(\bm{w},b)
@@ -89,6 +89,10 @@ Logistic曲线的历史早于统计分类。Verhulst在1838年用它描述受增
 
 实际训练常加入$\lambda\lVert\bm{w}\rVert_2^2/2$，其中$\lambda>0$。这个$L_2$惩罚抑制权重无限增大，也改善病态方向的数值条件。若两类均有样本，所有权重都受惩罚而偏置不受惩罚，所得二分类目标仍有唯一有限极小点；但若训练集只有一类，偏置仍可独自趋于无穷。若连偏置也作正的二次惩罚，则整个增广参数方向都受约束。使用$\lambda\lVert\bm{w}\rVert_1$可得到稀疏权重，但目标不再处处可微，不能直接套用下面的光滑牛顿更新。
 
+求解器的选择取决于数据规模和存储成本。稠密数据的一轮完整梯度计算为$O(nd)$，构造Hessian约为$O(nd^2)$，直接分解又需要$O(d^3)$。若存储$d\times d$量级的Hessian过于昂贵，\term{有限内存拟牛顿法}（limited-memory BFGS, L-BFGS）只保留少量历史更新来近似二阶信息。大规模稀疏数据则可采用\term{随机梯度下降}（stochastic gradient descent, SGD），每次用一个样本或小批量近似完整梯度。选择时还应考虑稀疏程度和精度要求，而不是固定的样本数门槛。
+
+数据持续到达时，也可以增量更新模型。McMahan等人的点击率系统使用稀疏正则与在线优化，展示了Logistic回归在大规模预测中的工程用途\scite{mcmahan2013}增量训练省去了每次从头拟合的成本，但持续更新能否改善未来预测，仍取决于更新规则和数据变化。
+
 对于中小规模问题，\term{迭代重加权最小二乘}（iteratively reweighted least squares, IRLS）把牛顿步改写为一个权重随当前预测变化的最小二乘问题。令$\bm{J}=\operatorname{diag}(1,\ldots,1,0)$，使偏置不受惩罚。在第$t$步计算
 \begin{equation}
   \label{eq:classification-logistic-irls}
@@ -114,10 +118,6 @@ Logistic曲线的历史早于统计分类。Verhulst在1838年用它描述受增
   =\tilde{\bm{X}}^{\top}\bm{R}^{(t)}\bm{u}^{(t)}.
 \]
 将$\bm{u}^{(t)}$代入即可还原“当前参数减去Hessian逆作用于梯度”的牛顿步。实现时应解线性方程而不显式求逆，并用阻尼或线搜索控制更新；当$p_i$接近零或一时，直接计算工作响应可能不稳定，可改用梯度与Hessian求牛顿方向。停止条件可综合梯度范数、目标变化与最大迭代次数，牛顿法的局部快速收敛不意味着从任意初始化都可无阻尼运行\scite{hastie2009}
-
-若存储$d\times d$量级的Hessian过于昂贵，\term{有限内存拟牛顿法}（limited-memory BFGS, L-BFGS）只保留少量历史更新来近似二阶信息。大规模稀疏数据则可采用\term{随机梯度下降}（stochastic gradient descent, SGD），每次用一个样本或小批量近似完整梯度。稠密数据的一轮完整梯度计算为$O(nd)$，而构造Hessian约为$O(nd^2)$，直接分解又需要$O(d^3)$；选择求解器应依据$n$、$d$、稀疏程度和精度要求，而不是固定的样本数门槛。
-
-数据持续到达时，也可以增量更新模型。McMahan等人的点击率系统使用稀疏正则与在线优化，展示了Logistic回归在大规模预测中的工程用途\scite{mcmahan2013}增量训练省去了每次从头拟合的成本，但持续更新能否改善未来预测，仍取决于更新规则和数据变化。
 
 \subsubsection{支持多分类（Softmax）}
 \label{sec:classification-logistic-softmax}
@@ -240,14 +240,27 @@ Maron在1961年关于自动索引的研究，是概率方法用于文档归类�
 \subsubsection{参数学习}
 \label{sec:classification-naive-bayes-learning}
 
-令$n_c=\sum_i\mathbb{1}\{y_i=c\}$，类先验的MLE为$\hat\pi_c=n_c/n$。这是以训练样本的类别比例估计目标总体的比例，依赖抽样具有代表性；若训练集人为重采样，不能未经修正就把重采样后的比例当成部署先验。也可以使用有依据的外部先验，或对类概率向量设置Dirichlet先验。若其超参数为$\gamma_c>0$，后验均值为
+令$n_c=\sum_i\mathbb{1}\{y_i=c\}$，类先验的MLE为$\hat\pi_c=n_c/n$。这是以训练样本的类别比例估计目标总体的比例，依赖抽样具有代表性；若训练集人为重采样，不能未经修正就把重采样后的比例当成部署先验。也可以使用有依据的外部类别比例；若希望保留对该比例的不确定性，并为训练中未见的类别保留概率质量，则可对类概率向量$\bm{\pi}=(\pi_1,\ldots,\pi_C)^{\top}$设置参数先验。以下对类别概率与各组类条件参数设置相互独立的先验，以便分别更新。
+
+\term{狄利克雷分布}（Dirichlet distribution）就是定义在概率向量上的分布：其取值满足$\pi_c\geq0$、$\sum_c\pi_c=1$，这一区域称为概率单纯形。给定参数$\gamma_c>0$，先验在单纯形内部的密度与各坐标的幂次乘积成正比。独立类别观测的似然也具有相同形式，因此
+\[
+  \begin{aligned}
+    p(\bm{\pi})
+      &\propto\prod_{c=1}^{C}\pi_c^{\gamma_c-1},\\
+    p(y_1,\ldots,y_n\mid\bm{\pi})
+      &\propto\prod_{c=1}^{C}\pi_c^{n_c},\\
+    p(\bm{\pi}\mid y_1,\ldots,y_n)
+      &\propto\prod_{c=1}^{C}\pi_c^{\gamma_c+n_c-1}.
+  \end{aligned}
+\]
+后验仍是狄利克雷分布，只需把参数从$\gamma_c$更新为$\gamma_c+n_c$。这种先验与后验属于同一分布族的关系称为\term{共轭}（conjugacy）；“先验参数加计数”来自相乘时指数相加，不是额外规定的平滑技巧。狄利克雷分布的均值是各参数除以参数总和，故后验均值为
 \[
   \tilde\pi_c=\frac{n_c+\gamma_c}
   {n+\sum_{r=1}^{C}\gamma_r}.
 \]
-这里“类别先验$\pi_c$”是样本生成模型的一部分，“参数先验”则表达估计$\bm{\pi}$前的不确定性，两者不是同一个概率。
+先验均值为$\gamma_c/\sum_r\gamma_r$，参数总和决定这些伪计数相对于观测计数的权重。这里“类别先验$\pi_c$”是样本生成模型的一部分，“参数先验”则表达估计$\bm{\pi}$前的不确定性，两者不是同一个概率。
 
-连续特征可采用\term{高斯朴素贝叶斯}（Gaussian naive Bayes），即$x_j\mid y=c\sim\mathcal{N}(\mu_{j,c},\sigma_{j,c}^{2})$。当$n_c>0$时，均值和方差的MLE为
+连续特征可采用\term{高斯朴素贝叶斯}（Gaussian naive Bayes），即$x_j\mid y=c\sim\mathcal{N}(\mu_{j,c},\sigma_{j,c}^{2})$，其中$\sigma_{j,c}^{2}>0$。当$n_c>0$且该特征的类内平方偏差和为正时，均值和方差的MLE为
 \begin{equation}
   \label{eq:classification-naive-bayes-gaussian}
   \begin{aligned}
@@ -258,7 +271,7 @@ Maron在1961年关于自动索引的研究，是概率方法用于文档归类�
         (x_{i,j}-\hat\mu_{j,c})^2.
   \end{aligned}
 \end{equation}
-方差分母为$n_c$，不是无偏样本方差所用的$n_c-1$。预测时将这些量代入一维高斯密度后相乘。某类某特征恒定时估计方差为零，需要有明确尺度的方差下限或其他正则化；给密度任意“加一”不是离散概率的平滑对应物。
+方差分母为$n_c$，不是无偏样本方差所用的$n_c-1$。在上述条件下，预测时将这些量代入一维高斯密度后相乘。若某类某特征恒定为$a$，固定$\mu_{j,c}=a$后，对数似然为$-n_c\log(2\pi\sigma_{j,c}^{2})/2$，随正方差趋于零而无界增大。因此，此时正方差参数域内没有有限MLE；式\eqref{eq:classification-naive-bayes-gaussian}给出的零值只是样本散度，不能代入普通高斯密度。设定有明确尺度的方差下限或加入先验后，得到的是相应的受约束或正则化估计；给密度任意“加一”不是离散概率的平滑对应物。
 
 只关心某个词是否出现时，可用\term{伯努利朴素贝叶斯}（Bernoulli naive Bayes）。输入$x_{i,j}\in\{0,1\}$，令$n_{j,c}=\sum_{i:y_i=c}x_{i,j}$，则
 \begin{equation}
@@ -270,7 +283,13 @@ Maron在1961年关于自动索引的研究，是概率方法用于文档归类�
     \hat\theta_{j,c}&=\frac{n_{j,c}}{n_c}.
   \end{aligned}
 \end{equation}
-未出现的词同样提供证据，不能只保留$x_j=1$的项。若对$\theta_{j,c}$使用$\operatorname{Beta}(\alpha_1,\alpha_0)$先验，后验均值为$(n_{j,c}+\alpha_1)/(n_c+\alpha_1+\alpha_0)$；对称情形的分母是$n_c+2\alpha$。
+未出现的词同样提供证据，不能只保留$x_j=1$的项；这里的MLE要求$n_c>0$。为平滑这个二值事件，可使用\term{贝塔分布}（Beta distribution）作为$\theta_{j,c}$的先验。它是二元概率向量$(\theta_{j,c},1-\theta_{j,c})$上的狄利克雷分布，以$0<\theta_{j,c}<1$为密度定义域，两个正参数$\alpha_1,\alpha_0$分别对应出现与未出现。先验密度正比于$\theta_{j,c}^{\alpha_1-1}(1-\theta_{j,c})^{\alpha_0-1}$；乘以似然后，两项指数分别增加$n_{j,c}$和$n_c-n_{j,c}$，所以
+\[
+  \theta_{j,c}\mid D_n
+  \sim\operatorname{Beta}
+    (\alpha_1+n_{j,c},\,\alpha_0+n_c-n_{j,c}).
+\]
+其后验均值为$(n_{j,c}+\alpha_1)/(n_c+\alpha_1+\alpha_0)$；对称情形$\alpha_1=\alpha_0=\alpha$的分母是$n_c+2\alpha$。这同时平滑了出现和未出现两种事件。
 
 若重复出现的次数也有意义，应使用\term{多项式朴素贝叶斯}（multinomial naive Bayes）。设固定词表有$d$个词项，$\bm{x}_i\in\mathbb{N}_0^d$记录一篇文档的词项计数，$m_i=\sum_jx_{i,j}$是该文档的总词元数。给定类别和$m_i$，假设每个词元位置独立地按$\bm{\theta}_c=(\theta_{1,c},\ldots,\theta_{d,c})^{\top}$抽取词项，其中$\sum_j\theta_{j,c}=1$。忽略顺序后，计数向量服从
 \begin{equation}
@@ -283,7 +302,15 @@ Maron在1961年关于自动索引的研究，是概率方法用于文档归类�
 
 标准文档分类通常进一步假设长度分布与类别无关，因而$\mathbb{P}(m_i\mid y_i=c)$在类别比较中约掉，此时给定长度后的类先验仍为$\pi_c$。若长度本身携带类别信息，则应保留并估计该项，使长度也参与后验计算。
 
-令$t_{j,c}=\sum_{i:y_i=c}x_{i,j}$为第$c$类中词项$j$的总出现次数，$t_c=\sum_jt_{j,c}$为该类的总词元数。去掉与参数无关的组合系数后，类内对数似然为$\sum_jt_{j,c}\log\theta_{j,c}$。在$\sum_j\theta_{j,c}=1$约束下求极值，拉格朗日方程给出$t_{j,c}/\theta_{j,c}$为同一常数，求和确定常数为$t_c$，所以
+令$t_{j,c}=\sum_{i:y_i=c}x_{i,j}$为第$c$类中词项$j$的总出现次数，$t_c=\sum_jt_{j,c}$为该类的总词元数。去掉与参数无关的组合系数后，类内对数似然为$\sum_jt_{j,c}\log\theta_{j,c}$。当$t_c>0$时，在$\sum_j\theta_{j,c}=1$约束下求极值，正计数坐标上的拉格朗日方程给出$t_{j,c}/\theta_{j,c}$为同一常数，零计数坐标取零；求和确定常数为$t_c$，从而得到频率MLE。
+
+若对$\bm{\theta}_c$使用$\operatorname{Dirichlet}(\alpha_1,\ldots,\alpha_d)$先验，其中$\alpha_j>0$，同样的共轭更新把各坐标的幂次从$\alpha_j-1$变为$\alpha_j+t_{j,c}-1$，得到
+\[
+  \bm{\theta}_c\mid D_n
+  \sim\operatorname{Dirichlet}
+    (\alpha_1+t_{1,c},\ldots,\alpha_d+t_{d,c}).
+\]
+把更新后的参数归一化即可得到后验均值。两种估计分别为
 \begin{equation}
   \label{eq:classification-naive-bayes-smoothing}
   \hat\theta_{j,c}=\frac{t_{j,c}}{t_c},
@@ -292,7 +319,7 @@ Maron在1961年关于自动索引的研究，是概率方法用于文档归类�
   =\frac{t_{j,c}+\alpha_j}
          {t_c+\sum_{r=1}^{d}\alpha_r}.
 \end{equation}
-前式要求$t_c>0$；后式是$\operatorname{Dirichlet}(\alpha_1,\ldots,\alpha_d)$参数先验下的后验均值，也给出下一词元的后验预测概率。它不是同一先验下的MLE或通常意义的MAP。对称$\alpha_j=1$给出\term{拉普拉斯平滑}（Laplace smoothing），相当于每个词项加入一个伪计数；$\alpha_j=1/2$对应多项式参数的Jeffreys先验。对伯努利参数，其对应物是$\operatorname{Beta}(1/2,1/2)$，不应把这些常数不加区分地推广到高斯方差。以平滑估计代入式\eqref{eq:classification-naive-bayes-multinomial}得到的是常用的点估计分类器，不等于积分消去参数后的整篇文档预测分布。
+前式要求$t_c>0$；后式也给出下一词元的后验预测概率，因为给定参数时该概率为$\theta_{j,c}$，对参数后验积分便得到其后验均值。这种均值估计通常既不同于MLE，也不同于式\eqref{eq:regression-map}定义的MAP。对称$\alpha_j=1$给出\term{拉普拉斯平滑}（Laplace smoothing），相当于每个词项加入一个伪计数；$\alpha_j=1/2$对应多项式参数的Jeffreys先验。对伯努利参数，其对应物是$\operatorname{Beta}(1/2,1/2)$，不应把这些常数不加区分地推广到高斯方差。以平滑估计代入式\eqref{eq:classification-naive-bayes-multinomial}得到的是常用的点估计分类器，不等于积分消去参数后的整篇文档预测分布。
 
 在长度与类别无关的约定下，文档预测只需计算$\log\tilde\pi_c+\sum_jx_j\log\tilde\theta_{j,c}$。算法\ref{alg:classification-multinomial-nb}给出完整的统计与预测流程，训练和预测使用相同的词表，并明确处理平滑与得分平局。
 \begin{algorithm}[带平滑的多项式朴素贝叶斯]
@@ -423,7 +450,7 @@ NB的计算优势来自统计量可累积：稠密输入的训练统计约为$O(
 
 高斯NB只保存每维的均值与方差，相当于把类内协方差矩阵的非对角元素设为零。若分类信息恰好体现在多个连续特征的共同变化中，就需要估计这些关系。\term{高斯判别分析}（Gaussian discriminant analysis, GDA）用每类的多元高斯分布描述输入，允许保留类内协方差；增加的表达能力也意味着需要估计更多参数。
 
-第\ref{sec:clustering-gmm}节的高斯混合模型同样估计高斯成分及其权重，但成分归属是隐变量，通常需要EM交替推断；GDA中的类别标签已经观测，可以直接按类分组估计。两者共享高斯密度结构，却分别服务于预设类别预测和无标签分组。
+第\ref{sec:clustering-gmm}节的高斯混合模型同样估计高斯成分及其权重，但成分归属是潜变量，通常用\term{期望最大化}（expectation-maximization, EM）交替计算成分归属的后验概率并更新分布参数；两步计算的分类实例见第\ref{sec:classification-semisupervised-comparison}节。GDA中的类别标签已经观测，可以直接按类分组估计。两者共享高斯密度结构，却分别服务于预设类别预测和无标签分组。
 
 从类间分离程度转向概率决策，关注的问题也从“怎样区分类别”扩展为“怎样权衡误判”。Anderson在1951年的多元分类研究中，以误分类代价为依据讨论分类规则，并在正态总体下给出判别函数。这为理解GDA提供了一条历史线索：分布模型负责描述输入来自各类的可能性，决策规则再据此比较误判代价，而不只是寻找一个投影方向\scite{anderson1951classification}
 
