@@ -6,7 +6,7 @@ project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$project_root"
 
 book_source=tex/main.tex
-book_output=build/main.pdf
+book_output=target/machine-learning-notes.pdf
 volume_slugs=(
   01-mathematical-preliminaries
   02-foundations
@@ -24,20 +24,21 @@ volume_sources=(
   tex/06-systems/main.tex
 )
 volume_outputs=(
-  build/01-mathematical-preliminaries.pdf
-  build/02-foundations.pdf
-  build/03-models.pdf
-  build/04-paradigms.pdf
-  build/05-applications.pdf
-  build/06-systems.pdf
+  target/vol1-mathematical-preliminaries.pdf
+  target/vol2-foundations.pdf
+  target/vol3-models.pdf
+  target/vol4-paradigms.pdf
+  target/vol5-applications.pdf
+  target/vol6-systems.pdf
 )
 
 usage() {
-  printf '用法: %s [build|volume <slug>|volumes|all|watch|release|clean]\n' "${0##*/}"
+  printf '用法: %s [build|volume <slug>|volumes|all|check-target|watch|release|clean]\n' "${0##*/}"
   printf '  build          增量编译全集，使用快速无损压缩（默认）\n'
   printf '  volume <slug>  只编译指定单卷\n'
   printf '  volumes        依次编译六个单卷\n'
   printf '  all            依次编译全集和六个单卷\n'
+  printf '  check-target   检查七份成品与正文是否一致\n'
   printf '  watch          只监听全集，不打开新窗口\n'
   printf '  release        以最高压缩等级编译全集\n'
   printf '  clean          清除全集与六个单卷的构建缓存和产物\n'
@@ -95,7 +96,10 @@ build_entry() {
   local compression="${BOOK_PDF_COMPRESSION:-1}"
   local previous_compression=""
   local output_name="${output##*/}"
-  local job_name="${output_name%.pdf}"
+  local job_name="${source#tex/}"
+  job_name="${job_name%/main.tex}"
+  if [[ "$source" == "$book_source" ]]; then job_name=main; fi
+  local cached_pdf="build/$job_name.pdf"
   local compression_cache="build/.pdf-compression-$job_name"
   local latexmk_options=(-interaction=nonstopmode -halt-on-error -file-line-error)
   case "$compression" in
@@ -106,7 +110,7 @@ build_entry() {
     previous_compression="$(cat "$compression_cache")"
   fi
   # latexmk 不一定因 PDF 转换命令变化而重建；显式处理模式切换。
-  if [[ -f "$output" && "$previous_compression" != "$compression" ]]; then
+  if [[ -f "$cached_pdf" && "$previous_compression" != "$compression" ]]; then
     latexmk_options+=(-g)
   fi
   latexmk \
@@ -114,6 +118,9 @@ build_entry() {
     -jobname="$job_name" \
     "$@" \
     "$source"
+  mkdir -p target
+  cp "$cached_pdf" "$output.tmp"
+  mv "$output.tmp" "$output"
   printf '%s\n' "$compression" > "$compression_cache"
 }
 
@@ -152,7 +159,7 @@ clean_project() {
       -jobname="${volume_slugs[$index]}" \
       "${volume_sources[$index]}"
   done
-  rm -rf -- "$project_root/build"
+  rm -rf -- "$project_root/build" "$project_root/target"
 }
 
 case "${1:-build}" in
@@ -174,11 +181,20 @@ case "${1:-build}" in
     build_volumes
     ;;
   all)
+    snapshot="$(mktemp "${TMPDIR:-/tmp}/book-inputs.XXXXXX")"
+    trap 'rm -f "$snapshot"' EXIT
+    python3 scripts/check_target_pdfs.py snapshot > "$snapshot"
     build_entry "$book_source" "$book_output"
     build_volumes
+    python3 scripts/check_target_pdfs.py record --snapshot "$snapshot"
+    python3 scripts/check_target_pdfs.py check
+    ;;
+  check-target)
+    python3 scripts/check_target_pdfs.py check
     ;;
   watch)
     build_entry "$book_source" "$book_output"
+    export BOOK_TARGET_PDF="$book_output"
     build_entry "$book_source" "$book_output" -pvc -view=none
     ;;
   release)

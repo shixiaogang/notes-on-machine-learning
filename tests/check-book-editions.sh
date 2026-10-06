@@ -627,13 +627,13 @@ for slug in "${volume_slugs[@]}"; do
 done
 
 expected_outputs=(
-  build/main.pdf
-  build/01-mathematical-preliminaries.pdf
-  build/02-foundations.pdf
-  build/03-models.pdf
-  build/04-paradigms.pdf
-  build/05-applications.pdf
-  build/06-systems.pdf
+  target/machine-learning-notes.pdf
+  target/vol1-mathematical-preliminaries.pdf
+  target/vol2-foundations.pdf
+  target/vol3-models.pdf
+  target/vol4-paradigms.pdf
+  target/vol5-applications.pdf
+  target/vol6-systems.pdf
 )
 for output in "${expected_outputs[@]}"; do
   check_fixed build.sh "$output" "构建产物 $output"

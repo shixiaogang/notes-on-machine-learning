@@ -39,20 +39,20 @@
 ./build.sh all
 ```
 
-七个 PDF 均直接写入 `build/`：
+七个 PDF 均直接写入 `target/`：
 
 | 版本 | 输出文件 |
 | --- | --- |
-| 全集 | `build/main.pdf` |
-| 第一卷 | `build/01-mathematical-preliminaries.pdf` |
-| 第二卷 | `build/02-foundations.pdf` |
-| 第三卷 | `build/03-models.pdf` |
-| 第四卷 | `build/04-paradigms.pdf` |
-| 第五卷 | `build/05-applications.pdf` |
-| 第六卷 | `build/06-systems.pdf` |
+| 全集 | `target/machine-learning-notes.pdf` |
+| 第一卷 | `target/vol1-mathematical-preliminaries.pdf` |
+| 第二卷 | `target/vol2-foundations.pdf` |
+| 第三卷 | `target/vol3-models.pdf` |
+| 第四卷 | `target/vol4-paradigms.pdf` |
+| 第五卷 | `target/vol5-applications.pdf` |
+| 第六卷 | `target/vol6-systems.pdf` |
 
 全集和单卷采用同一封面构图。全集封面第二行为“理论、模型和范式”，单卷封面第二行为
-“卷一：基础、理论和可信性”等“卷号：卷名”形式；作者名统一为“施晓罡”。
+“卷一：数学准备”等“卷号：卷名”形式；作者名统一为“施晓罡”。
 
 脚本使用 XeLaTeX。`latexmk` 自动调用 Biber 和索引处理器，并重复编译直至交叉引用稳定。
 日常构建使用等级 1 的无损压缩，加快含大量图片和嵌入字体的 PDF 输出；不会降低图片分辨率或画质。
@@ -60,7 +60,7 @@
 
 目前内置编辑器的单文件编译不支持本项目的多个 `\input` 文件；请以 `./build.sh` 生成的 PDF 为准。
 
-`watch` 持续监听全集并更新 `build/main.pdf`；`release` 以最高无损压缩等级构建全集。两者均保持全集语义：
+`watch` 持续监听全集并更新 `target/machine-learning-notes.pdf`；`release` 以最高无损压缩等级构建全集。两者均保持全集语义：
 
 ```sh
 ./build.sh watch
@@ -131,11 +131,29 @@ make test
 ```
 
 `make test` 的索引审计基线为 `calls=2291`、`unique=1965`、`mappings=1924`、
-`aliases=2`、`errors=0`。交付前还需运行 `./build.sh all`，扫描六份构建日志，
-并检查六版封面、前言、数学符号、参考文献和索引的范围、排序、双语格式、合并页码与链接。
+`aliases=2`、`errors=0`。交付前还需运行 `./build.sh all`，扫描七份构建日志，
+并检查七版封面、前言、数学符号、参考文献和索引的范围、排序、双语格式、合并页码与链接。
 
 ## 许可
 
 - 书稿正文与原创图表采用 CC BY-NC-ND 4.0，版权页中的英文许可声明与矢量图标由共享样式统一维护。
 - LaTeX 样式、构建脚本、测试和代码示例继续使用 Apache License 2.0，许可证见根目录 `LICENSE`。
 - `fonts/` 中的字体继续适用各自的 SIL Open Font License。
+
+## 成品与提交
+
+`target/` 保存成品 PDF 并纳入版本管理；`build/` 只作为编译缓存。
+`./build.sh all` 生成七份成品及输入、PDF 的 SHA-256 校验记录；
+`./build.sh check-target`（或 `make check-target`）检查它们是否对应当前正文。
+修改正文后仅构建一个版本不能替代提交前的完整构建。
+
+新克隆后启用提交检查：
+
+```sh
+git config --local core.hooksPath .githooks
+```
+
+每次提交前将正文、七份成品和 `target/.build-manifest.json` 一并暂存。
+检查会重新构建全集和所有单卷；如果成品有更新，须重新暂存 `target/` 再提交。
+正文存在未暂存修改、成品过期或成品尚未暂存时，提交会被拒绝。
+索引审计按当前出版单元核对词条，单卷不得包含只在其他卷出现的词条。

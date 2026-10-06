@@ -469,6 +469,22 @@ class MappingAndAuditTests(unittest.TestCase):
 
         self.assertEqual(diagnostics, [])
 
+    def test_volume_index_rejects_terms_only_used_in_another_volume(self):
+        term = self.occurrence("机器学习")._replace(volume="02-foundations")
+        mappings = [self.mapping("机器学习", "machine learning")]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "build").mkdir()
+            for edition in ["main", "03-models"]:
+                (root / "build" / (edition + ".idx")).write_text(
+                    "\\indexentry{机器学习@机器学习，machine learning|hyperpage}{1}\n")
+                (root / "build" / (edition + ".ind")).write_text("")
+            diagnostics = self.audit_index_terms._artifact_diagnostics(
+                root, [term], mappings, [])
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0].path, Path("build/03-models.idx"))
+        self.assertEqual(diagnostics[0].code, "ORPHAN_INDEX_TERM")
+
     def test_index_artifact_audit_rejects_untranslated_mapped_term(
         self,
     ) -> None:

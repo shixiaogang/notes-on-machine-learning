@@ -18,3 +18,10 @@ $ENV{'TEXINPUTS'} = './tex//:' . ($ENV{'TEXINPUTS'} // '');
 $ENV{'T1FONTS'} = './fonts/stix2-type1/type1//:' . ($ENV{'T1FONTS'} // '');
 $ENV{'TFMFONTS'} = './fonts/stix2-type1/tfm//:' . ($ENV{'TFMFONTS'} // '');
 $ENV{'ENCFONTS'} = './fonts/stix2-type1/enc//:' . ($ENV{'ENCFONTS'} // '');
+
+# watch publishes after each successful latexmk cycle.
+if (defined $ENV{'BOOK_TARGET_PDF'}) {
+    $success_cmd = 'cp build/main.pdf target/machine-learning-notes.pdf.tmp && mv target/machine-learning-notes.pdf.tmp target/machine-learning-notes.pdf';
+}
+
+1;

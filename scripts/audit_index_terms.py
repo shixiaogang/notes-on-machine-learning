@@ -1060,7 +1060,7 @@ def _parse_idx_entries(text: str, path: Path) -> Iterator[tuple[str, str, int]]:
 
 def _normalize_idx_tex(value: str) -> str:
     value = re.sub(
-        r'\\mathaccent\s+"[0-9A-Fa-f]+\s*\\relax\s+([A-Za-z])',
+        r'\\mathaccent\s+"?[0-9A-Fa-f]+\s*\\relax\s+([A-Za-z])',
         r"\\widehat \1",
         value,
     )
@@ -1145,6 +1145,11 @@ def audit_index_artifacts(
                         f"English display {display!r} has no source term",
                     )
                 )
+            if source not in known_keys and display not in translation_keys:
+                diagnostics.append(Diagnostic(
+                    "ORPHAN_INDEX_TERM", base.with_suffix(".idx"), line, 1,
+                    f"index display source {source!r} is not a term in this edition",
+                ))
             continue
         if source not in known_keys:
             diagnostics.append(
@@ -1176,6 +1181,12 @@ def audit_index_artifacts(
             continue
         item = stripped[len("\\item ") :]
         display = item.split("，\\hyperpage", 1)[0]
+        source = _normalize_idx_tex(display.partition("，")[0])
+        if source not in known_keys:
+            diagnostics.append(Diagnostic(
+                "ORPHAN_INDEX_TERM", base.with_suffix(".ind"), line_number, 1,
+                f"index item source {source!r} is not a term in this edition",
+            ))
         if display in seen_items:
             diagnostics.append(
                 Diagnostic(
@@ -1219,9 +1230,12 @@ def _artifact_diagnostics(
         ind_path = idx_path.with_suffix(".ind")
         if not ind_path.is_file():
             continue
+        scoped_occurrences = occurrences if idx_path.stem == "main" else [
+            occurrence for occurrence in occurrences if occurrence.volume == idx_path.stem or occurrence.path in SHARED_TERM_FILES
+        ]
         diagnostics.extend(
             audit_index_artifacts(
-                occurrences,
+                scoped_occurrences,
                 mappings,
                 idx_path.read_text(encoding="utf-8", errors="replace"),
                 ind_path.read_text(encoding="utf-8", errors="replace"),

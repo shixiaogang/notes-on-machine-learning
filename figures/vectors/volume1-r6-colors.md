@@ -46,4 +46,4 @@
 
 独立图源与42组矢量资源在此后再次重编、导出；相应分组记录包含当前源与产物SHA。局部位移改变了绘图坐标和部分画布尺寸，原有科学数据、计数、函数值与方向仍保持。
 
-最终书页与构建验收见[第一卷审查记录](../../plans/volume1-figures-review.md)。独立彩色、灰度校样及导出检查保存在`build/volume1-r6-basics/`、`volume1-r6-theory/`和`volume1-r6-trust/`；实际书页、数据不变检查和最终日志记录保存在`build/volume1-r6/`，均可重新生成。
+最终书页与构建验收见[第一卷审查记录](foundations-figures-review-history.md)。独立彩色、灰度校样及导出检查保存在`build/volume1-r6-basics/`、`volume1-r6-theory/`和`volume1-r6-trust/`；实际书页、数据不变检查和最终日志记录保存在`build/volume1-r6/`，均可重新生成。

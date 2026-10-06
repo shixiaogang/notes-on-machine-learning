@@ -9,7 +9,8 @@
 - `plans/`：开发计划与任务拆解。
 - `figures/`：书籍中使用的图像资源。
 - `fonts/`：项目固定使用的字体文件、校验清单及其上游许可证。
-- `build/`：LaTeX 编译产物，由构建工具生成，不纳入 Git。
+- `build/`：LaTeX 中间产物与编译缓存，不纳入 Git。
+- `target/`：全集和六个单卷的成品 PDF 及构建校验记录，随正文一起提交。
 
 ## 开发规范索引
 
@@ -67,3 +68,14 @@
 “机器学习理论”部分依次介绍统计学习框架、二分类、多分类、凸学习与算法稳定性、深度学习理论和迁移学习理论，详细规划见 `plans/learning-theory-outline.md`。全书分卷、内容边界与迁移约定见 `plans/book-structure.md`。
 
 后续新增章节时，应放入其所属卷和部分的目录中；图像资源放入 `figures/`，并在 LaTeX 源文件中以相对路径引用。
+
+## 提交前的成品一致性
+
+每次提交前必须运行 `./build.sh all` 和 `./build.sh check-target`。全集为
+`target/machine-learning-notes.pdf`，六个单卷为 `target/volN-<slug>.pdf`。
+七份 PDF 与 `target/.build-manifest.json` 必须对应当前正文、图源、字体及构建输入，
+并与正文一起暂存；不得提交过期或遗漏的成品。新克隆后运行
+`git config --local core.hooksPath .githooks` 启用版本化提交检查。
+索引只收录当前出版单元正文实际调用的 `\term` / `\termalias`；词典登记本身不产生条目。
+全集和单卷的部首页必须使用奇数正文页码；需要补页时，空白页不显示页眉或页码，目录、书签及标签仍指向部首页。
+正文第 1 页也必须位于 PDF 的实际奇数页，以同步正文页码与 PDF 页面序号的奇偶。

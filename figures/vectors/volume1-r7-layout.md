@@ -40,10 +40,10 @@
 
 原有42组正式PDF/SVG重新维护，本轮再新增4.4与17.3两组，共44组。基础11组、理论15组、可信性10组、隐私与安全8组；后者含未改图17.1默认宏复核。资源保留原有稳定文件名和可编辑TeX，SVG使用真实字形轮廓及显式mm尺寸。
 
-分组处理与导出记录见[基础](volume1-r7-basics.md)、[可信性](trust-r7-layout.md)、[隐私与安全](volume1-r7-privacy-security.md)；理论复现入口为`theory-r5-export.tex`和`export-theory-r5.py`，现含追加的图4.4。独立校样、44组格式校验与五份数据文件、九幅PNG不变检查见`build/volume1-r7/`及三个分组目录。最终实际书页与构建验收写入[第一卷审阅记录](../../plans/volume1-figures-review.md)。
+分组处理与导出记录见[基础](volume1-r7-basics.md)、[可信性](trust-r7-layout.md)、[隐私与安全](volume1-r7-privacy-security.md)；理论复现入口为`theory-r5-export.tex`和`export-theory-r5.py`，现含追加的图4.4。独立校样、44组格式校验与五份数据文件、九幅PNG不变检查见`build/volume1-r7/`及三个分组目录。最终实际书页与构建验收写入[第一卷审阅记录](foundations-figures-review-history.md)。
 
 ## 最终验收
 
-最终第一卷SHA-256为`c5e59bb621d8ab6ae90f061af3cb4de001207e6eb1c68b03472e0c92a44c6dde`，509页、131书签；25幅修订均经独立矢量校样和实际完整书页检查，全卷92幅复查通过。44组源与PDF/SVG哈希再次核对一致，九幅原生PNG与五份定量数据保持不变。全集及五卷构建、27项测试、索引和六版结构检查通过；六份日志无溢出、缺字、未定义引用或重跑请求。详见[根代理最终记录](../../build/volume1-r7/final-root-review.md)及[全卷审阅索引](../../plans/volume1-figures-review.md)。
+最终第一卷SHA-256为`c5e59bb621d8ab6ae90f061af3cb4de001207e6eb1c68b03472e0c92a44c6dde`，509页、131书签；25幅修订均经独立矢量校样和实际完整书页检查，全卷92幅复查通过。44组源与PDF/SVG哈希再次核对一致，九幅原生PNG与五份定量数据保持不变。全集及五卷构建、27项测试、索引和六版结构检查通过；六份日志无溢出、缺字、未定义引用或重跑请求。详见[根代理最终记录](../../build/volume1-r7/final-root-review.md)及[全卷审阅索引](foundations-figures-review-history.md)。
 
 邻页复查另修第17章20个重复引文句号，并在图17.5后排完浮动图再建立章节目标；该局部收尾没有修改任何图源、独立矢量资源、图注数值或引文来源键。最终再次构建第一卷和全集，实际图页与文流验收同步绑定上述最终SHA。
