@@ -1,8 +1,8 @@
 \chapter{随机过程与随机逼近}
 \label{chap:stochastic-processes-and-approximation}
 
-第~\ref{chap:probability-theory}章考察独立观测的平均。若每次观测都来自同一个分布，
-大数定律说明样本均值是否接近期望，集中不等式进一步控制有限样本误差。然而，许多学习
+第~\ref{chap:probability-theory}章已建立条件期望，并分析独立同分布观测的平均。
+大数定律说明样本均值是否接近期望，集中不等式进一步控制有限样本误差。许多学习
 过程会把当前结果带到下一步：采样器从当前位置产生新状态，算法根据已有数据选择下一次
 查询，参数又用刚得到的噪声观测继续更新。此时，记录数仍在增加，独立性却已经消失。
 
@@ -18,17 +18,56 @@
 根。四种视角共享的是如何在时间依赖或自适应信息下分离平均信号与噪声，其中鞅提供连接
 这些任务的条件噪声工具。
 
-我们先判断相关序列的时间平均何时仍指向$\mu$，再用鞅刻画给定过去后无法预测的噪声。
+随机过程先把多个索引上的观测放到同一联合分布中。随后，本章判断相关序列的时间平均何时
+仍指向$\mu$，并用鞅刻画给定过去后无法预测的噪声。
 条件方差给出比统一增量界更细的序贯控制，带可预测特征的向量鞅则把误差放进随数据增长的
 设计矩阵。最后，随机逼近把这些噪声工具接到求根更新，并说明步长、平均漂移与迭代有界性
 各自承担什么作用。贯穿各节的重点不是把“独立样本数”换成“时间步数”，而是辨认过去信息
 怎样改变当前分布，以及证明中哪一步仍能利用条件平均为零。
 
+\section{随机过程的联合描述}
+\label{sec:stoch-process-joint-laws}
+
+
+一个随机变量描述一次结果；要研究多次观测如何关联，必须把它们放到同一个概率空间上。
+\begin{definition}[随机过程]
+  \label{def:stoch-process}
+  给定概率空间\((\Omega,\mathcal F,\mathbb P)\)、索引集\(T\)和状态可测空间\((\mathcal X,\mathcal A)\)，\term{随机过程}（stochastic process）是一族随机变量\((X_t)_{t\in T}\)，其中每个\(X_t:\Omega\to\mathcal X\)均可测。
+\end{definition}
+索引集\(T\)可以是离散时间、连续时间，也可以是输入位置。指定每个\(X_t\)的边缘分布还不够；有限维联合分布
+\(\mathcal L(X_{t_1},\ldots,X_{t_m})\)才记录不同索引之间的依赖。本节先建立这个共同对象，再给出用均值与协方差描述联合分布的高斯过程；
+下一节的Markov链则约束给定过去之后的转移规律，两种限制不能相互替代。
+
+\begin{definition}[高斯过程]
+  \label{def:stoch-gaussian-process}
+  实值随机过程\((F(x))_{x\in\mathcal X}\)称为\term{高斯过程}（Gaussian process），若任意正整数\(m\)及任意\(x_1,\ldots,x_m\in\mathcal X\)上的向量
+  \((F(x_1),\ldots,F(x_m))^\top\)均服从多元高斯分布，允许协方差奇异。其均值函数和协方差函数为
+  \[
+    m(x)=\mathbb E F(x),\qquad
+    k(x,x')=\operatorname{Cov}(F(x),F(x')),
+  \]
+  因而每个有限向量的均值为\((m(x_i))_i\)，协方差矩阵为\((k(x_i,x_j))_{i,j}\)，记作\(F\sim\mathcal{GP}(m,k)\)。索引\(x\)不必代表时间。
+\end{definition}
+协方差函数必须对称，且对任意有限输入和实系数\(c_i\)满足
+\[
+  \sum_{i,j}c_ic_jk(x_i,x_j)\geq0.
+\]
+这正是有限协方差矩阵半正定的条件。均值与协方差因此确定高斯过程的全部有限维分布；它们本身不自动保证样本函数连续、可微或具有Markov性。
+
+例如令\(A,B\)是独立标准高斯变量，定义\(F(x)=A+Bx\)。任意有限函数值都是\((A,B)\)的线性变换，所以构成高斯过程，且
+\(m(x)=0\)、\(k(x,x')=1+xx'\)。三个以上不同输入的协方差矩阵可以奇异，因为这些随机值都由同两个随机系数决定。反过来，各点边缘高斯并不足够：若\(X\sim\mathcal N(0,1)\)，独立符号\(S\)等概率取\(\pm1\)，则\(X,SX\)的边缘均为标准高斯且不相关，但\((SX)^2=X^2\)使它们依赖，故不可能是联合高斯。定义中的“任意有限联合分布”不可省略。
+
 \section{Markov链与长期平均}
 \label{sec:stoch-markov-long-run-average}
 
-\subsection{转移规则、平稳分布与时间齐次性}
+现在把索引限定为离散时间，研究状态如何接续，以及相关观测的平均何时仍有确定目标。
+Markov条件压缩预测下一步所需的历史；平稳分布给出可能的长期分布，
+遍历与混合条件才进一步连接时间平均和有限样本误差。三种作用需要分别判断。
 
+\subsection{转移核、时间齐次性与平稳分布}
+
+\begin{definition}[Markov链]
+  \label{def:stoch-markov-chain}
 设$(Z_t)_{t\geq0}$取值于可测空间$(\mathcal{Z},\mathcal{A})$。若对每个
 $B\in\mathcal{A}$，
 \[
@@ -36,15 +75,20 @@ $B\in\mathcal{A}$，
   =
   \mathbb{P}(Z_{t+1}\in B\mid Z_t),
 \]
-则称$(Z_t)$为\term{Markov链}（Markov chain）。这个条件不是说过去没有影响，而是
-说当前状态已经保存了预测下一步所需的全部历史信息。若右侧可统一写成
-$P(Z_t,B)$，且转移核$P$不随$t$改变，则链是\term{时间齐次的}
-（time-homogeneous）。时间齐次描述机制不变，不代表$Z_t$的边缘分布不随时间改变
+则称$(Z_t)$为\term{Markov链}（Markov chain）；上述条件等式按几乎必然意义理解。
+\end{definition}
+这个条件不是说过去没有影响，而是
+说当前状态已经保存了预测下一步所需的全部历史信息。
+\begin{definition}[时间齐次Markov链]
+  \label{def:stoch-time-homogeneous-chain}
+  若存在从\((\mathcal Z,\mathcal A)\)到自身的概率核\(P\)，使所有\(t\geq0\)、\(B\in\mathcal A\)都满足
+  \[ \mathbb P(Z_{t+1}\in B\mid Z_t)=P(Z_t,B)\quad\text{几乎必然}, \]
+  则该Markov链称为\term{时间齐次的}（time-homogeneous）。
+\end{definition}
+时间齐次描述机制不变，不代表$Z_t$的边缘分布不随时间改变
 \scite{math-meyn2009markov}
 
-这里的转移核需要同时满足两项可测性条件：固定$z$时，$P(z,\cdot)$是
-$(\mathcal{Z},\mathcal{A})$上的概率测度；固定$B\in\mathcal{A}$时，
-$P(\cdot,B)$是可测函数。对有界可测函数$f$，记
+概率核的两项要求见定义~\ref{def:probability-kernel}：每个状态对应合法的下一步分布，而每个事件的概率随当前状态可测地变化。对有界可测函数$f$，记
 \[
   Pf(z)=\int_{\mathcal{Z}}f(z')P(z,\mathrm{d}z').
 \]
@@ -69,20 +113,29 @@ $P^{m+1}=P^mP$，则时间齐次链满足
 $Z_{t+m}$在给定$Z_t=z$时的分布$P^m(z,\mathrm{d}z')$积分，就得到右侧。取$n=1$
 并归纳，还同时证明了第一个等式及核幂确实给出多步转移。
 
+\begin{definition}[平稳分布]
+  \label{def:stoch-stationary-distribution}
 概率分布$\pi$若满足
 \begin{equation}
   \pi(B)=\int_{\mathcal{Z}}P(z,B)\,\pi(\mathrm{d}z),
   \qquad B\in\mathcal{A},
   \label{eq:stoch-stationary-distribution}
 \end{equation}
-就称为$P$的\term{平稳分布}（stationary distribution）。若$Z_0\sim\pi$，式
+就称为$P$的\term{平稳分布}（stationary distribution）。
+\end{definition}
+若$Z_0\sim\pi$，式
 \eqref{eq:stoch-stationary-distribution}保证每个$Z_t$仍服从$\pi$；若从指定状态
 $z_0$启动，平稳性本身却没有说明$\mathcal{L}(Z_t)$会趋向$\pi$。恒等转移核
 $P(z,B)=\mathbb{I}\{z\in B\}$保持任意分布，但它永远不忘记初态，这已经表明“保持
 目标”和“到达目标”是两项不同要求。
 
-“平稳分布”是核与一个概率分布之间的关系，\term{平稳过程}（stationary process）则要求
-任意有限维联合分布在时间平移后不变。对时间齐次Markov链，若$Z_0\sim\pi$且
+“平稳分布”约束一个核如何保持一个分布；过程的平稳性还要约束多个时刻的联合分布。
+\begin{definition}[平稳过程]
+  \label{def:stoch-stationary-process}
+  离散时间过程\((Z_t)_{t\geq0}\)称为\term{平稳过程}（stationary process），若任意正整数\(m\)、时刻\(t_1,\ldots,t_m\geq0\)及整数\(h\geq0\)都满足
+  \[ (Z_{t_1},\ldots,Z_{t_m})\overset{\mathrm d}{=}(Z_{t_1+h},\ldots,Z_{t_m+h}). \]
+\end{definition}
+对时间齐次Markov链，若$Z_0\sim\pi$且
 $\pi P=\pi$，则
 \[
   \mathbb{P}(Z_0\in\mathrm{d}z_0,\ldots,Z_m\in\mathrm{d}z_m)
@@ -95,12 +148,15 @@ $\pi P=\pi$，则
 时间齐次链是平稳过程。只知道某一个时刻的边缘分布等于$\pi$，却没有核不变或联合分布
 条件时，不能据此断言整个过程平稳。
 
-一个常用的保持性条件是\term{细致平衡}（detailed balance）
+\begin{definition}[细致平衡]
+  \label{def:stoch-detailed-balance}
+概率核\(P\)与概率测度\(\pi\)满足\term{细致平衡}（detailed balance），若以下两个联合测度在\(\mathcal Z\times\mathcal Z\)上相同：
 \begin{equation}
   \pi(\mathrm{d}z)P(z,\mathrm{d}z')
   =\pi(\mathrm{d}z')P(z',\mathrm{d}z).
   \label{eq:stoch-detailed-balance}
 \end{equation}
+\end{definition}
 它要求平稳运行时任意两处之间的概率流量正反相等。对$z$积分便得到
 \eqref{eq:stoch-stationary-distribution}，所以细致平衡足以推出平稳性。反向不成立：
 围绕三个状态单向循环的链可以保持均匀分布，却没有逐边对称的反向流。细致平衡是构造
@@ -128,19 +184,21 @@ $\pi P=\pi$，则
   接近平稳。
 \end{example}
 
-\subsection{可达性、周期与收敛不是同一条件}
+\subsection{不可约性、周期与分布收敛}
 
-在有限状态空间中，\term{不可约性}（irreducibility）要求任意状态都能以正概率在有限步
-内到达任意另一状态。它排除多个互不连通的封闭类，并保证平稳分布唯一。
-\term{周期}（period）是从某状态返回自身的可能步数集合的最大公约数；不可约链的所有
-状态具有相同周期。周期等于$1$时，链称为\term{非周期的}（aperiodic）。
+\begin{definition}[有限链的不可约性与周期]
+  \label{def:stoch-finite-irreducibility-period}
+  有限状态Markov链满足\term{不可约性}（irreducibility），若对任意状态\(i,j\)存在整数\(m\geq0\)，使\(P^m(i,\{j\})>0\)。若返回步数集合非空，状态\(i\)的\term{周期}（period）定义为
+  \[ d_i=\gcd\{m\geq1:P^m(i,\{i\})>0\}. \]
+  不可约链的全部状态具有共同周期；该周期为\(1\)时，称链为\term{非周期的}（aperiodic）。
+\end{definition}
+不可约性排除多个互不连通的封闭类，并在有限状态下保证平稳分布唯一。
 
 更具体地，状态$i$到$j$可达，是指存在$m\geq0$使$P^m(i,\{j\})>0$。令
 $T_i^+=\inf\{t\geq1:Z_t=i\}$；若
 $\mathbb{P}_i(T_i^+<\infty)=1$，就称$i$为\term{常返状态}（recurrent state）。
 有限链必有至少一个封闭常返类；不可约性迫使全部状态属于同一个类，所以每个状态都常返。
-从$i$出发，把从一次访问$i$起、到下一次返回$i$前为止的路径作为一个游程；返回时刻处的
-强Markov性说明这些游程独立同分布。记第$k$个游程的长度为$L_k$、其中访问$j$的次数为
+从$i$出发，把从一次访问$i$起、到下一次返回$i$前为止的路径作为一个游程。返回时刻只由已经观察到的历史决定，属于后面定义~\ref{def:stoch-stopping-time}中的停时。Markov性质在这类随机时刻之后仍成立，称为强Markov性；在有限离散链中，把返回时刻的各个可能取值分别代入Markov条件即可验证。因此这些游程独立同分布。记第$k$个游程的长度为$L_k$、其中访问$j$的次数为
 $R_k$，则大数定律给出
 \[
   \frac{\sum_{k=1}^{m}R_k}{\sum_{k=1}^{m}L_k}
@@ -164,7 +222,7 @@ $\bm{\pi}^{\top}$。这两条路线分别解释了为什么周期不妨碍时间
   \quad\text{对每个初始状态 }z,
   \label{eq:stoch-finite-chain-distribution-convergence}
 \end{equation}
-其中有限状态下的收敛可以用\term{总变差距离}（total variation distance）衡量：
+其中有限状态下的收敛可以用\term{总变差距离}（total variation distance）衡量。这一距离比较所有事件概率，定义~\ref{def:information-total-variation}将系统讨论它与其他分布差异的关系；本节只使用下面的表达式：
 对概率测度$\nu,\pi$，定义
 \[
   \lVert\nu-\pi\rVert_{\mathrm{TV}}
@@ -199,19 +257,63 @@ $\mathbb{E}[\widetilde{Y}_{t+k}\mid Z_t]=0.7^k\widetilde{Y}_t$。
 这个几何衰减同时展示了“收敛到平稳”和“样本之间仍相关”：边缘分布可以从一开始就等于
 $\pi$，相邻观测却不会因此独立。
 
+\subsection{一般状态空间的返回条件}
+
+有限链可用矩阵、路径和周期描述可达性。连续或一般状态空间中，单点通常概率为零，“每个
+状态互相到达”不再是合适表述。
+\begin{definition}[一般状态空间的不可约性与Harris常返性]
+  \label{def:stoch-harris-recurrence}
+固定$(\mathcal{Z},\mathcal{A})$上的非零参考测度
+$\varphi$。常用的$\varphi$不可约性要求：对每个满足$\varphi(B)>0$的
+$B\in\mathcal{A}$以及每个初态$z\in\mathcal{Z}$，链从$z$出发都有正概率在有限时间内
+到达$B$；若只研究某个不可约类，就先把$\mathcal{Z}$限制为该类。在此基础上，
+\term{Harris常返性}（Harris recurrence）要求这些正测度集合以概率$1$被反复访问；
+\term{正Harris常返性}（positive Harris recurrence）再要求存在不变概率分布。这里的反复访问要求：对每个上述\(B\)和每个初态\(z\)，以概率\(1\)有无穷多个\(t\geq0\)满足\(Z_t\in B\)。
+\end{definition}
+对
+$\pi$可积的$f$，正Harris常返性提供一般状态空间遍历大数定律的标准入口。
+
+这里“反复访问”带有概率$1$的量词：从$\mathcal{Z}$中的任意初态出发，每个满足
+$\varphi(B)>0$的集合$B$都几乎必然被访问无穷多次。仅有“以正概率最终到达”还不够，
+因为过程仍可能以正概率逃离后永不返回。正Harris常返链对其唯一不变概率$\pi$满足
+式~\eqref{eq:stoch-markov-ergodic-average}的一般状态空间版本，但函数必须
+$\pi$可积；若只知道局部可积或某个初态下样本值有限，不能推出该时间平均结论。
+
+\begin{definition}[几何遍历性]
+  \label{def:stoch-geometric-ergodicity}
+  对具有不变概率分布\(\pi\)的时间齐次链，\term{几何遍历性}（geometric ergodicity）要求存在共同的$0<r<1$，使每个初态\(z\)都对应有限常数$C(z)$，对所有整数\(t\geq0\)满足
+\[
+  \lVert P^t(z,\cdot)-\pi\rVert_{\mathrm{TV}}
+  \leq C(z)r^t.
+\]
+\end{definition}
+它比“存在平稳分布”或“时间平均收敛”更强，常与额外矩条件一起用于中心极限定理、Poisson
+方程和随机逼近中的相关噪声控制。几何遍历是方便而有力的充分条件，不是所有遍历链都必须
+满足的定义。
+
+这些条件也解释了相关平均的边界。链若可约，长期平均可能由初始封闭类决定；链若只保持
+$\pi$而不能充分移动，有限预算误差可能很大；观测函数若不可积，平稳分布存在也不能定义
+所求均值。式~\eqref{eq:stoch-mean-root}在Markov观测下仍有意义，需要的是链的长期平均
+确实识别$\mu$，而不是把相关的$Y_t$假装成独立样本。
+
 \subsection{混合速度、自相关与有效样本量}
 
-\term{混合速度}（mixing rate）描述链忘记初态的快慢。有限链常考察
+返回条件回答相关平均有没有稳定目标，还没有给出接近目标所需的步数。\term{混合速度}（mixing rate）描述链忘记初态的快慢。
+\begin{definition}[有限链的混合时间]
+  \label{def:stoch-finite-mixing-time}
+对具有平稳分布\(\pi\)的有限时间齐次链，定义
 \[
   d(t)
   =
   \sup_{z\in\mathcal{Z}}
   \lVert P^t(z,\cdot)-\pi\rVert_{\mathrm{TV}},
 \]
-并把使$d(t)\leq\varepsilon$的最小$t$称为相应精度下的混合时间。这个最坏初态指标
+对\(0<\varepsilon<1\)，混合时间为\(t_{\mathrm{mix}}(\varepsilon)=\inf\{t\in\mathbb N_0:d(t)\leq\varepsilon\}\)，空集的下确界约定为\(\infty\)。
+\end{definition}
+这个最坏初态指标
 针对分布距离；估计某个特定$f$的时间平均时，还要考察$f(Z_t)$自身的自相关。
 
-若链平稳，记$\sigma_f^2=\operatorname{Var}_{\pi}(f(Z_0))$，
+若链平稳，且\(0<\sigma_f^2=\operatorname{Var}_{\pi}(f(Z_0))<\infty\)，记
 $\rho_f(k)=\operatorname{Corr}_{\pi}(f(Z_0),f(Z_k))$。展开样本均值方差得到
 \begin{align}
   \operatorname{Var}\left(
@@ -232,9 +334,9 @@ $\rho_f(k)=\operatorname{Corr}_{\pi}(f(Z_0),f(Z_k))$。展开样本均值方差�
   =
   1+2\sum_{k=1}^{\infty}\rho_f(k),
 \]
-称为积分自相关时间。用$n_{\mathrm{eff}}\approx n/\tau_f$表达
+称为积分自相关时间。它是非负的渐近方差比；在\(\tau_f>0\)时，用$n_{\mathrm{eff}}\approx n/\tau_f$表达
 \term{自相关有效样本量}（autocorrelation effective sample size），只是把该函数
-均值的渐近方差换算成独立样本尺度。它依赖$f$，也不同于重要性权重的有效样本量。
+均值的渐近方差换算成独立样本尺度。它依赖$f$，也不同于重要性权重的有效样本量。若\(\sigma_f^2=0\)，观测函数在平稳分布下为常数，无须定义相关系数；若\(\tau_f=0\)，则\(n\operatorname{Var}(\overline f_n)\to0\)，不能用有限的\(n/\tau_f\)概括其误差。
 
 对例~\ref{ex:stoch-two-state-chain}，式
 \eqref{eq:stoch-two-state-autocorrelation}给出
@@ -246,45 +348,29 @@ $\rho_f(k)=\operatorname{Corr}_{\pi}(f(Z_0),f(Z_k))$。展开样本均值方差�
 $\tau_f$也可能小于$1$；有效样本量是特定估计量的方差等价口径，不是链中“真正保留下来”
 的样本条数。
 
-\subsection{一般状态空间需要返回条件}
+图~\ref{fig:stochastic-mixing-variance}把分布收敛与均值方差分开呈现。左图从同一确定初态出发，非周期链的状态概率逐渐接近平稳质量，周期链却一直交替；右图针对从平稳分布启动的非周期链，有限样本的方差放大可直接由自相关求和，不能把左图的初态偏差混入这条公式。
 
-有限链可用矩阵、路径和周期描述可达性。连续或一般状态空间中，单点通常概率为零，“每个
-状态互相到达”不再是合适表述。固定$(\mathcal{Z},\mathcal{A})$上的非零参考测度
-$\varphi$。常用的$\varphi$不可约性要求：对每个满足$\varphi(B)>0$的
-$B\in\mathcal{A}$以及每个初态$z\in\mathcal{Z}$，链从$z$出发都有正概率在有限时间内
-到达$B$；若只研究某个不可约类，就先把$\mathcal{Z}$限制为该类。在此基础上，
-\term{Harris常返性}（Harris recurrence）要求这些正测度集合以概率$1$被反复访问；
-\term{正Harris常返性}（positive Harris recurrence）再要求存在不变概率分布。对
-$\pi$可积的$f$，正Harris常返性提供一般状态空间遍历大数定律的标准入口。
-
-这里“反复访问”带有概率$1$的量词：从$\mathcal{Z}$中的任意初态出发，每个满足
-$\varphi(B)>0$的集合$B$都几乎必然被访问无穷多次。仅有“以正概率最终到达”还不够，
-因为过程仍可能以正概率逃离后永不返回。正Harris常返链对其唯一不变概率$\pi$满足
-式~\eqref{eq:stoch-markov-ergodic-average}的一般状态空间版本，但函数必须
-$\pi$可积；若只知道局部可积或某个初态下样本值有限，不能推出该时间平均结论。
-
-\term{几何遍历性}（geometric ergodicity）进一步要求到平稳分布的距离以几何速度下降，
-例如存在$0<r<1$和依赖初态的有限$C(z)$，使
-\[
-  \lVert P^t(z,\cdot)-\pi\rVert_{\mathrm{TV}}
-  \leq C(z)r^t.
-\]
-它比“存在平稳分布”或“时间平均收敛”更强，常与额外矩条件一起用于中心极限定理、Poisson
-方程和随机逼近中的相关噪声控制。几何遍历是方便而有力的充分条件，不是所有遍历链都必须
-满足的定义。
-
-这些条件也解释了相关平均的边界。链若可约，长期平均可能由初始封闭类决定；链若只保持
-$\pi$而不能充分移动，有限预算误差可能很大；观测函数若不可积，平稳分布存在也不能定义
-所求均值。式~\eqref{eq:stoch-mean-root}在Markov观测下仍有意义，需要的是链的长期平均
-确实识别$\mu$，而不是把相关的$Y_t$假装成独立样本。
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/math-preparation/probability-discrete/stochastic-mixing-variance.pdf}
+  \caption{两状态链的解析式教学图。左图蓝线使用例~\ref{ex:stoch-two-state-chain}的转移矩阵，从\(Z_0=0\)出发绘制\(\mathbb P(Z_t=2)=(1-0.7^t)/3\)；红线使用确定交替的转移矩阵。右图使用平稳初态和\(\rho_k=0.7^k\)，绘制\(1+2\sum_{k=1}^{n-1}(1-k/n)\rho_k\)，其极限为\(17/3\)，独立观测基准为\(1\)。}
+  \label{fig:stochastic-mixing-variance}
+\end{figure*}
 
 \section{简单鞅、停时与序贯集中}
 \label{sec:stoch-martingales-stopping-sequential-concentration}
 
-\subsection{滤过与不可预测增量}
+Markov条件描述整个状态怎样转移，但误差分析往往只需要某个增量在给定过去后均值为零。
+鞅将这个较局部的条件单独提取出来，可用于Markov观测，也可用于其他依赖序列。
+滤过记录可用信息，停时记录何时停止；集中界必须与这套信息和停止规则一起使用。
+
+\subsection{滤过、鞅与条件均值}
 
 Markov链保留了当前状态对未来的预测作用。另一种更适合分析累计噪声的结构，是只要求每个
-新增误差在给定过去后均值为零。在概率空间
+新增误差在给定过去后均值为零。信息限制需要一个明确对象，才能区分“当前已经看到”与“新噪声到来前就已确定”。
+\begin{definition}[滤过、适应与可预测性]
+  \label{def:stoch-filtration-adaptation-predictability}
+在概率空间
 $(\Omega,\mathcal{F},\mathbb{P})$上，令每个$\mathcal{F}_t$都是
 $\mathcal{F}$的子$\sigma$代数，并且
 \[
@@ -292,10 +378,13 @@ $\mathcal{F}$的子$\sigma$代数，并且
 \]
 这列递增的子$\sigma$代数称为\term{滤过}（filtration），可以理解为随时间增长的信息。
 随机变量$X_t$若对
-$\mathcal{F}_t$可测，就称它在时刻$t$已经可知；过程$(H_t)$若$H_t$对
-$\mathcal{F}_{t-1}$可测，就称为\term{可预测过程}（predictable process）。这里的
-“可预测”不是说$H_t$没有随机性，而是说它可以由第$t$次新噪声到来之前的信息确定。
+$\mathcal{F}_t$可测，就称它在时刻$t$已经可知；若每个$t$都如此，称$(X_t)$适应于该滤过。对$t\geq1$，过程$(H_t)$若$H_t$对
+$\mathcal{F}_{t-1}$可测，就称为\term{可预测过程}（predictable process）。
+\end{definition}
+这里的“可预测”不是说$H_t$没有随机性，而是说它可以由第$t$次新噪声到来之前的信息确定。
 
+\begin{definition}[鞅与鞅差]
+  \label{def:stoch-martingale}
 可积过程$(M_t)$若适应于$(\mathcal{F}_t)$，并满足
 \begin{equation}
   \mathbb{E}[M_t\mid\mathcal{F}_{t-1}]=M_{t-1},
@@ -306,7 +395,9 @@ $\mathcal{F}_{t-1}$可测，就称为\term{可预测过程}（predictable proces
   \mathbb{E}[X_t\mid\mathcal{F}_{t-1}]=0,
   \label{eq:stoch-martingale-difference}
 \end{equation}
-称为\term{鞅差}（martingale difference）。无条件零均值不够：若$X_t$可以由过去
+称为\term{鞅差}（martingale difference）。若条件等式改为\(\mathbb E[M_t\mid\mathcal F_{t-1}]\leq M_{t-1}\)，称\((M_t)\)为超鞅；改为\(\geq\)时称为次鞅。两者也要求每个时刻可积且适应。
+\end{definition}
+无条件零均值不够：若$X_t$可以由过去
 预测，累计和仍可能形成系统漂移；式~\eqref{eq:stoch-martingale-difference}排除的正是
 这种可利用的条件平均。
 
@@ -333,19 +424,25 @@ $\mathcal{F}_{t-1}$可测，就称为\term{可预测过程}（predictable proces
   失去依据。
 \end{example}
 
+\begin{definition}[可预测二次变差]
+  \label{def:stoch-predictable-quadratic-variation}
 对平方可积鞅差，定义\term{可预测二次变差}（predictable quadratic variation）
 \begin{equation}
   V_t=\sum_{s=1}^{t}\mathbb{E}[X_s^2\mid\mathcal{F}_{s-1}].
   \label{eq:stoch-predictable-quadratic-variation}
 \end{equation}
+\end{definition}
 它在每一步使用新增量到来之前可知的条件方差，因而能够记录实际噪声规模。与之不同，
 $\sum_{s=1}^{t}X_s^2$是观察后的实现二次变差。Freedman界使用前者；在其他序贯估计中
 也可以围绕后者构造界，但不能不加说明地互换。
 
 \subsection{停时与可选停止的条件}
 
-随机时刻$\tau$若满足$\{\tau\leq t\}\in\mathcal{F}_t$对每个$t$成立，就称为
-\term{停时}（stopping time）。到时刻$t$为止已有的信息足以判断是否已经停止；“最后一次
+\begin{definition}[停时]
+  \label{def:stoch-stopping-time}
+  相对于滤过\((\mathcal F_t)_{t\geq0}\)，取值于\(\mathbb N_0\cup\{\infty\}\)的随机时刻$\tau$若满足$\{\tau\leq t\}\in\mathcal{F}_t$对每个整数$t\geq0$成立，就称为\term{停时}（stopping time）。
+\end{definition}
+到时刻$t$为止已有的信息足以判断是否已经停止；“最后一次
 达到最大值的时刻”通常需要看到未来，不一定是停时。
 
 \begin{theorem}[有界停时的可选停止]
@@ -387,7 +484,7 @@ $\mathbb{E}\tau<\infty$。这些条件不能省略。对从$0$开始的公平随
 $\tau=\inf\{t:S_t=1\}$。该停时几乎必然有限，却有$S_\tau=1$，所以
 $\mathbb{E}S_\tau=1\neq0$；这里$\mathbb{E}\tau=\infty$，不能套用有界停时定理。
 
-\subsection{Azuma--Hoeffding界只使用统一增量尺度}
+\subsection{有界增量的Azuma--Hoeffding不等式}
 
 若只知道每个鞅差的范围，可以把独立变量的指数矩方法逐步条件化。
 
@@ -442,7 +539,7 @@ $\lambda=4x/\sum_t(b_t-a_t)^2$，便得到式
 这个证明没有要求$X_t$彼此独立，只要求给定过去后均值为零，并且条件范围受控。代价是
 它把每一步都按最坏范围计费。若多数时刻的条件方差很小，下一结果会给出更紧的尺度。
 
-\subsection{Freedman界利用实际累积的条件方差}
+\subsection{条件方差与Freedman不等式}
 
 \begin{theorem}[标量Freedman不等式]
   \label{thm:stoch-freedman}
@@ -541,8 +638,14 @@ $\mathbb{E}L_0\leq1$，则
   \label{eq:stoch-ville}
 \end{equation}
 证明只需令$\tau$为首次越过$1/\delta$的时刻，对$\tau\wedge n$使用有界停时，再令
-$n\to\infty$。由此反演得到的\term{置信序列}（confidence sequence）在同一个高概率
-事件上覆盖所有时刻，因而允许根据当前数据决定何时查看或停止。固定$n$的置信区间只承诺
+$n\to\infty$。反演这类同时有效的检验，可以得到随时间更新的置信集合。
+\begin{definition}[置信序列]
+  \label{def:stoch-confidence-sequence}
+  对参数为\(\theta\)时的数据分布\(\mathbb P_\theta\)，数据依赖集合\((C_t)_{t\geq1}\)若在时刻\(t\)由\(\mathcal F_t\)确定，且对每个允许的\(\theta\)满足
+  \[ \mathbb P_\theta(\theta\in C_t\text{ 对所有 }t\geq1)\geq1-\delta, \]
+  则称为覆盖水平\(1-\delta\)的\term{置信序列}（confidence sequence），其中\(0<\delta<1\)。
+\end{definition}
+它在同一个高概率事件上覆盖所有时刻，因而允许根据当前数据决定何时查看或停止。固定$n$的置信区间只承诺
 预先指定时刻的覆盖；反复查看直到区间排除某个值，会改变错误概率。
 
 同一个上穿论证还解释了后文为什么可以使用非负超鞅的极限。设$(L_t)$为非负超鞅且
@@ -574,7 +677,11 @@ $\sup_t\mathbb{E}L_t\leq\mathbb{E}L_0<\infty$排除极限为正无穷。于是�
 \section{自归一化集中与自适应设计}
 \label{sec:stoch-self-normalized-adaptive-design}
 
-\subsection{为什么误差要按设计矩阵衡量}
+标量鞅界控制累计噪声的大小。在线性估计中，噪声还会沿所查询的特征方向进入参数误差，
+而这些方向可能由过去观测决定。设计矩阵记录各方向获得了多少信息，自归一化界用它
+度量向量噪声，因此能给出方向不同的置信椭球；可预测性仍是有效使用条件均值的关键。
+
+\subsection{设计矩阵与误差尺度}
 
 标量累计和把每次噪声视为同一个方向。在线性观测中，第$t$次查询带有特征
 $\bm{x}_t\in\mathbb{R}^d$，观测为
@@ -583,8 +690,10 @@ $\bm{x}_t\in\mathbb{R}^d$，观测为
   \label{eq:stoch-adaptive-linear-observation}
 \end{equation}
 允许$\bm{x}_t$根据$\mathcal{F}_{t-1}$中的历史结果选择，但要求它在$\eta_t$揭晓前
-已经确定，也就是$\bm{x}_t$可预测；噪声$\eta_t$对$\mathcal{F}_t$可测。若噪声对
-某个$R>0$满足条件次高斯界
+已经确定，也就是$\bm{x}_t$可预测；噪声$\eta_t$对$\mathcal{F}_t$可测。
+\begin{definition}[条件次高斯噪声]
+  \label{def:stoch-conditional-subgaussian}
+对\(\mathcal F_t\)-可测实随机变量\(\eta_t\)，若某个$R>0$使下面的条件指数矩界对每个\(\gamma\in\mathbb R\)几乎必然成立，则称其相对于过去信息\(\mathcal F_{t-1}\)为参数\(R^2\)的条件次高斯噪声：
 \begin{equation}
   \mathbb{E}[
     \exp(\gamma\eta_t)
@@ -594,7 +703,8 @@ $\bm{x}_t\in\mathbb{R}^d$，观测为
   \qquad \gamma\in\mathbb{R},
   \label{eq:stoch-conditional-subgaussian}
 \end{equation}
-则它给定过去后均值为零，并且尾部由尺度$R$控制。
+\end{definition}
+该条件蕴含可积性和给定过去后均值为零，并且尾部由尺度$R$控制。
 
 累计噪声和正则化设计矩阵分别记为
 \begin{equation}
@@ -604,7 +714,7 @@ $\bm{x}_t\in\mathbb{R}^d$，观测为
   \quad\bm{V}_0\succ\bm{0}.
   \label{eq:stoch-vector-sum-design}
 \end{equation}
-可预测性与条件中心化共同保证
+若各增量满足\(\mathbb E\lVert\bm x_t\eta_t\rVert_2<\infty\)，可预测性与条件中心化共同保证
 \[
   \mathbb{E}[\bm{x}_t\eta_t\mid\mathcal{F}_{t-1}]
   =
@@ -612,7 +722,7 @@ $\bm{x}_t\in\mathbb{R}^d$，观测为
   \mathbb{E}[\eta_t\mid\mathcal{F}_{t-1}]
   =\bm{0}.
 \]
-因此$(\bm{S}_t)$是向量鞅。这里没有要求$\bm{x}_t$为确定向量，也没有要求不同
+这时$(\bm{S}_t)$是向量鞅。特征可预测不自动保证这一可积性；下面的指数超鞅论证只需其条件指数矩控制，因此自归一化界不要求额外假定整个向量和可积。这里没有要求$\bm{x}_t$为确定向量，也没有要求不同
 $\bm{x}_t$彼此独立；关键是它在当前噪声出现前已经由过去确定。
 
 某个方向被反复观测时，$\bm{V}_t$沿该方向增大；从未被询问的方向只剩初始正则化。
@@ -625,7 +735,7 @@ $\bm{x}_t$彼此独立；关键是它在当前噪声出现前已经由过去确�
 称为\term{自归一化}（self-normalized）；它与第~\ref{chap:probability-theory}章中用
 随机权重和归一化分母构造的自归一化重要性估计不是同一个对象。
 
-\subsection{混合指数超鞅给出向量界}
+\subsection{混合指数超鞅与向量集中}
 
 \begin{theorem}[向量自归一化集中界]
   \label{thm:stoch-vector-self-normalized}
@@ -701,7 +811,7 @@ $\overline L_0=1$。把高斯密度与指数中的二次项合并，配方得到
 定义；行列式比累计各方向相对于初始尺度增长了多少。行列式不是把每个访问次数简单相加，
 因为同一方向的重复观测与新方向的首次观测提供的信息不同。
 
-\subsection{从噪声界到置信椭球}
+\subsection{置信椭球与方向信息}
 
 取$\bm{V}_0=\lambda\bm{I}$，$\lambda>0$，并定义岭回归估计
 \begin{equation}
@@ -785,11 +895,20 @@ $\overline L_0=1$。把高斯密度与指数中的二次项合并，配方得到
   新噪声产生之前固定当前方向，并在一个事件上同时控制全部时刻。
 \end{example}
 
+图~\ref{fig:stochastic-design-ellipsoids}还比较了相同四次预算在两个方向各访问两次的情形：此时\(\bm V_4=\operatorname{diag}(3,3)\)。均衡访问扩大第一个方向的几何半宽，却缩小第二个方向的半宽；因此设计会改变误差的方向分配，不能只比较一个总访问数。图中把两条二次型的右侧统一设为\(1\)，仅比较几何；真正的置信椭球还要分别乘上各自的\(\beta_4(\delta)\)，其行列式项也会改变。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{figures/math-preparation/probability-discrete/stochastic-design-ellipsoids.pdf}
+  \caption{二维设计的归一化误差几何（解析式教学图）。蓝实线为\(\bm e^\top\operatorname{diag}(4,2)\bm e=1\)，红虚线为\(\bm e^\top\operatorname{diag}(3,3)\bm e=1\)。它们不是已经具有相同覆盖概率的数值置信区间；真实置信半径由式~\eqref{eq:stoch-adaptive-confidence-ellipsoid}另行确定。}
+  \label{fig:stochastic-design-ellipsoids}
+\end{figure}
+
 这个例子也说明为什么不能把独立样本界中的$n$换成某个动作的访问次数。参数误差是向量，
 不同特征方向可能相关；置信宽度由$\bm{x}^{\top}\bm{V}_t^{-1}\bm{x}$决定，而不是只由
 某个坐标被访问多少次决定。行列式项又要为算法可能探索的全部方向支付复杂度。
 
-\subsection{自适应有效不等于任意数据依赖都有效}
+\subsection{可预测设计与数据依赖的边界}
 
 自归一化界允许$\bm{x}_t$依赖$\mathcal{F}_{t-1}$，不允许它依赖当前$\eta_t$后再伪装成
 预先选择。若传感器先看到当前噪声再决定是否记录，$\bm{x}_t\eta_t$的条件平均可能不再为
@@ -807,7 +926,11 @@ $\sqrt{\lambda}B$偏差项。置信椭球控制统计误差，不保证选择策
 \section{随机逼近与Markov噪声}
 \label{sec:stoch-approximation-markov-noise}
 
-\subsection{从保存平均到持续求根}
+前面控制观测误差，现在让观测进入每一步参数更新。随机逼近用局部噪声观测寻找平均方程的根，
+因此既要控制累计噪声，又要确认平均漂移会把参数带向目标。Markov噪声的Poisson分解
+把相关误差转回鞅项与可控余项，连接本章的转移结构、鞅控制和递推收敛。
+
+\subsection{递推平均与随机求根}
 
 若全部观测都可保存，均值求根可以在$t$步后直接使用样本平均。流式算法则希望每到一个
 观测只更新当前估计。对式~\eqref{eq:stoch-mean-root}，Robbins--Monro型递推为
@@ -850,7 +973,7 @@ $\bm{r}_{t+1}$是近似、截断或分布尚未平衡产生的偏差。算法要
 $\overline{\bm{h}}(\bm{\theta})=\bm{0}$的稳定根，必须分别控制这三部分，不能只验证
 单步估计“看起来无偏”。
 
-\subsection{步长条件分别控制移动与噪声}
+\subsection{步长、累计移动与噪声控制}
 
 经典步长条件为
 \begin{equation}
@@ -864,6 +987,27 @@ $\overline{\bm{h}}(\bm{\theta})=\bm{0}$的稳定根，必须分别控制这三�
 $\alpha_t=c/(t+t_0)^\gamma$时，通常
 $1/2<\gamma\leq1$满足这两个条件。固定步长不满足平方可和条件，适合追踪变化目标或维持
 稳态误差，却一般不保证迭代精确收敛到一个点。
+
+固定步长的代价可以在均值例子中精确算出。设\(Y_t\)独立同分布，均值\(\mu\)、方差\(\sigma^2\)，初值确定，并取\(\alpha_t=\alpha\in(0,1)\)。误差满足
+\[
+  e_{t+1}=(1-\alpha)e_t+\alpha(Y_{t+1}-\mu),\qquad e_t=\theta^{(t)}-\mu.
+\]
+新噪声与过去独立，所以\(\mathbb E e_t=(1-\alpha)^t e_0\)，而方差递推为
+\(v_{t+1}=(1-\alpha)^2v_t+\alpha^2\sigma^2\)。解这个几何级数可得
+\[
+  v_t=\frac{\alpha\sigma^2}{2-\alpha}\bigl[1-(1-\alpha)^{2t}\bigr]
+  \longrightarrow\frac{\alpha\sigma^2}{2-\alpha}.
+\]
+即使初始偏差消失，噪声方差仍保留一个正极限；缩小\(\alpha\)会减小这项稳态误差，也会减慢初始偏差衰减。这个结论只针对固定均值及独立有限方差噪声，不能原样替代一般随机逼近的稳定性证明。
+
+图~\ref{fig:stochastic-stepsize-bias-variance}把同一均值问题的平均轨迹与方差分开比较。递减规则\(\alpha_t=1/(t+1)\)在第一次更新后就是样本平均；固定规则\(\alpha=0.2\)逐步遗忘初值，却也不断给新噪声保留固定权重。曲线描述重复实验的均值和方差，不是一条随机观测轨迹。
+\begin{figure*}[!ht]
+  \centering
+  \includegraphics[width=\linewidth]{figures/math-preparation/concept-revision-probability/stochastic-stepsize-bias-variance.pdf}
+  \caption{固定步长与样本平均的偏差、方差（解析式教学图）。取\(\theta^{(0)}=0\)、\(\mu=1\)、\(\sigma^2=1\)，观测独立同分布。蓝实线对应\(\alpha=0.2\)，红虚线对应\(\alpha_t=1/(t+1)\)。右图中固定步长方差趋于\(1/9\)，样本平均方差为\(1/t\)。}
+  \label{fig:stochastic-stepsize-bias-variance}
+\end{figure*}
+\FloatBarrier
 
 下面先给出独立或鞅差噪声下的完整代表性证明。证明只用一个特殊的超鞅收敛引理。
 
@@ -956,7 +1100,7 @@ $\alpha_t^2\sigma^2$可累计控制；步长和发散则排除非零极限误差
 方差，或条件均值带有不可消失的偏差，上述递推不等式不再成立。若迭代是向量且平均漂移
 非线性，还要另行保证迭代不会逃向无穷远。
 
-\subsection{累计步长把随机更新连接到平均ODE}
+\subsection{累计时间与平均常微分方程}
 
 定义算法时间
 \begin{equation}
@@ -1009,7 +1153,7 @@ $W(\theta)=(\theta-\mu)^2/2$，沿ODE轨迹有
 成立时，算法才可能收敛到该平衡。原方程的根位于集合外这一事实本身，既不能保证收敛，
 也不能把可能的极限直接解释成原方程根在边界上的投影。
 
-\subsection{Poisson方程分离Markov相关波动}
+\subsection{Poisson方程与Markov噪声分解}
 
 定理~\ref{thm:stoch-mean-root-convergence}假设
 $Y_{t+1}-\mu$给定$\mathcal{F}_t$后均值为零。对Markov链，这通常不成立：
@@ -1023,7 +1167,9 @@ $H(\theta,z)$为一次随机更新。平均漂移是
   \overline h(\theta)=\int H(\theta,z)\,\pi(\mathrm{d}z).
   \label{eq:stoch-markov-mean-field}
 \end{equation}
-对每个$\theta$，若存在函数$g_\theta$满足
+\begin{definition}[Markov核的Poisson方程]
+  \label{def:stoch-markov-poisson-equation}
+固定转移核\(P\)、不变概率\(\pi\)与\(\pi\)可积更新函数\(H(\theta,\cdot)\)。对每个$\theta$，使下列积分有限并满足等式的可测函数$g_\theta$，称为对应Poisson方程的解：
 \begin{equation}
   g_\theta(z)-Pg_\theta(z)
   =
@@ -1034,7 +1180,8 @@ $H(\theta,z)$为一次随机更新。平均漂移是
   \int g_\theta(z')P(z,\mathrm{d}z'),
   \label{eq:stoch-poisson-equation}
 \end{equation}
-则对$Z_{t+1}\sim P(Z_t,\cdot)$，
+\end{definition}
+方程把中心化更新写成\(g_\theta\)与其一步条件平均之差。若\(g_\theta(Z_t)\)和\(g_\theta(Z_{t+1})\)可积，且链相对于所用历史满足\(\mathcal L(Z_{t+1}\mid\mathcal F_t)=P(Z_t,\cdot)\)，则
 \begin{align}
   H(\theta,Z_t)-\overline h(\theta)
   &=
@@ -1159,7 +1306,7 @@ $\pi_{\bm{\theta}}$以及$g_{\bm{\theta}}$随参数的变化。只证明每个�
 最终收敛到哪里仍由这个平均ODE的稳定结构决定。混合只帮助把相关观测替换为平均漂移加
 可控噪声，不会把一个不稳定平衡变成稳定平衡。
 
-\subsection{双时间尺度与仍需核对的边界}
+\subsection{双时间尺度与收敛条件}
 
 有些算法同时更新快变量$\bm{u}^{(t)}$与慢变量$\bm{v}^{(t)}$：
 \begin{align*}
@@ -1236,7 +1383,9 @@ $\bm{u}^{\star}(\bm{v})$还需在慢变量访问区域内足够正则，才能�
 \section{本章小结}
 \label{sec:stochastic-processes-and-approximation-summary}
 
-当观测沿时间相关或由过去自适应选择时，独立样本分析失效的位置并不相同。Markov链用
+随机过程以一族联合分布描述多个索引处的随机量。高斯过程要求每个有限子族联合高斯，
+因此均值函数和半正定协方差核足以确定其有限维分布；仅有逐点高斯边缘还不够，索引也
+不必是时间。当观测沿时间相关或由过去自适应选择时，独立样本分析失效的位置并不相同。Markov链用
 转移核描述当前状态怎样影响下一步；平稳分布只保证从该分布出发后保持不变，不可约性、
 周期与返回条件决定能否从指定初态接近它。时间平均还受到自相关影响，所以记录数不能直接
 解释为独立信息量。有限链的路径条件也不能原样搬到一般状态空间；正Harris常返和几何遍历
