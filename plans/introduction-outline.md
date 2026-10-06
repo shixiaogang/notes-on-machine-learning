@@ -2,7 +2,7 @@
 
 状态：正文已展开；本文件随章节结构同步维护。
 
-正文位置：`tex/01-foundations/01-basics/01-introduction.tex`。
+正文位置：`tex/02-foundations/01-basics/01-introduction.tex`。
 
 ## 章节定位与叙述主线
 
