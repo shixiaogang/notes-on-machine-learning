@@ -21,8 +21,8 @@ VOLUMES = (
     "05-applications",
     "06-systems",
 )
-EXPECTED_CALLS = 2327
-EXPECTED_UNIQUE_TERMS = 1976
+EXPECTED_CALLS = 2371
+EXPECTED_UNIQUE_TERMS = 2018
 SHARED_TERM_FILES = (Path("tex/styles/environments.tex"),)
 VERBATIM_ENVIRONMENTS = {"verbatim", "Verbatim", "lstlisting", "minted"}
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")

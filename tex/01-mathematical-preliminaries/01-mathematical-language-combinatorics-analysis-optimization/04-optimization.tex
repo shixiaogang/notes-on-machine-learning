@@ -23,23 +23,29 @@
 式~\eqref{eq:prelim-regularized-least-squares}是同一个目标的矩阵写法。正则项限制参数
 规模，约束则直接排除超出预算的候选；两者看似都在“限制模型”，却改变了不同的数学对象。
 
-本章先说明解的存在与曲率如何决定局部信息的效力，再用约束、乘子、对偶和松弛建立
-可核验的最优性证书；在认清目标与保证后，讨论光滑迭代、代理上界，以及非光滑项和不完整
-梯度需要的更新方式。分块、多目标和双层问题不是
-一条由旧到新的算法路线，而是三种不同的问题组织方式。读完本章，读者应能判断一个优化结论
-依赖哪些条件，并能指出条件失效时究竟失去了存在性、全局性、唯一性还是收敛速度。
+给定目标、可行范围和计算预算，本章要回答怎样构造一个足够好的解，以及怎样核验它。
+先建立解与误差的共同语言，再依次讨论无约束光滑、无约束非光滑和有约束问题的基本更新。
+计算预算不足时，可以松弛范围、替换局部模型、拆分变量或近似更新信息；多个目标还可能通过
+权衡、竞争或嵌套共同规定答案。这些选择可以组合，并非互斥的问题类别或必须依次执行的阶段。
+比较算法时，除了上述拟合与资源例，还固定使用小二次目标
+\begin{equation}
+ f(\bm w)=\frac12(w_1^2+16w_2^2),\qquad
+ \bm H=\operatorname{diag}(1,16),\qquad
+ \bm w^{(0)}=(2,2)^\top.
+ \label{eq:opt-common-quadratic}
+\end{equation}
+其最小点为零、初始目标值为$34$；两方向曲率的差异使方向、步长和每步成本都能直接核算。
 
-\section{目标、解与曲率}
+\section{优化问题的定义与基本性质}
 \label{sec:opt-objectives-solutions-curvature}
 
 求解算法之前，需要分清三件事：问题是否有解、怎样认出最优点，以及局部信息能否保证全局最优。
 存在性主要依赖目标与可行域的闭合性质；凸性和其他曲率条件则决定驻点、解的唯一性与误差界。
 这些是后面各种算法共用的前提，不是三种求解方法。
 
-\subsection{问题设定与解的性质}
+\subsection{优化问题与解}
 \label{sec:opt-problem-and-solutions}
-
-\subsubsection{可行性、最优性与近似标准}
+\label{sec:opt-error-objects}
 
 一个优化问题必须同时给出目标函数、变量和可行域。记
 \[
@@ -47,9 +53,19 @@
   C=\{\bm{w}\in\mathbb{R}^d:
   \bm{A}\bm{w}=\bm{b},\ \bm{G}\bm{w}\leq\bm{h}\}.
 \]
+变量$\bm w$是待选择的参数，目标$F$规定怎样比较候选，可行域$C$规定哪些候选允许采用。
+若等式有$m$条、不等式有$p$条，则
+$\bm A\in\mathbb R^{m\times d}$、$\bm b\in\mathbb R^m$、
+$\bm G\in\mathbb R^{p\times d}$、$\bm h\in\mathbb R^p$，向量不等式逐坐标理解。
 若$C=\varnothing$，问题\term{不可行}（infeasible）；若$C\neq\varnothing$但
 $\inf_{\bm{w}\in C}F(\bm{w})=-\infty$，问题\term{无下界}（unbounded below）。
 只有可行且有有限下界，才值得继续问下确界是否由某个点达到。
+例如同时要求$x\leq0$和$x\geq1$就不可行；
+在实线上最小化$x$无下界，$\inf_{x\in\mathbb R}e^x=0$有下界却没有最小点；
+把$x$限制在$[0,1]$后，后一问题的最小值变为$1$且在$0$达到。
+最优值是数$F^\star=\inf_C F$，最优解集合是$\argmin_C F$，后者可以为空或包含多个点。
+写出问题$\min_C F$表示求最小值的任务，并不代替存在性证明；
+声称某个数等于$\min_C F$时，才需要确认它确实被可行点取得。
 
 \begin{definition}[全局解、局部解与无约束驻点]
 \label{def:opt-solutions-stationarity}
@@ -68,11 +84,8 @@ $\nabla F(\bm{w})=\bm{0}$。驻点只是局部一阶变化消失，可能是极�
 就称$\widehat{\bm{w}}$为目标值意义下的$\varepsilon$近似解。对无约束可微问题，
 另一种常见标准是
 $\lVert\nabla F(\widehat{\bm{w}})\rVert_2\leq\varepsilon$；在没有额外曲率条件时，
-这两种近似不能互换。一般约束问题的精确最优点也可能有非零梯度，此时应改用投影梯度、
-可行方向导数或KKT残差等同时反映可行性与驻点性的标准。
-
-\subsubsection{目标值、参数与预测误差}
-\label{sec:opt-error-objects}
+这两种近似不能互换。一般约束问题的精确最优点也可能有非零梯度；
+后面的约束求解将建立同时反映允许移动方向与可行性的停止标准。
 
 前面的目标值近似标准只比较目标与最优值之间的差距。评价同一个近似参数时，还可以关心它离某个参照参数多远，
 或者它的预测发生了多大变化。这三个问题要分别选择误差对象。
@@ -99,8 +112,29 @@ $\bm{w}^\star$，则
 在这个样本输入上的预测也相同，参数距离却是$100$。差别来自目标和当前观测都没有约束
 第二个坐标；并不是把目标误差算得更精确就能补回这项信息。
 
-\subsubsection{解的存在、唯一与稳定性}
+若希望在一个目标式中同时比较代价并排除不可行点，可以约定不可行点的代价为$+\infty$。
+这种扩展实值表达把约束并入函数，后面的非光滑子问题就不必另写一套可行域符号。
+\begin{definition}[适当函数、有效定义域与约束指标]
+\label{def:opt-proper-domain-indicator}
+函数$f:\mathbb R^d\to\mathbb R\cup\{+\infty\}$若不恒为$+\infty$，称为适当函数；
+它从不取$-\infty$。其\term{有效定义域}（effective domain）为
+$\operatorname{dom}f=\{\bm x:f(\bm x)<+\infty\}$。
+集合$C$的扩展实值指标函数为$\iota_C(\bm x)=0$（$\bm x\in C$），在其余点取$+\infty$。
+\end{definition}
+这个指标不是第~\ref{chap:sets-functions-and-proofs}章取$0/1$的指示函数。
+它把不允许的点排除出最小化，而不只是给集合成员作标记。
+于是$\min_{\bm w\in C}F(\bm w)$可统一写成
+$\min_{\bm w\in\mathbb R^d}\{F(\bm w)+\iota_C(\bm w)\}$。
+有限惩罚只是不喜欢违规候选，$+\infty$才真正将它排除。有效定义域记录有有限代价的点，
+适当性保证至少还有一个这样的点；它不保证有下界、更不保证最小值达到。
 
+\subsection{最优解的存在}
+\label{sec:opt-existence}
+
+即使暂时不知道如何求解，也能选择一列目标值越来越接近下确界的候选，称为最小化序列。
+有限下确界$m$时，可逐项选取$F(\bm w^{(k)})\leq m+1/k$；若下确界为$-\infty$，
+则可逐项要求$F(\bm w^{(k)})\leq-k$。要从这些候选得到最优点，须回答三个问题：
+序列能否取到收敛子列，极限是否仍可行，目标值比较能否传到极限。
 若$C\subseteq\mathbb{R}^d$非空且紧，$F:C\to\mathbb{R}$连续，则
 定理~\ref{thm:analysis-extreme-value}保证$F$在$C$上达到全局最小值。这里直接复用
 第~\ref{chap:mathematical-analysis}章的极值存在结论。
@@ -133,42 +167,21 @@ $\inf_C F<F(\bar{\bm{w}})$，任一最小化序列从某项起都落入$K$，可
 强制性使$K$有界，下半连续性与$C$的闭性使$K$闭，故$K$在有限维空间中紧。该尾序列
 有子列收敛到$\bm{w}^{\star}\in K$，而下半连续性给出
 $F(\bm{w}^{\star})\leq\liminf_kF(\bm{w}^{(k)})=\inf_C F$。因此下确界达到。
+若原先假设下确界为$-\infty$，同一不等式会迫使$F(\bm w^\star)=-\infty$，
+与适当性矛盾；所以这些条件也排除了无下界情形。
 这个证明也指出各条件的职责：强制性阻止序列逃向无穷远，闭性保留可行极限，下半连续性
 把目标值比较传到极限点。
 当$\lambda>0$时，式~\eqref{eq:opt-regularized-least-squares}满足
 $F(\bm{w})\geq\lambda\lVert\bm{w}\rVert_2^2/2$，所以即使可行域无界也不会沿参数
 无穷大的方向降低目标。
 
-存在不等于唯一。若$\lambda=0$且$\bm{X}$有非零零空间向量$\bm{v}$，那么
-$F(\bm{w}+t\bm{v})=F(\bm{w})$，最小点可能形成一条直线。即使唯一，数值问题也可能
-非常敏感。例如令$0<\epsilon\ll1$并考虑
-\[
-  f_b(w_1,w_2)=\frac12(\epsilon w_1^2+w_2^2)-bw_1.
-\]
-它对每个$b$都有唯一最小点$(b/\epsilon,0)$，但$b$改变$\Delta b$会使第一坐标改变
-$\Delta b/\epsilon$。更一般的二次目标具有如下曲率矩阵：
-\[
-  \bm{H}=\frac{1}{n}\bm{X}^{\top}\bm{X}+\lambda\bm{I}
-\]
-当$\bm{H}\succ\bm{0}$时，若线性项受到加性扰动$\delta\bm{g}$，相应解变化满足
-\[
-  \lVert\delta\bm{w}\rVert_2
-  \leq
-  \frac{1}{\lambda_{\min}(\bm{H})}
-  \lVert\delta\bm{g}\rVert_2.
-\]
-因此$1/\lambda_{\min}(\bm{H})$控制固定尺度加性扰动的绝对放大；经过目标和变量尺度
-归一化后，条件数
-$\kappa(\bm{H})=\lambda_{\max}(\bm{H})/\lambda_{\min}(\bm{H})$
-才刻画相对病态程度。例如$\bm{H}=\epsilon\bm{I}$的条件数为$1$，但绝对扰动仍会被
-放大$1/\epsilon$倍。唯一性回答“解有几个”，敏感性还取决于所采用的扰动尺度，
-不能只由唯一性或条件数笼统判断。
-
-\subsection{凸集与凸函数}
+\subsection{凸性与最优解的性质}
 \label{sec:opt-convexity}
 
-\subsubsection{线段、曲率与全局下界}
+\subsubsection{凸性与全局最优}
 
+若一个局部低点不是全局低点，能否沿可行路径走向更低处？凸性让两点间的线段成为这条路径，
+并控制沿途的目标值；这正是局部判优能够升级为全局判优的原因。
 约束只告诉我们哪些点允许使用；还要问两个可行点之间能否连续移动而始终可行。
 \begin{definition}[凸集与凸函数]
 \label{def:opt-convex-set-function}
@@ -225,12 +238,21 @@ $\alpha_i\geq0$且$\sum_i\alpha_i=1$，则
   \label{eq:opt-jensen}
 \end{equation}
 归纳步骤把前$m-1$个点先归一化为一个加权平均，再与第$m$个点应用二点凸性。
+具体地，若$\alpha_m<1$，取
+$\bm z=\sum_{i<m}\alpha_i\bm w_i/(1-\alpha_m)$，归纳假设给
+$f(\bm z)\leq\sum_{i<m}\alpha_i f(\bm w_i)/(1-\alpha_m)$；
+再用于$(1-\alpha_m)\bm z+\alpha_m\bm w_m$即可。若$\alpha_m=1$，结论直接为等式。
 这个证明也说明非负和归一化不是装饰条件；允许负权重后，组合点可能落到凸包之外，
 因而不能再由凸性保证Jensen不等式。
 
 凸性还把最优性变成可核验的一阶条件。若$f$可微且凸，则
 $\nabla f(\bm{w}^{\star})=\bm{0}$代入式~\eqref{eq:opt-first-order-convexity}
 便得$f(\bm{v})\geq f(\bm{w}^{\star})$。因此凸问题的驻点是全局最小点。
+更一般地，凸集$C$上凸函数的每个局部最小点都是全局最小点，不要求可微：
+若$\bm u$局部最优而某个$\bm v\in C$满足$f(\bm v)<f(\bm u)$，则对任意$t\in(0,1)$，
+$\bm u+t(\bm v-\bm u)\in C$且
+$f(\bm u+t(\bm v-\bm u))\leq(1-t)f(\bm u)+tf(\bm v)<f(\bm u)$。
+取足够小的$t$便与局部最优矛盾。对于边界上的约束最优点，仍不能反推普通梯度为零。
 图~\ref{fig:opt-convex-chord-tangent}同时画出这两侧的界。弦在图像上方，源于二点凸组合；
 切线在图像下方，源于可微凸函数的一阶判据。二者夹住函数，却来自不同的比较对象，
 不能把某点处的切线误当作连接两个函数值的弦。
@@ -243,12 +265,28 @@ $\nabla f(\bm{w}^{\star})=\bm{0}$代入式~\eqref{eq:opt-first-order-convexity}
  \label{fig:opt-convex-chord-tangent}
 \end{figure}
 
+对扩展实值目标，式~\eqref{eq:opt-convex-function}在有限取值的点上检验，
+并要求有效定义域凸；这避免在端点权重为零时操作$0\cdot(+\infty)$。
 
+\subsubsection{严格凸性与解的唯一性}
+
+凸函数可以沿某个方向保持不变，局部到全局的保证并没有排除多个最小点。
+若希望排除这种平坦的最优线段，需要把不同点之间的凸性不等式加强为严格不等式。
 \begin{definition}[严格凸函数]
 \label{def:opt-strict-convexity}
 设$C$凸，$f:C\to\mathbb R$。若式~\eqref{eq:opt-convex-function}对所有
 $\bm u\neq\bm v$及$0<\theta<1$严格成立，则称$f$严格凸。
 \end{definition}
+若两个不同点$\bm u,\bm v$都达到最小值$m$，严格凸性使其中点的函数值严格小于
+$(m+m)/2=m$，矛盾。因此它只保证至多一个最小点；严格凸函数$e^x$在实线上仍没有最小点。
+存在性必须另由前一小节的条件检验。
+在式~\eqref{eq:opt-regularized-least-squares}中，$\lambda=0$且$\bm X$不满列秩时沿零空间
+方向目标不变；$\bm X$满列秩或$\lambda>0$时，任意非零方向$\bm d$都有
+$\|\bm X\bm d\|_2^2/n+\lambda\|\bm d\|_2^2>0$，故目标严格凸。
+与闭可行域上的存在性合用，才能断言有唯一解。
+
+\subsubsection{强凸性与误差控制}
+
 严格凸保证最小点至多一个，却不给统一曲率下界。强凸性则要求弦段与函数之间至少留出一个与距离平方成比例的间隔。
 这个定义可以用于非光滑正则项，也可以使用欧氏范数以外的范数。
 
@@ -279,6 +317,79 @@ $f(\bm{w})-\mu\lVert\bm{w}\rVert_2^2/2$应用凸性判据得到这一等价关�
 例如$|x|+\mu x^2/2$虽在$0$处不可微，仍相对于绝对值范数$\mu$强凸：绝对值部分满足
 凸性，二次部分恰好提供式~\eqref{eq:opt-norm-strong-convexity}中的距离平方间隔。
 
+强凸性还能把目标差转成参数距离。设$f$在凸集$C$上$\mu$强凸，且最小点$\bm w^\star$存在。
+把定义用于$\bm w^\star$与任意$\bm w\in C$，并用最优性给线段上的函数值加下界，得到
+\[
+ f(\bm w^\star)\leq(1-t)f(\bm w^\star)+tf(\bm w)
+ -\frac{\mu}{2}t(1-t)\|\bm w-\bm w^\star\|^2.
+\]
+除以$t>0$再令$t\downarrow0$，可得
+\begin{equation}
+ f(\bm w)-f(\bm w^\star)\geq\frac{\mu}{2}\|\bm w-\bm w^\star\|^2,
+ \qquad
+ \|\bm w-\bm w^\star\|\leq\sqrt{\frac{2(f(\bm w)-f^\star)}{\mu}}.
+ \label{eq:opt-strong-convex-distance}
+\end{equation}
+证明并未假设最优点在内部，因此也适用于固定凸域上的非光滑目标。
+
+抗扰动结论必须明确扰动对象。现在使用欧氏范数，固定同一个凸集$C$，只改变线性项：
+$f_{\bm b}(\bm w)=f(\bm w)-\langle\bm b,\bm w\rangle$。
+设$\bm w_{\bm b}$与$\bm w_{\bm c}$分别达到这两个强凸问题的最小值。
+把式~\eqref{eq:opt-strong-convex-distance}分别用于两个目标后相加，得
+\[
+ \mu\|\bm w_{\bm b}-\bm w_{\bm c}\|_2^2
+ \leq\langle\bm b-\bm c,\bm w_{\bm b}-\bm w_{\bm c}\rangle,
+ \qquad
+ \|\bm w_{\bm b}-\bm w_{\bm c}\|_2\leq\frac{\|\bm b-\bm c\|_2}{\mu}.
+\]
+这里没有改变可行域，也没有任意改变目标的曲率。约束边界变化造成的活跃集切换，
+不能由这个线性扰动界一并处理。
+
+式~\eqref{eq:opt-regularized-least-squares}的Hessian矩阵为
+$\bm{X}^{\top}\bm{X}/n+\lambda\bm{I}$。当$\lambda>0$时，正则项把所有缺失曲率的
+方向至少抬高到$\lambda$，因而目标$\lambda$强凸。若$\lambda=0$且$\bm{X}$不满列秩，
+驻点仍是全局最优点，但解不唯一；若目标再加入非凸项，驻点甚至不再保证局部最小。
+
+前述零空间退化满足$F(\bm w+t\bm v)=F(\bm w)$，说明曲率缺失可以产生多个解。
+即使曲率处处为正且解唯一，数值问题也可能非常敏感。例如令$0<\epsilon\ll1$并考虑
+\[
+  f_b(w_1,w_2)=\frac12(\epsilon w_1^2+w_2^2)-bw_1.
+\]
+它对每个$b$都有唯一最小点$(b/\epsilon,0)$，但$b$改变$\Delta b$会使第一坐标改变
+$\Delta b/\epsilon$。更一般的二次目标具有如下曲率矩阵：
+\[
+  \bm{H}=\frac{1}{n}\bm{X}^{\top}\bm{X}+\lambda\bm{I}
+\]
+当$\bm{H}\succ\bm{0}$时，若线性项受到加性扰动$\delta\bm{g}$，相应解变化满足
+\[
+  \lVert\delta\bm{w}\rVert_2
+  \leq
+  \frac{1}{\lambda_{\min}(\bm{H})}
+  \lVert\delta\bm{g}\rVert_2.
+\]
+因此$1/\lambda_{\min}(\bm{H})$控制固定尺度加性扰动的绝对放大；经过目标和变量尺度
+归一化后，条件数
+$\kappa(\bm{H})=\lambda_{\max}(\bm{H})/\lambda_{\min}(\bm{H})$
+才刻画相对病态程度。例如$\bm{H}=\epsilon\bm{I}$的条件数为$1$，但绝对扰动仍会被
+放大$1/\epsilon$倍。唯一性回答“解有几个”，敏感性还取决于所采用的扰动尺度，
+不能只由唯一性或条件数笼统判断。
+
+\section{无约束光滑目标的求解}
+\label{sec:opt-smooth-iterative-methods}
+
+有了可判定的最优性条件，还需构造能逐步接近它的参数序列。这里先限定目标可微且梯度光滑：
+梯度下降用一阶信息保证单步改善，动量和预条件再利用迭代历史或曲率改变移动方向。
+每种改进的保证都应与前节的曲率条件配对，而不能仅凭更新公式判断快慢。
+
+\subsection{一阶方法}
+\label{sec:opt-first-order-methods}
+
+在每个候选处只计算目标的一阶变化，就能以较少的局部信息构造方向。
+梯度下降使用当前点的梯度；动量和加速还保留历史信息，但每轮仍只要求一次梯度计算。
+
+\subsubsection{梯度下降}
+\label{sec:opt-gradient-descent}
+
 一阶算法还需要防止梯度随位移过快改变。
 \begin{definition}[欧氏梯度光滑性]
 \label{def:opt-smoothness}
@@ -290,40 +401,118 @@ $\lVert\nabla f(\bm{u})-\nabla f(\bm{v})\rVert_2
 这里对梯度使用同一Lipschitz常数。强凸给下曲率，光滑给上曲率；$x^4$严格凸但
 不在全实线上强凸，也不在全实线上具有有限的光滑常数。
 
-\subsection{较弱曲率与非凸结构}
-\label{sec:opt-weaker-curvature}
+梯度给出最陡的一阶下降方向，但一步走多远取决于函数弯曲程度。光滑性把局部线性近似的
+余项控制为二次量\scite{math-nocedal2006numerical}。本小节考虑可微函数
+$f:\mathbb R^d\to\mathbb R$，并选取一个正的梯度Lipschitz上界$L>0$。
+若梯度恒定，仍可选择任意正上界；这样后面的$1/L$步长也有定义。
+全空间的设定保证更新点仍在函数定义域内；若目标只定义在开凸子域上，使用下降引理时
+还须确认两端点及其线段留在该域内，不能直接把任意梯度步代入。
 
-凸性同时约束所有线段上的函数值，有时比具体求解所需的条件更强。
-下面分开讨论两种放宽：弱凸允许负曲率但限制其大小，PL条件直接把梯度大小与目标差联系起来。
-它们服务于不同推导，不应把名称看成从凸到非凸的单一强弱序列。
+\begin{lemma}[下降引理]
+\label{lem:opt-descent}
+若$f:\mathbb R^d\to\mathbb R$可微且梯度是$L$-Lipschitz连续的，$L>0$，则对任意
+$\bm u,\bm v\in\mathbb R^d$，
+\begin{equation}
+  f(\bm{v})\leq f(\bm{u})
+  +\langle\nabla f(\bm{u}),\bm{v}-\bm{u}\rangle
+  +\frac{L}{2}\lVert\bm{v}-\bm{u}\rVert_2^2.
+  \label{eq:opt-descent-lemma}
+\end{equation}
+\end{lemma}
 
-\subsubsection{弱凸与补足曲率}
-
-强凸同时控制函数形状和误差。实际目标可能不凸，却仍有足够结构支持算法分析。
-\begin{definition}[欧氏空间中的弱凸性]
-\label{def:opt-weak-convexity}
-设$f:\mathbb{R}^d\to\mathbb{R}\cup\{+\infty\}$是适当函数，即不恒为$+\infty$，
-且$\rho\geq0$。若
-$\bm{w}\mapsto f(\bm{w})+\rho\lVert\bm{w}\rVert_2^2/2$是凸函数，
-则称$f$是\term{$\rho$弱凸}（$\rho$-weakly convex）的。取值$+\infty$可以用来表示不可行点。
-\end{definition}
-若$f$在开凸定义域上二阶可微，这等价于
-$\nabla^2f(\bm{w})\succeq-\rho\bm{I}$：负曲率可以存在，但有统一下界。
-当$\rho>0$且$0<\eta<1/\rho$时，对任意中心$\bm{z}$，邻近子问题的目标
+\begin{proof}
+令$\bm{d}=\bm{v}-\bm{u}$。沿线段积分并减去一阶项可得
 \[
-  f(\bm{w})+\frac{1}{2\eta}\lVert\bm{w}-\bm{z}\rVert_2^2
+  f(\bm{v})-f(\bm{u})-\langle\nabla f(\bm{u}),\bm{d}\rangle
+  =
+  \int_0^1
+  \langle\nabla f(\bm{u}+t\bm{d})-\nabla f(\bm{u}),\bm{d}\rangle\,dt.
 \]
-是$(1/\eta-\rho)$强凸函数；若$\rho=0$，任意$\eta>0$都具有同样的补足曲率作用。
-这正是弱凸性与第~\ref{sec:opt-nonsmooth-proximal}节邻近方法的联系。补入二次曲率
-只让这个子问题更易控制，并没有把原函数变成凸函数；弱凸目标仍可有局部极小点和鞍点，
-也不保证求得原问题的全局最优解。
+由Cauchy--Schwarz不等式和梯度Lipschitz条件，被积函数至多为
+$Lt\lVert\bm{d}\rVert_2^2$；积分即得结论。
+\end{proof}
 
-例如$f(x)=\cos x$的二阶导数是$-\cos x\geq-1$，所以它是$1$弱凸的，
-但仍有无穷多个局部低点。弱凸性限制谷之间最坏的负曲率，并未消除这些谷。
-若在当前位置附近加上足够大的二次惩罚，邻近子问题会得到唯一解；改变当前位置后，
-所解的却是另一个邻近子问题，不能据此声称原函数只有一个最小点。
+在当前点$\bm w$，一阶近似为$f(\bm w)+\langle\nabla f(\bm w),\bm d\rangle$。
+给这条近似加上控制移动幅度的$\|\bm d\|_2^2/(2\eta)$，其唯一最小增量是
+$\bm d=-\eta\nabla f(\bm w)$。由此得到梯度下降更新
+\begin{equation}
+  \bm{w}^{(t+1)}
+  =\bm{w}^{(t)}-\eta\nabla f(\bm{w}^{(t)})
+  \label{eq:opt-gradient-descent}
+\end{equation}
+更新。把$\bm{v}$取为右端点代入下降引理，得到
+\begin{equation}
+  f(\bm{w}^{(t+1)})
+  \leq f(\bm{w}^{(t)})
+  -\eta\left(1-\frac{L\eta}{2}\right)
+  \lVert\nabla f(\bm{w}^{(t)})\rVert_2^2.
+  \label{eq:opt-gradient-single-step}
+\end{equation}
+所以$0<\eta<2/L$保证每个非驻点处严格下降。若$f$下有界，记其有限下确界为
+\[
+  f_{\inf}:=\inf_{\bm{w}\in\mathbb{R}^d}f(\bm{w})>-\infty.
+\]
+取$\eta=1/L$并对$t=0,\ldots,T-1$求和，可得非凸光滑情形的保证
+\begin{equation}
+  \min_{0\leq t<T}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2
+  \leq
+  \frac{2L(f(\bm{w}^{(0)})-f_{\inf})}{T}.
+  \label{eq:opt-nonconvex-gradient-rate}
+\end{equation}
+它只说明某次迭代接近驻点，没有声称驻点是全局最优点。
 
-\subsubsection{Polyak--Łojasiewicz条件}
+步长上界在一维二次函数上即可看到。对$f(w)=Lw^2/2$，
+$w^{(t+1)}=(1-\eta L)w^{(t)}$。当$\eta=2/L$时迭代在正负之间等幅振荡；
+$\eta>2/L$时幅度按$|1-\eta L|>1$增长。负梯度方向本身没有错，失败来自步长跨过了
+曲率允许的稳定范围。
+
+若$f$还凸、最小点$\bm{w}^{\star}$存在，并继续取$\eta=1/L$，则由凸性有
+$f(\bm{w}^{(t)})-f^\star
+\leq\langle\nabla f(\bm{w}^{(t)}),\bm{w}^{(t)}-\bm{w}^{\star}\rangle$。
+先展开距离平方并使用这个不等式：
+\begin{align*}
+  \lVert\bm{w}^{(t+1)}-\bm{w}^{\star}\rVert_2^2
+  &=
+  \lVert\bm{w}^{(t)}-\bm{w}^{\star}\rVert_2^2
+  -\frac{2}{L}
+  \left\langle\nabla f(\bm{w}^{(t)}),
+  \bm{w}^{(t)}-\bm{w}^{\star}\right\rangle\\
+  &\qquad
+  +\frac{1}{L^2}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2\\
+  &\leq
+  \lVert\bm{w}^{(t)}-\bm{w}^{\star}\rVert_2^2
+  -\frac{2}{L}\bigl(f(\bm{w}^{(t)})-f^\star\bigr)\\
+  &\qquad
+  +\frac{1}{L^2}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2.
+\end{align*}
+另一方面，把$\eta=1/L$代入式~\eqref{eq:opt-gradient-single-step}可得
+\[
+  \frac{1}{L^2}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2
+  \leq
+  \frac{2}{L}\bigl(
+  f(\bm{w}^{(t)})-f(\bm{w}^{(t+1)})\bigr).
+\]
+用后一式消去梯度平方项，得到
+\[
+  \lVert\bm{w}^{(t+1)}-\bm{w}^{\star}\rVert_2^2
+  \leq
+  \lVert\bm{w}^{(t)}-\bm{w}^{\star}\rVert_2^2
+  -\frac{2}{L}\bigl(f(\bm{w}^{(t+1)})-f^\star\bigr).
+\]
+对$t=0,\ldots,T-1$求和并去掉末端的非负距离，便有
+\[
+  \frac{2}{L}\sum_{t=0}^{T-1}
+  \bigl(f(\bm{w}^{(t+1)})-f^\star\bigr)
+  \leq
+  \lVert\bm{w}^{(0)}-\bm{w}^{\star}\rVert_2^2.
+\]
+式~\eqref{eq:opt-gradient-single-step}还说明目标值单调不增，因此左侧求和中的每一项
+都不小于$f(\bm{w}^{(T)})-f^\star$。于是
+\begin{equation}
+  f(\bm{w}^{(T)})-f^\star
+  \leq\frac{L\lVert\bm{w}^{(0)}-\bm{w}^{\star}\rVert_2^2}{2T}.
+  \label{eq:opt-convex-gradient-rate}
+\end{equation}
 
 \term{Polyak--Łojasiewicz条件}（PL condition）不约束函数图像必须凸，而用梯度大小控制
 距离最优值还有多少差距。
@@ -348,15 +537,6 @@ $\nabla^2f(\bm{w})\succeq-\rho\bm{I}$：负曲率可以存在，但有统一下�
 移项正是式~\eqref{eq:opt-pl-condition}。这个推导使用全局强凸下界；只有局部Hessian
 正定时，不能直接得到全域PL条件。反过来，PL函数可以有多个最小点。
 
-同一个低维族能显示这些性质各自控制什么。令
-\[
-  f_a(x_1,x_2)=\frac12(x_1+x_2)^2+\frac{a}{2}(x_1-x_2)^2.
-\]
-当$a>0$时函数强凸；$a=0$时它凸且满足PL条件，但整条直线$x_1+x_2=0$都是最小点；
-$a<0$时函数弱凸却无下界。若限制在紧可行域上，$a<0$时仍有最小点，但驻点
-$(0,0)$可能是鞍点。这个例子说明弱凸、PL和强凸不是一条简单的强弱链：弱凸限制最坏负
-曲率，PL控制梯度与目标误差，强凸还控制参数距离与唯一性。
-
 PL条件也确实可以出现在非凸函数中。考虑
 \[
   f(x,y)=x^2+2\sin^2x.
@@ -372,13 +552,698 @@ $\partial f/\partial x=2(x+\sin 2x)$；当$x>0$时，若$x\leq1$则两项均非�
 把两端之外的剩余区域限制为紧集，连续函数$R$在其中有正下界，故某个$\mu>0$使
 式~\eqref{eq:opt-pl-condition}成立。另一方面，
 $\partial^2 f/\partial x^2=2+4\cos2x$在某些点为负，所以$f$并不凸；该二阶导数
-下界为$-2$、绝对值上界为$6$，又说明它同时是$2$弱凸且$6$光滑。这个例子不能推出
-所有弱凸函数都满足PL条件，它只表明非凸性本身不排斥目标值的梯度控制。
+下界为$-2$、绝对值上界为$6$，所以它仍是$6$光滑的。负曲率下界的另一用途将在
+邻近方法中解释；这里的例子表明非凸性本身不排斥目标值的梯度控制。
 
-式~\eqref{eq:opt-regularized-least-squares}的Hessian矩阵为
-$\bm{X}^{\top}\bm{X}/n+\lambda\bm{I}$。当$\lambda>0$时，正则项把所有缺失曲率的
-方向至少抬高到$\lambda$，因而目标$\lambda$强凸。若$\lambda=0$且$\bm{X}$不满列秩，
-驻点仍是全局最优点，但解不唯一；若目标再加入非凸项，驻点甚至不再保证局部最小。
+若满足PL条件，把式~\eqref{eq:opt-pl-condition}代入
+式~\eqref{eq:opt-gradient-single-step}，在$\eta=1/L$时得到
+\begin{equation}
+  f(\bm{w}^{(t)})-f^\star
+  \leq
+  \left(1-\frac{\mu}{L}\right)^t
+  \bigl(f(\bm{w}^{(0)})-f^\star\bigr).
+  \label{eq:opt-pl-linear-rate}
+\end{equation}
+强凸函数满足PL条件，还由
+$f(\bm{w})-f^\star\geq\mu\lVert\bm{w}-\bm{w}^{\star}\rVert_2^2/2$
+把目标误差转成参数误差。没有强凸时，式~\eqref{eq:opt-pl-linear-rate}不保证迭代趋向
+某个唯一参数。
+
+固定步长需要已知或估计$L$。回溯线搜索从候选步长开始缩小，直到
+$f(\bm{w}-\eta\nabla f(\bm{w}))\leq
+f(\bm{w})-c\eta\lVert\nabla f(\bm{w})\rVert_2^2$成立，其中$c\in(0,1)$。
+学习率调度则预先或按进度改变$\eta^{(t)}$。线搜索用实际函数值核验当前一步，调度只规定时间
+表；二者都不能弥补错误梯度或无下界目标。
+
+具体执行回溯时，给定初始试探步长$\bar\eta>0$、缩减比例$\gamma\in(0,1)$与$c\in(0,1)$。
+每轮先算一次$\bm g=\nabla f(\bm w)$，若$\|\bm g\|_2$已满足停止要求就返回；
+否则从$\eta=\bar\eta$开始，计算候选$\bm w-\eta\bm g$的函数值，若未满足上述充分下降条件，
+令$\eta\leftarrow\gamma\eta$再试，接受后进入下一轮。下降引理保证
+$\eta\leq2(1-c)/L$时一定通过，所以全局$L$光滑时每轮有限次结束，
+接受步长至少为$\min\{\bar\eta,2\gamma(1-c)/L\}$。
+增加的成本主要是试探点函数求值，而非每次重算当前位置的梯度。
+
+在式~\eqref{eq:opt-common-quadratic}中，$\eta=1/16$给
+$\bm w^{(t)}=(2(15/16)^t,0)^\top$（$t\geq1$），于是
+$f(\bm w^{(t)})=2(15/16)^{2t}$。第二坐标一步消去，第一坐标却受较大曲率限制而缓慢缩小。
+$\eta=0.1$使两坐标分别乘$0.9$与$-0.6$，目标仍下降但路径振荡；
+$\eta=1/8$使第二坐标等幅振荡，$\eta>1/8$使它发散。
+一般非凸问题返回梯度范数最小的已访问点，式~\eqref{eq:opt-nonconvex-gradient-rate}
+控制其驻点残差；凸问题可返回最后一点并用式~\eqref{eq:opt-convex-gradient-rate}控制目标差。
+已知PL常数时，$\|\nabla f\|_2\leq\sqrt{2\mu\varepsilon}$足以保证目标差不超过$\varepsilon$；
+不能将这条停止规则无条件用于所有光滑目标。
+
+\subsubsection{动量与加速}
+\label{sec:opt-curvature-acceleration}
+
+对二次函数$f(\bm{w})=\frac12\bm{w}^{\top}\bm{H}\bm{w}
+-\bm{c}^{\top}\bm{w}$，梯度下降的误差满足
+$\bm{e}^{(t+1)}=(\bm{I}-\eta\bm{H})\bm{e}^{(t)}$。当
+$\bm{H}\succ\bm{0}$但条件数$\kappa=L/\mu$很大时，同一步长必须同时照顾陡峭与平坦
+方向，平坦方向因而收敛缓慢。
+
+\term{动量法}（momentum method）保存过去方向，使连续几步指向同一侧的梯度能够累积。
+这里采用重球（heavy-ball）形式：
+\[
+  \bm{v}^{(t+1)}=\beta\bm{v}^{(t)}+\nabla f(\bm{w}^{(t)}),
+  \qquad
+  \bm{w}^{(t+1)}=\bm{w}^{(t)}-\eta\bm{v}^{(t+1)}.
+\]
+它通过二阶递推重塑各特征方向上的多项式响应，但$\beta$和$\eta$不能各自独立地任取。
+取$\bm v^{(0)}=0$，或等价地令$\bm w^{(-1)}=\bm w^{(0)}$，即可启动重球迭代。
+每轮只需一次当前位置梯度、一个历史方向和向量加法；它没有计算Hessian。
+对上述正定二次目标，曲率为$\lambda_i$的特征方向满足
+\[
+  e_i^{(t+1)}
+  =(1+\beta-\eta\lambda_i)e_i^{(t)}-\beta e_i^{(t-1)}.
+\]
+该方向的两个特征根都严格位于单位圆内，当且仅当
+$-1<\beta<1$且$0<\eta\lambda_i<2(1+\beta)$。因而常用的
+$0\leq\beta<1$还须配合$0<\eta<2(1+\beta)/L$，才能保证所有方向稳定。
+若已知$0<\mu\leq\lambda_i\leq L$，经典重球参数
+\[
+  \eta=\frac{4}{(\sqrt{L}+\sqrt{\mu})^2},
+  \qquad
+  \beta=\left(\frac{\sqrt{L}-\sqrt{\mu}}
+  {\sqrt{L}+\sqrt{\mu}}\right)^2
+\]
+给出这一二次模型上的代表性最坏方向速率；它不是一般非凸目标或含噪梯度下的无条件
+调参规则。
+稳定区间也可从特征多项式
+$r^2-(1+\beta-\eta\lambda_i)r+\beta$核对：实系数二次多项式的两根在单位圆内，
+等价于$|\beta|<1$、$\eta\lambda_i>0$与$2+2\beta-\eta\lambda_i>0$。
+经典参数的根模至多
+$q=(\sqrt L-\sqrt\mu)/(\sqrt L+\sqrt\mu)$，端点的重根会带来$tq^t$因子；
+因此不能不带常数地把有限步参数误差写成$q^t$。
+在共同二次例上，$\eta=4/25$、$\beta=9/25$且零初速度给出精确轨迹
+\[
+ w_1^{(t)}=(2+0.8t)\,0.6^t,\qquad
+ w_2^{(t)}=(2+3.2t)(-0.6)^t.
+\]
+第一步为$(1.68,-3.12)$，目标从$34$升至$79.2864$，之后仍趋于零。
+重球的稳定和渐近提速不等于逐步下降；给定有限预算时要连同启动阶段比较。
+
+\term{Nesterov加速梯度}
+（Nesterov accelerated gradient）在前瞻点计算梯度：
+\[
+ \bm w^{(t+1)}=\bm z^{(t)}-\frac1L\nabla f(\bm z^{(t)}),\qquad
+ q^{(t+1)}=\frac{1+\sqrt{1+4(q^{(t)})^2}}2,
+\]
+\[
+ \bm z^{(t+1)}=\bm w^{(t+1)}
+ +\frac{q^{(t)}-1}{q^{(t+1)}}(\bm w^{(t+1)}-\bm w^{(t)}).
+\]
+初始化为$\bm z^{(0)}=\bm w^{(0)}$、$q^{(0)}=1$。必须先得到新点，再形成下一轮前瞻点；
+不能把下一轮外推系数提前用于本轮。
+若$f$为凸可微函数、梯度$L$-Lipschitz连续、最小点存在，并且每步使用精确梯度和
+步长$1/L$，则对$T\geq1$，
+\begin{equation}
+ f(\bm w^{(T)})-f^\star
+ \leq\frac{2L\|\bm w^{(0)}-\bm w^\star\|_2^2}{(T+1)^2}.
+ \label{eq:opt-accelerated-finite-rate}
+\end{equation}
+同样条件下，普通梯度下降的一般保证为$O(1/T)$。
+强凸时可以另取固定外推系数
+$\beta=(\sqrt L-\sqrt\mu)/(\sqrt L+\sqrt\mu)$与步长$1/L$，
+获得$O((1-\sqrt{\mu/L})^T)$的目标误差界；这不是重球的步长参数。
+在一维二次函数$f(w)=\lambda w^2/2$上，上述一般凸加速迭代可直接核验为
+\[
+  w^{(t+1)}
+  =\left(1-\frac{\lambda}{L}\right)
+  \bigl((1+\beta^{(t)})w^{(t)}-\beta^{(t)} w^{(t-1)}\bigr).
+\]
+其中$t\geq1$时$\beta^{(t)}=(q^{(t-1)}-1)/q^{(t)}$，初始化时取$\beta^{(0)}=0$。
+当$\lambda=L$时一步到达零点；当$\lambda\ll L$时，跨步项改变平坦方向上的二阶递推，
+但系数选错仍会振荡。下面给出一般凸情形的关键势函数证明，以免把二次算例误当一般保证。
+对$\bm x^+=\bm z-\nabla f(\bm z)/L$，光滑上界和凸一阶下界合并为
+\[
+ f(\bm x^+)-f(\bm v)
+ \leq\frac L2\bigl(\|\bm v-\bm z\|_2^2-\|\bm v-\bm x^+\|_2^2\bigr).
+\]
+取$\bm v=(1-1/q^{(t)})\bm w^{(t)}+\bm w^\star/q^{(t)}$，再用凸性控制$f(\bm v)$。
+记$\Delta^{(t)}=f(\bm w^{(t)})-f^\star$、
+$\bm u^{(t+1)}=q^{(t)}\bm w^{(t+1)}-(q^{(t)}-1)\bm w^{(t)}$及$\bm u^{(0)}=\bm w^{(0)}$，
+乘以$(q^{(t)})^2$后得到
+\[
+ (q^{(t)})^2\Delta^{(t+1)}+\frac L2\|\bm u^{(t+1)}-\bm w^\star\|_2^2
+ \leq q^{(t)}(q^{(t)}-1)\Delta^{(t)}+\frac L2\|\bm u^{(t)}-\bm w^\star\|_2^2.
+\]
+这里用了$q^{(t)}\bm z^{(t)}-(q^{(t)}-1)\bm w^{(t)}=\bm u^{(t)}$。
+$t=0$时目标系数为零，$t\geq1$时$q^{(t)}(q^{(t)}-1)=(q^{(t-1)})^2$，
+故逐次相消后有$(q^{(T-1)})^2\Delta^{(T)}\leq L\|\bm w^{(0)}-\bm w^\star\|_2^2/2$。
+递推又给$q^{(T-1)}\geq(T+1)/2$，即得式~\eqref{eq:opt-accelerated-finite-rate}。
+每轮代价仍是一次梯度与几个向量操作，但目标未必单调；一般凸情形的目标收敛也没有规定
+唯一参数。强凸时才可再用式~\eqref{eq:opt-strong-convex-distance}转成参数界。
+
+\subsection{二阶方法}
+\label{sec:opt-second-order-methods}
+
+只控制梯度的最大变化会让平坦方向也受陡峭方向的步长约束。
+二阶方法直接在局部模型中保留各方向曲率；收益取决于曲率模型是否可靠，
+以及取得矩阵、求解线性方程的成本是否能够接受。
+
+\subsubsection{牛顿与Gauss–Newton方法}
+\label{sec:opt-newton-gauss-newton}
+
+\term{牛顿法}（Newton's method）在$\bm{w}^{(t)}$处使用关于增量$\bm{p}$的局部
+二次模型
+\[
+  m^{(t)}(\bm{p})
+  =
+  f(\bm{w}^{(t)})
+  +\left\langle\nabla f(\bm{w}^{(t)}),\bm{p}\right\rangle
+  +\frac12\bm{p}^{\top}\nabla^2f(\bm{w}^{(t)})\bm{p}.
+\]
+令$\nabla_{\bm{p}}m^{(t)}(\bm{p}^{(t)})=\bm{0}$，便得到牛顿方程
+\[
+  \nabla^2 f(\bm{w}^{(t)})\bm{p}^{(t)}
+  =-\nabla f(\bm{w}^{(t)}),\qquad
+  \bm{w}^{(t+1)}=\bm{w}^{(t)}+\alpha^{(t)}\bm{p}^{(t)}.
+\]
+若Hessian矩阵在最优点附近正定且Lipschitz连续，取单位步长可得到局部二次收敛。但Hessian矩阵
+不定时，牛顿方向未必下降；离最优点较远时还需线搜索或信赖域。
+可逆性只使方程有唯一解，正定性才使这个解成为二次模型的最小点。
+实际过程是计算梯度与Hessian，求解线性方程得到$\bm p^{(t)}$，核验其下降性，再选择步长。
+若Hessian不正定，可用$\nabla^2f+\delta^{(t)}\bm I\succ0$替代它；沿该方向执行充分下降线搜索，
+而不是直接接受单位步长。奇异Hessian下也不能照写逆矩阵。
+
+局部二次速率有可量化的范围。设$\nabla f(\bm w^\star)=0$，在包含$\bm w^\star$的球内
+$\nabla^2f(\bm w)\succeq m\bm I$且Hessian为$M$-Lipschitz，其中$m>0$。
+对单位牛顿步，令$\bm e=\bm w-\bm w^\star$，沿线段积分梯度得
+\[
+ \bm e^+
+ =\nabla^2f(\bm w)^{-1}\!
+ \int_0^1\bigl(\nabla^2f(\bm w)-\nabla^2f(\bm w^\star+s\bm e)\bigr)\bm e\,ds,
+ \quad
+ \|\bm e^+\|_2\leq\frac{M}{2m}\|\bm e\|_2^2.
+\]
+初始误差足够小，使这个界将点留在同一球内，才可逐轮使用。
+共同二次例的Hessian恒定，$M=0$，求解$\bm H\bm p=-\bm H\bm w$得到
+$\bm p=-\bm w$，一步到达零点。一般稠密$d$维问题需要存储$O(d^2)$个矩阵元素，
+直接分解约需$O(d^3)$运算；本例的对角结构才把这一成本降为$O(d)$。
+
+对非线性最小二乘
+$f(\bm{w})=\frac12\lVert\bm{r}(\bm{w})\rVert_2^2$，设
+$\bm{r}:\mathbb{R}^d\to\mathbb{R}^m$。记残差向量的Jacobian矩阵为
+$\bm{J}(\bm{w})\in\mathbb{R}^{m\times d}$，其第$i$行为
+$\bm{J}_{i,:}(\bm{w})=\nabla r_i(\bm{w})^{\top}$，则
+\[
+  \nabla^2f(\bm{w})
+  =\bm{J}(\bm{w})^{\top}\bm{J}(\bm{w})
+  +\sum_{i=1}^m r_i(\bm{w})\nabla^2r_i(\bm{w}).
+\]
+\term{Gauss--Newton法}忽略第二项，使用半正定矩阵
+$\bm{J}^{\top}\bm{J}$。当残差小或残差函数近似线性时近似合理；残差大时，省略项可能
+决定曲率。
+它的方向不是凭空替换矩阵，而是先线性化残差，求解
+\[
+ \min_{\bm p}\frac12\|\bm r(\bm w)+\bm J(\bm w)\bm p\|_2^2,
+ \qquad
+ \bm J^\top\bm J\bm p=-\bm J^\top\bm r.
+\]
+残差Jacobian描述每个残差对参数的变化，Hessian描述整个标量目标的曲率，两者维度也不同。
+$\bm J$满列秩时子问题方向唯一；秩亏时可用QR或奇异值分解取最小范数方向，
+也可增加$\delta\|\bm p\|_2^2/2$得到
+$(\bm J^\top\bm J+\delta\bm I)\bm p=-\bm J^\top\bm r$。
+对未正则化子问题，直接形成正规方程会平方条件数，数值实现常直接解线性最小二乘。
+
+若解附近$\bm J$满列秩且Lipschitz、残差在解处为零，则
+$\bm r(\bm w)=\bm J(\bm w)(\bm w-\bm w^\star)+O(\|\bm w-\bm w^\star\|_2^2)$，
+左逆一致有界便给出局部二次误差。非零残差时，进一步设各残差二阶连续可微，记
+$\bm E^\star=\sum_i r_i(\bm w^\star)\nabla^2r_i(\bm w^\star)$；
+Gauss--Newton映射在驻点处的导数为
+$-(\bm J^{\star\top}\bm J^\star)^{-1}\bm E^\star$。
+它在某个一致范数中小于$1$是局部收缩的充分条件，通常只给线性速率；
+残差大或秩条件失效时不能保证收敛。共同二次例可取
+$\bm r(\bm w)=(w_1,4w_2)^\top$，残差本身线性，Gauss--Newton与牛顿方向完全一致。
+
+\subsubsection{拟牛顿方法}
+\label{sec:opt-quasi-newton}
+
+完整Hessian可能难以获得，但走过一步后，已经知道位移与梯度变化。
+\term{拟牛顿法}（quasi-Newton method）用这两份信息修正曲率模型，不显式计算Hessian矩阵。
+它使用梯度差
+$\bm{y}^{(t)}=\nabla f(\bm{w}^{(t+1)})-\nabla f(\bm{w}^{(t)})$和步长
+$\bm{s}^{(t)}=\bm{w}^{(t+1)}-\bm{w}^{(t)}$更新矩阵近似，并满足割线条件
+$\bm{B}^{(t+1)}\bm{s}^{(t)}=\bm{y}^{(t)}$。若$\bm{B}^{(t)}$近似Hessian矩阵，
+BFGS更新为
+\begin{equation}
+  \bm{B}^{(t+1)}
+  =
+  \bm{B}^{(t)}
+  +
+  \frac{\bm{y}^{(t)}(\bm{y}^{(t)})^{\top}}
+       {(\bm{y}^{(t)})^{\top}\bm{s}^{(t)}}
+  -
+  \frac{\bm{B}^{(t)}\bm{s}^{(t)}(\bm{s}^{(t)})^{\top}\bm{B}^{(t)}}
+       {(\bm{s}^{(t)})^{\top}\bm{B}^{(t)}\bm{s}^{(t)}}.
+  \label{eq:opt-bfgs-update}
+\end{equation}
+当$\bm{B}^{(t)}\succ\bm{0}$且曲率条件
+$(\bm{y}^{(t)})^{\top}\bm{s}^{(t)}>0$成立时，
+式~\eqref{eq:opt-bfgs-update}保持$\bm{B}^{(t+1)}\succ\bm{0}$，相应搜索方向
+$-(\bm{B}^{(t+1)})^{-1}\nabla f$才由正定性保证是下降方向。沿下降方向执行满足
+Wolfe条件的线搜索可产生该正曲率内积。具体地，令
+$\bm{w}^{(t+1)}=\bm{w}^{(t)}+\alpha^{(t)}\bm{p}^{(t)}$，其中
+$\nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)}<0$。Wolfe条件要求存在
+$0<c_1<c_2<1$使
+\begin{equation}
+\begin{aligned}
+  f(\bm{w}^{(t+1)})
+  &\leq
+  f(\bm{w}^{(t)})
+  +
+  c_1\alpha^{(t)}
+  \nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)},\\
+  \nabla f(\bm{w}^{(t+1)})^{\top}\bm{p}^{(t)}
+  &\geq
+  c_2\nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)}.
+\end{aligned}
+\label{eq:opt-wolfe-conditions}
+\end{equation}
+第二行就是\term{Wolfe曲率条件}（Wolfe curvature condition）。由
+$\bm{s}^{(t)}=\alpha^{(t)}\bm{p}^{(t)}$可得
+\[
+  (\bm{y}^{(t)})^{\top}\bm{s}^{(t)}
+  \geq
+  \alpha^{(t)}(c_2-1)
+  \nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)}
+  >0.
+\]
+非凸或梯度含噪时，上述条件可能难以满足，此时可能需要阻尼或跳过更新。
+
+正定性的理由值得单独核验。省略轮次上标，对任意$\bm v\neq0$，
+\[
+ \bm v^\top\bm B^+\bm v
+ =\bm v^\top\bm B\bm v
+ -\frac{(\bm v^\top\bm B\bm s)^2}{\bm s^\top\bm B\bm s}
+ +\frac{(\bm v^\top\bm y)^2}{\bm y^\top\bm s}.
+\]
+前两项由$\bm B$内积的Cauchy--Schwarz不等式非负，仅在$\bm v$与$\bm s$平行时为零；
+此时$\bm y^\top\bm s>0$又使最后一项严格为正。把更新式乘$\bm s$，
+还可直接检查$\bm B^+\bm s=\bm y$。割线条件只匹配一个观测方向，不等于已经恢复全部曲率。
+
+一次BFGS迭代从正定$\bm B^{(t)}$出发，解
+$\bm B^{(t)}\bm p^{(t)}=-\nabla f(\bm w^{(t)})$，进行Wolfe线搜索，计算新梯度与
+$(\bm s^{(t)},\bm y^{(t)})$后再更新矩阵。仅用不断缩短步长的Armijo回溯未必满足
+Wolfe第二式，因为步长太小会使方向导数几乎不变；需要括住合适步长区间再缩小区间。
+若观测曲率太小，给定$\delta\in(0,1)$，可以令
+\[
+ \widetilde{\bm y}=\theta\bm y+(1-\theta)\bm B\bm s,\qquad
+ \theta=
+ \begin{cases}
+ 1,&\bm s^\top\bm y\geq\delta\bm s^\top\bm B\bm s,\\
+ \dfrac{(1-\delta)\bm s^\top\bm B\bm s}
+ {\bm s^\top\bm B\bm s-\bm s^\top\bm y},&\text{其余情形}.
+ \end{cases}
+\]
+用$\widetilde{\bm y}$替代$\bm y$便有
+$\bm s^\top\widetilde{\bm y}\geq\delta\bm s^\top\bm B\bm s>0$；
+代价是割线条件改为匹配修正后的曲率。零位移或不可靠梯度差应跳过更新。
+
+为避免每轮重新分解稠密矩阵，通常维护$\bm C=\bm B^{-1}$并用等价公式
+\[
+ \bm C^+=(\bm I-\rho\bm s\bm y^\top)\bm C
+          (\bm I-\rho\bm y\bm s^\top)+\rho\bm s\bm s^\top,
+ \qquad \rho=(\bm y^\top\bm s)^{-1}.
+\]
+方向是$-\bm C\nabla f$，更新与乘法各需$O(d^2)$运算和存储；
+有限记忆版本只保存最近$m$对位移、梯度差，以$O(md)$代价应用近似逆。
+共同二次例取$\bm B^{(0)}=\bm I$，第一方向为$(-2,-32)$，精确线搜索步长为
+$257/4097$；第一步并不像牛顿步直达最小点，所得
+$\bm y=\bm H\bm s$才提供沿这次位移的曲率信息。精确算术与精确线搜索下，
+正定二次目标的BFGS至多$d$步终止；一般光滑目标的局部超线性结论另需强凸邻域、
+连续曲率与合适线搜索，不能从保持正定性直接推出。
+这里比较的是到局部解的参数误差$e_t=\|\bm w^{(t)}-\bm w^\star\|_2$。
+在未有限步终止且$e_t\to0$的情形，超线性收敛（superlinear convergence）指
+$e_{t+1}/e_t\to0$，即每一步相对上一步的误差比例也趋于零。
+此前牛顿法的二次收敛还给出近解处$e_{t+1}\leq Ce_t^2$的更具体上界，
+因此二次收敛蕴含超线性收敛，反向却不必成立。
+
+无论方向来自一阶还是二阶模型，坐标尺度都会影响数值计算。
+\term{预条件}（preconditioning）通过改变方向的尺度改善求解，最简单的形式选择正定矩阵$\bm{P}$，按
+\[
+  \bm{w}^{(t+1)}
+  =
+  \bm{w}^{(t)}-\eta\bm{P}\nabla f(\bm{w}^{(t)})
+\]
+更新。
+这等价于在新的坐标或内积下做最陡下降。若\(p_i>0\)，并且
+\[
+  \bm{P}
+  =
+  \bm{Q}\operatorname{diag}(p_1,\ldots,p_d)\bm{Q}^{\top},
+\]
+则定义
+\[
+  \bm{P}^{1/2}
+  =
+  \bm{Q}\operatorname{diag}(\sqrt{p_1},\ldots,\sqrt{p_d})\bm{Q}^{\top}.
+\]
+这就是$\bm{P}$唯一的对称正定平方根：它满足
+$\bm{P}^{1/2}\bm{P}^{1/2}=\bm{P}$，并且可逆，其逆记为$\bm{P}^{-1/2}$。
+对当前正定二次目标，记
+\[
+  \widetilde{\bm{H}}=\bm{P}^{1/2}\bm{H}\bm{P}^{1/2},
+  \qquad
+  0<\widetilde{\mu}
+  =\lambda_{\min}(\widetilde{\bm{H}})
+  \leq\lambda_{\max}(\widetilde{\bm{H}})
+  =\widetilde{L}.
+\]
+原坐标中的误差递推为
+$\bm{e}^{(t+1)}=(\bm{I}-\eta\bm{P}\bm{H})\bm{e}^{(t)}$。令
+$\widetilde{\bm{e}}^{(t)}=\bm{P}^{-1/2}\bm{e}^{(t)}$，则
+\[
+  \widetilde{\bm{e}}^{(t+1)}
+  =
+  (\bm{I}-\eta\widetilde{\bm{H}})
+  \widetilde{\bm{e}}^{(t)},
+  \qquad
+  \bm{P}^{-1/2}
+  (\bm{I}-\eta\bm{P}\bm{H})
+  \bm{P}^{1/2}
+  =
+  \bm{I}-\eta\widetilde{\bm{H}}.
+\]
+右侧矩阵由可逆坐标变换$\bm{P}^{1/2}$得到，因而与原误差递推矩阵相似；相似矩阵具有
+相同特征值。由于$\widetilde{\bm{H}}$对称正定，迭代对任意初始误差收敛当且仅当
+$0<\eta<2/\widetilde{L}$。取
+$\eta=2/(\widetilde{L}+\widetilde{\mu})$时，在变换后的欧氏范数中，每步最坏收缩因子为
+\[
+  \frac{\widetilde{\kappa}-1}{\widetilde{\kappa}+1},
+  \qquad
+  \widetilde{\kappa}
+  =\frac{\widetilde{L}}{\widetilde{\mu}}.
+\]
+因此预条件的目标不是单独让$\bm{P}$的条件数小，而是让变换后曲率
+$\widetilde{\bm{H}}$的条件数接近$1$。固定$\bm{P}\succ\bm{0}$只保证定义了合法内积；
+若它与$\bm{H}$不匹配，$\widetilde{\kappa}$反而可能增大。对一般二阶可微的光滑强凸
+函数，需要在所有迭代经过的区域统一满足
+$\widetilde{\mu}\bm{I}\preceq
+\bm{P}^{1/2}\nabla^2f(\bm{w})\bm{P}^{1/2}
+\preceq\widetilde{L}\bm{I}$，上述步长范围与线性收敛解释才相应延续；变化的预条件矩阵还需
+额外控制。
+
+动量利用历史更新，牛顿类近似当前曲率，预条件改变几何尺度；三者可能组合，却不是同一种
+机制。第~\ref{chap:linear-algebra-and-matrix-analysis}章“线性空间”
+将从线性方程求解的角度比较预条件对搜索空间、残差和总成本的影响；
+Fisher矩阵与经验梯度二阶矩的差别则需等概率对象建立后讨论。
+
+\begin{example}[两个曲率方向上的预条件]
+\label{ex:opt-anisotropic-preconditioning}
+取$f(\bm w)=(w_1^2+16w_2^2)/2$，初值$(2,2)^{\top}$。普通梯度下降若取
+$\eta=0.1$，两个坐标分别乘以$0.9$与$-0.6$，因而
+$\bm w^{(t)}=(2\times0.9^t,\,2\times(-0.6)^t)^{\top}$。
+第二坐标来回越过谷底，第一坐标却缓慢缩小。取
+$\bm P=\operatorname{diag}(1,1/16)$及$\eta=1/2$后，
+$\bm P\nabla f(\bm w)=\bm w$，两坐标每步都减半。
+\end{example}
+
+\begin{figure*}[htbp]
+ \centering
+ \includegraphics[width=\linewidth]{figures/math-preparation/analysis-geometry/optimization-preconditioned-paths.pdf}
+ \caption{例~\ref{ex:opt-anisotropic-preconditioning}中的精确更新路径。灰线是同一二次目标的等值线，蓝、红圆点分别表示普通更新与预条件更新，黄色星号是最小点。预条件使用了已知曲率，获得和应用这一矩阵的成本仍属于算法代价。}
+ \label{fig:opt-preconditioned-paths}
+\end{figure*}
+
+这个例子中的预条件恰好消除了两个方向的尺度差。一般目标的曲率会随位置变化，近似矩阵
+也有误差；因此图中的直达路径解释机制，不构成所有预条件方法都更快的保证。
+从坐标$\bm w=\bm P^{1/2}\bm z$看，预条件只是改变测量方向长度的方式；
+它也可以用于牛顿线性方程的迭代求解，并不必然是Hessian的近似逆。
+在共同例中，普通$\eta=1/16$梯度法需要
+$T\geq\log(2/\varepsilon)/(2\log(16/15))$（并至少一步）达到目标差$\varepsilon$；
+对角预条件$\eta=1/2$的目标为$34\,4^{-T}$；
+牛顿与Gauss--Newton各解一次对角系统即结束。前两者每步只做向量运算，
+而一般稠密二阶方法的矩阵成本不能由这个特殊例子代表。
+停止时都应核验原目标或原坐标梯度残差，而不能只看被任意缩小的预条件方向长度。
+矩阵分解、条件数与线性方程残差的具体关系可回查第~\ref{chap:matrix-analysis}章。
+
+\section{无约束非光滑目标的求解}
+\label{sec:opt-nonsmooth-stochastic-methods}
+
+不可微点并不意味着目标没有可利用的结构。能够取得全局支撑斜率时，可沿次梯度迭代；
+能够有效求解带二次距离的子问题时，可将尖点完整留在邻近更新中。
+下面区分这两条路线，随机抽样带来的信息误差则留到计算预算一节。
+
+\subsection{次梯度方法}
+\label{sec:opt-subgradient-methods}
+
+绝对值损失和$\ell_1$稀疏惩罚在零点不可微，因而不能直接代入普通梯度更新。
+凸函数仍可用全局仿射下界描述：允许同一点有多个支撑斜率，就能保留用于比较目标值的方向信息。
+\begin{definition}[凸次梯度与次微分]
+\label{def:opt-convex-subgradient}
+设$f:\mathbb R^d\to\mathbb R\cup\{+\infty\}$为适当凸函数，$f(\bm u)$有限。
+向量$\bm{g}\in\mathbb R^d$若满足
+\[
+  f(\bm{v})\geq f(\bm{u})+\langle\bm{g},\bm{v}-\bm{u}\rangle
+  \quad\text{对所有 }\bm{v},
+\]
+就称为$f$在$\bm{u}$处的\term{次梯度}（subgradient）。全部次梯度组成
+$\partial f(\bm{u})$，称为次微分；它可以是空集。
+\end{definition}
+例如
+\[
+  \partial |x|=
+  \begin{cases}
+    \{1\},&x>0,\\
+    [-1,1],&x=0,\\
+    \{-1\},&x<0.
+  \end{cases}
+\]
+凸函数在$\bm{w}^{\star}$处最优，当且仅当
+$\bm{0}\in\partial f(\bm{w}^{\star})$。若零向量是次梯度，定义立即给出
+$f(\bm{v})\geq f(\bm{w}^{\star})$；反过来，若$\bm{w}^{\star}$全局最优，则
+$f(\bm{v})\geq f(\bm{w}^{\star})+\langle\bm{0},\bm{v}-\bm{w}^{\star}\rangle$，
+所以零向量满足次梯度定义。这个等价性依赖凸次梯度采用全局下界定义。
+若要把$f+r$的次微分直接写成$\partial f+\partial r$，或把约束写成指标函数后拆分
+次微分，还需限制两个函数的定义域接触方式。
+不能只凭两个函数都凸就无条件使用求和等式。本节不依赖这条求和规则，
+而直接从支撑不等式推导所需的最优性关系。
+
+次梯度迭代选$\bm g^{(t)}\in\partial f(\bm w^{(t)})$并令
+$\bm w^{(t+1)}=\bm w^{(t)}-\eta^{(t)}\bm g^{(t)}$。
+支撑斜率提供下界，却未必是实际下降方向。例如$f(x)=|x|$，在$x=0.2$取$\eta=1$，
+更新到$-0.8$后目标反而增大，这一次是步长过大的结果。
+尖点还可能让任意小步都不能下降：对$f(x,y)=|x|+y/2$，
+在$(0,0)$可取次梯度$(1,1/2)$，沿其负方向移动$t>0$后目标为$3t/4>0$。
+所以不能给次梯度更新强加光滑梯度的逐步下降要求。实际输出可取已访问点中目标最小者，
+或取步长加权平均$\bar{\bm w}^{(T)}=\sum_{t<T}\eta^{(t)}\bm w^{(t)}/\sum_{t<T}\eta^{(t)}$。
+
+设$f$凸、最小点$\bm w^\star$存在，沿迭代能取得$\|\bm g^{(t)}\|_2\leq G$，
+且$\|\bm w^{(0)}-\bm w^\star\|_2\leq R$。展开距离并用次梯度下界得
+\[
+ \|\bm w^{(t+1)}-\bm w^\star\|_2^2
+ \leq\|\bm w^{(t)}-\bm w^\star\|_2^2
+ -2\eta^{(t)}(f(\bm w^{(t)})-f^\star)+(\eta^{(t)})^2G^2.
+\]
+求和消去中间距离，再对平均点用Jensen不等式，得到
+\begin{equation}
+\begin{aligned}
+ \min_{t<T}(f(\bm w^{(t)})-f^\star)
+ &\leq\frac{\sum_{t<T}\eta^{(t)}(f(\bm w^{(t)})-f^\star)}{\sum_{t<T}\eta^{(t)}},\\
+ f(\bar{\bm w}^{(T)})-f^\star
+ &\leq\frac{R^2+G^2\sum_{t<T}(\eta^{(t)})^2}{2\sum_{t<T}\eta^{(t)}}.
+\end{aligned}
+ \label{eq:opt-subgradient-finite-rate}
+\end{equation}
+同一右端也控制最佳候选。已知预算$T$且$R,G>0$时，固定
+$\eta^{(t)}=R/(G\sqrt T)$给出$RG/\sqrt T$；不知道预算时可用递减步长，
+按实际的两个步长和评价误差。边界上次微分可能为空，强凸二次目标在全空间的次梯度也未必有界；
+上界$G$必须由目标或迭代区域另行保证，不能省略。
+
+本节的凸次梯度也不同于第~\ref{chap:mathematical-analysis}章介绍的Clarke广义梯度。
+前者用一个全局仿射下界定义，直接产生凸最优性条件；后者取局部Lipschitz函数邻近可微点
+梯度极限的闭凸包，允许非凸局部结构。人为指定的替代梯度更只是反向计算信号，未必属于
+前面任一集合。三者名称相近，定义对象与可用结论并不相同。
+
+\subsection{邻近方法}
+\label{sec:opt-nonsmooth-proximal}
+\label{sec:opt-weaker-curvature}
+
+次梯度法允许单步目标上升。另一条路线是每轮完整保留难处理的目标项，
+在“目标小”和“离当前点近”之间解一个折中子问题。
+\begin{definition}[凸函数的邻近算子]
+\label{def:opt-proximal-operator}
+设$r:\mathbb R^d\to\mathbb R\cup\{+\infty\}$适当、下半连续且凸，$\eta>0$。
+函数$r$的\term{邻近算子}（proximal operator）定义为
+\[
+  \operatorname{prox}_{\eta r}(\bm{z})
+  =\argmin_{\bm{w}}
+  \left\{r(\bm{w})+\frac{1}{2\eta}
+  \lVert\bm{w}-\bm{z}\rVert_2^2\right\}.
+\]
+\end{definition}
+这里的$\eta$调节惩罚与距离的相对权重；它还未指代某个算法的迭代步数。二次项使目标强凸。
+存在性还需要防止$r$下降得太快，抵消二次距离；下面直接由凸性和下半连续性证明。
+后文将“适当、下半连续且凸”简称为“适当闭凸”，这里的“闭”是下半连续性的惯常表述，
+不要求有效定义域本身是闭集；对偶部分将再解释这种叫法的几何含义。
+
+\begin{proof}[邻近子问题存在与唯一]
+取$\bm u\in\operatorname{dom}r$。下半连续且不取$-\infty$的$r$在紧球
+$\{\bm v:\|\bm v-\bm u\|_2\leq1\}$上有有限下界$m$。
+否则可取球内$r(\bm v^{(k)})\to-\infty$的序列，再取收敛子列，由下半连续性迫使极限点取$-\infty$。
+对$\bm w\in\operatorname{dom}r$且$R=\|\bm w-\bm u\|_2>1$，点
+$\bm v=\bm u+(\bm w-\bm u)/R$在该球上，凸性给
+\[
+ m\leq r(\bm v)\leq(1-1/R)r(\bm u)+r(\bm w)/R,
+ \qquad
+ r(\bm w)\geq r(\bm u)+R(m-r(\bm u)).
+\]
+所以$r$的负向增长至多线性；对固定$\bm z$，$\|\bm w-\bm z\|_2^2/(2\eta)$
+支配这一线性项。邻近目标强制、下半连续且适当，由存在性小节达到最小值。
+其$1/\eta$强凸性又排除两个不同最小点，因而每个$\bm z$都有唯一输出。
+\end{proof}
+
+还可以直接取得最优性关系而不预用次微分求和规则。令$\bm p$为邻近最小点，
+比较它与$\bm p+t(\bm v-\bm p)$，用$r$的凸性上界并展开平方，除以$t$再令$t\downarrow0$，得
+\[
+ r(\bm v)\geq r(\bm p)+
+ \left\langle\frac{\bm z-\bm p}{\eta},\bm v-\bm p\right\rangle.
+\]
+故$(\bm z-\bm p)/\eta\in\partial r(\bm p)$；反向将该下界与平方距离相加又可证明最优。
+这个关系同时给出邻近解的核验条件。
+
+\begin{theorem}[$\ell_1$邻近算子是软阈值]
+\label{thm:opt-soft-threshold}
+设$\lambda\geq0$、$\eta>0$。对$r(\bm{w})=\lambda\lVert\bm{w}\rVert_1$，
+\[
+  [\operatorname{prox}_{\eta r}(\bm{z})]_j
+  =\operatorname{sign}(z_j)\max\{|z_j|-\eta\lambda,0\}.
+\]
+\end{theorem}
+
+\begin{proof}
+目标按坐标可分，只需最小化
+$\lambda|w|+(w-z)^2/(2\eta)$。若$w>0$，驻点为
+$w=z-\eta\lambda$，只在$z>\eta\lambda$时落在该区域；若$w<0$，驻点为
+$w=z+\eta\lambda$，只在$z<-\eta\lambda$时有效。若
+$|z|\leq\eta\lambda$，零点最优性条件
+$0\in\lambda[-1,1]-z/\eta$成立，所以$w=0$。合并三种情形即得结论。
+\end{proof}
+
+例如取$\bm z=(3,0.4,-2)^{\top}$与$\eta\lambda=1$，软阈值输出
+$(2,0,-1)^{\top}$；小幅坐标被直接置零。若改用
+$r(\bm w)=\lambda\lVert\bm w\rVert_2^2/2$，逐坐标驻点给出
+$\operatorname{prox}_{\eta r}(\bm z)=\bm z/(1+\eta\lambda)$，在同一参数下为
+$(1.5,0.2,-1)^{\top}$。两种正则化都缩小幅度，只有前者在这个例子中产生精确零值。
+
+邻近算子不会放大输入距离。令
+$\bm{p}=\operatorname{prox}_{\eta r}(\bm{x})$、
+$\bm{q}=\operatorname{prox}_{\eta r}(\bm{y})$。最优性条件给出
+$(\bm{x}-\bm{p})/\eta\in\partial r(\bm{p})$和
+$(\bm{y}-\bm{q})/\eta\in\partial r(\bm{q})$。把两个次梯度不等式相加，得到
+\[
+  \langle\bm{x}-\bm{y},\bm{p}-\bm{q}\rangle
+  \geq\lVert\bm{p}-\bm{q}\rVert_2^2.
+\]
+再用Cauchy--Schwarz不等式便有
+$\lVert\bm{p}-\bm{q}\rVert_2\leq\lVert\bm{x}-\bm{y}\rVert_2$。
+这个非扩张性质依赖凸次梯度的单调性；非凸邻近子问题可能多解，不能直接沿用。
+
+若能直接求整个目标的邻近解，邻近点方法令
+$\bm w^{(t+1)}=\operatorname{prox}_{\eta^{(t)} F}(\bm w^{(t)})$。
+与子问题候选$\bm w^{(t)}$比较可得
+\[
+ F(\bm w^{(t+1)})+\frac{\|\bm w^{(t+1)}-\bm w^{(t)}\|_2^2}{2\eta^{(t)}}
+ \leq F(\bm w^{(t)}).
+\]
+若$F$适当闭凸且有最小点，邻近最优性关系与次梯度下界进一步给出
+\[
+ 2\eta^{(t)}(F(\bm w^{(t+1)})-F^\star)
+ \leq\|\bm w^{(t)}-\bm w^\star\|_2^2
+ -\|\bm w^{(t+1)}-\bm w^\star\|_2^2
+ -\|\bm w^{(t+1)}-\bm w^{(t)}\|_2^2.
+\]
+固定$\eta>0$时，求和并利用目标单调性得最后一点误差
+$F(\bm w^{(T)})-F^\star\leq\|\bm w^{(0)}-\bm w^\star\|_2^2/(2\eta T)$。
+这里没有光滑步长限制，但每一步可能需要求解一个几乎同样困难的优化问题；
+数学上唯一可解不等于计算上廉价。
+
+对$F=f+r$，若$f$可微且$L$光滑、$r$适当闭凸，
+近端梯度只线性化$f$，将$r$留在子问题中：
+\begin{equation}
+ \bm w^{(t+1)}
+ =\operatorname{prox}_{\eta r}
+   \bigl(\bm w^{(t)}-\eta\nabla f(\bm w^{(t)})\bigr).
+ \label{eq:opt-proximal-gradient-update}
+\end{equation}
+一次更新依次计算$\nabla f$、形成邻近中心、求$r$的邻近解，再评价原目标。
+例如共同二次目标加$r(\bm w)=\lambda\|\bm w\|_1$时，取$\eta=1/16$，
+从$(2,2)$出发先到$(15/8,0)$，随后软阈值得
+$(\max\{15/8-\lambda/16,0\},0)$，无需迭代求解邻近子问题。
+
+令$\bm w^+$为该更新、$\bm d=\bm w^+-\bm w$。
+邻近最优性给$-\nabla f(\bm w)-\bm d/\eta\in\partial r(\bm w^+)$，
+将次梯度不等式用于旧点，再与$f$的光滑上界相加：
+\begin{equation}
+ F(\bm w^+)\leq F(\bm w)
+ -\left(\frac1\eta-\frac L2\right)\|\bm d\|_2^2.
+ \label{eq:opt-proximal-gradient-descent}
+\end{equation}
+故$0<\eta\leq1/L$保证下降。定义可计算的近端梯度映射
+\[
+ \bm G_\eta(\bm w)=\frac{\bm w-\bm w^+}{\eta}.
+\]
+它为零当且仅当$0\in\nabla f(\bm w)+\partial r(\bm w)$。
+而$\bm G_\eta(\bm w)+\nabla f(\bm w^+)-\nabla f(\bm w)$
+属于$\nabla f(\bm w^+)+\partial r(\bm w^+)$，范数至多
+$(1+L\eta)\|\bm G_\eta(\bm w)\|_2$，所以这个停止残差确实控制新点的驻点性。
+若$F$下有界，固定$\eta\leq1/L$时
+$\min_{t<T}\|\bm G_\eta(\bm w^{(t)})\|_2^2
+\leq2(F(\bm w^{(0)})-F_{\inf})/(\eta T)$。
+非凸$f$下这仍只是驻点保证。
+
+若$f$也凸，任意$\bm v\in\operatorname{dom}r$满足三点不等式
+\[
+ F(\bm w^+)-F(\bm v)
+ \leq\frac{\|\bm w-\bm v\|_2^2-\|\bm w^+-\bm v\|_2^2}{2\eta}
+ -\left(\frac1{2\eta}-\frac L2\right)\|\bm w^+-\bm w\|_2^2.
+\]
+它来自$f$在旧点的凸下界、在新点的光滑上界及$r$在新点的次梯度下界。
+取$\bm v=\bm w^\star$、$\eta\leq1/L$并求和，便得
+$F(\bm w^{(T)})-F^\star\leq\|\bm w^{(0)}-\bm w^\star\|_2^2/(2\eta T)$。
+未知$L$时，可回溯增大二次模型系数直到$f$在新点不超过该模型；
+每次试探都需重新求邻近解，其成本应计入预算。
+
+前面的唯一性来自给凸函数补入正二次曲率。如果原目标已经有少量负曲率，
+二次距离是否仍能补足它？弱凸性就是对所需补偿量的统一限制。
+\begin{definition}[欧氏空间中的弱凸性]
+\label{def:opt-weak-convexity}
+设$f:\mathbb{R}^d\to\mathbb{R}\cup\{+\infty\}$是适当函数，即不恒为$+\infty$，
+且$\rho\geq0$。若
+$\bm{w}\mapsto f(\bm{w})+\rho\lVert\bm{w}\rVert_2^2/2$是凸函数，
+则称$f$是\term{$\rho$弱凸}（$\rho$-weakly convex）的。取值$+\infty$可以用来表示不可行点。
+\end{definition}
+若$f$在开凸定义域上二阶可微，这等价于
+$\nabla^2f(\bm{w})\succeq-\rho\bm{I}$：负曲率可以存在，但有统一下界。
+当$\rho>0$且$0<\eta<1/\rho$时，对任意中心$\bm{z}$，邻近子问题的目标
+\[
+  f(\bm{w})+\frac{1}{2\eta}\lVert\bm{w}-\bm{z}\rVert_2^2
+\]
+是$(1/\eta-\rho)$强凸函数；若$\rho=0$，任意$\eta>0$都具有同样的补足曲率作用。
+若$f$还下半连续，把$f+\rho\|\cdot\|_2^2/2$代入本节的直接增长证明，
+剩余正二次项就保证子问题强制且有唯一解。这正是弱凸性与邻近方法的联系。补入二次曲率
+只让这个子问题更易控制，并没有把原函数变成凸函数；弱凸目标仍可有局部极小点和鞍点，
+也不保证求得原问题的全局最优解。
+
+例如$f(x)=\cos x$的二阶导数是$-\cos x\geq-1$，所以它是$1$弱凸的，
+但仍有无穷多个局部低点。弱凸性限制谷之间最坏的负曲率，并未消除这些谷。
+若在当前位置附近加上足够大的二次惩罚，邻近子问题会得到唯一解；改变当前位置后，
+所解的却是另一个邻近子问题，不能据此声称原函数只有一个最小点。
+前面非凸PL例$f(x,y)=x^2+2\sin^2x$的Hessian下界为$-2\bm I$，
+因此它也为$2$弱凸；这只说明两项性质可以共存，不说明任意弱凸函数都满足PL条件。
+弱凸邻近映射一般也不再非扩张。例如$f(x)=-\rho x^2/2$且$0<\eta\rho<1$时，
+其唯一邻近解为$z/(1-\eta\rho)$，两个输入的距离被放大$1/(1-\eta\rho)$倍。
+
+同一个低维族能显示这些性质各自控制什么。令
+\[
+  f_a(x_1,x_2)=\frac12(x_1+x_2)^2+\frac{a}{2}(x_1-x_2)^2.
+\]
+当$a>0$时函数强凸；$a=0$时它凸且满足PL条件，但整条直线$x_1+x_2=0$都是最小点；
+$a<0$时函数弱凸却无下界。若限制在紧可行域上，$a<0$时仍有最小点，但驻点
+$(0,0)$可能是鞍点。这个例子说明弱凸、PL和强凸不是一条简单的强弱链：弱凸限制最坏负
+曲率，PL控制梯度与目标误差，强凸还控制参数距离与唯一性。
 
 \begin{table*}[htbp]
  \centering\small
@@ -397,33 +1262,29 @@ $\bm{X}^{\top}\bm{X}/n+\lambda\bm{I}$。当$\lambda>0$时，正则项把所有�
  \label{tab:opt-curvature-conditions}
 \end{table*}
 
-\section{约束、对偶与最优性证书}
+\section{有约束优化的求解}
 \label{sec:opt-constraints-duality-certificates}
 
-前节的局部驻点标准允许考察任意方向；有资源约束时，降低目标的方向可能不可行。
-乘子把可行方向的限制纳入一阶条件，对偶把这些限制转换为目标的下界，松弛则让难以直接求解的问题也能得到可计算的界。
-三者共同回答：一个候选解是否可行，以及还可能改善多少。
+无约束下降方向可能走出允许范围。投影直接修复候选，惩罚让违规付出目标代价，
+乘子与对偶则把约束作用表示为额外变量和可核验的界。三条路线各有自己的子问题与停止依据，
+可以组合使用，不要求算法依次经历它们。
 
-\subsection{凸几何与仿射下界}
-\label{sec:opt-affine-certificates}
-把不可行或次优转为可核验的线性不等式，需要先说明分离与支撑；
-再把同样的仿射下界语言用于函数，就能理解共轭与对偶中的界来自哪里。
+\subsection{投影方法}
+\label{sec:opt-projected-methods}
 
-\subsubsection{最近点与线性分离}
-
-\begin{theorem}[闭凸集外一点的严格分离]
-\label{thm:opt-projection-separation}
-设$C\subseteq\mathbb{R}^d$非空、闭且凸，$\bm{z}\notin C$。则存在
-$\bm{a}\neq\bm{0}$和$c\in\mathbb{R}$，使
+对非空闭凸集$C$，约束指标$\iota_C$适当、下半连续且凸，
+其邻近子问题只在$C$内比较平方距离。因此欧氏\term{投影}（projection）
+$\Pi_C(\bm{z})=\argmin_{\bm{w}\in C}\lVert\bm{w}-\bm{z}\rVert_2^2$
+把一步梯度更新拉回可行域：
 \[
-  \langle\bm{a},\bm{x}\rangle\leq c
-  <\langle\bm{a},\bm{z}\rangle
-  \quad\text{对所有 }\bm{x}\in C.
+  \bm{w}^{(t+1)}
+  =\Pi_C\bigl(\bm{w}^{(t)}-\eta^{(t)}\nabla f(\bm{w}^{(t)})\bigr).
 \]
-\end{theorem}
+这就是取$r=\iota_C$的近端梯度。邻近存在与非扩张证明已经适用；
+下面将其中的最近点几何明确写出，后面对分离的证明将直接回用它。若$C$非凸，最近点可能不唯一。
 
-\begin{proof}
-先证明所需最近点的存在性与唯一性。任取$\bm{x}_0\in C$并令
+\begin{proof}[最近点的直接几何证明]
+任取$\bm{x}_0\in C$并令
 $R=\lVert\bm{z}-\bm{x}_0\rVert_2$。集合
 \[
   C_R=C\cap\{\bm{x}:\lVert\bm{z}-\bm{x}\rVert_2\leq R\}
@@ -446,8 +1307,326 @@ $\lVert\bm{z}-\bm{x}\rVert_2^2$在$C_R$上达到最小值；球外各点到$\bm{
 $\bm{p}+t(\bm{x}-\bm{p})\in C$。函数
 $q(t)=\lVert\bm{z}-\bm{p}-t(\bm{x}-\bm{p})\rVert_2^2$在$t=0$
 处右导数非负，所以
-$\langle\bm{z}-\bm{p},\bm{x}-\bm{p}\rangle\leq0$。取
-$\bm{a}=\bm{z}-\bm{p}$和$c=\langle\bm{a},\bm{p}\rangle$，则
+$\langle\bm{z}-\bm{p},\bm{x}-\bm{p}\rangle\leq0$。
+展开$\|\bm z-\bm x\|_2^2$即得
+\begin{equation}
+ \|\bm p-\bm x\|_2^2+\|\bm z-\bm p\|_2^2\leq\|\bm z-\bm x\|_2^2,
+ \qquad \bm x\in C.
+ \label{eq:opt-projection-distance}
+\end{equation}
+\end{proof}
+
+这说明投影不增加到任何可行参照点的距离；两个投影输出间的非扩张性则回用邻近证明。
+盒约束投影只需逐坐标截断，成本为$O(d)$。
+若要求非负坐标之和为$1$，得到概率单纯形（probability simplex）
+$\Delta=\{\bm w\in\mathbb R^d:w_j\geq0,\ \sum_jw_j=1\}$。
+它的投影具有共同阈值形式
+\[
+ p_j=\max\{z_j-\tau,0\},\qquad
+ \sum_j\max\{z_j-\tau,0\}=1.
+\]
+阈值同时移动全部坐标，由总和约束确定，不能像盒投影那样完全分开计算。
+为核对该形式，对$p_j>0$有$z_j-p_j=\tau$，对$p_j=0$有$z_j\leq\tau$。
+故对任意$\bm x\in\Delta$，
+$\langle\bm z-\bm p,\bm x-\bm p\rangle
+\leq\tau\sum_j(x_j-p_j)=0$；
+展开平方距离便知$\bm p$确为最近点。
+常用实现先排序以确定哪些坐标为正，再解总和为$1$的阈值；
+一般凸集的投影则可能本身就是大型子问题。
+在共同二次目标上加范围$C=[1,2]\times[0,2]$，$\eta=0.1$的第一步先到$(1.8,-1.2)$，
+再投影为$(1.8,0)$。约束最小点为$(1,0)$，其普通梯度为$(1,0)$而非零；
+正确停止量是
+$\|\bm w-\Pi_C(\bm w-\eta\nabla f(\bm w))\|_2/\eta$。
+它与原始可行性一起检查。若$f$凸且$L$光滑、最小点存在，
+前节三点不等式在$\eta\leq1/L$下直接给出目标差$O(1/T)$，
+无需为投影另假设普通梯度在边界消失。
+
+图~\ref{fig:opt-proximal-comparison}对同一个标量输入$z$比较三种处理：区间投影把
+超出范围的值截到边界；软阈值把小幅值置零、其余幅值减去固定量；二次惩罚则等比例
+缩小所有输入。投影保持可行性，软阈值产生稀疏性，二次惩罚改变幅度，它们都可以写成
+邻近算子，但输出行为和所解决的问题不同。
+\begin{figure}[htbp]
+ \centering
+ \includegraphics[width=\linewidth]{figures/math-preparation/concept-revision-analysis-functional/proximal-comparison.pdf}
+ \caption{同一输入$z$的三种邻近映射。投影采用$C=[-1,1]$；软阈值与二次收缩均取$\eta\lambda=1$，分别输出$\operatorname{sign}(z)(|z|-1)_+$和$z/2$。横轴刻度标出阈值位置，曲线由完整分段解析式生成。}
+ \label{fig:opt-proximal-comparison}
+\end{figure}
+
+\begin{table*}[htbp]
+ \centering\small
+ \begin{tabularx}{\linewidth}{@{}lXX@{}}
+ \toprule
+ 更新方式 & 每步处理的结构 & 分析前需核对的条件\\
+ \midrule
+ 梯度下降 & 使用可微目标的梯度 & 光滑常数与步长；全局最优保证还依赖凸性或PL等条件\\
+ 投影梯度 & 梯度更新后求可行集最近点 & 非空闭凸集；投影本身的计算成本\\
+ 次梯度更新 & 使用非光滑凸目标的全局下界斜率 & 次梯度范数及步长序列；单步目标未必下降\\
+ 近端梯度 & 光滑部分求梯度，非光滑部分求邻近解 & 光滑部分的步长、正则项的适当闭凸性及可解邻近子问题\\
+ \bottomrule
+ \end{tabularx}
+ \caption{常见一阶更新的结构与条件。相近的更新形式并不共享同一收敛定理。}
+ \label{tab:opt-first-order-structures}
+\end{table*}
+
+\subsection{惩罚方法}
+\label{sec:opt-penalty-methods}
+
+投影可能很贵，而违反约束的程度常容易计算。可将等式残差与不等式正部写成
+$V(\bm w)=\sum_j|a_j(\bm w)|+\sum_k[g_k(\bm w)]_+$，
+再最小化$f+\rho V$；也可以用平方残差构造光滑的二次惩罚。
+参数$\rho$越大，算法越重视可行性，但两类惩罚的有限参数性质不同。
+
+对共同二次目标加等式$w_1+w_2=1$，二次惩罚问题为
+\[
+ \min_{\bm w}\frac12(w_1^2+16w_2^2)
+ +\frac\rho2(w_1+w_2-1)^2.
+\]
+解线性驻点方程得
+\[
+ \bm w_\rho=\frac{(16\rho,\rho)^\top}{16+17\rho},\qquad
+ w_{\rho,1}+w_{\rho,2}-1=-\frac{16}{16+17\rho}.
+\]
+任意有限$\rho>0$下它仍不可行，极限才是约束解$(16/17,1/17)$。
+惩罚Hessian为$\operatorname{diag}(1,16)+\rho\bm 1\bm 1^\top$，
+最大特征值随$\rho$增大，最小特征值趋向$17/2$；条件数逐渐恶化，
+光滑梯度法需要更小步长，不能只把增大参数看作免费提高精度。
+
+一般可行性极限也有前提。设$P\geq0$连续且$P=0$恰好表示可行，
+$f$下半连续并在候选区域有统一有限下界$m$，
+$\bm w_\rho$精确最小化$f+\rho P$，并存在可行$\bar{\bm w}$。
+则$\rho P(\bm w_\rho)\leq f(\bar{\bm w})-m$，所以$\rho\to\infty$时违反量趋零。
+若这些解还有有界子列，其极限可行；再与任意可行点比较并使用下半连续性，可知极限全局最优。
+没有有界性不能保证存在极限，近似子问题则还要将求解误差加入这个比较。
+
+非平方的惩罚可能在有限参数精确。例如区域内$f$是$K$-Lipschitz，
+且每个候选都有可行修复$\bm p$满足
+$\|\bm p-\bm w\|_2\leq\kappa V(\bm w)$，则
+\[
+ f(\bm w)+\rho V(\bm w)
+ \geq f(\bm p)+(\rho-K\kappa)V(\bm w).
+\]
+当$\rho>K\kappa$时，任何不可行点都不如它的修复点，因而惩罚最优解必须可行。
+这是一条带明确误差界的精确性条件，不是所有惩罚的共同结论；
+后文还将用达到的乘子给出另一种参数对应。
+
+范数约束$\|\bm w\|_1\leq R$规定硬范围，正则项$\lambda\|\bm w\|_1$规定超出偏好规模的代价，
+不直接强制某个预先给定的$R$。含绝对值的惩罚可调用次梯度或邻近方法；
+二次惩罚可调用光滑方法。外层逐步提高$\rho$时，内层既要报告原目标变化，
+也要报告约束违反量，不能仅凭惩罚目标的小梯度停机。
+
+同样的区别出现在权重衰减中。普通欧氏梯度下降用于
+$f(\bm{w})+\lambda\lVert\bm{w}\rVert_2^2/2$时给出
+\[
+  \bm{w}^{(t+1)}
+  =(1-\eta\lambda)\bm{w}^{(t)}-\eta\nabla f(\bm{w}^{(t)}),
+\]
+与直接乘上衰减因子相同。若使用预条件矩阵$\bm{P}$，惩罚梯度产生
+$-\eta\lambda\bm{P}\bm{w}^{(t)}$，而坐标无关的直接衰减仍为
+$-\eta\lambda\bm{w}^{(t)}$；除非$\bm{P}=\bm{I}$或另有匹配，它们不再相同。
+
+\subsection{乘子与对偶方法}
+\label{sec:opt-multiplier-dual-methods}
+
+惩罚系数通常由我们选定，乘子则试图找出最优点处恰好平衡约束作用的价格。
+平衡条件用于判优，下界用于评价差距，价格更新才构成求解算法。
+
+\subsubsection{乘子条件与局部最优}
+\label{sec:opt-kkt}
+
+资源约束使最优点处的目标梯度不必为零，因为可行方向受到限制。对
+\[
+  \min_{\bm{w}}f(\bm{w})
+  \quad\text{s.t.}\quad
+  a_j(\bm{w})=0\ (j=1,\ldots,m),\quad
+  g_k(\bm{w})\leq0\ (k=1,\ldots,p),
+\]
+\begin{definition}[活跃约束与线性化可行方向]
+\label{def:opt-linearized-feasible-direction}
+设约束函数在可行点$\bm w$处可微。不等式$g_k(\bm w)\leq0$在该点活跃，是指$g_k(\bm w)=0$。
+满足
+\[
+  \langle\nabla a_j(\bm{w}),\bm{d}\rangle=0,\qquad
+  \langle\nabla g_k(\bm{w}),\bm{d}\rangle\leq0
+  \quad\text{对所有活跃的 }g_k
+\]
+的方向$\bm{d}$称为\term{一阶可行方向}（linearized feasible direction）。
+\end{definition}
+这些关系只检验约束的一阶近似，不保证$\bm w+t\bm d$在任意小的正$t$下都可行。
+例如约束$x^2\leq0$在$0$处梯度为零，线性化允许任何方向，真实可行点却只有$0$；
+后面的资格条件正是为了防止这种一阶信息失真。
+等式约束为何产生法向量平衡，可以先看仿射情形
+$\bm{A}\bm{w}=\bm{b}$。任一可行扰动都满足$\bm{A}\bm{d}=\bm{0}$；局部最优点
+不能沿$\bm{d}$或$-\bm{d}$下降，故
+$\langle\nabla f(\bm{w}^{\star}),\bm{d}\rangle=0$对所有
+$\bm{d}\in\ker\bm{A}$成立。由
+$(\ker\bm{A})^\perp=\operatorname{range}(\bm{A}^{\top})$，存在不受符号限制的
+$\bm{\nu}$使
+$\nabla f(\bm{w}^{\star})=-\bm{A}^{\top}\bm{\nu}$。
+这里的法向量指与所有切向可行扰动垂直的向量；$\bm A$的行给出等式面的法向量。
+在共同二次目标加$w_1+w_2=1$的例子中，平衡方程为
+$w_1+\nu=0$、$16w_2+\nu=0$和$w_1+w_2=1$，
+解出$\nu=-16/17$、$\bm w=(16/17,1/17)^\top$。
+负价格在等式问题中完全合法，因为等式既不允许增加也不允许减少总量。
+
+活跃不等式只允许切平面一侧的一阶移动，它的外法向量因而以非负系数参与梯度平衡；
+不活跃约束在该点留有严格余量，不限制足够小的移动，对应系数应为零。这分别引出
+非负乘子与互补松弛。在适当的约束资格条件下，这些几何关系可通过
+\term{拉格朗日函数}（Lagrangian）统一表达：
+\[
+  \mathcal{L}(\bm{w},\bm{\nu},\bm{\alpha})
+  =f(\bm{w})+\sum_j\nu_j a_j(\bm{w})
+  +\sum_k\alpha_k g_k(\bm{w}),
+  \qquad
+  \bm{\nu}\in\mathbb{R}^m,\quad
+  \bm{\alpha}\in\mathbb{R}_+^p.
+\]
+乘子把违反约束的边际代价并入目标。
+
+\begin{definition}[KKT条件]
+\label{def:opt-kkt-conditions}
+对于上述可微约束问题，候选点$\bm w^\star$与乘子
+$\bm\nu^\star\in\mathbb R^m$、$\bm\alpha^\star\in\mathbb R^p$满足
+\term{Karush--Kuhn--Tucker条件}（KKT conditions），是指以下四组关系同时成立：
+\begin{align}
+  \nabla_{\bm{w}}\mathcal{L}(\bm{w}^{\star},\bm{\nu}^{\star},
+  \bm{\alpha}^{\star})&=\bm{0},
+  &&\text{驻点性},\label{eq:opt-kkt-stationarity}\\
+  a_j(\bm{w}^{\star})=0,\quad g_k(\bm{w}^{\star})&\leq0,
+  &&\text{原始可行性},\\
+  \alpha_k^{\star}&\geq0,
+  &&\text{对偶可行性},\\
+  \alpha_k^{\star}g_k(\bm{w}^{\star})&=0,
+  &&\text{互补松弛}.\label{eq:opt-kkt-complementarity}
+\end{align}
+等式、不等式约束分别对全部$j=1,\ldots,m$与$k=1,\ldots,p$检验。
+\end{definition}
+互补松弛表示未用尽的约束不能有正价格，正价格只可能出现在活跃边界上。
+
+局部最优点满足KKT条件需要\term{约束资格条件}（constraint qualification）。
+这里采用一个局部、容易核验的充分条件：$f,a_j,g_k$在点附近连续可微，
+全部等式梯度与活跃不等式梯度线性无关，称为线性无关约束资格条件（LICQ）。
+它与后面保证凸问题强对偶的Slater条件不是同一个假设。
+
+可借第~\ref{chap:mathematical-analysis}章的逆函数工具直接证明LICQ下的必要性，
+无需提前使用后面的分离定理。把等式值、活跃不等式值与适当补充的线性坐标组成
+$\bm T(\bm w)=(\bm a(\bm w),\bm g_I(\bm w),\bm z(\bm w))$。
+线性无关性使补充后的Jacobian可逆，$\bm T$在局部就是可逆坐标变换。
+未活跃不等式仍严格满足；新坐标中的可行域局部恰为
+$\bm a=0,\ \bm g_I\leq0$，而$\bm z$自由。
+局部最优时，自由坐标偏导为零，活跃不等式坐标只能朝负方向移动，
+故相应目标偏导非正。取$\nu_j$为等式坐标偏导的相反数、
+$\alpha_k$为活跃不等式坐标偏导的相反数，再令未活跃乘子为零，
+链式法则恰给$\nabla f+\sum_j\nu_j\nabla a_j+\sum_k\alpha_k\nabla g_k=0$。
+非负性与互补松弛同时成立，这就建立了局部必要性。
+
+没有资格条件，乘子可能不存在。例$f(x)=x$且约束$x^2\leq0$只有可行点
+$x=0$，它当然最优；但约束梯度为零，驻点条件$1+\alpha\cdot0=0$无解。
+
+反方向在凸情形更强。若$f$和每个$g_k$均为可微凸函数，$a_j$仿射，且某个可行点与乘子
+满足KKT，则对任意可行$\bm{w}$，仿射等式约束使
+$\langle\nabla a_j(\bm{w}^{\star}),\bm{w}-\bm{w}^{\star}\rangle
+=a_j(\bm{w})-a_j(\bm{w}^{\star})=0$。因此等式乘子项消失，再由凸性和驻点性，
+\[
+  f(\bm{w})\geq
+  f(\bm{w}^{\star})
+  -\sum_k\alpha_k^{\star}
+  \langle\nabla g_k(\bm{w}^{\star}),\bm{w}-\bm{w}^{\star}\rangle
+  \geq f(\bm{w}^{\star}).
+\]
+最后一步使用凸约束的一阶下界、可行性和互补松弛。因此KKT在该条件下足以保证全局最优。
+这个充分性证明不需要LICQ或Slater：只要确实找到满足KKT的候选即可。
+反过来，非凸问题即便LICQ成立，KKT也通常只是必要条件；例如无约束$f(x)=-x^2$
+在$0$满足驻点条件，却是极大点。
+数值计算只能得到近似关系，宜分别报告
+$\|\nabla_{\bm w}\mathcal L\|_2$、$\|\bm a\|_2$、$\|[\bm g]_+\|_2$、
+$\|[-\bm\alpha]_+\|_2$及$\|\bm\alpha\odot\bm g\|_2$，
+其中$\odot$表示逐坐标乘积。小残差不是无条件的目标差证书：
+即使无约束凸目标$f(x)=\epsilon x^2/2$，梯度大小$\delta$也对应目标差
+$\delta^2/(2\epsilon)$，仍须知道曲率尺度。若已找到精确可行点及可信的对偶下界，
+才可直接用二者的差控制全局目标误差。
+
+\begin{example}[活跃约束与乘子]
+\label{ex:opt-scalar-active-constraint}
+最小化$f(x)=(x-2)^2/2$，约束$x\leq a$。无约束最小点为$2$，因此
+$x^\star(a)=\min\{2,a\}$。将约束写成$g(x)=x-a\leq0$，KKT条件为
+$x-2+u=0$、$u\geq0$、$x\leq a$与$u(x-a)=0$。
+当$a=1$时，$x^\star=1$、$u^\star=1$；当$a=3$时，$x^\star=2$、$u^\star=0$。
+约束是否取等号决定乘子能否抵消目标继续下降的梯度。
+最优值为$v(a)=(2-a)^2/2$对$a<2$成立，$a\geq2$时为零。
+在$a=1$附近，$v'(a)=a-2=-u^\star$：增加一小单位资源上限，最优代价下降的局部速率
+由乘子给出。到$a=2$时活跃集改变，解映射出现折点，不能跨越它直接沿用同一敏感性公式。
+\end{example}
+
+\begin{example}[预算约束、活跃集与敏感性]
+\label{ex:opt-kkt-budget}
+求最接近$\bm{c}=(2,1)^{\top}$的非负分配，并令总预算为$\tau>0$：
+\[
+  \min_{\bm{w}}\frac12\lVert\bm{w}-\bm{c}\rVert_2^2
+  \quad\text{s.t.}\quad
+  w_1+w_2\leq\tau,\quad -w_1\leq0,\quad -w_2\leq0.
+\]
+当$\tau>3$时，$\bm{c}$本身严格满足预算约束，故该约束不活跃，且
+$\bm{w}^{\star}(\tau)=(2,1)^{\top}$。当$\tau=3$时解仍为$\bm{c}$，预算约束活跃，
+但其乘子为零；这个边界说明“约束活跃”不等于“乘子严格为正”。
+当$1<\tau<3$时，两个坐标仍为正而预算取等。把预算这一不等式的乘子记为
+$\alpha_{\mathrm{bud}}$，驻点条件给
+\[
+  w_1-2+\alpha_{\mathrm{bud}}=0,\qquad
+  w_2-1+\alpha_{\mathrm{bud}}=0,\qquad
+  w_1+w_2=\tau.
+\]
+因此
+\[
+  \bm{w}^{\star}(\tau)
+  =\left(\frac{\tau+1}{2},\frac{\tau-1}{2}\right)^{\top},
+  \qquad
+  \alpha_{\mathrm{bud}}^{\star}(\tau)=\frac{3-\tau}{2}.
+\]
+当$0<\tau<1$时，第二个非负约束也活跃，解变成
+$\bm{w}^{\star}(\tau)=(\tau,0)^{\top}$，预算乘子为$2-\tau$，第二个非负约束的
+乘子为$1-\tau$。在$\tau=1$处，第二个非负约束活跃但乘子为零。上述区域及边界分别
+展示预算不生效、约束活跃但零乘子、仅预算产生正价格，以及预算与坐标边界同时产生
+正价格。目标严格凸，满足KKT的点都是唯一全局最优解。
+\end{example}
+
+\subsubsection{对偶下界与全局最优}
+\label{sec:opt-duality}
+\label{sec:opt-affine-certificates}
+
+对固定乘子$\bm{\alpha}\geq\bm{0}$，任意可行$\bm{w}$都满足
+$\mathcal{L}(\bm{w},\bm{\nu},\bm{\alpha})\leq f(\bm{w})$。因此
+\term{对偶函数}（dual function）
+\[
+  q(\bm{\nu},\bm{\alpha})
+  =\inf_{\bm{w}}\mathcal{L}(\bm{w},\bm{\nu},\bm{\alpha})
+\]
+给出原问题最优值的下界。最大化这个下界得到对偶问题。由构造立即有
+$d^{\star}\leq p^{\star}$，称为\term{弱对偶}（weak duality）；差
+$p^{\star}-d^{\star}$称为对偶间隙。对某组乘子取下确界得到$-\infty$，表示这组
+乘子没有给出有限下界；对偶不可行则表示没有任何乘子满足对偶问题规定的可行条件。前者
+描述一个候选乘子的函数值，后者描述整个候选集合，二者不能混用。
+若已求得原始可行$\widehat{\bm w}$与有限对偶值$q(\bm\nu,\bm\alpha)$，
+则$f(\widehat{\bm w})-q(\bm\nu,\bm\alpha)$是可核验的目标差上界。
+要说明这个间隙能否降到零，需要分析目标和约束是否能由仿射界精确描述。
+下面按最近点分离、共轭重建、有限生成锥与线性规划的顺序建立这些工具；
+每一步都承担不同的证明任务。
+
+\begin{theorem}[闭凸集外一点的严格分离]
+\label{thm:opt-projection-separation}
+设$C\subseteq\mathbb{R}^d$非空、闭且凸，$\bm{z}\notin C$。则存在
+$\bm{a}\neq\bm{0}$和$c\in\mathbb{R}$，使
+\[
+  \langle\bm{a},\bm{x}\rangle\leq c
+  <\langle\bm{a},\bm{z}\rangle
+  \quad\text{对所有 }\bm{x}\in C.
+\]
+\end{theorem}
+
+\begin{proof}
+由投影小节的直接证明，$\bm p=\Pi_C(\bm z)$存在且唯一，
+并满足$\langle\bm z-\bm p,\bm x-\bm p\rangle\leq0$对所有$\bm x\in C$成立。
+取$\bm a=\bm z-\bm p$和$c=\langle\bm a,\bm p\rangle$。由于$\bm z\notin C$，
+$\bm a\neq0$，并且
 $\langle\bm{a},\bm{x}\rangle\leq c$，而
 $\langle\bm{a},\bm{z}\rangle=c+\lVert\bm{a}\rVert_2^2>c$。
 \end{proof}
@@ -480,23 +1659,11 @@ $\bm{v}^{\top}\bm{M}\bm{v}
 =\lim_k\bm{v}^{\top}\bm{M}^{(k)}\bm{v}\geq0$。
 线性规划的非负正交锥和半正定规划的矩阵约束直接定义凸可行域；标准凸二次规划中的
 半正定曲率矩阵则保证目标凸。三者共享的是凸目标与凸可行域的语言。若要进一步统一成
-带线性目标的锥规划，还需引入辅助变量，对二次目标作上图或锥提升。
-
-\subsubsection{凸共轭与双共轭}
+带线性目标的锥规划，还需引入辅助变量，用锥约束表达二次目标的界。
 
 分离用仿射函数区分一个点与可行集合。对目标函数，也可以收集所有仿射下界：
 固定斜率后找最紧的截距，再比较所有斜率能否重建原函数。凸共轭承担这一步。
-\begin{definition}[适当函数、有效定义域与约束指标]
-\label{def:opt-proper-domain-indicator}
-函数$f:\mathbb R^d\to\mathbb R\cup\{+\infty\}$若不恒为$+\infty$，称为适当函数；
-它从不取$-\infty$。其\term{有效定义域}（effective domain）为
-$\operatorname{dom}f=\{\bm x:f(\bm x)<+\infty\}$。
-集合$C$的扩展实值指标函数为$\iota_C(\bm x)=0$（$\bm x\in C$），在其余点取$+\infty$。
-\end{definition}
-这个指标不是第~\ref{chap:sets-functions-and-proofs}章取$0/1$的指示函数。
-它把不允许的点排除出最小化，而不只是给集合成员作标记。
-对扩展实值目标，式~\eqref{eq:opt-convex-function}在有限取值的点上检验，
-并要求有效定义域凸；这避免在端点权重为零时操作$0\cdot(+\infty)$。
+
 上图集$\operatorname{epi}f=\{(\bm x,r)\in\mathbb R^{d+1}:r\geq f(\bm x)\}$
 记录图像以上的全部点；它凸与$f$凸等价，闭与$f$下半连续等价。
 \begin{definition}[凸共轭与双共轭]
@@ -576,198 +1743,6 @@ $f(x)=-\sqrt{x}$对$x\geq0$定义，负半轴取$+\infty$。在$x=0$，有限次
 必须满足$-\sqrt{x}\geq yx$对所有$x>0$成立，即$y\leq-1/\sqrt{x}$，这是不可能的。
 $f^{**}(0)=f(0)=0$仍成立，但只能由一列仿射下界逼近，不能声称共轭上确界在某个有限
 $y$处达到。由双共轭推导对偶表达时，值相等与最优乘子存在必须分别证明。
-
-\subsection{约束与拉格朗日乘子}
-\label{sec:opt-kkt}
-
-\subsubsection{可行方向与KKT条件}
-
-资源约束使最优点处的目标梯度不必为零，因为可行方向受到限制。对
-\[
-  \min_{\bm{w}}f(\bm{w})
-  \quad\text{s.t.}\quad
-  a_j(\bm{w})=0\ (j=1,\ldots,m),\quad
-  g_k(\bm{w})\leq0\ (k=1,\ldots,p),
-\]
-\begin{definition}[活跃约束与线性化可行方向]
-\label{def:opt-linearized-feasible-direction}
-设约束函数在可行点$\bm w$处可微。不等式$g_k(\bm w)\leq0$在该点活跃，是指$g_k(\bm w)=0$。
-满足
-\[
-  \langle\nabla a_j(\bm{w}),\bm{d}\rangle=0,\qquad
-  \langle\nabla g_k(\bm{w}),\bm{d}\rangle\leq0
-  \quad\text{对所有活跃的 }g_k
-\]
-的方向$\bm{d}$称为\term{一阶可行方向}（linearized feasible direction）。
-\end{definition}
-这些关系只检验约束的一阶近似，不保证$\bm w+t\bm d$在任意小的正$t$下都可行。
-例如约束$x^2\leq0$在$0$处梯度为零，线性化允许任何方向，真实可行点却只有$0$；
-后面的资格条件正是为了防止这种一阶信息失真。
-等式约束为何产生法向量平衡，可以先看仿射情形
-$\bm{A}\bm{w}=\bm{b}$。任一可行扰动都满足$\bm{A}\bm{d}=\bm{0}$；局部最优点
-不能沿$\bm{d}$或$-\bm{d}$下降，故
-$\langle\nabla f(\bm{w}^{\star}),\bm{d}\rangle=0$对所有
-$\bm{d}\in\ker\bm{A}$成立。由
-$(\ker\bm{A})^\perp=\operatorname{range}(\bm{A}^{\top})$，存在不受符号限制的
-$\bm{\nu}$使
-$\nabla f(\bm{w}^{\star})=-\bm{A}^{\top}\bm{\nu}$。
-
-活跃不等式只允许切平面一侧的一阶移动，它的外法向量因而以非负系数参与梯度平衡；
-不活跃约束在该点留有严格余量，不限制足够小的移动，对应系数应为零。这分别引出
-非负乘子与互补松弛。在适当的约束资格条件下，这些几何关系可通过
-\term{拉格朗日函数}（Lagrangian）统一表达：
-\[
-  \mathcal{L}(\bm{w},\bm{\nu},\bm{\alpha})
-  =f(\bm{w})+\sum_j\nu_j a_j(\bm{w})
-  +\sum_k\alpha_k g_k(\bm{w}),
-  \qquad
-  \bm{\nu}\in\mathbb{R}^m,\quad
-  \bm{\alpha}\in\mathbb{R}_+^p.
-\]
-乘子把违反约束的边际代价并入目标。
-
-\begin{definition}[KKT条件]
-\label{def:opt-kkt-conditions}
-对于上述可微约束问题，候选点$\bm w^\star$与乘子
-$\bm\nu^\star\in\mathbb R^m$、$\bm\alpha^\star\in\mathbb R^p$满足
-\term{Karush--Kuhn--Tucker条件}（KKT conditions），是指以下四组关系同时成立：
-\begin{align}
-  \nabla_{\bm{w}}\mathcal{L}(\bm{w}^{\star},\bm{\nu}^{\star},
-  \bm{\alpha}^{\star})&=\bm{0},
-  &&\text{驻点性},\label{eq:opt-kkt-stationarity}\\
-  a_j(\bm{w}^{\star})=0,\quad g_k(\bm{w}^{\star})&\leq0,
-  &&\text{原始可行性},\\
-  \alpha_k^{\star}&\geq0,
-  &&\text{对偶可行性},\\
-  \alpha_k^{\star}g_k(\bm{w}^{\star})&=0,
-  &&\text{互补松弛}.\label{eq:opt-kkt-complementarity}
-\end{align}
-等式、不等式约束分别对全部$j=1,\ldots,m$与$k=1,\ldots,p$检验。
-\end{definition}
-互补松弛表示未用尽的约束不能有正价格，正价格只可能出现在活跃边界上。
-
-局部最优点满足KKT条件需要\term{约束资格条件}（constraint qualification）。
-例如活跃不等式梯度与等式梯度线性无关时，沿可行方向的一阶下降不可能存在，由有限维分离
-可得到乘子。没有资格条件，乘子可能不存在。例$f(x)=x$且约束$x^2\leq0$只有可行点
-$x=0$，它当然最优；但约束梯度为零，驻点条件$1+\alpha\cdot0=0$无解。
-
-反方向在凸情形更强。若$f$和每个$g_k$均为可微凸函数，$a_j$仿射，且某个可行点与乘子
-满足KKT，则对任意可行$\bm{w}$，仿射等式约束使
-$\langle\nabla a_j(\bm{w}^{\star}),\bm{w}-\bm{w}^{\star}\rangle
-=a_j(\bm{w})-a_j(\bm{w}^{\star})=0$。因此等式乘子项消失，再由凸性和驻点性，
-\[
-  f(\bm{w})\geq
-  f(\bm{w}^{\star})
-  -\sum_k\alpha_k^{\star}
-  \langle\nabla g_k(\bm{w}^{\star}),\bm{w}-\bm{w}^{\star}\rangle
-  \geq f(\bm{w}^{\star}).
-\]
-最后一步使用凸约束的一阶下界、可行性和互补松弛。因此KKT在该条件下足以保证全局最优。
-
-\begin{example}[活跃约束与乘子]
-\label{ex:opt-scalar-active-constraint}
-最小化$f(x)=(x-2)^2/2$，约束$x\leq a$。无约束最小点为$2$，因此
-$x^\star(a)=\min\{2,a\}$。将约束写成$g(x)=x-a\leq0$，KKT条件为
-$x-2+u=0$、$u\geq0$、$x\leq a$与$u(x-a)=0$。
-当$a=1$时，$x^\star=1$、$u^\star=1$；当$a=3$时，$x^\star=2$、$u^\star=0$。
-约束是否取等号决定乘子能否抵消目标继续下降的梯度。
-最优值为$v(a)=(2-a)^2/2$对$a<2$成立，$a\geq2$时为零。
-在$a=1$附近，$v'(a)=a-2=-u^\star$：增加一小单位资源上限，最优代价下降的局部速率
-由乘子给出。到$a=2$时活跃集改变，解映射出现折点，不能跨越它直接沿用同一敏感性公式。
-\end{example}
-
-\subsubsection{活跃集与解的敏感性}
-
-\begin{example}[预算约束、活跃集与敏感性]
-\label{ex:opt-kkt-budget}
-求最接近$\bm{c}=(2,1)^{\top}$的非负分配，并令总预算为$\tau>0$：
-\[
-  \min_{\bm{w}}\frac12\lVert\bm{w}-\bm{c}\rVert_2^2
-  \quad\text{s.t.}\quad
-  w_1+w_2\leq\tau,\quad -w_1\leq0,\quad -w_2\leq0.
-\]
-当$\tau>3$时，$\bm{c}$本身严格满足预算约束，故该约束不活跃，且
-$\bm{w}^{\star}(\tau)=(2,1)^{\top}$。当$\tau=3$时解仍为$\bm{c}$，预算约束活跃，
-但其乘子为零；这个边界说明“约束活跃”不等于“乘子严格为正”。
-当$1<\tau<3$时，两个坐标仍为正而预算取等。把预算这一不等式的乘子记为
-$\alpha_{\mathrm{bud}}$，驻点条件给
-\[
-  w_1-2+\alpha_{\mathrm{bud}}=0,\qquad
-  w_2-1+\alpha_{\mathrm{bud}}=0,\qquad
-  w_1+w_2=\tau.
-\]
-因此
-\[
-  \bm{w}^{\star}(\tau)
-  =\left(\frac{\tau+1}{2},\frac{\tau-1}{2}\right)^{\top},
-  \qquad
-  \alpha_{\mathrm{bud}}^{\star}(\tau)=\frac{3-\tau}{2}.
-\]
-当$0<\tau<1$时，第二个非负约束也活跃，解变成
-$\bm{w}^{\star}(\tau)=(\tau,0)^{\top}$，预算乘子为$2-\tau$，第二个非负约束的
-乘子为$1-\tau$。在$\tau=1$处，第二个非负约束活跃但乘子为零。上述区域及边界分别
-展示预算不生效、约束活跃但零乘子、仅预算产生正价格，以及预算与坐标边界同时产生
-正价格。目标严格凸，满足KKT的点都是唯一全局最优解。
-\end{example}
-
-这个算例也把两类敏感性分开。在$1<\tau<3$时，
-$d\bm{w}^{\star}/d\tau=(1/2,1/2)^{\top}$；在$0<\tau<1$时则为
-$(1,0)^{\top}$。$\tau=1$处活跃集切换，解连续但导数改变。最优值为
-\[
-  V(\tau)=
-  \begin{cases}
-    0, & \tau\geq3,\\
-    (3-\tau)^2/4, & 1\leq\tau\leq3,\\
-    \bigl((2-\tau)^2+1\bigr)/2, & 0<\tau\leq1.
-  \end{cases}
-\]
-在每个活跃集固定的开区间内，
-$V'(\tau)=-\alpha_{\mathrm{bud}}^{\star}(\tau)$：放宽一单位预算带来的
-最优值下降率正是预算乘子的相反数。解导数是向量，乘子给出的是最优值导数，二者不能混用。
-
-图~\ref{fig:opt-budget-active-set}沿同一个预算轴展示解坐标与乘子。$\tau=1$时第二个
-坐标开始离开零边界；$\tau=3$时预算继续增加却不再改善目标。两处切换的条件都需要
-通过可行性与互补松弛核对，不能只从曲线是否出现折点判断。
-\begin{figure*}[htbp]
- \centering
- \includegraphics[width=\linewidth]{figures/math-preparation/concept-revision-analysis-functional/budget-active-set.pdf}
- \caption{例~\ref{ex:opt-kkt-budget}的解析解。左图为两个最优分配坐标，右图为预算乘子与第二个非负约束的乘子。竖参考线标出$\tau=1,3$；在切换点约束可以取等号而乘子为零，说明活跃性与正价格并不等价。}
- \label{fig:opt-budget-active-set}
-\end{figure*}
-
-一般地，设问题依赖参数$\tau$，活跃集在邻域内不变，把驻点条件、等式和活跃约束写成
-$\bm{\Phi}(\bm{w},\bm{\nu},\bm{\alpha},\tau)=\bm{0}$。若对前三组变量的Jacobian
-矩阵可逆，则第~\ref{chap:mathematical-analysis}章的隐式求导给出
-\[
-  \frac{d}{d\tau}
-  \begin{bmatrix}\bm{w}^{\star}\\\bm{\nu}^{\star}\\\bm{\alpha}^{\star}\end{bmatrix}
-  =
-  -\left(\frac{\partial\bm{\Phi}}
-  {\partial(\bm{w},\bm{\nu},\bm{\alpha})}\right)^{-1}
-  \frac{\partial\bm{\Phi}}{\partial\tau}.
-\]
-这个Jacobian是完整KKT系统的导数，原目标Hessian可逆并不足以保证它可逆。活跃集改变或
-该矩阵奇异时，解映射可能不可微；此时不能跨越切换点沿用同一个导数。
-
-\subsection{原问题与对偶问题}
-\label{sec:opt-duality}
-
-\subsubsection{Lagrangian下界与弱对偶}
-
-对固定乘子$\bm{\alpha}\geq\bm{0}$，任意可行$\bm{w}$都满足
-$\mathcal{L}(\bm{w},\bm{\nu},\bm{\alpha})\leq f(\bm{w})$。因此
-\term{对偶函数}（dual function）
-\[
-  q(\bm{\nu},\bm{\alpha})
-  =\inf_{\bm{w}}\mathcal{L}(\bm{w},\bm{\nu},\bm{\alpha})
-\]
-给出原问题最优值的下界。最大化这个下界得到对偶问题。由构造立即有
-$d^{\star}\leq p^{\star}$，称为\term{弱对偶}（weak duality）；差
-$p^{\star}-d^{\star}$称为对偶间隙。对某组乘子取下确界得到$-\infty$，表示这组
-乘子没有给出有限下界；对偶不可行则表示没有任何乘子满足对偶问题规定的可行条件。前者
-描述一个候选乘子的函数值，后者描述整个候选集合，二者不能混用。
-
-\subsubsection{Farkas择一与线性规划强对偶}
 
 线性规划的强对偶可以从一个不可行证书推出。先建立所需的择一定理
 \scite{math-boyd2004convex}
@@ -942,8 +1917,6 @@ $(u_1,u_2)=(4/3,1/3)$可行，值也为$20/3$。弱对偶说明二者同时最�
 和两项产品约束均取等号，互补松弛也逐项成立。
 \end{example}
 
-\subsubsection{一般凸问题中的资格条件}
-
 不可行、无界和未达到必须区分。Farkas向量证明约束不可行；若原问题沿可行射线无限改善，
 弱对偶只说明不存在给出有限下界的对偶候选，也就是每个允许乘子的对偶函数值都为
 $-\infty$，不能据此断言乘子候选集合为空。在线性规划标准型中，这种情形表现为对偶
@@ -966,16 +1939,184 @@ $+\infty$、从不取$-\infty$且至少在一点取有限值；这些函数具�
   g_k(\bar{\bm{w}})<0\quad\text{对所有 }k,
 \]
 并且原问题最优值有限，则原、对偶最优值相等，且存在最优对偶乘子。证明把可达到的
-“约束余量—目标值”集合与严格低于原最优值的点分离；相对内部中的严格可行点排除了
+“约束余量与目标值”集合与严格低于原最优值的点分离；在等式可达的仿射子空间中进行分离，
+可先排除冗余等式产生的法向量。相对内部中的严格可行点排除了
 目标系数为零的异常分离向量，归一化后便得到所需乘子。这里列出的定义域、仿射等式和
 有限最优值都是所采用版本的一部分。凸性本身并不够，也不能把前面的线性规划证明原样
 套到任意凸问题。第~\ref{chap:decision-theory-and-dynamic-risk}章会在状态、策略和
 价值定义后，把同一对偶工具用于价值函数与占用度量。
 
-\subsection{松弛与最优性证书}
-\label{sec:opt-relaxations-certificates}
+这项结论没有补上原始最小值的达到。例如在实线上最小化$e^x$，没有不等式要违反，
+最优值为$0$而没有原始最优点。反过来，某个凸问题即使没有Slater点，
+找到KKT候选仍足以证明它全局最优；Slater是用于保证乘子存在和零间隙的充分条件，
+不是KKT充分性证明的必需假设。
+在预算例~\ref{ex:opt-kkt-budget}中，$\tau>0$时可取足够小的两个正坐标使总和严格小于$\tau$，
+因此Slater成立；闭域上的强制目标还保证原始解达到。
+于是该例同时具备可行解、原始达到、零间隙和对偶达到。
+这四项不能仅凭一个“凸优化问题”名称全部省去核验。
 
-\subsubsection{凸包与可计算松弛}
+\subsubsection{乘子更新与原始—对偶求解}
+\label{sec:opt-multiplier-updates}
+
+KKT是判据，对偶值是证书，它们还没有规定怎样更新未知的乘子。
+把乘子合记为$\bm y=(\bm\nu,\bm\alpha)$，允许域为
+$Y=\mathbb R^m\times\mathbb R_+^p$。在给定$\bm y^{(t)}$时先求
+\[
+ \begin{aligned}
+ \bm w^{(t)}&\in\argmin_{\bm w}\mathcal L(\bm w,\bm y^{(t)}),\\
+ \bm s^{(t)}&=(\bm a(\bm w^{(t)}),\bm g(\bm w^{(t)})),\\
+ \bm y^{(t+1)}&=\Pi_Y(\bm y^{(t)}+\eta^{(t)}\bm s^{(t)}).
+ \end{aligned}
+\]
+等式乘子直接加残差，不等式乘子加残差后逐项截到非负区间。
+违反预算使价格上升，资源有余量使价格下降；这与原变量沿负梯度更新的方向相反。
+内层最小值必须达到且有限，否则这一步没有定义。
+
+为什么残差给出了合法方向？对任意$\bm y'\in Y$，
+\[
+ q(\bm y')\leq\mathcal L(\bm w^{(t)},\bm y')
+ =q(\bm y^{(t)})+\langle\bm s^{(t)},\bm y'-\bm y^{(t)}\rangle.
+\]
+所以$q$是凹函数，$\bm s^{(t)}$是其全局仿射上界斜率，
+$-\bm s^{(t)}\in\partial(-q)(\bm y^{(t)})$。
+这正是对凸函数$-q$作投影次梯度下降。
+若最优乘子$\bm y^\star$存在、$\|\bm y^{(0)}-\bm y^\star\|_2\leq R_y$，
+沿途$\|\bm s^{(t)}\|_2\leq G_y$，投影距离不增和前节距离递推给
+\[
+ \max_{t<T}q(\bm y^{(t)})\geq
+ d^\star-\frac{R_y^2+G_y^2\sum_{t<T}(\eta^{(t)})^2}{2\sum_{t<T}\eta^{(t)}}.
+\]
+它控制最好的已访问下界，不要求每一轮下界都上升，更不直接控制原始候选的可行性。
+
+若$q$可微且$-q$为$L_q$光滑，则用
+$\bm y^{(t+1)}=\Pi_Y(\bm y^{(t)}+\nabla q(\bm y^{(t)})/L_q)$
+可回用投影梯度的$O(1/T)$目标差界。
+一个容易核验的充分设定是内层在固定闭凸域上最小化强凸$f$，
+所有对偶化约束仿射为$\bm A\bm w-\bm b$，且内层总能达到唯一解。
+强凸最优性比较给
+$\|\bm w(\bm y)-\bm w(\bm y')\|_2
+\leq\|\bm A\|_2\|\bm y-\bm y'\|_2/\mu$，
+于是$\nabla q(\bm y)=\bm A\bm w(\bm y)-\bm b$且
+$L_q\leq\|\bm A\|_2^2/\mu$。一般非线性约束或多解内层不能直接套用这个光滑常数。
+
+沿预算例取$\tau=2$，把非负性留在内层可行域，只更新预算乘子$\alpha$。
+内层解为
+$\bm w(\alpha)=((2-\alpha)_+,(1-\alpha)_+)^\top$。
+在$0\leq\alpha\leq1$上，对偶函数为$q(\alpha)=\alpha-\alpha^2$，
+残差为$1-2\alpha$。取$\alpha^{(0)}=0$、$\eta=1/4$，则
+\[
+ \alpha^{(t)}=\frac12(1-2^{-t}),\qquad
+ \bm w^{(t)}=\left(\frac32+\frac{2^{-t}}2,\frac12+\frac{2^{-t}}2\right)^\top,
+ \qquad q(\alpha^{(t)})=\frac14-\frac{4^{-t}}4.
+\]
+前三轮乘子为$0,1/4,3/8$，对应内层分配为
+$(2,1),(7/4,3/4),(13/8,5/8)$；预算违反量为$1,1/2,1/4$。
+对偶值趋近$1/4$时，有限轮的内层候选仍全部超预算。
+本例从两个坐标各减去一半预算残差即可修复为$(3/2,1/2)$，
+原目标上界$U=1/4$，与已算下界的间隙为$4^{-t}/4$。
+修复如此简单依赖本例两个坐标一直为正；一般问题应单独给出投影或其他可行恢复算法。
+
+即使已经得到最优乘子，任意内层最小点也未必是原解。
+在例~\ref{ex:opt-resource-lp-duality}的最优资源价格$(4/3,1/3)$处，
+两个产品的系数同时为零，Lagrangian对所有非负分配都等于$20/3$；
+内层选$(10,10)$会超出原预算，选$(0,0)$虽可行却不是原始最优。
+恢复原解还要满足原始约束及互补松弛。对于仿射约束，
+步长加权平均的残差等于各轮残差的加权平均，因此平均常有助于恢复；
+是否真的可行及目标是否达标，仍须用原问题重新检验。
+内层只近似求解时，上述上界斜率会带误差，下一节将说明如何记录这项计算代价。
+
+\subsubsection{约束变化与解的敏感性}
+\label{sec:opt-constraint-sensitivity}
+
+预算例~\ref{ex:opt-kkt-budget}也把两类敏感性分开。在$1<\tau<3$时，
+$d\bm{w}^{\star}/d\tau=(1/2,1/2)^{\top}$；在$0<\tau<1$时则为
+$(1,0)^{\top}$。$\tau=1$处活跃集切换，解连续但导数改变。最优值为
+\[
+  V(\tau)=
+  \begin{cases}
+    0, & \tau\geq3,\\
+    (3-\tau)^2/4, & 1\leq\tau\leq3,\\
+    \bigl((2-\tau)^2+1\bigr)/2, & 0<\tau\leq1.
+  \end{cases}
+\]
+在每个活跃集固定的开区间内，
+$V'(\tau)=-\alpha_{\mathrm{bud}}^{\star}(\tau)$：放宽一单位预算带来的
+最优值下降率正是预算乘子的相反数。解导数是向量，乘子给出的是最优值导数，二者不能混用。
+
+图~\ref{fig:opt-budget-active-set}沿同一个预算轴展示解坐标与乘子。$\tau=1$时第二个
+坐标开始离开零边界；$\tau=3$时预算继续增加却不再改善目标。两处切换的条件都需要
+通过可行性与互补松弛核对，不能只从曲线是否出现折点判断。
+\begin{figure*}[htbp]
+ \centering
+ \includegraphics[width=\linewidth]{figures/math-preparation/concept-revision-analysis-functional/budget-active-set.pdf}
+ \caption{例~\ref{ex:opt-kkt-budget}的解析解。左图为两个最优分配坐标，右图为预算乘子与第二个非负约束的乘子。竖参考线标出$\tau=1,3$；在切换点约束可以取等号而乘子为零，说明活跃性与正价格并不等价。}
+ \label{fig:opt-budget-active-set}
+\end{figure*}
+
+一般地，设问题依赖参数$\tau$，活跃集在邻域内不变，把驻点条件、等式和活跃约束写成
+$\bm{\Phi}(\bm{w},\bm{\nu},\bm{\alpha},\tau)=\bm{0}$。若对前三组变量的Jacobian
+矩阵可逆，则第~\ref{chap:mathematical-analysis}章的隐式求导给出
+\[
+  \frac{d}{d\tau}
+  \begin{bmatrix}\bm{w}^{\star}\\\bm{\nu}^{\star}\\\bm{\alpha}^{\star}\end{bmatrix}
+  =
+  -\left(\frac{\partial\bm{\Phi}}
+  {\partial(\bm{w},\bm{\nu},\bm{\alpha})}\right)^{-1}
+  \frac{\partial\bm{\Phi}}{\partial\tau}.
+\]
+这个Jacobian是完整KKT系统的导数，原目标Hessian可逆并不足以保证它可逆。活跃集改变或
+该矩阵奇异时，解映射可能不可微；此时不能跨越切换点沿用同一个导数。
+更具体地，若目标与约束二阶连续可微，活跃约束Jacobian$\bm A_I$满行秩，
+则固定活跃集的KKT导数为
+\[
+ \begin{bmatrix}
+ \nabla_{\bm w,\bm w}^2\mathcal L&\bm A_I^\top\\
+ \bm A_I&0
+ \end{bmatrix}.
+\]
+若Lagrangian的Hessian在$\ker\bm A_I$上正定，该矩阵可逆：
+齐次方程先给$\bm A_I\bm d=0$，与第一行作内积推出$\bm d=0$，
+满行秩再迫使乘子增量为零。加上活跃不等式乘子严格为正、未活跃约束有严格余量，
+可在小邻域内保持同一活跃集和局部极小分支。
+若约束写成$g_k(\bm w)-\tau_k\leq0$而目标不直接依赖$\tau_k$，
+对最优值应用链式法则并用KKT平衡消去解导数，便得
+$\partial V/\partial\tau_k=-\alpha_k^\star$；
+目标也依赖参数时，还须加入$\partial f/\partial\tau_k$及其余约束的参数项。
+
+惩罚与硬约束有联系，但不是逐参数自动等价。考虑约束问题
+\[
+  \min_{\bm{w}}f(\bm{w})
+  \quad\text{s.t.}\quad
+  \lVert\bm{w}\rVert_1\leq R.
+\]
+若该问题有原始最优解，强对偶成立，并且对偶最优乘子
+$\lambda^\star$确实达到，例如满足前述Slater条件且最优值有限，则原始最优解同时最小化
+$f(\bm{w})+\lambda^\star\lVert\bm{w}\rVert_1$；Lagrangian中的常数
+$-\lambda^\star R$不影响最小点。仅有原、对偶最优值相等并不能保证这样的有限乘子存在。
+反过来，不同$\lambda$对应的范数半径可能相同，非凸问题还可能存在对偶间隙。把
+$\bm{w}$写成其他参数的函数也会改变优化几何；即使表示同一预测函数，也不保证产生同一
+更新轨迹。
+反向对应也可以精确说明：若$\widehat{\bm w}$最小化$f+\lambda\|\cdot\|_1$且$\lambda\geq0$，
+令$R=\|\widehat{\bm w}\|_1$，则它最小化半径为$R$的约束问题，
+因为任何范数不超过$R$且$f$更低的候选都会使惩罚目标更低。
+这只构造了与该解匹配的半径，不证明$\lambda$与$R$一一对应。
+对一般凸约束，若原始与对偶最优解均达到且对偶间隙为零，取
+$\rho>\max\{\|\bm\nu^\star\|_\infty,\|\bm\alpha^\star\|_\infty\}$，
+则$f+\rho(\sum_j|a_j|+\sum_k[g_k]_+)$不小于最优Lagrangian，
+并对任何非零约束违反多出严格正量。因此有限参数精确惩罚可由达到的乘子支持。
+共同二次等式例的$\nu^\star=-16/17$，故$\rho>16/17$的绝对值惩罚已经精确，
+与二次惩罚只能在极限可行形成对照。
+
+\section{计算预算有限时的近似优化}
+\label{sec:opt-approximate-optimization}
+
+前面的更新都隐含了计算预算：能迭代多少轮，每轮读多少信息，要解多大的子问题，
+子问题要解到多准确。这四种成本不总能同时降低。下面按简化操作分组：
+松弛改变候选范围，代理改变每轮模型，分块缩小联合求解规模，近似更新减少信息取得成本。
+它们仍回用前面的基本更新与误差标准，且可以在同一算法内组合。
+
+\subsection{松弛方法}
+\label{sec:opt-relaxations-certificates}
 
 第~\ref{chap:combinatorics}章已利用候选范围的包含关系建立松弛界。
 现在还需区分两件事：连续集合能否精确包住原候选，以及返回的连续最优点能否恢复为原问题的解。
@@ -1040,8 +2181,6 @@ $\bm u=\bm v=\bm x$，则称$\bm x$为$K$的极点（extreme point）。
 得到更大的多面体，计算较容易而界更松。也可以把乘积$x_ix_j$提升为矩阵变量并要求某个
 块矩阵半正定，得到半正定松弛；它利用二次一致性，代价是矩阵锥约束更昂贵。
 
-\subsubsection{上下界与最优性证书}
-
 取整还可能破坏约束。考虑
 \[
   \max_{x_1,x_2\in\{0,1\}}x_1+x_2
@@ -1079,155 +2218,11 @@ $3/2-1=1/2$。更大的松弛不一定产生严格间隙，它还取决于目标
 \]
 当$U=L$时已证明全局最优。若把松弛解取整为可行解$\widehat{\bm{x}}$，还应单独分析
 $f(\widehat{\bm{x}})-L$；“取整后看起来接近”不是误差界。互补松弛能够证明哪些约束在
-最优点活跃，却不总能直接构造整数解。图模型中的边缘多面体和MAP松弛会在图与概率对象
+最优点活跃的必要关系，却不能仅凭约束活跃就反推正乘子，也不总能直接构造整数解。
+图模型中的边缘多面体和MAP松弛会在图与概率对象
 建立后复用这里的凸包、上下界和间隙概念。
 
-\section{光滑目标的迭代求解}
-\label{sec:opt-smooth-iterative-methods}
-
-有了可判定的最优性条件，还需构造能逐步接近它的参数序列。这里先限定目标可微且梯度光滑：
-梯度下降用一阶信息保证单步改善，动量和预条件再利用迭代历史或曲率改变移动方向。
-每种改进的保证都应与前节的曲率条件配对，而不能仅凭更新公式判断快慢。
-
-\subsection{梯度下降与步长}
-\label{sec:opt-gradient-descent}
-
-\subsubsection{光滑上界与单步下降}
-
-梯度给出最陡的一阶下降方向，但一步走多远取决于函数弯曲程度。光滑性把局部线性近似的
-余项控制为二次量\scite{math-nocedal2006numerical}。本小节考虑可微函数
-$f:\mathbb R^d\to\mathbb R$，并选取一个正的梯度Lipschitz上界$L>0$。
-若梯度恒定，仍可选择任意正上界；这样后面的$1/L$步长也有定义。
-全空间的设定保证更新点仍在函数定义域内；若目标只定义在开凸子域上，使用下降引理时
-还须确认两端点及其线段留在该域内，不能直接把任意梯度步代入。
-
-\begin{lemma}[下降引理]
-\label{lem:opt-descent}
-若$f:\mathbb R^d\to\mathbb R$可微且梯度是$L$-Lipschitz连续的，$L>0$，则对任意
-$\bm u,\bm v\in\mathbb R^d$，
-\begin{equation}
-  f(\bm{v})\leq f(\bm{u})
-  +\langle\nabla f(\bm{u}),\bm{v}-\bm{u}\rangle
-  +\frac{L}{2}\lVert\bm{v}-\bm{u}\rVert_2^2.
-  \label{eq:opt-descent-lemma}
-\end{equation}
-\end{lemma}
-
-\begin{proof}
-令$\bm{d}=\bm{v}-\bm{u}$。沿线段积分并减去一阶项可得
-\[
-  f(\bm{v})-f(\bm{u})-\langle\nabla f(\bm{u}),\bm{d}\rangle
-  =
-  \int_0^1
-  \langle\nabla f(\bm{u}+t\bm{d})-\nabla f(\bm{u}),\bm{d}\rangle\,dt.
-\]
-由Cauchy--Schwarz不等式和梯度Lipschitz条件，被积函数至多为
-$Lt\lVert\bm{d}\rVert_2^2$；积分即得结论。
-\end{proof}
-
-梯度下降按
-\begin{equation}
-  \bm{w}^{(t+1)}
-  =\bm{w}^{(t)}-\eta\nabla f(\bm{w}^{(t)})
-  \label{eq:opt-gradient-descent}
-\end{equation}
-更新。把$\bm{v}$取为右端点代入下降引理，得到
-\begin{equation}
-  f(\bm{w}^{(t+1)})
-  \leq f(\bm{w}^{(t)})
-  -\eta\left(1-\frac{L\eta}{2}\right)
-  \lVert\nabla f(\bm{w}^{(t)})\rVert_2^2.
-  \label{eq:opt-gradient-single-step}
-\end{equation}
-所以$0<\eta<2/L$保证每个非驻点处严格下降。若$f$下有界，记其有限下确界为
-\[
-  f_{\inf}:=\inf_{\bm{w}\in\mathbb{R}^d}f(\bm{w})>-\infty.
-\]
-取$\eta=1/L$并对$t=0,\ldots,T-1$求和，可得非凸光滑情形的保证
-\begin{equation}
-  \min_{0\leq t<T}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2
-  \leq
-  \frac{2L(f(\bm{w}^{(0)})-f_{\inf})}{T}.
-  \label{eq:opt-nonconvex-gradient-rate}
-\end{equation}
-它只说明某次迭代接近驻点，没有声称驻点是全局最优点。
-
-步长上界在一维二次函数上即可看到。对$f(w)=Lw^2/2$，
-$w^{(t+1)}=(1-\eta L)w^{(t)}$。当$\eta=2/L$时迭代在正负之间等幅振荡；
-$\eta>2/L$时幅度按$|1-\eta L|>1$增长。负梯度方向本身没有错，失败来自步长跨过了
-曲率允许的稳定范围。
-
-\subsubsection{不同曲率下的收敛证明}
-
-若$f$还凸、最小点$\bm{w}^{\star}$存在，并继续取$\eta=1/L$，则由凸性有
-$f(\bm{w}^{(t)})-f^\star
-\leq\langle\nabla f(\bm{w}^{(t)}),\bm{w}^{(t)}-\bm{w}^{\star}\rangle$。
-先展开距离平方并使用这个不等式：
-\begin{align*}
-  \lVert\bm{w}^{(t+1)}-\bm{w}^{\star}\rVert_2^2
-  &=
-  \lVert\bm{w}^{(t)}-\bm{w}^{\star}\rVert_2^2
-  -\frac{2}{L}
-  \left\langle\nabla f(\bm{w}^{(t)}),
-  \bm{w}^{(t)}-\bm{w}^{\star}\right\rangle\\
-  &\qquad
-  +\frac{1}{L^2}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2\\
-  &\leq
-  \lVert\bm{w}^{(t)}-\bm{w}^{\star}\rVert_2^2
-  -\frac{2}{L}\bigl(f(\bm{w}^{(t)})-f^\star\bigr)\\
-  &\qquad
-  +\frac{1}{L^2}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2.
-\end{align*}
-另一方面，把$\eta=1/L$代入式~\eqref{eq:opt-gradient-single-step}可得
-\[
-  \frac{1}{L^2}\lVert\nabla f(\bm{w}^{(t)})\rVert_2^2
-  \leq
-  \frac{2}{L}\bigl(
-  f(\bm{w}^{(t)})-f(\bm{w}^{(t+1)})\bigr).
-\]
-用后一式消去梯度平方项，得到
-\[
-  \lVert\bm{w}^{(t+1)}-\bm{w}^{\star}\rVert_2^2
-  \leq
-  \lVert\bm{w}^{(t)}-\bm{w}^{\star}\rVert_2^2
-  -\frac{2}{L}\bigl(f(\bm{w}^{(t+1)})-f^\star\bigr).
-\]
-对$t=0,\ldots,T-1$求和并去掉末端的非负距离，便有
-\[
-  \frac{2}{L}\sum_{t=0}^{T-1}
-  \bigl(f(\bm{w}^{(t+1)})-f^\star\bigr)
-  \leq
-  \lVert\bm{w}^{(0)}-\bm{w}^{\star}\rVert_2^2.
-\]
-式~\eqref{eq:opt-gradient-single-step}还说明目标值单调不增，因此左侧求和中的每一项
-都不小于$f(\bm{w}^{(T)})-f^\star$。于是
-\begin{equation}
-  f(\bm{w}^{(T)})-f^\star
-  \leq\frac{L\lVert\bm{w}^{(0)}-\bm{w}^{\star}\rVert_2^2}{2T}.
-  \label{eq:opt-convex-gradient-rate}
-\end{equation}
-
-若满足PL条件，把式~\eqref{eq:opt-pl-condition}代入
-式~\eqref{eq:opt-gradient-single-step}，在$\eta=1/L$时得到
-\begin{equation}
-  f(\bm{w}^{(t)})-f^\star
-  \leq
-  \left(1-\frac{\mu}{L}\right)^t
-  \bigl(f(\bm{w}^{(0)})-f^\star\bigr).
-  \label{eq:opt-pl-linear-rate}
-\end{equation}
-强凸函数满足PL条件，还由
-$f(\bm{w})-f^\star\geq\mu\lVert\bm{w}-\bm{w}^{\star}\rVert_2^2/2$
-把目标误差转成参数误差。没有强凸时，式~\eqref{eq:opt-pl-linear-rate}不保证迭代趋向
-某个唯一参数。
-
-固定步长需要已知或估计$L$。回溯线搜索从候选步长开始缩小，直到
-$f(\bm{w}-\eta\nabla f(\bm{w}))\leq
-f(\bm{w})-c\eta\lVert\nabla f(\bm{w})\rVert_2^2$成立，其中$c\in(0,1)$。
-学习率调度则预先或按进度改变$\eta_t$。线搜索用实际函数值核验当前一步，调度只规定时间
-表；二者都不能弥补错误梯度或无下界目标。
-
-\subsection{代理上界与单调改善}
+\subsection{代理方法}
 \label{sec:opt-majorization-improvement}
 
 梯度下降利用一个可计算二次上界。若上界来自别的可解结构，同一下降逻辑也能使用，
@@ -1278,525 +2273,37 @@ $Q(x\mid1)=1/2+(x-1)+(x-1)^2$，则$Q-F=(x-1)^2/2\geq0$且当前点取等号。
  \label{fig:opt-majorizer-versus-tangent}
 \end{figure}
 
-\subsection{曲率、加速与预条件}
-\label{sec:opt-curvature-acceleration}
-
-梯度下降的收敛界已经显示，方向上的曲率差异会限制统一步长。
-加速递推利用迭代历史，预条件则改变不同方向的尺度；牛顿法进一步用局部二阶近似。
-这三种机制改变不同部分，条件与收益须分别对照，不能由一个二阶矩阵的出现就认定获得加速。
-
-\subsubsection{动量与加速的递推结构}
-
-对二次函数$f(\bm{w})=\frac12\bm{w}^{\top}\bm{H}\bm{w}
--\bm{c}^{\top}\bm{w}$，梯度下降的误差满足
-$\bm{e}^{(t+1)}=(\bm{I}-\eta\bm{H})\bm{e}^{(t)}$。当
-$\bm{H}\succ\bm{0}$但条件数$\kappa=L/\mu$很大时，同一步长必须同时照顾陡峭与平坦
-方向，平坦方向因而收敛缓慢。
-
-\term{动量法}（momentum method）保存过去方向：
+代理不必精确最小化，但必须分清计算省在何处。记子问题最优值为
 \[
-  \bm{v}^{(t+1)}=\beta\bm{v}^{(t)}+\nabla f(\bm{w}^{(t)}),
-  \qquad
-  \bm{w}^{(t+1)}=\bm{w}^{(t)}-\eta\bm{v}^{(t+1)}.
+ Q^{\star,(t)}=\inf_{\bm w\in C}Q(\bm w\mid\bm w^{(t)}).
 \]
-它通过二阶递推重塑各特征方向上的多项式响应，但$\beta$和$\eta$不能各自独立地任取。
-对上述正定二次目标，曲率为$\lambda_i$的特征方向满足
+若近似子问题解满足
 \[
-  e_i^{(t+1)}
-  =(1+\beta-\eta\lambda_i)e_i^{(t)}-\beta e_i^{(t-1)}.
+ Q(\bm w^{(t+1)}\mid\bm w^{(t)})\leq Q^{\star,(t)}+\epsilon^{(t)},
 \]
-该方向的两个特征根都严格位于单位圆内，当且仅当
-$-1<\beta<1$且$0<\eta\lambda_i<2(1+\beta)$。因而常用的
-$0\leq\beta<1$还须配合$0<\eta<2(1+\beta)/L$，才能保证所有方向稳定。
-若已知$0<\mu\leq\lambda_i\leq L$，经典重球参数
+则
 \[
-  \eta=\frac{4}{(\sqrt{L}+\sqrt{\mu})^2},
-  \qquad
-  \beta=\left(\frac{\sqrt{L}-\sqrt{\mu}}
-  {\sqrt{L}+\sqrt{\mu}}\right)^2
+ \begin{aligned}
+ F(\bm w^{(t+1)})&\leq F(\bm w^{(t)})-\Delta^{(t)}+\epsilon^{(t)},\\
+ \Delta^{(t)}&=Q(\bm w^{(t)}\mid\bm w^{(t)})-Q^{\star,(t)}\geq0.
+ \end{aligned}
 \]
-给出这一二次模型上的代表性最坏方向速率；它不是一般非凸目标或含噪梯度下的无条件
-调参规则。
+只有$\epsilon^{(t)}\leq\Delta^{(t)}$才由此保证本轮原目标不增。实际无需知道$Q^{\star,(t)}$，
+也可直接检查新代理值是否低于旧代理值，再决定接受或继续求解。
+允许误差超过代理改善时，累计不等式为
+$\sum_{t<T}\Delta^{(t)}\leq F(\bm w^{(0)})-\inf_C F+\sum_{t<T}\epsilon^{(t)}$，
+其中假设原目标有有限下界。可求和误差控制累计退让，却不自动保证达到全局最优点。
 
-\term{Nesterov加速梯度}
-（Nesterov accelerated gradient）在前瞻点计算梯度：
-\[
-  \bm{z}^{(t)}=\bm{w}^{(t)}+\beta_t(\bm{w}^{(t)}-\bm{w}^{(t-1)}),
-  \qquad
-  \bm{w}^{(t+1)}=\bm{z}^{(t)}-\frac1L\nabla f(\bm{z}^{(t)}).
-\]
-令$\bm{w}^{(-1)}=\bm{w}^{(0)}$、$q_0=1$，并取
-\[
-  q_{t+1}=\frac{1+\sqrt{1+4q_t^2}}{2},
-  \qquad
-  \beta_t=\frac{q_t-1}{q_{t+1}}.
-\]
-若$f$为凸可微函数、梯度$L$-Lipschitz连续、最小点存在，并且每步使用精确梯度和
-步长$1/L$，则上述选择给出
-$f(\bm{w}^{(t)})-f^\star=O(1/t^2)$；同样条件下，普通梯度下降的一般保证为
-$O(1/t)$。强凸时还可采用依赖$\mu/L$的固定系数得到线性速率，但那是另一组参数和证明。
-在一维二次函数$f(w)=\lambda w^2/2$上，这个迭代可直接核验为
-\[
-  w^{(t+1)}
-  =\left(1-\frac{\lambda}{L}\right)
-  \bigl((1+\beta_t)w^{(t)}-\beta_t w^{(t-1)}\bigr).
-\]
-当$\lambda=L$时一步到达零点；当$\lambda\ll L$时，跨步项改变平坦方向上的二阶递推，
-但系数选错仍会振荡。一般凸证明不能只检查这个二次算例，而是构造同时含目标误差与外推
-距离的势函数；$q_{t+1}^2-q_{t+1}=q_t^2$使相邻两步的耦合项抵消，最终留下
-$q_t^2(f(\bm{w}^{(t)})-f^\star)$的统一上界。加速结论因此来自特定外推序列与势函数
-不等式，不能由“加入惯性”本身推出。
+同一数值例中，代理为$Q(x\mid1)=(x-1/2)^2+1/4$。
+若只求到$x=3/4$，其代理值为$5/16<1/2$，原目标为$9/32$，仍严格改善；
+若返回$x=5/4$，代理误差为$9/16>\Delta^{(t)}=1/4$，原目标反而升为$25/32$。
+当任务是最大化$F$时，方向相反：构造切触下界$Q\leq F$，
+使$Q(\bm w^{(t+1)}\mid\bm w^{(t)})\geq Q(\bm w^{(t)}\mid\bm w^{(t)})$，
+才有$F(\bm w^{(t+1)})\geq Q(\bm w^{(t+1)}\mid\bm w^{(t)})\geq F(\bm w^{(t)})$。
+不能沿用最小化的上界方向。
 
-\subsubsection{牛顿法、近似曲率与预条件}
-
-\term{牛顿法}（Newton's method）在$\bm{w}^{(t)}$处使用关于增量$\bm{p}$的局部
-二次模型
-\[
-  m_t(\bm{p})
-  =
-  f(\bm{w}^{(t)})
-  +\left\langle\nabla f(\bm{w}^{(t)}),\bm{p}\right\rangle
-  +\frac12\bm{p}^{\top}\nabla^2f(\bm{w}^{(t)})\bm{p}.
-\]
-令$\nabla_{\bm{p}}m_t(\bm{p}^{(t)})=\bm{0}$，便得到牛顿方程
-\[
-  \nabla^2 f(\bm{w}^{(t)})\bm{p}^{(t)}
-  =-\nabla f(\bm{w}^{(t)}),\qquad
-  \bm{w}^{(t+1)}=\bm{w}^{(t)}+\alpha_t\bm{p}^{(t)}.
-\]
-若Hessian矩阵在最优点附近正定且Lipschitz连续，取单位步长可得到局部二次收敛。但Hessian矩阵
-不定时，牛顿方向未必下降；离最优点较远时还需线搜索或信赖域。
-
-对非线性最小二乘
-$f(\bm{w})=\frac12\lVert\bm{r}(\bm{w})\rVert_2^2$，设
-$\bm{r}:\mathbb{R}^d\to\mathbb{R}^m$。记残差向量的Jacobian矩阵为
-$\bm{J}(\bm{w})\in\mathbb{R}^{m\times d}$，其第$i$行为
-$\bm{J}_{i,:}(\bm{w})=\nabla r_i(\bm{w})^{\top}$，则
-\[
-  \nabla^2f(\bm{w})
-  =\bm{J}(\bm{w})^{\top}\bm{J}(\bm{w})
-  +\sum_{i=1}^m r_i(\bm{w})\nabla^2r_i(\bm{w}).
-\]
-\term{Gauss--Newton法}忽略第二项，使用半正定矩阵
-$\bm{J}^{\top}\bm{J}$。当残差小或残差函数近似线性时近似合理；残差大时，省略项可能
-决定曲率。
-
-\term{拟牛顿法}（quasi-Newton method）不显式计算Hessian矩阵，而用梯度差
-$\bm{y}^{(t)}=\nabla f(\bm{w}^{(t+1)})-\nabla f(\bm{w}^{(t)})$和步长
-$\bm{s}^{(t)}=\bm{w}^{(t+1)}-\bm{w}^{(t)}$更新矩阵近似，并满足割线条件
-$\bm{B}^{(t+1)}\bm{s}^{(t)}=\bm{y}^{(t)}$。若$\bm{B}^{(t)}$近似Hessian矩阵，
-BFGS更新为
-\begin{equation}
-  \bm{B}^{(t+1)}
-  =
-  \bm{B}^{(t)}
-  +
-  \frac{\bm{y}^{(t)}(\bm{y}^{(t)})^{\top}}
-       {(\bm{y}^{(t)})^{\top}\bm{s}^{(t)}}
-  -
-  \frac{\bm{B}^{(t)}\bm{s}^{(t)}(\bm{s}^{(t)})^{\top}\bm{B}^{(t)}}
-       {(\bm{s}^{(t)})^{\top}\bm{B}^{(t)}\bm{s}^{(t)}}.
-  \label{eq:opt-bfgs-update}
-\end{equation}
-当$\bm{B}^{(t)}\succ\bm{0}$且曲率条件
-$(\bm{y}^{(t)})^{\top}\bm{s}^{(t)}>0$成立时，
-式~\eqref{eq:opt-bfgs-update}保持$\bm{B}^{(t+1)}\succ\bm{0}$，相应搜索方向
-$-(\bm{B}^{(t+1)})^{-1}\nabla f$才由正定性保证是下降方向。沿下降方向执行满足
-Wolfe条件的线搜索可产生该正曲率内积。具体地，令
-$\bm{w}^{(t+1)}=\bm{w}^{(t)}+\alpha_t\bm{p}^{(t)}$，其中
-$\nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)}<0$。Wolfe条件要求存在
-$0<c_1<c_2<1$使
-\begin{equation}
-\begin{aligned}
-  f(\bm{w}^{(t+1)})
-  &\leq
-  f(\bm{w}^{(t)})
-  +
-  c_1\alpha_t
-  \nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)},\\
-  \nabla f(\bm{w}^{(t+1)})^{\top}\bm{p}^{(t)}
-  &\geq
-  c_2\nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)}.
-\end{aligned}
-\label{eq:opt-wolfe-conditions}
-\end{equation}
-第二行就是\term{Wolfe曲率条件}（Wolfe curvature condition）。由
-$\bm{s}^{(t)}=\alpha_t\bm{p}^{(t)}$可得
-\[
-  (\bm{y}^{(t)})^{\top}\bm{s}^{(t)}
-  \geq
-  \alpha_t(c_2-1)
-  \nabla f(\bm{w}^{(t)})^{\top}\bm{p}^{(t)}
-  >0.
-\]
-非凸或梯度含噪时，上述条件可能难以满足，此时可能需要阻尼或跳过更新。
-
-\term{预条件}（preconditioning）则选择正定矩阵$\bm{P}$，按
-\[
-  \bm{w}^{(t+1)}
-  =
-  \bm{w}^{(t)}-\eta\bm{P}\nabla f(\bm{w}^{(t)})
-\]
-更新。
-这等价于在新的坐标或内积下做最陡下降。若\(p_i>0\)，并且
-\[
-  \bm{P}
-  =
-  \bm{Q}\operatorname{diag}(p_1,\ldots,p_d)\bm{Q}^{\top},
-\]
-则定义
-\[
-  \bm{P}^{1/2}
-  =
-  \bm{Q}\operatorname{diag}(\sqrt{p_1},\ldots,\sqrt{p_d})\bm{Q}^{\top}.
-\]
-这就是$\bm{P}$唯一的对称正定平方根：它满足
-$\bm{P}^{1/2}\bm{P}^{1/2}=\bm{P}$，并且可逆，其逆记为$\bm{P}^{-1/2}$。
-对当前正定二次目标，记
-\[
-  \widetilde{\bm{H}}=\bm{P}^{1/2}\bm{H}\bm{P}^{1/2},
-  \qquad
-  0<\widetilde{\mu}
-  =\lambda_{\min}(\widetilde{\bm{H}})
-  \leq\lambda_{\max}(\widetilde{\bm{H}})
-  =\widetilde{L}.
-\]
-原坐标中的误差递推为
-$\bm{e}^{(t+1)}=(\bm{I}-\eta\bm{P}\bm{H})\bm{e}^{(t)}$。令
-$\widetilde{\bm{e}}^{(t)}=\bm{P}^{-1/2}\bm{e}^{(t)}$，则
-\[
-  \widetilde{\bm{e}}^{(t+1)}
-  =
-  (\bm{I}-\eta\widetilde{\bm{H}})
-  \widetilde{\bm{e}}^{(t)},
-  \qquad
-  \bm{P}^{-1/2}
-  (\bm{I}-\eta\bm{P}\bm{H})
-  \bm{P}^{1/2}
-  =
-  \bm{I}-\eta\widetilde{\bm{H}}.
-\]
-右侧矩阵由可逆坐标变换$\bm{P}^{1/2}$得到，因而与原误差递推矩阵相似；相似矩阵具有
-相同特征值。由于$\widetilde{\bm{H}}$对称正定，迭代对任意初始误差收敛当且仅当
-$0<\eta<2/\widetilde{L}$。取
-$\eta=2/(\widetilde{L}+\widetilde{\mu})$时，在变换后的欧氏范数中，每步最坏收缩因子为
-\[
-  \frac{\widetilde{\kappa}-1}{\widetilde{\kappa}+1},
-  \qquad
-  \widetilde{\kappa}
-  =\frac{\widetilde{L}}{\widetilde{\mu}}.
-\]
-因此预条件的目标不是单独让$\bm{P}$的条件数小，而是让变换后曲率
-$\widetilde{\bm{H}}$的条件数接近$1$。固定$\bm{P}\succ\bm{0}$只保证定义了合法内积；
-若它与$\bm{H}$不匹配，$\widetilde{\kappa}$反而可能增大。对一般二阶可微的光滑强凸
-函数，需要在所有迭代经过的区域统一满足
-$\widetilde{\mu}\bm{I}\preceq
-\bm{P}^{1/2}\nabla^2f(\bm{w})\bm{P}^{1/2}
-\preceq\widetilde{L}\bm{I}$，上述步长范围与线性收敛解释才相应延续；变化的预条件矩阵还需
-额外控制。
-
-动量利用历史更新，牛顿类近似当前曲率，预条件改变几何尺度；三者可能组合，却不是同一种
-机制。第~\ref{chap:matrix-analysis}章将在矩阵函数与Kronecker结构建立后给出结构化
-预条件，Fisher矩阵与经验梯度二阶矩的差别则需等概率对象建立后讨论。
-
-\begin{example}[两个曲率方向上的预条件]
-\label{ex:opt-anisotropic-preconditioning}
-取$f(\bm w)=(w_1^2+16w_2^2)/2$，初值$(2,2)^{\top}$。普通梯度下降若取
-$\eta=0.1$，两个坐标分别乘以$0.9$与$-0.6$，因而
-$\bm w^{(t)}=(2\times0.9^t,\,2\times(-0.6)^t)^{\top}$。
-第二坐标来回越过谷底，第一坐标却缓慢缩小。取
-$\bm P=\operatorname{diag}(1,1/16)$及$\eta=1/2$后，
-$\bm P\nabla f(\bm w)=\bm w$，两坐标每步都减半。
-\end{example}
-
-\begin{figure*}[htbp]
- \centering
- \includegraphics[width=\linewidth]{figures/math-preparation/analysis-geometry/optimization-preconditioned-paths.pdf}
- \caption{例~\ref{ex:opt-anisotropic-preconditioning}中的精确更新路径。灰线是同一二次目标的等值线，蓝、红圆点分别表示普通更新与预条件更新，黄色星号是最小点。预条件使用了已知曲率，获得和应用这一矩阵的成本仍属于算法代价。}
- \label{fig:opt-preconditioned-paths}
-\end{figure*}
-
-这个例子中的预条件恰好消除了两个方向的尺度差。一般目标的曲率会随位置变化，近似矩阵
-也有误差；因此图中的直达路径解释机制，不构成所有预条件方法都更快的保证。
-
-\section{非光滑与随机目标的求解}
-\label{sec:opt-nonsmooth-stochastic-methods}
-
-接下来改变的是算法能取得的局部信息。绝对值等正则项使普通梯度不存在，
-大规模数据又可能只允许计算带噪声的梯度估计。非光滑性和随机性是两种不同障碍：
-前者需要次梯度或邻近映射，后者需要控制误差积累；两者可以出现在同一个问题中。
-
-\subsection{非光滑目标与正则化}
-\label{sec:opt-nonsmooth-proximal}
-
-\subsubsection{次梯度与非光滑最优性}
-
-绝对值损失和$\ell_1$稀疏惩罚在零点不可微，但凸函数仍可用支撑直线描述。
-\begin{definition}[凸次梯度与次微分]
-\label{def:opt-convex-subgradient}
-设$f:\mathbb R^d\to\mathbb R\cup\{+\infty\}$为适当凸函数，$f(\bm u)$有限。
-向量$\bm{g}\in\mathbb R^d$若满足
-\[
-  f(\bm{v})\geq f(\bm{u})+\langle\bm{g},\bm{v}-\bm{u}\rangle
-  \quad\text{对所有 }\bm{v},
-\]
-就称为$f$在$\bm{u}$处的\term{次梯度}（subgradient）。全部次梯度组成
-$\partial f(\bm{u})$，称为次微分；它可以是空集。
-\end{definition}
-例如
-\[
-  \partial |x|=
-  \begin{cases}
-    \{1\},&x>0,\\
-    [-1,1],&x=0,\\
-    \{-1\},&x<0.
-  \end{cases}
-\]
-凸函数在$\bm{w}^{\star}$处最优，当且仅当
-$\bm{0}\in\partial f(\bm{w}^{\star})$。若零向量是次梯度，定义立即给出
-$f(\bm{v})\geq f(\bm{w}^{\star})$；反过来，若$\bm{w}^{\star}$全局最优，则
-$f(\bm{v})\geq f(\bm{w}^{\star})+\langle\bm{0},\bm{v}-\bm{w}^{\star}\rangle$，
-所以零向量满足次梯度定义。这个等价性依赖凸次梯度采用全局下界定义。
-若要把$f+r$的次微分直接写成$\partial f+\partial r$，或把约束写成指标函数后拆分
-次微分，还需共同相对内部等相应资格条件；不能只凭两个函数都凸就无条件使用求和等式。
-
-\subsubsection{投影、邻近与软阈值}
-
-对闭凸集$C$，欧氏\term{投影}（projection）
-$\Pi_C(\bm{z})=\argmin_{\bm{w}\in C}\lVert\bm{w}-\bm{z}\rVert_2^2$
-把一步梯度更新拉回可行域：
-\[
-  \bm{w}^{(t+1)}
-  =\Pi_C\bigl(\bm{w}^{(t)}-\eta_t\nabla f(\bm{w}^{(t)})\bigr).
-\]
-定理~\ref{thm:opt-projection-separation}的证明已经说明，在有限维空间中，非空闭性保证
-最近点存在，而凸性与平方距离的严格凸性共同保证唯一。若$C$非凸，最近点可能不唯一。
-
-投影处理一个硬可行域；若希望保留整个空间中的候选，却对不同候选收取不同惩罚，
-就要在“惩罚小”和“离当前点近”之间取得平衡。
-\begin{definition}[凸函数的邻近算子]
-\label{def:opt-proximal-operator}
-设$r:\mathbb R^d\to\mathbb R\cup\{+\infty\}$适当、下半连续且凸，$\eta>0$。
-函数$r$的\term{邻近算子}（proximal operator）定义为
-\[
-  \operatorname{prox}_{\eta r}(\bm{z})
-  =\argmin_{\bm{w}}
-  \left\{r(\bm{w})+\frac{1}{2\eta}
-  \lVert\bm{w}-\bm{z}\rVert_2^2\right\}.
-\]
-\end{definition}
-这里的$\eta$调节惩罚与距离的相对权重；它还未指代某个算法的迭代步数。二次项使目标强凸。
-适当闭凸函数具有仿射下界，二次项在无穷远处超过这个下界的线性下降，所以子问题强制；
-强制性与下半连续性保证最小点存在，强凸性保证它唯一，所以邻近算子对每个$\bm{z}$都有
-单值输出。
-指标函数$\iota_C$在$C$上为零、在外部为$+\infty$，其邻近算子正是投影。
-对$f+r$，近端梯度先按光滑部分$f$走一步，再用$r$的邻近算子处理非光滑结构。
-
-\begin{theorem}[$\ell_1$邻近算子是软阈值]
-\label{thm:opt-soft-threshold}
-设$\lambda\geq0$、$\eta>0$。对$r(\bm{w})=\lambda\lVert\bm{w}\rVert_1$，
-\[
-  [\operatorname{prox}_{\eta r}(\bm{z})]_j
-  =\operatorname{sign}(z_j)\max\{|z_j|-\eta\lambda,0\}.
-\]
-\end{theorem}
-
-\begin{proof}
-目标按坐标可分，只需最小化
-$\lambda|w|+(w-z)^2/(2\eta)$。若$w>0$，驻点为
-$w=z-\eta\lambda$，只在$z>\eta\lambda$时落在该区域；若$w<0$，驻点为
-$w=z+\eta\lambda$，只在$z<-\eta\lambda$时有效。若
-$|z|\leq\eta\lambda$，零点最优性条件
-$0\in\lambda[-1,1]-z/\eta$成立，所以$w=0$。合并三种情形即得结论。
-\end{proof}
-
-例如取$\bm z=(3,0.4,-2)^{\top}$与$\eta\lambda=1$，软阈值输出
-$(2,0,-1)^{\top}$；小幅坐标被直接置零。若改用
-$r(\bm w)=\lambda\lVert\bm w\rVert_2^2/2$，逐坐标驻点给出
-$\operatorname{prox}_{\eta r}(\bm z)=\bm z/(1+\eta\lambda)$，在同一参数下为
-$(1.5,0.2,-1)^{\top}$。两种正则化都缩小幅度，只有前者在这个例子中产生精确零值。
-
-图~\ref{fig:opt-proximal-comparison}对同一个标量输入$z$比较三种处理：区间投影把
-超出范围的值截到边界；软阈值把小幅值置零、其余幅值减去固定量；二次惩罚则等比例
-缩小所有输入。投影保持可行性，软阈值产生稀疏性，二次惩罚改变幅度，它们都可以写成
-邻近算子，但输出行为和所解决的问题不同。
-\begin{figure}[htbp]
- \centering
- \includegraphics[width=\linewidth]{figures/math-preparation/concept-revision-analysis-functional/proximal-comparison.pdf}
- \caption{同一输入$z$的三种邻近映射。投影采用$C=[-1,1]$；软阈值与二次收缩均取$\eta\lambda=1$，分别输出$\operatorname{sign}(z)(|z|-1)_+$和$z/2$。横轴刻度标出阈值位置，曲线由完整分段解析式生成。}
- \label{fig:opt-proximal-comparison}
-\end{figure}
-
-邻近算子不会放大输入距离。令
-$\bm{p}=\operatorname{prox}_{\eta r}(\bm{x})$、
-$\bm{q}=\operatorname{prox}_{\eta r}(\bm{y})$。最优性条件给出
-$(\bm{x}-\bm{p})/\eta\in\partial r(\bm{p})$和
-$(\bm{y}-\bm{q})/\eta\in\partial r(\bm{q})$。把两个次梯度不等式相加，得到
-\[
-  \langle\bm{x}-\bm{y},\bm{p}-\bm{q}\rangle
-  \geq\lVert\bm{p}-\bm{q}\rVert_2^2.
-\]
-再用Cauchy--Schwarz不等式便有
-$\lVert\bm{p}-\bm{q}\rVert_2\leq\lVert\bm{x}-\bm{y}\rVert_2$。
-这个非扩张性质依赖凸次梯度的单调性；非凸邻近子问题可能多解，不能直接沿用。
-
-本节的凸次梯度也不同于第~\ref{chap:mathematical-analysis}章介绍的Clarke广义梯度。
-前者用一个全局仿射下界定义，直接产生凸最优性条件；后者取局部Lipschitz函数邻近可微点
-梯度极限的闭凸包，允许非凸局部结构。人为指定的替代梯度更只是反向计算信号，未必属于
-前面任一集合。三者名称相近，定义对象与可用结论并不相同。
-
-\begin{table*}[htbp]
- \centering\small
- \begin{tabularx}{\linewidth}{@{}lXX@{}}
- \toprule
- 更新方式 & 每步处理的结构 & 分析前需核对的条件\\
- \midrule
- 梯度下降 & 使用可微目标的梯度 & 光滑常数与步长；全局最优保证还依赖凸性或PL等条件\\
- 投影梯度 & 梯度更新后求可行集最近点 & 非空闭凸集；投影本身的计算成本\\
- 次梯度更新 & 使用非光滑凸目标的全局下界斜率 & 次梯度范数及步长序列；单步目标未必下降\\
- 近端梯度 & 光滑部分求梯度，非光滑部分求邻近解 & 光滑部分的步长、正则项的适当闭凸性及可解邻近子问题\\
- \bottomrule
- \end{tabularx}
- \caption{常见一阶更新的结构与条件。相近的更新形式并不共享同一收敛定理。}
- \label{tab:opt-first-order-structures}
-\end{table*}
-
-\subsubsection{惩罚、约束与参数表达}
-
-惩罚与硬约束有联系，但不是逐参数自动等价。考虑约束问题
-\[
-  \min_{\bm{w}}f(\bm{w})
-  \quad\text{s.t.}\quad
-  \lVert\bm{w}\rVert_1\leq R.
-\]
-若该问题有原始最优解，强对偶成立，并且对偶最优乘子
-$\lambda^\star$确实达到，例如满足前述Slater条件且最优值有限，则原始最优解同时最小化
-$f(\bm{w})+\lambda^\star\lVert\bm{w}\rVert_1$；Lagrangian中的常数
-$-\lambda^\star R$不影响最小点。仅有原、对偶最优值相等并不能保证这样的有限乘子存在。
-反过来，不同$\lambda$对应的范数半径可能相同，非凸问题还可能存在对偶间隙。把
-$\bm{w}$写成其他参数的函数也会改变优化几何；即使表示同一预测函数，也不保证产生同一
-更新轨迹。
-
-同样的区别出现在权重衰减中。普通欧氏梯度下降用于
-$f(\bm{w})+\lambda\lVert\bm{w}\rVert_2^2/2$时给出
-\[
-  \bm{w}^{(t+1)}
-  =(1-\eta\lambda)\bm{w}^{(t)}-\eta\nabla f(\bm{w}^{(t)}),
-\]
-与直接乘上衰减因子相同。若使用预条件矩阵$\bm{P}$，惩罚梯度产生
-$-\eta\lambda\bm{P}\bm{w}^{(t)}$，而坐标无关的直接衰减仍为
-$-\eta\lambda\bm{w}^{(t)}$；除非$\bm{P}=\bm{I}$或另有匹配，它们不再相同。
-
-\subsection{随机梯度与更新稳定性}
-\label{sec:opt-stochastic-gradient-stability}
-
-\subsubsection{随机梯度与带误差迭代}
-
-有限和目标
-\[
-  F_S(\bm{w})=\frac1n\sum_{i=1}^n\ell_i(\bm{w})
-  +\frac{\lambda}{2}\lVert\bm{w}\rVert_2^2
-\]
-的经验损失梯度要读取全部$n$项。这里的抽取先只用有限概率权重理解，$\mathbb E_I$表示按这些权重求和；
-条件期望和随机收敛留待概率与随机过程章节。若$I$在$\{1,\ldots,n\}$上均匀抽取，则完整目标的
-随机梯度可取
-\[
-  \bm{g}_I(\bm{w})
-  =\nabla\ell_I(\bm{w})+\lambda\bm{w},\qquad
-  \mathbb{E}_I[\bm{g}_I(\bm{w})]
-  =\nabla F_S(\bm{w}).
-\]
-若按概率$p_i>0$非均匀抽取，则应改用
-\[
-  \bm{g}_I(\bm{w})
-  =\frac{\nabla\ell_I(\bm{w})}{np_I}+\lambda\bm{w}.
-\]
-正则项梯度$\lambda\bm{w}$是确定量，无需抽样；小批量只需平均若干经过相应加权的
-损失梯度，再加上这项确定梯度。小批量降低方差，却增加每步计算。
-
-在概率工具建立前，可以先分析带确定误差的更新
-\[
-  \bm{w}^{(t+1)}
-  =\bm{w}^{(t)}-\eta_t
-  \bigl(\nabla F(\bm{w}^{(t)})+\bm{e}^{(t)}\bigr).
-\]
-若$F$为$L$光滑且$0<\eta_t\leq1/L$，把这一步代入下降引理，并对交叉项使用
-Cauchy--Schwarz与$2ab\leq a^2+b^2$，可得
-\[
-  F(\bm{w}^{(t+1)})
-  \leq F(\bm{w}^{(t)})
-  -\frac{\eta_t}{2}\lVert\nabla F(\bm{w}^{(t)})\rVert_2^2
-  +\frac{\eta_t}{2}\lVert\bm{e}^{(t)}\rVert_2^2.
-\]
-误差项因而必须与所求结论一起累计。固定非零偏差通常只允许迭代接近一个误差邻域；
-$\sum_t\eta_t\lVert\bm{e}^{(t)}\rVert_2^2<\infty$使上述目标下降不等式中的累计
-误差项有限。仅令
-$\eta_t\to0$仍不够，还要核对步长总量是否足以持续纠偏，以及目标与迭代是否保持稳定。
-
-若理想更新映射$T_t(\bm{w})=\bm{w}-\eta_t\nabla F(\bm{w})$是
-$\rho_t$-Lipschitz，实际轨迹与理想轨迹之差$\delta_t$满足
-\begin{equation}
-  \delta_{t+1}\leq\rho_t\delta_t+\eta_t\lVert\bm{e}^{(t)}\rVert_2.
-  \label{eq:opt-inexact-gradient-recurrence}
-\end{equation}
-展开递推可见，$\rho_t<1$时旧误差会衰减；若只有$\rho_t\leq1$，直接求和控制轨迹偏差
-需要考察$\sum_t\eta_t\lVert\bm{e}^{(t)}\rVert_2$，前面的平方误差条件一般不能推出
-这个一次范数条件。若$\rho_t>1$，传播因子还可能放大早期扰动。减小步长降低单步误差
-影响，也会减慢理想更新。
-
-\subsubsection{成对迭代与梯度自界}
-
-同一递推可比较只替换一个样本的数据集$S,S'$。若每个样本梯度有界，且两条轨迹在使用
-相同样本时由收缩映射拉近，只在抽到被替换样本时受到额外扰动，就能控制
-$\lVert\bm{w}_S^{(t)}-\bm{w}_{S'}^{(t)}\rVert_2$。具体地，设每个样本梯度
-$L$-Lipschitz且范数不超过$G$，两条迭代使用相同索引$I_t$。记距离为$\Delta_t$；
-若$I_t$不是被替换的索引，则
-\[
-  \Delta_{t+1}\leq(1+\eta_tL)\Delta_t;
-\]
-若恰好抽到被替换项，则再增加至多$2\eta_tG$。在凸光滑且步长适当时，共同样本的梯度
-更新可进一步证明为非扩张映射，从而去掉前式中的膨胀因子。这称为
-\term{算法稳定性}（algorithmic stability）：训练集改动一个样本时，输出不会变化太大。
-完整的期望界和随机收敛需使用第~\ref{chap:stochastic-processes-and-approximation}章的
-条件期望与噪声工具。
-
-缩放损失会等比例缩放梯度，因此学习率不能脱离损失尺度比较。梯度裁剪把过大更新限制在
-指定半径内，改变了估计量并可能引入偏差。对更新式直接减去
-$\eta\lambda\bm{w}$的权重衰减，在普通梯度下降中等价于$\ell_2$惩罚；使用坐标自适应缩放
-时，两者通常不再等价。
-
-\begin{lemma}[非负光滑函数的梯度自界]
-\label{lem:opt-self-bounding}
-若$\ell:\mathbb{R}^d\to[0,\infty)$可微且$L$光滑，其中$L>0$，则
-\[
-  \lVert\nabla\ell(\bm{w})\rVert_2^2\leq2L\ell(\bm{w}).
-\]
-\end{lemma}
-
-\begin{proof}
-在下降引理中取
-$\bm{v}=\bm{w}-\nabla\ell(\bm{w})/L$，得到
-\[
-  \ell(\bm{v})
-  \leq\ell(\bm{w})-\frac{1}{2L}
-  \lVert\nabla\ell(\bm{w})\rVert_2^2.
-\]
-左侧非负，移项即得结论。若损失可取负值，这一步失效；给函数加常数虽不改变梯度，却会
-改变右侧，所以非负性是实质条件。
-\end{proof}
-
-\section{变量分解与多层决策}
-\label{sec:opt-decomposition-multiple-levels}
-
-前面主要比较同一目标下的更新规则。现在考察问题自身的组织：参数可分块，
-目标可能彼此竞争，某些变量还可能由另一个优化问题决定。分块方法利用变量结构，
-多目标与鞍点明确不同目标之间的关系，双层求导则追踪内层解如何影响外层目标。
-这些结构可以与光滑、约束或随机条件组合，不能按单一的算法优劣排序。
-
-\subsection{分块、交替与分布优化}
+\subsection{分块方法}
 \label{sec:opt-block-alternating-distribution}
-
-\subsubsection{分块更新与约束分解}
 
 若变量自然分成$\bm{u}$与$\bm{v}$两组，可以固定一组更新另一组。对
 \[
@@ -1827,12 +2334,55 @@ $v^{(t+1)}-1=(v^{(t)}-1)/2$，最终到达联合最优点$(1,1)$。这里的收�
 正定二次目标的特殊结构。换成非凸目标$(uv-1)^2$并从$(0,0)$开始时，逐块目标在一块
 固定为零时没有提供离开零点的理由；若平局规则继续选择零，目标保持为$1$，而全局最优值
 为$0$。所以逐块精确和目标单调都不单独保证全局最优。
+若无约束目标连续可微，一个点对每一块都已精确最优，则各块偏导同时为零，故它是驻点。
+目标联合凸时，这又足以推出全局最优；仅对各块分别凸则不够。
+上述$(uv-1)^2$在另一块固定时都是凸二次函数，仍给出了失败例。
+对于实际迭代，还须证明它确实收敛到块最优点，而非仅看到目标值收敛。
 
 约束耦合时，可以复制共享变量，再通过一致性约束分解为局部子问题。乘子负责协调副本，
 这改变了每步计算位置，却没有删除原约束。若局部问题没有被足够准确地求解，或协调步长
 不满足条件，分解形式本身不保证收敛。
+具体地，最小化$r(\bm w)+s(\bm w)$可改写为
+$\min_{\bm u=\bm v}\{r(\bm u)+s(\bm v)\}$。固定等式乘子$\bm\nu$后，
+两项Lagrangian子问题可独立求解：
+\begin{align}
+ \bm u^{(t)}&\in\argmin_{\bm u}\{r(\bm u)+\langle\bm\nu^{(t)},\bm u\rangle\},\nonumber\\
+ \bm v^{(t)}&\in\argmin_{\bm v}\{s(\bm v)-\langle\bm\nu^{(t)},\bm v\rangle\},\nonumber\\
+ \bm\nu^{(t+1)}&=\bm\nu^{(t)}+\eta^{(t)}(\bm u^{(t)}-\bm v^{(t)}).
+ \label{eq:opt-consensus-dual-decomposition}
+\end{align}
+输入是两个可分函数及当前价格，子问题输出各自副本，协调量是副本差。
+这不是固定其他变量的交替最小化：局部副本可以暂时不一致，所改进的是对偶下界，
+并不保证原始目标在每轮都下降。若两个子问题适当闭凸且强凸，解总存在，
+负对偶函数的光滑常数可取$1/\mu_r+1/\mu_s$，步长据此选择；
+仅凸时则回用有界残差的对偶次梯度分析。子问题无下界时，这种分解不能直接执行。
 
-\subsubsection{分布变量与可行约束}
+取$r(u)=(u-1)^2/2$、$s(v)=(v+1)^2/2$，
+内层解是$u=1-\nu$、$v=\nu-1$，对偶函数$q(\nu)=2\nu-\nu^2$。
+令$\nu^{(0)}=0$、$\eta^{(t)}=1/4$，得到
+$\nu^{(t)}=1-2^{-t}$、$u^{(t)}=2^{-t}$、$v^{(t)}=-2^{-t}$。
+第一轮两个副本各自使局部目标为零，却相差$2$；第三次取值为$1/4,-1/4$，
+差缩小到$1/2$。将二者平均为共同变量$w=0$，恢复可行上界$r(0)+s(0)=1$，
+与$q(\nu^{(t)})=1-4^{-t}$之间的差为$4^{-t}$。
+这里的平均恰好最优来自对称二次结构，不是一般副本问题的免费恢复规则。
+
+若每轮只保证
+$\mathcal L(\widetilde{\bm w}^{(t)},\bm y^{(t)})\leq q(\bm y^{(t)})+\epsilon^{(t)}$，
+将该候选代入另一组乘子会给
+\[
+ q(\bm y')\leq q(\bm y^{(t)})
+ +\langle\widetilde{\bm s}^{(t)},\bm y'-\bm y^{(t)}\rangle+\epsilon^{(t)}.
+\]
+于是投影次梯度的单步距离界多出$2\eta^{(t)}\epsilon^{(t)}$。累加后，
+有限步界的分子应增加
+\[
+ 2\sum_{t<T}\eta^{(t)}\epsilon^{(t)}.
+\]
+近似内层值本身大于等于$q$，不能直接冒充原问题下界。有可信子问题误差界时，
+可用下界为
+\[
+ \mathcal L(\widetilde{\bm w}^{(t)},\bm y^{(t)})-\epsilon^{(t)}.
+\]
 
 变量也可以是一个分布$q$。此时“更新分布”仍是在某个可行分布集合上降低同一目标，而非
 一种脱离优化的概率操作。在有限支持$\{1,\ldots,m\}$上，分布变量就是概率单纯形
@@ -1840,30 +2390,231 @@ $v^{(t+1)}-1=(v^{(t)}-1)/2$，最终到达联合最优点$(1,1)$。这里的收�
   \bm{\Delta}_m
   =\{\bm{q}\in\mathbb{R}^m:q_i\geq0,\ \sum_{i=1}^m q_i=1\}.
 \]
-归一化、非负性和支持集都是可行约束，更新后必须仍留在这个单纯形中。EM与变分方法还需要
-期望、条件分布和散度。第~\ref{chap:probability-theory}章、
-第~\ref{chap:mathematical-statistics}章和
+归一化、非负性和支持集都是可行约束，更新后必须仍留在这个单纯形中。
+例如块子问题$\min_{\bm q\in\bm\Delta_2}\|\bm q-(0.8,0.4)^\top\|_2^2/2$
+的解不是原向量：为使两坐标和为$1$，各减去$0.1$，得到$(0.7,0.3)^\top$；
+非负性仍成立，因此它满足该凸投影问题的最优性条件。
+EM与变分方法还需要
+期望、条件分布和散度。第~\ref{chap:random-variables}章“随机变量”和
 第~\ref{chap:information-theory-and-statistical-geometry}章建立这些对象后，将复用
 交替优化与MM的单调性核对方式。
 
-\subsection{多目标与鞍点}
-\label{sec:opt-multiobjective-saddle}
+\subsection{近似更新方法}
+\label{sec:opt-stochastic-gradient-stability}
 
-\subsubsection{支配、Pareto与共同下降}
+有限和目标
+\[
+  F_S(\bm{w})=\frac1n\sum_{i=1}^n\ell_i(\bm{w})
+  +\frac{\lambda}{2}\lVert\bm{w}\rVert_2^2
+\]
+的经验损失梯度要读取全部$n$项。这里的抽取先只用有限概率权重理解，$\mathbb E_I$表示按这些权重求和；
+条件期望由第~\ref{chap:random-variables}章“随机变量”建立，
+随机迭代的收敛分析见第~\ref{sec:stoch-approximation-markov-noise}节。
+若$I$在$\{1,\ldots,n\}$上均匀抽取，则完整目标的
+随机梯度可取
+\[
+  \bm{g}_I(\bm{w})
+  =\nabla\ell_I(\bm{w})+\lambda\bm{w},\qquad
+  \mathbb{E}_I[\bm{g}_I(\bm{w})]
+  =\nabla F_S(\bm{w}).
+\]
+若按概率$p_i>0$非均匀抽取，则应改用
+\[
+  \bm{g}_I(\bm{w})
+  =\frac{\nabla\ell_I(\bm{w})}{np_I}+\lambda\bm{w}.
+\]
+正则项梯度$\lambda\bm{w}$是确定量，无需抽样；小批量只需平均若干经过相应加权的
+损失梯度，再加上这项确定梯度。
+例如$n=2$、当前位置两项标量梯度为$2,-1$，完整损失梯度为$1/2$。
+若以$p_1=3/4,p_2=1/4$抽样而不重加权，均值为$5/4$，已经改变更新方向的大小；
+使用$1/(np_I)$后，两种输出为$4/3,-2$，均值恢复为$1/2$。
+
+在第$t$轮固定已经得到的历史和当前点，再按该轮概率求有限加权平均，记作$\mathbb E^{(t)}$。
+无偏性要求的是这个固定历史后的平均，不只是对一个与迭代无关的固定点成立。
+若固定历史后的各抽样梯度独立同分布、无偏，且均方波动不超过$(\sigma^{(t)})^2$，
+将$b$个样本平均后，交叉误差项均值为零，故
+\[
+ \mathbb E^{(t)}\left\|\frac1b\sum_{j=1}^b\bm g_{I_j}
+             -\nabla F_S(\bm w^{(t)})\right\|_2^2
+ \leq\frac{(\sigma^{(t)})^2}{b}.
+\]
+这解释了小批量减少波动但增加信息读取量的取舍；重复使用同一个样本$b$次没有这一收益。
+有偏近似可写成$\bm g^{(t)}=\nabla F_S(\bm w^{(t)})+\bm b^{(t)}+\bm\xi^{(t)}$，
+其中$\bm b^{(t)}=\mathbb E^{(t)}\bm g^{(t)}-\nabla F_S(\bm w^{(t)})$、
+$\mathbb E^{(t)}\bm\xi^{(t)}=0$。
+抽样降低的是波动，不会自动消除$\bm b^{(t)}$。这里仅建立逐轮有限加权接口，
+长期随机收敛仍需后文的条件期望工具。
+
+在概率工具建立前，可以先分析带确定误差的更新
+\[
+  \bm{w}^{(t+1)}
+  =\bm{w}^{(t)}-\eta^{(t)}
+  \bigl(\nabla F(\bm{w}^{(t)})+\bm{e}^{(t)}\bigr).
+\]
+若$F$为$L$光滑且$0<\eta^{(t)}\leq1/L$，令$\bm g=\nabla F(\bm w^{(t)})$，
+下降引理给出的变化上界为
+$-\eta^{(t)}\|\bm g\|_2^2-\eta^{(t)}\langle\bm g,\bm e^{(t)}\rangle
++L(\eta^{(t)})^2\|\bm g+\bm e^{(t)}\|_2^2/2$。
+将$L(\eta^{(t)})^2$放宽为$\eta^{(t)}$后，平方展开的交叉项恰好抵消，得到
+\[
+  F(\bm{w}^{(t+1)})
+  \leq F(\bm{w}^{(t)})
+  -\frac{\eta^{(t)}}{2}\lVert\nabla F(\bm{w}^{(t)})\rVert_2^2
+  +\frac{\eta^{(t)}}{2}\lVert\bm{e}^{(t)}\rVert_2^2.
+\]
+误差项因而必须与所求结论一起累计。固定非零偏差通常只允许迭代接近一个误差邻域；
+$\sum_t\eta^{(t)}\lVert\bm{e}^{(t)}\rVert_2^2<\infty$使上述目标下降不等式中的累计
+误差项有限。仅令
+$\eta^{(t)}\to0$仍不够，还要核对步长总量是否足以持续纠偏，以及目标与迭代是否保持稳定。
+若$F_{\inf}>-\infty$，求和得到一个可直接使用的有限预算界：
+\begin{equation}
+ \min_{t<T}\|\nabla F(\bm w^{(t)})\|_2^2
+ \leq\frac{2(F(\bm w^{(0)})-F_{\inf})
+             +\sum_{t<T}\eta^{(t)}\|\bm e^{(t)}\|_2^2}
+            {\sum_{t<T}\eta^{(t)}}.
+ \label{eq:opt-inexact-gradient-finite-rate}
+\end{equation}
+步长总和发散且加权平方误差和有限时，右侧趋零；结论仍只涉及最佳驻点残差。
+例如$F(w)=w^2/2$、恒定误差$e\neq0$与$0<\eta<2$给
+$w^{(t+1)}=(1-\eta)w^{(t)}-\eta e$，最终趋向$-e$而非$0$。
+固定偏差即使很小，也会留下$e^2/2$的目标差。
+
+若理想更新映射$T^{(t)}(\bm{w})=\bm{w}-\eta^{(t)}\nabla F(\bm{w})$是
+$\rho^{(t)}$-Lipschitz，实际轨迹与理想轨迹之差$\delta^{(t)}$满足
+\begin{equation}
+  \delta^{(t+1)}\leq\rho^{(t)}\delta^{(t)}+\eta^{(t)}\lVert\bm{e}^{(t)}\rVert_2.
+  \label{eq:opt-inexact-gradient-recurrence}
+\end{equation}
+令$a^{(t)}=\eta^{(t)}\|\bm e^{(t)}\|_2$，完整展开为
+\[
+ \delta^{(T)}\leq\left(\prod_{j=0}^{T-1}\rho^{(j)}\right)\delta^{(0)}
+ +\sum_{t=0}^{T-1}a^{(t)}\prod_{j=t+1}^{T-1}\rho^{(j)},
+\]
+其中空积为$1$。若存在统一$\bar\rho<1$使$\rho^{(t)}\leq\bar\rho$，
+旧误差几何衰减；$a^{(t)}\to0$还保证$\delta^{(T)}\to0$，
+而$a^{(t)}\leq a$只能给出极限上界$a/(1-\bar\rho)$。
+证明前一结论时，可把误差和分成有限的早期项与足够小的尾项：早期项的传播因子趋零，
+尾项由几何级数控制。仅有每个$\rho^{(t)}<1$不够，例如
+$\rho^{(t)}=1-1/(t+2)^2$的前$T$项乘积为$(T+2)/(2(T+1))$，趋向$1/2$而非零。
+
+若只有$\rho^{(t)}\leq1$，则$\delta^{(T)}\leq\delta^{(0)}+\sum_{t<T}a^{(t)}$。
+控制这条轨迹偏差需要一次范数误差和；平方误差可求和不蕴含它：
+取$\eta^{(t)}=1$、$\|\bm e^{(t)}\|_2=1/(t+1)$即可区分两者。
+即使一次范数和有限，也只保证偏差有界，不保证两条轨迹最终重合。
+若$\rho^{(t)}>1$，传播因子还可能放大早期扰动；减小步长同时影响误差注入和理想收敛，需一起计算。
+
+映射系数也必须由目标条件取得。一般$L$光滑目标只能直接给出$\rho^{(t)}\leq1+\eta^{(t)}L$。
+若$F$还凸，则梯度满足
+\[
+ \langle\nabla F(\bm x)-\nabla F(\bm y),\bm x-\bm y\rangle
+ \geq\frac1L\|\nabla F(\bm x)-\nabla F(\bm y)\|_2^2.
+\]
+为证明它，对凸光滑函数$h_{\bm y}(\bm z)=F(\bm z)-\langle\nabla F(\bm y),\bm z\rangle$
+使用下降引理；$\bm y$为其全局最小点，故
+$h_{\bm y}(\bm x)-h_{\bm y}(\bm y)\geq
+\|\nabla F(\bm x)-\nabla F(\bm y)\|_2^2/(2L)$。
+交换$\bm x,\bm y$后相加即得所需不等式。再展开两次梯度更新的距离平方，得到
+\[
+ \|T^{(t)}(\bm x)-T^{(t)}(\bm y)\|_2^2
+ \leq\|\bm x-\bm y\|_2^2
+ -\eta^{(t)}(2/L-\eta^{(t)})\|\nabla F(\bm x)-\nabla F(\bm y)\|_2^2.
+\]
+因此$0\leq\eta^{(t)}\leq2/L$时非扩张。若进一步二阶连续可微且
+$\mu\bm I\preceq\nabla^2F\preceq L\bm I$，沿两点线段平均Hessian可得
+$\rho^{(t)}\leq\max\{|1-\eta^{(t)}\mu|,|1-\eta^{(t)}L|\}$。
+固定$0<\eta<2/L$才给出统一小于$1$的系数；变步长需检查其乘积而不是只逐项检查。
+
+同一递推可比较只替换一个样本的数据集$S,S'$。若每个样本梯度有界，且两条轨迹在使用
+相同样本时由收缩映射拉近，只在抽到被替换样本时受到额外扰动，就能控制
+$\lVert\bm{w}_S^{(t)}-\bm{w}_{S'}^{(t)}\rVert_2$。具体地，设每个样本梯度
+$L$-Lipschitz且在所访问点范数不超过$G$，暂取$\lambda=0$，
+两条迭代使用相同索引$I^{(t)}$。记距离为$\Delta^{(t)}$；
+若$I^{(t)}$不是被替换的索引，则
+\[
+  \Delta^{(t+1)}\leq(1+\eta^{(t)}L)\Delta^{(t)};
+\]
+若恰好抽到被替换项，则再增加至多$2\eta^{(t)}G$。在凸光滑且步长适当时，共同样本的梯度
+更新由刚才的证明为非扩张映射，从而去掉前式中的膨胀因子。
+在均匀抽样且固定历史后，被替换索引出现的权重为$1/n$，故
+$\mathbb E^{(t)}\Delta^{(t+1)}\leq\Delta^{(t)}+2\eta^{(t)}G/n$。
+相同初值给$\mathbb E\Delta^{(T)}\leq(2G/n)\sum_{t<T}\eta^{(t)}$。
+若测试损失在比较点之间为$K$-Lipschitz，损失差再被$K\Delta^{(T)}$控制；
+参数接近与预测或损失接近仍需这一接口。这称为
+\term{算法稳定性}（algorithmic stability）：训练集改动一个样本时，输出不会变化太大。
+上述期望递推的严格表述需要第~\ref{sec:rv-conditional-expectation}节的条件期望；
+随机迭代本身的收敛则还需第~\ref{chap:action-and-state}章“行动和状态”中的
+步长、累计噪声与平均动力学条件，不能由算法稳定性直接推出。
+
+缩放损失会等比例缩放梯度，因此学习率不能脱离损失尺度比较。梯度裁剪把过大更新限制在
+指定半径内，改变了估计量并可能引入偏差。
+具体地，阈值$c>0$下令
+$\operatorname{clip}_c(\bm g)=\bm g\min\{1,c/\|\bm g\|_2\}$，并令零向量仍映为零。
+前述等概率标量梯度$2,-1$的均值为$1/2$，裁剪到$c=1$后变成$1,-1$，
+均值为零；这展示了偏差怎样产生。对更新式直接减去
+$\eta\lambda\bm{w}$的权重衰减，在普通梯度下降中等价于$\ell_2$惩罚；使用坐标自适应缩放
+时，两者通常不再等价。
+
+\begin{lemma}[非负光滑函数的梯度自界]
+\label{lem:opt-self-bounding}
+若$\ell:\mathbb{R}^d\to[0,\infty)$可微且$L$光滑，其中$L>0$，则
+\[
+  \lVert\nabla\ell(\bm{w})\rVert_2^2\leq2L\ell(\bm{w}).
+\]
+\end{lemma}
+
+\begin{proof}
+在下降引理中取
+$\bm{v}=\bm{w}-\nabla\ell(\bm{w})/L$，得到
+\[
+  \ell(\bm{v})
+  \leq\ell(\bm{w})-\frac{1}{2L}
+  \lVert\nabla\ell(\bm{w})\rVert_2^2.
+\]
+左侧非负，移项即得结论。若损失可取负值，这一步失效；给函数加常数虽不改变梯度，却会
+改变右侧，所以非负性是实质条件。
+\end{proof}
+
+给定总预算，松弛应返回可行恢复与上下界，代理应核验原目标而非只报子问题收敛，
+分块应核验联合驻点或副本一致性，近似更新应核验误差累计。
+这些检查可以共用前面的下降和距离递推，但不能互换输出含义：
+距离某条理想轨迹很近，不代表那条轨迹本身全局最优；对偶值很高，也不代表本轮原始候选可行。
+比较总成本时，应同时计入试探次数、样本读取、局部子问题和恢复步骤，而非只比较外层迭代轮数。
+
+\section{多目标、对抗与双层优化}
+\label{sec:opt-decomposition-multiple-levels}
+
+前面的计算预算改变了怎样求同一个答案；现在改变的是怎样规定答案。
+多个指标可以由同一决策共同权衡，也可以由方向相反的两方竞争，
+还可以把一次优化的输出作为另一次评价的输入。
+权衡需要说明偏好，竞争需要说明行动次序，嵌套需要说明内层选解规则；
+这些约定不能由某个通用梯度更新替代。
+
+\subsection{多目标优化}
+\label{sec:opt-multiobjective-saddle}
 
 一个标量不能完整表示互相竞争的任务，需先规定怎样比较损失向量。
 \begin{definition}[支配与Pareto最优]
 \label{def:opt-pareto-optimality}
-设$C$为非空可行集合，$\bm f=(f_1,\ldots,f_m):C\to\mathbb R^m$，各分量均要最小化。
+设$C$为非空可行集合，损失向量为
+\[
+ \bm f=(f_1,\ldots,f_m):C\to\mathbb R^m,
+\]
+各分量均要最小化。
 若$\bm u,\bm v\in C$满足所有$i$都有$f_i(\bm u)\leq f_i(\bm v)$，且至少一项严格小于，
 就称$\bm u$\term{支配}（dominate）$\bm v$。不可被任何可行方案支配的点称为
 \term{Pareto最优}（Pareto optimal）。
 \end{definition}
-分量逐项不大于给出偏序；这里的严格支配是相应的严格比较，不是单一排名。
+分量逐项不大于在损失向量上给出偏序；不同参数若产生相同损失向量，仍无法按损失区分。
+这里的支配是相应的严格比较，不是单一排名。
 下文先用两个目标说明这种区别。
 
 加权和$\alpha f_1+(1-\alpha)f_2$把偏好写成一个标量目标，$\alpha\in[0,1]$。
-它能找出凸目标像边界上的支撑点，但非凸Pareto前沿的某些点无法由任何固定权重得到。
+给定权重后，就可按该标量目标的光滑性、凸性及约束选择前面的求解方法。
+若所有权重严格为正，任何全局最小点都为Pareto最优：
+支配它的候选会使加权目标严格下降，造成矛盾。
+允许零权重时，只能保证不存在所有分量都严格下降的候选，通常称为弱Pareto最优。
+固定权重找的是目标像某个支撑方向的最优点；
+非凸Pareto前沿的某些点无法由任何固定权重得到。
 例如三个可行方案的损失向量分别为$(0,1)$、$(1,0)$和$(0.6,0.6)$。第三个方案不被
 前两个方案支配，所以是Pareto最优；但对任意$\alpha\in[0,1]$，前两个方案的加权损失
 中至少一个不超过$0.5$，严格小于第三个方案的$0.6$，故权重和永远不会选择第三个方案。
@@ -1891,13 +2642,46 @@ $\bm{d}$，使它与每个梯度的内积具有同一严格符号；必要时取
 
 这个条件只排除局部的一阶共同改善，不保证全局Pareto最优；高阶变化或远处方案仍可能
 同时改善所有目标。
+例如两个目标都为$-x^2$，在$0$的梯度均为零，任意小的非零移动却使两者同时改善。
+若目标都凸，零梯度凸组合使相应加权和全局最优，
+从而保证弱Pareto最优；要据此得到前面定义的Pareto最优，严格正权重是一条充分条件。
+零权重不能省略检查，例如$f_1(x)=0$、$f_2(x)=x^2$在$x=1$满足该一阶判据，
+但被$x=0$支配。
 
-\subsubsection{极小极大与鞍点间隙}
+共同下降不只是判据，还能给出具体更新。计算权重子问题
+\[
+ \bm\alpha^\star\in\argmin_{\bm\alpha\in\bm\Delta_m}
+ \frac12\left\|\sum_{i=1}^m\alpha_i\nabla f_i(\bm w)\right\|_2^2,
+ \qquad
+ \bar{\bm g}=\sum_i\alpha_i^\star\nabla f_i(\bm w).
+\]
+有限梯度的凸包紧且凸，故$\bar{\bm g}$就是原点的唯一投影。
+投影最优性给
+$\langle\bar{\bm g},\nabla f_i(\bm w)-\bar{\bm g}\rangle\geq0$。
+若$\bar{\bm g}\neq0$，取$\bm d=-\bar{\bm g}$便有
+$\langle\nabla f_i,\bm d\rangle\leq-\|\bar{\bm g}\|_2^2$对全部$i$成立。
+每个目标均$L_i$光滑且$L_i>0$时，任意$0<\eta<2/\max_i L_i$都使
+$\bm w^+=\bm w+\eta\bm d$同时降低全部目标；未知常数时，可回溯直至所有目标的
+充分下降检验同时通过。若$\bar{\bm g}=0$，算法返回的只是上述一阶证书。
+有约束时还要限制$\bm d$的可行性，不能直接使用无约束梯度凸包判据。
+
+例如$f_1(x,y)=((x-1)^2+y^2)/2$、$f_2(x,y)=((x+1)^2+y^2)/2$。
+在$(0,1)$两梯度为$(-1,1),(1,1)$，最小范数平均为$(0,1)$；
+步长$1$将点移到$(0,0)$，两项目标都由$1$降为$1/2$。
+此时梯度为$(-1,0),(1,0)$，原点已在它们之间，不能再共同下降。
+加权标量问题的解为$(2\alpha-1,0)$，展示了改变权重怎样沿同一条取舍曲线选择答案。
+
+\subsection{极小极大优化}
+\label{sec:opt-minimax}
 
 另一类问题让两个变量方向相反：
 \[
   \min_{\bm{w}\in W}\max_{\bm{z}\in Z}\phi(\bm{w},\bm{z}).
 \]
+外层先选择$\bm w$，内层在看到它后选择使损失最大的$\bm z$。
+因此外层实际最小化最坏响应值，不是让两方分别寻找$\phi$的普通最小点。
+倒转次序一般会改变值，原始问题返回的是应对最坏响应的决策；
+若还返回一对互为最优响应的候选，则需核验下面的鞍点关系。
 \begin{definition}[极小极大鞍点]
 \label{def:opt-minimax-saddle}
 设$W,Z$非空，$\phi:W\times Z\to\mathbb R$。点$(\bm w^\star,\bm z^\star)\in W\times Z$若对所有
@@ -1931,14 +2715,69 @@ $\phi(\bm{w},\cdot)$为凹函数，则
   \max_{\bm{z}\in Z}\min_{\bm{w}\in W}\phi(\bm{w},\bm{z}),
 \]
 且两侧最值达到。紧致性提供最值的达到，凸凹性允许用分离比较混合候选，连续性保证极限
-不丢失函数值。鲁棒优化中的$\bm{z}$表示最坏扰动，对抗训练让扰动方提高损失，多任务协调
+不丢失函数值。
+
+可以用前面的分离工具说明交换为何成立。记左侧值为$v$，任取$c<v$。
+每个$\bm w\in W$都存在$\bm z$使$\phi(\bm w,\bm z)>c$；
+连续性与$W$的紧性给出有限个$\bm z_1,\ldots,\bm z_k$，使每个$\bm w$至少在其中一项超过$c$。
+考虑向上封闭的集合
+\[
+ U=\{\bm a\in\mathbb R^k:\text{存在 }\bm w\in W,\
+          \phi(\bm w,\bm z_i)\leq a_i\text{ 对全部 }i\}.
+\]
+各目标关于$\bm w$凸使$U$凸；$\bm a$的收敛序列所对应的$\bm w$可取收敛子列，
+故$U$闭。点$c\bm1$不属于$U$，严格分离给出
+$\langle\bm\alpha,c\bm1\rangle<
+\inf_{\bm a\in U}\langle\bm\alpha,\bm a\rangle$。
+向上封闭迫使$\bm\alpha\geq0$，可归一化为$\sum_i\alpha_i=1$。
+于是$\inf_{\bm w}\sum_i\alpha_i\phi(\bm w,\bm z_i)>c$。
+令$\bar{\bm z}=\sum_i\alpha_i\bm z_i\in Z$，关于$\bm z$的凹性给
+$\phi(\bm w,\bar{\bm z})\geq\sum_i\alpha_i\phi(\bm w,\bm z_i)$，
+所以右侧极大极小值大于$c$。令$c\uparrow v$再结合弱对偶，即得值相等。
+连续函数在紧积空间上一致连续，使$P,D$分别连续并达到最值；
+各取一个达到点就由$D\leq\phi\leq P$得到鞍点。
+
+原始与对偶最优解也可形成这一关系：若零对偶间隙、原始与对偶最优解均达到，
+则$\mathcal L(\bm w^\star,\bm y)\leq
+\mathcal L(\bm w^\star,\bm y^\star)\leq\mathcal L(\bm w,\bm y^\star)$。
+这是Lagrangian的全局鞍点，不是原目标$f$自身的微分鞍点。
+鲁棒优化中的$\bm{z}$表示最坏扰动，对抗训练让扰动方提高损失，多任务协调
 则可能在权重与模型间形成极小极大结构。若缺少上述条件，两个优化次序可能不同；即使值相等，
 具体梯度下降--上升仍可能旋转或发散，值的存在定理不等于算法收敛定理。
 
-\subsection{双层目标与隐式更新}
-\label{sec:opt-bilevel}
+取$W=Z=[-1,1]$和$\phi(x,z)=xz$，就能复算这种差别。
+$P(x)=|x|$、$D(z)=-|z|$，唯一鞍点为$(0,0)$，候选间隙为$|x|+|z|$。
+若两方都作普通最小化，会偏好乘积为$-1$的角点，但在该处最大化方立刻有动机反向行动。
+若取同时下降与上升
+\[
+ x^{(t+1)}=x^{(t)}-\eta z^{(t)},\qquad
+ z^{(t+1)}=z^{(t)}+\eta x^{(t)},
+\]
+暂不投影时有
+$(x^{(t+1)})^2+(z^{(t+1)})^2=(1+\eta^2)((x^{(t)})^2+(z^{(t)})^2)$。
+每个非零初值都向外旋转。加上盒投影也不保证收敛：
+$\eta=1$、初值$(1,0)$时依次得到
+$(1,1),(0,1),(-1,1),(-1,0),(-1,-1),(0,-1),(1,-1),(1,0)$，
+此后重复，鞍点间隙始终不小于$1$。
 
-\subsubsection{有限步更新的展开求导}
+一种修正是先试探双方响应，再用试探点的方向更新原点，称为外梯度（extragradient）更新。
+记$\bm u=(x,z)^\top$、$\bm F(\bm u)=(z,-x)^\top$、$K=W\times Z$，每轮计算
+\[
+ \bar{\bm u}^{(t)}=\Pi_K(\bm u^{(t)}-\eta\bm F(\bm u^{(t)})),\qquad
+ \bm u^{(t+1)}=\Pi_K(\bm u^{(t)}-\eta\bm F(\bar{\bm u}^{(t)})).
+\]
+这需要两次方向求值与两次投影。对当前双线性例，在投影未激活时，
+更新矩阵为
+$\left[\begin{smallmatrix}1-\eta^2&-\eta\\ \eta&1-\eta^2\end{smallmatrix}\right]$，
+距离平方每步乘以$1-\eta^2+\eta^4<1$（$0<\eta<1$）。
+例如$\eta=1/2$且$\|\bm u^{(0)}\|_2\leq1/2$时，
+试探点范数至多$\sqrt{5}/4<1$，后续校正点范数递减，所以所有投影确实都不激活；
+此时上述计算完整证明迭代趋于鞍点，间隙也趋零。
+这是对该例的可核验改善；一般问题还需梯度映射的单调性和Lipschitz条件等分析，
+不能把“多算一次梯度”本身当作收敛定理。
+
+\subsection{双层优化}
+\label{sec:opt-bilevel}
 
 有些决策必须先经过一次学习过程才能评价。令外层变量为$\bm{\theta}$。如果内层问题有
 多个最小点，只写
@@ -1959,6 +2798,10 @@ $\bm{w}^{\star}(\bm{\theta})\in
 \end{equation}
 这就是\term{双层优化}（bilevel optimization）。元学习把内层看成任务适应，超参数
 选择让$\bm{\theta}$控制正则强度或数据权重，定向知识修正则让外层评价修改后的特定行为。
+例如$L_{\mathrm{in}}(w,\theta)=(w^2-1)^2$的最小点始终为$\{-1,1\}$，
+外层取$L_{\mathrm{out}}(w,\theta)=(w-\theta)^2/2$。
+在$\theta=1$，乐观选解的外层值为$0$，悲观选解的值为$2$。
+内层最优值相同并不使外层值相同；选择规则还可能随$\theta$发生切换。
 
 一种求导方式是把$T$步内层更新全部展开。例如
 $\bm{w}^{(t+1)}=\bm{w}^{(t)}-\eta\nabla_{\bm{w}}
@@ -1966,29 +2809,39 @@ L_{\mathrm{in}}(\bm{w}^{(t)},\bm{\theta})$，再按链式法则从$t=T$反向传
 展开法忠实求导于“运行$T$步”这个实际算法，但存储随$T$增长，且所得梯度对应近似内层解，
 不一定对应精确最优解。
 
-两步展开已经能看清链式结构。记
+两步展开已经能看清链式结构。设$\bm w\in\mathbb R^d$、$\bm\theta\in\mathbb R^p$，
+固定不依赖$\bm\theta$的步长$\eta$，记$d\times d$和$d\times p$矩阵分别为
 \[
-  \bm{A}_t=\bm{I}-\eta\nabla_{\bm{w}\bm{w}}^2
+  \bm{A}^{(t)}=\bm{I}-\eta\nabla_{\bm{w},\bm{w}}^2
   L_{\mathrm{in}}(\bm{w}^{(t)},\bm{\theta}),\qquad
-  \bm{B}_t=\nabla_{\bm{w}\bm{\theta}}^2
+  \bm{B}^{(t)}=\nabla_{\bm{w},\bm{\theta}}^2
   L_{\mathrm{in}}(\bm{w}^{(t)},\bm{\theta}).
 \]
 则
 \[
   \frac{d\bm{w}^{(t+1)}}{d\bm{\theta}}
-  =\bm{A}_t\frac{d\bm{w}^{(t)}}{d\bm{\theta}}-\eta\bm{B}_t,
+  =\bm{A}^{(t)}\frac{d\bm{w}^{(t)}}{d\bm{\theta}}-\eta\bm{B}^{(t)},
 \]
 从而
 \[
   \frac{d\bm{w}^{(2)}}{d\bm{\theta}}
-  =\bm{A}_1\bm{A}_0\frac{d\bm{w}^{(0)}}{d\bm{\theta}}
-  -\eta\bm{A}_1\bm{B}_0-\eta\bm{B}_1.
+  =\bm{A}^{(1)}\bm{A}^{(0)}\frac{d\bm{w}^{(0)}}{d\bm{\theta}}
+  -\eta\bm{A}^{(1)}\bm{B}^{(0)}-\eta\bm{B}^{(1)}.
 \]
 外层梯度再把这个Jacobian与
 $\nabla_{\bm{w}}L_{\mathrm{out}}$相乘，并加上外层目标对$\bm{\theta}$的直接偏导。
 截断某一步会删除相应乘积项，因而改变所求导的算法，而不只是节省存储。
+若步长或初始化本身依赖外层参数，其导数也必须保留；
+若更新含不可微投影或离散分支，普通链式法则需要另外检查分支与可微条件。
 
-\subsubsection{局部内层解的隐式求导}
+取$L_{\mathrm{in}}(w,\theta)=(w-\theta)^2/2$、$w^{(0)}=0$与$\eta=1/2$。
+两步得到$w^{(1)}=\theta/2$、$w^{(2)}=3\theta/4$，对应导数为$1/2,3/4$。
+外层仍取$(w-1)^2/2$，在$\theta=2$有$w^{(2)}=3/2$，
+两步外层梯度为$(3/2-1)(3/4)=3/8$；
+理想内层解$w^\star=\theta$对应梯度却为$\theta-1=1$。
+两者都算得正确，求导的对象不同。在这个例子中，
+$w^{(T)}=(1-2^{-T})\theta$及其导数都趋向理想分支；一般问题需要额外控制
+迭代收敛与导数乘积，不能由有限步求导自动得到这个极限。
 
 隐式求导跟踪的是一个选定的非退化局部最小点分支，不自动证明该分支实现全局最小值。
 只有当这个分支也是全局最小点并符合前述选择规则时，它才与
@@ -2002,27 +2855,28 @@ $\widehat{J}(\bm{\theta})
   (\widehat{\bm{w}}(\bm{\theta}),\bm{\theta})=\bm{0},
 \]
 记在该分支上计算的二阶导数为
-$\bm{H}_{ww}=\nabla_{\bm{w}\bm{w}}^2L_{\mathrm{in}}$和
-$\bm{H}_{w\theta}=\nabla_{\bm{w}\bm{\theta}}^2L_{\mathrm{in}}$。
+$\bm{H}_{w,w}=\nabla_{\bm{w},\bm{w}}^2L_{\mathrm{in}}$和
+$\bm{H}_{w,\theta}=\nabla_{\bm{w},\bm{\theta}}^2L_{\mathrm{in}}$。
 对驻点方程关于$\bm{\theta}$求导得到
 \[
-  \bm{H}_{ww}\frac{d\widehat{\bm{w}}}{d\bm{\theta}}
-  +\bm{H}_{w\theta}=\bm{0}.
+  \bm{H}_{w,w}\frac{d\widehat{\bm{w}}}{d\bm{\theta}}
+  +\bm{H}_{w,\theta}=\bm{0}.
 \]
-当$\bm{H}_{ww}$可逆时，隐函数定理给出局部可微分支；对非退化局部最小点，
-$\bm{H}_{ww}\succ\bm{0}$保证这一可逆性。链式法则于是给出
+当$\bm{H}_{w,w}$可逆时，第~\ref{chap:mathematical-analysis}章的隐函数定理给出局部可微分支；
+固定参数时，这个驻点在附近是孤立的。对非退化局部最小点，
+$\bm{H}_{w,w}\succ\bm{0}$保证这一可逆性。链式法则于是给出
 \begin{equation}
   \nabla_{\bm{\theta}}\widehat{J}
   =
   \nabla_{\bm{\theta}}L_{\mathrm{out}}
-  -\bm{H}_{w\theta}^{\top}
-  \bm{H}_{ww}^{-\top}
+  -\bm{H}_{w,\theta}^{\top}
+  \bm{H}_{w,w}^{-\top}
   \nabla_{\bm{w}}L_{\mathrm{out}}.
   \label{eq:opt-implicit-hypergradient}
 \end{equation}
 式~\eqref{eq:opt-implicit-hypergradient}是\term{隐式超梯度}
 （implicit hypergradient）。实际计算通常解线性方程
-$\bm{H}_{ww}^{\top}\bm{v}=\nabla_{\bm{w}}L_{\mathrm{out}}$，无须显式求逆。
+$\bm{H}_{w,w}^{\top}\bm{v}=\nabla_{\bm{w}}L_{\mathrm{out}}$，无须显式求逆。
 
 用二次内层目标可以核对公式。设$\bm{H}\succ\bm{0}$，
 \[
@@ -2040,9 +2894,10 @@ $\widehat{J}=J$。直接消元给出
   =\bm{B}^{\top}\bm{C}^{\top}
   (\bm{C}\bm{B}\bm{\theta}-\bm{d}).
 \]
-隐式公式中$\bm{H}_{ww}=\bm{H}$、
-$\bm{H}_{w\theta}=-\bm{H}\bm{B}$，代入后得到同一结果。计算时若线性方程残差为
-$\bm{r}$，解误差为$\bm{H}^{-\top}\bm{r}$；小特征值会放大该误差。因而内层驻点残差、
+隐式公式中$\bm{H}_{w,w}=\bm{H}$、
+$\bm{H}_{w,\theta}=-\bm{H}\bm{B}$，代入后得到同一结果。计算时若线性方程残差为
+$\bm r=\bm H^\top\widetilde{\bm v}-\nabla_{\bm w}L_{\mathrm{out}}$，
+解误差为$\widetilde{\bm v}-\bm v=\bm{H}^{-\top}\bm{r}$；小特征值会放大该误差。因而内层驻点残差、
 线性求解残差和曲率病态是三种不同的误差来源。
 
 若内层只近似收敛，驻点残差会进入超梯度误差；若Hessian矩阵奇异，解映射可能不唯一或不可微；
@@ -2050,6 +2905,36 @@ $\bm{r}$，解误差为$\bm{H}^{-\top}\bm{r}$；小特征值会放大该误差�
 式~\eqref{eq:opt-implicit-hypergradient}给出的是$\widehat{J}$的梯度，而不是前述全局
 双层目标$J$的梯度。展开深度、线性方程精度、内层计算预算与解选择规则因此都是问题定义的
 一部分，而不只是实现细节。
+
+误差可在局部强凸条件下定量分开。固定$\bm\theta$，设近似点$\widetilde{\bm w}$
+与选定分支$\widehat{\bm w}$之间的凸邻域满足
+$\nabla_{\bm w,\bm w}^2L_{\mathrm{in}}\succeq\mu\bm I$，$\mu>0$。
+内层残差$\bm r_{\mathrm{in}}=\nabla_{\bm w}L_{\mathrm{in}}(\widetilde{\bm w},\bm\theta)$满足
+\[
+ \|\widetilde{\bm w}-\widehat{\bm w}\|_2
+ \leq\frac{\|\bm r_{\mathrm{in}}\|_2}{\mu},
+\]
+因为梯度沿线段积分后，与位移的内积至少为$\mu$倍距离平方。
+在近似点计算内层Hessian$\widetilde{\bm H}$、混合导数
+$\widetilde{\bm B}=\nabla_{\bm w,\bm\theta}^2L_{\mathrm{in}}(\widetilde{\bm w},\bm\theta)$
+及外层梯度，再近似求解伴随方程，
+令$\bm r_{\mathrm{lin}}=\widetilde{\bm H}^{\top}\widetilde{\bm v}
+-\nabla_{\bm w}L_{\mathrm{out}}(\widetilde{\bm w},\bm\theta)$。
+线性求解单独贡献的超梯度误差至多为
+$\|\widetilde{\bm B}\|_2\|\bm r_{\mathrm{lin}}\|_2/\mu$。
+若这些一、二阶导数在该邻域有界且Lipschitz，精确线性求解所定义的超梯度表达式
+作为$\bm w$的函数有某个有限Lipschitz常数$C$。记由近似点与近似伴随解算出的
+超梯度为$\widetilde{\nabla_{\bm\theta}J}$，则总误差满足
+\begin{equation}
+ \|\widetilde{\nabla_{\bm\theta} J}-\nabla_{\bm\theta}\widehat J\|_2
+ \leq\frac C\mu\|\bm r_{\mathrm{in}}\|_2
+ +\frac{\|\widetilde{\bm B}\|_2}{\mu}\|\bm r_{\mathrm{lin}}\|_2.
+ \label{eq:opt-hypergradient-two-residuals}
+\end{equation}
+右侧第一项来自内层点不够准确，第二项来自同一点上的线性系统未解准。
+只压低其中一项不足以控制总误差，小$\mu$也会同时放大二者。
+取得外层方向后，可再对选定的外层目标执行梯度或投影更新；
+只有所求超梯度对应的目标和误差范围明确，才能复用前面带误差更新的分析。
 
 \section{本章小结}
 \label{sec:opt-summary}
@@ -2059,13 +2944,26 @@ $\bm{r}$，解误差为$\bm{H}^{-\top}\bm{r}$；小特征值会放大该误差�
 下水平集保证存在。凸性把局部条件提升为全局条件，强凸、光滑性与PL条件则分别控制参数
 距离、单步上界和目标误差。它们不能只用“曲率好”一语合并。
 
+共同二次目标$(w_1^2+16w_2^2)/2$展示了这些条件怎样进入计算：
+统一梯度步受曲率$16$限制，动量改变历史响应，预条件调整两个方向的尺度，
+牛顿法则直接解曲率方程。它们对同一个无约束答案付出不同的信息与计算成本。
+加上$\ell_1$项后，软阈值使尖点可精确处理；加上$w_1+w_2=1$后，
+二次惩罚的有限参数解仍不满足等式，乘子平衡才给出约束解$(16/17,1/17)$。
+因此比较方法要固定原任务、返回质量及成本口径，不能只看更新式是否更复杂或步数是否更少。
+
 带资源约束后，KKT条件描述目标梯度与约束法向量的平衡，对偶变量提供界和敏感性解释。
 Farkas证书与线性规划强对偶说明最优值相等需要证明，不能从凸性直接跳得。松弛、对偶界与
-可行解共同形成最优性证书；证书说明结果离最优值多远，却不自动给出寻找结果的过程。
+可行解共同形成最优性证书；乘子更新提供寻找下界的过程，原解恢复仍需单独保证可行性。
+预算例中，对偶值持续改善时原始副本仍可能违规，这正是不能把求解过程与证书混为一谈的原因。
 
-非光滑正则需要次梯度、投影或邻近算子，不完整梯度需要核对误差如何累计。分块、分布变量、
-多目标、鞍点与双层目标改变的是变量组织和最优性概念，不能沿用同一套无条件保证。随机更新
-的严格收敛将在第~\ref{chap:stochastic-processes-and-approximation}章建立条件期望与
-噪声工具后补全；后续决策章节还会复用本章的对偶与鞍点语言。紧邻的
+计算预算不足时，可以组合代理、分块及近似更新，但必须保留各自的误差账目。
+目标下降中的平方误差和，与轨迹偏差中的一次范数和，控制不同对象；
+副本一致、块最优和联合最优也需要不同条件。多个指标进一步要求约定权重或Pareto比较，
+竞争要求核验最坏响应及鞍点间隙，嵌套要求区分有限步输出、局部驻点分支与理想全局内层解。
+这些答案都可以“足够好”，但必须说明好在哪个尺度、满足哪些约束、花了多少计算。
+第~\ref{chap:random-variables}章“随机变量”先建立条件期望与噪声工具，
+第~\ref{chap:action-and-state}章“行动和状态”再讨论随机逼近的收敛条件；
+第~\ref{chap:decision-theory-and-dynamic-risk}章“策略的价值与优化”还会复用
+本章的对偶与鞍点语言。紧邻的
 第~\ref{chap:functional-analysis-and-approximation}章将把有限维参数推广到函数空间，
 区分表示存在性、逼近误差与函数类复杂度。

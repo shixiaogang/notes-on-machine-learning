@@ -33,6 +33,7 @@
 - 按“读者已知什么—还缺什么—新概念如何补上”组织内容。段落靠因果、条件、递进或转折衔接，不靠“首先、其次、再次、最后”串联。
 - 开篇提出的问题必须在正文中得到回应，结尾收拢答案与适用边界。同一概念的名称与符号保持一致。
 - 每章末尾必须设置独立的 `\section{本章小结}`；新增或重构章节时不得省略，也不得将小结并入其他小节。
+- 数学准备卷每个部分首页后设置一页无编号阅读指引，只介绍本部分主要内容和章节组织；不进入目录，不提供推荐阅读顺序。
 - 使用具体、直接的中文，主动预判理解难点。避免空话、术语堆叠、反复总结和整齐划一的段落模板；比喻、设问与“你／我们”应服务于解释。
 - 初稿完成后，分别检查逻辑、技术准确性与语言。发现概念跳步、论证缺口或读者难以跟上的句子，先修订再交稿。
 
@@ -41,11 +42,11 @@
 书籍采用“卷—部分—章—节”结构。`tex/` 下按卷设置带两位序号的英文目录，每卷以 `volume.tex` 为入口；卷内各部分再使用带两位序号的英文子目录，以 `part.tex` 为入口。目录前缀按所属层级从 01 开始，书中的部分号和章号则全书连续编号。
 
 1. `tex/01-mathematical-preliminaries/`：第一卷“数学准备”
-   - `01-mathematical-language-analysis-optimization/`：数学语言、分析与最优化
-   - `02-linear-algebra-and-geometry/`：线性代数与几何
-   - `03-probability-stochastic-processes-statistics/`：概率、随机过程与统计
-   - `04-discrete-mathematics-and-graph-theory/`：离散数学与图论
-   - `05-dynamical-systems-control-and-decision/`：动力系统、控制与决策
+   - `01-mathematical-language-combinatorics-analysis-optimization/`：计数、分析与优化
+   - `02-linear-algebra-and-geometry/`：线性和非线性空间
+   - `03-random-variables-distributions-and-causality/`：随机变量、分布与因果响应
+   - `04-graphs-and-signals/`：图与信号
+   - `05-dynamical-systems-control-decision-and-games/`：演化、控制、决策与博弈
 2. `tex/02-foundations/`：第二卷“基础、理论和可信性”
    - `01-basics/`：机器学习基础
    - `02-learning-theory/`：机器学习理论
@@ -64,6 +65,8 @@
    - `03-recommendation-and-search/`：推荐与搜索
 6. `tex/06-systems/`：第六卷“系统”
    - `01-machine-learning-systems/`：机器学习系统；承接数据、训练与部署相关内容。
+
+数学准备卷按 `plans/mathematical-preliminaries-reading-structure.md` 组织为17章。大纲保留合并前的讨论定位号，实施章号以正文为准；原线性代数与矩阵分析合入“线性空间”，概率论、随机过程与统计合入“随机变量”，图与信号同属第四部分，控制先于价值优化。最终章目与迁移映射见 `docs/math-restructure/authoring-contract.md`。
 
 “机器学习理论”部分依次介绍统计学习框架、二分类、多分类、凸学习与算法稳定性、深度学习理论和迁移学习理论，详细规划见 `plans/learning-theory-outline.md`。全书分卷、内容边界与迁移约定见 `plans/book-structure.md`。
 

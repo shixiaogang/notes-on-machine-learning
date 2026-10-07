@@ -21,7 +21,7 @@ sys.path.insert(0, str(HERE.parent))
 from plot_style import configure, prepare_figure, style_record
 
 configure()
-CHAPTER_DIR = Path("tex/01-mathematical-preliminaries/05-dynamical-systems-control-and-decision")
+CHAPTER_DIR = Path("tex/01-mathematical-preliminaries")
 BLUE, RED, YELLOW = "#7998AD", "#D57B70", "#D6B35D"
 INK, STROKE, GREY, GRID = "#222222", "#4C4D4F", "#747A80", "#C8CDCF"
 
@@ -105,7 +105,7 @@ def amplitude_phase():
                  xlabel="频率索引 k", ylabel="相位（弧度）")
     phase_ax.set_title("非零系数相位", pad=4)
     phase_ax.legend(loc="upper left", ncols=2)
-    save(fig, "amplitude-phase", 169, 84, "01-signal-analysis.tex",
+    save(fig, "amplitude-phase", 169, 84, "04-graphs-and-signals/02-signal-representation-and-processing.tex",
          "Why can equal Fourier magnitudes describe different sequences?",
          {"sequence": "x[n]=cos(2*pi*n/8)", "shift": "z[n]=x[(n-2) mod 8]",
           "DFT": "X[k]=sum_(n=0)^7 x[n]*exp(-2*pi*i*k*n/8)"},
@@ -133,7 +133,7 @@ def transient_growth():
     ax.set(xlim=(-.2, 14.2), ylim=(0, 4.6), xticks=[0, 2, 4, 6, 8, 10, 12, 14],
            yticks=[0, 1, 2, 3, 4], xlabel="步数 k", ylabel="状态范数")
     ax.legend(loc="upper right", ncols=2)
-    save(fig, "transient-growth", 112, 64, "02-dynamical-systems-and-state-estimation.tex",
+    save(fig, "transient-growth", 112, 64, "05-dynamical-systems-control-decision-and-games/01-action-and-state.tex",
          "How can identical stable eigenvalues allow different finite-time gains?",
          {"matrix": "A=[[1/2,K],[0,1/2]]", "initial_state": "x_0=(0,1)",
           "state": "x_k=(K*k*2^(1-k),2^(-k))", "ordinate": "Euclidean norm of x_k"},
@@ -159,7 +159,7 @@ def cvar_reweighting():
     ax.set(xlim=(-.6, 2.6), ylim=(0, .85), xticks=positions, xticklabels=["0", "2", "10"],
            yticks=[0, .2, .4, .6, .8], xlabel="损失 L", ylabel="概率质量")
     ax.legend(loc="upper center", ncols=2)
-    save(fig, "cvar-reweighting", 112, 64, "03-decision-theory-and-dynamic-risk.tex",
+    save(fig, "cvar-reweighting", 112, 64, "05-dynamical-systems-control-decision-and-games/03-policy-value-and-optimization.tex",
          "How does CVaR redistribute evaluation mass toward the adverse tail?",
          {"risk_envelope": "sum_i q_i=1, 0<=q_i<=p_i/(1-alpha)",
           "density_ratio": "zeta_i=q_i/p_i", "CVaR": "sum_i q_i*L_i=5.2"},
@@ -191,7 +191,7 @@ def reachable_directions():
            xlabel="状态分量 x₁", ylabel="状态分量 x₂", aspect="equal")
     ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=2,
               columnspacing=.8, handlelength=1.4)
-    save(fig, "reachable-directions", 112, 76, "04-control-theory.tex",
+    save(fig, "reachable-directions", 112, 76, "05-dynamical-systems-control-decision-and-games/02-policy-realization-and-control.tex",
          "Why does a scalar input generate a two-dimensional reachable set after propagation?",
          {"state_model": "x_(t+1)=A*x_t+B*u_t, x_0=0", "one_step": "x_1=B*u_0",
           "two_steps": "x_2=A*B*u_0+B*u_1=(u_0,u_0+u_1)"},
@@ -227,7 +227,7 @@ def correlated_mass():
     colorbar = fig.colorbar(image, cax=cax, orientation="horizontal", ticks=[0, .25, .5])
     colorbar.ax.tick_params(length=2.5, labelsize=8)
     colorbar.set_label("联合概率", fontsize=8.5, labelpad=1)
-    save(fig, "correlated-mass", 112, 72, "05-game-theory-and-multi-agent-decision.tex",
+    save(fig, "correlated-mass", 112, 72, "05-dynamical-systems-control-decision-and-games/04-multi-agent-response-and-evolution.tex",
          "Why do the same individual action frequencies allow different coordination?",
          {"independent": "mu(a_1,a_2)=x(a_1)*y(a_2)=1/4",
           "correlated": "mu(L,L)=mu(R,R)=1/2; off-diagonal mass=0",

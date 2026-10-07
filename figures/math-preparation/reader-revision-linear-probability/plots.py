@@ -72,7 +72,7 @@ def pseudoinverse():
           'least_squares_family': '[1+t,1-t], t in R',
           'minimum_norm_parameter': [1, 1], 'projected_output': [2, 0],
           'residual_b_minus_Ax': [0, 1], 'squared_norm': '2+2*t**2'},
-         'tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/02-matrix-analysis.tex')
+         'tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/01-linear-algebra-and-matrix-analysis.tex')
 
 
 def cech_rips():
@@ -104,7 +104,7 @@ def cech_rips():
           'minimum_enclosing_radius': float(side/np.sqrt(3)),
           'cech_has_edges': True, 'cech_has_2_simplex': False,
           'rips_has_2_simplex': True, 'balls': 'open; boundary excluded'},
-         'tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/03-differential-geometry-and-symmetry.tex')
+         'tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/02-differential-geometry-and-symmetry.tex')
 
 
 def kernel_distinguishability():
@@ -138,7 +138,7 @@ def kernel_distinguishability():
           'gaussian_mmd_squared': '1.5 + 0.5*exp(-2) - 2*exp(-0.5)',
           'gaussian_mmd': float(np.sqrt(mmd_squared)),
           'estimation': 'exact population expectations; no sample estimator'},
-         'tex/01-mathematical-preliminaries/03-probability-stochastic-processes-statistics/04-information-theory-and-statistical-geometry.tex')
+         'tex/01-mathematical-preliminaries/03-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex')
 
 
 if __name__ == '__main__':

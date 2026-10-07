@@ -24,11 +24,18 @@ configure()
 BLUE, RED, YELLOW = '#7998AD', '#D57B70', '#D6B35D'
 INK, STROKE, GREY, PALE = '#222222', '#4C4D4F', '#747A80', '#EDF2F5'
 RECORDS = {}
-CHAPTERS = {'convolution-boundaries':'01-signal-analysis.tex', 'aliasing-curves':'01-signal-analysis.tex',
-            'euler-stability':'02-dynamical-systems-and-state-estimation.tex', 'kalman-density-update':'02-dynamical-systems-and-state-estimation.tex',
-            'cost-thresholds':'03-decision-theory-and-dynamic-risk.tex', 'cvar-threshold':'03-decision-theory-and-dynamic-risk.tex',
-            'stability-safety':'04-control-theory.tex', 'barrier-projection':'04-control-theory.tex',
-            'matching-best-responses':'05-game-theory-and-multi-agent-decision.tex', 'bargaining-disagreement':'05-game-theory-and-multi-agent-decision.tex'}
+CHAPTERS = {
+    'convolution-boundaries': '04-graphs-and-signals/02-signal-representation-and-processing.tex',
+    'aliasing-curves': '04-graphs-and-signals/02-signal-representation-and-processing.tex',
+    'euler-stability': '05-dynamical-systems-control-decision-and-games/01-action-and-state.tex',
+    'kalman-density-update': '05-dynamical-systems-control-decision-and-games/01-action-and-state.tex',
+    'cost-thresholds': '05-dynamical-systems-control-decision-and-games/03-policy-value-and-optimization.tex',
+    'cvar-threshold': '05-dynamical-systems-control-decision-and-games/03-policy-value-and-optimization.tex',
+    'stability-safety': '05-dynamical-systems-control-decision-and-games/02-policy-realization-and-control.tex',
+    'barrier-projection': '05-dynamical-systems-control-decision-and-games/02-policy-realization-and-control.tex',
+    'matching-best-responses': '05-dynamical-systems-control-decision-and-games/04-multi-agent-response-and-evolution.tex',
+    'bargaining-disagreement': '05-dynamical-systems-control-decision-and-games/04-multi-agent-response-and-evolution.tex',
+}
 
 def canvas(width_mm=112, height_mm=64, ncols=1, nrows=1, **kwargs):
     fig, axs = plt.subplots(nrows, ncols, figsize=(width_mm/25.4,height_mm/25.4),
@@ -61,7 +68,7 @@ def save(fig, name, expressions, sampling, parameters, question, width_mm, heigh
                        'visual': 'See validation.json; output hashes identify externally inspected versions',
                        'book_compilation': 'No TeX compilation or embedded book-page inspection, at user request'},
     }
-    chapter = Path('tex/01-mathematical-preliminaries/05-dynamical-systems-control-and-decision')/CHAPTERS[name]
+    chapter = Path('tex/01-mathematical-preliminaries')/CHAPTERS[name]
     meta['source'] = {'file':str(chapter), 'sha256':hashlib.sha256((ROOT/chapter).read_bytes()).hexdigest()}
     RECORDS[name] = meta
     (HERE/f'{name}.json').write_text(json.dumps(meta, ensure_ascii=False, indent=2)+'\n')

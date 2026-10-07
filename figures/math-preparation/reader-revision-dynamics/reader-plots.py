@@ -16,7 +16,7 @@ sys.path.insert(0,str(HERE.parent))
 from plot_style import configure,prepare_figure,style_record
 from plot_style import BLUE,RED,YELLOW,STROKE,MUTED,GRID,BLUE_FILL,RED_FILL,YELLOW_FILL
 configure()
-CHAPTER='tex/01-mathematical-preliminaries/05-dynamical-systems-control-and-decision/'
+CHAPTER='tex/01-mathematical-preliminaries/'
 
 def save(fig,name,size,chapter,purpose,formula,parameters,data=None):
     prepare_figure(fig)
@@ -62,7 +62,7 @@ def overlap():
     ax.scatter([.5,1.5],[.5,.5],color=YELLOW,s=18,zorder=3)
     ax.set(xlim=(-.3,2.3),ylim=(-.03,1.17),xticks=[0,1,2],yticks=[0,.5,1],xlabel=r'输出位置 $t$',ylabel='重叠长度',title='全部位置的卷积输出')
     ax.grid(axis='y')
-    save(fig,'continuous-convolution-overlap',size,'01-signal-analysis.tex',
+    save(fig,'continuous-convolution-overlap',size,'04-graphs-and-signals/02-signal-representation-and-processing.tex',
       'Separate the integration variable from the output location and interpret convolution as overlap area.',
       'f=g=1_[0,1]; g(t-tau) supported on [t-1,t]; (f*g)(t)=max(0,min(1,t)-max(0,t-1))',
       {'output_positions':[.5,1.5],'curve_points':401,'curve_interval':[-.3,2.3]})
@@ -91,7 +91,7 @@ def lasalle():
     ax.annotate('最大不变集：原点',xy=(0,0),xytext=(-.88,.48),arrowprops={'arrowstyle':'-','color':MUTED,'lw':.6})
     ax.set(xlim=(-1.1,1.1),ylim=(-1.08,.82),xticks=[-1,-.5,0,.5,1],yticks=[-1,-.5,0,.5],xlabel=r'位置 $q$',ylabel=r'速度 $p$')
     ax.set_aspect('equal',adjustable='box')
-    save(fig,'lasalle-zero-set',size,'02-dynamical-systems-and-state-estimation.tex',
+    save(fig,'lasalle-zero-set',size,'05-dynamical-systems-control-decision-and-games/01-action-and-state.tex',
       'Zero instantaneous energy derivative is not an invariant trajectory.',
       'q=e^(-t/2)(cos(wt)+sin(wt)/(2w)); p=-e^(-t/2)sin(wt)/w; w=sqrt(3)/2; V=(q^2+p^2)/2; Vdot=-p^2',
       {'initial_state':[1,0],'damping':1,'time_interval':[0,12],'points':1601,'reference_energy_radii':[.25,.5,.75,1]})
@@ -117,7 +117,7 @@ def quadratic_variation():
     axes[1].legend(loc='upper left',handlelength=1.7)
     for ax in axes:ax.grid(axis='y')
     np.savetxt(HERE/'brownian-increments.csv',np.c_[t[1:],increments,path[1:]],delimiter=',',header='time,increment,cumulative_path',comments='',fmt='%.17g')
-    save(fig,'brownian-quadratic-variation',size,'02-dynamical-systems-and-state-estimation.tex',
+    save(fig,'brownian-quadratic-variation',size,'03-random-variables-distributions-and-causality/01-random-variables.tex',
       'Quadratic variation is accumulated along time on the same coupled sample, distinct from endpoint variance across samples.',
       'delta W_i=sqrt(1/4096)*epsilon_i with seeded independent N(0,1); coarse increments sum the same fine increments; Q_m(t)=sum completed coarse increments squared; E Q_m(1)=1 and Var Q_m(1)=2/m',
       {'seed':seed,'fine_intervals':n,'coarse_intervals':[64,1024],'endpoint_sums':values,
