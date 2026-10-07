@@ -44,9 +44,10 @@
 1. `tex/01-mathematical-preliminaries/`：第一卷“数学准备”
    - `01-mathematical-language-combinatorics-analysis-optimization/`：计数、分析与优化
    - `02-linear-algebra-and-geometry/`：线性和非线性空间
-   - `03-random-variables-distributions-and-causality/`：随机变量、分布与因果响应
-   - `04-graphs-and-signals/`：图与信号
+   - `03-graphs-and-signals/`：图与信号
+   - `04-random-variables-distributions-and-causality/`：随机变量、分布与因果响应
    - `05-dynamical-systems-control-decision-and-games/`：演化、控制、决策与博弈
+   - `06-mathematics-and-machine-learning/`：数学与机器学习；仅含第17章“数学基础与后续研究”。
 2. `tex/02-foundations/`：第二卷“基础、理论和可信性”
    - `01-basics/`：机器学习基础
    - `02-learning-theory/`：机器学习理论
@@ -66,7 +67,9 @@
 6. `tex/06-systems/`：第六卷“系统”
    - `01-machine-learning-systems/`：机器学习系统；承接数据、训练与部署相关内容。
 
-数学准备卷按 `plans/mathematical-preliminaries-reading-structure.md` 组织为17章。大纲保留合并前的讨论定位号，实施章号以正文为准；原线性代数与矩阵分析合入“线性空间”，概率论、随机过程与统计合入“随机变量”，图与信号同属第四部分，控制先于价值优化。最终章目与迁移映射见 `docs/math-restructure/authoring-contract.md`。
+数学准备卷按 `plans/mathematical-preliminaries-reading-structure.md` 组织为17章。大纲保留合并前的讨论定位号，实施章号以正文为准；原线性代数与矩阵分析合入“线性空间”，概率论、随机过程与统计合入“随机变量”，图与信号同属第三部分，先讲信号再讲图，随机变量、分布与因果响应后移至第四部分，控制先于价值优化。最终章目与文件映射见 `plans/mathematical-preliminaries-chapter-map.md`；第一卷第六部分仅含第17章。
+
+第17章从统一学习框架出发，区分环境、候选类、目标与约束，以及采样、求解和评价的过程。在共同对象上提出表示与逼近、优化与收敛、观测与统计、扰动与响应、跨情境学习、约束与动态六类分析关系，再说明不同学习设定下的分析对象、所求结论和适用工具。具体任务可以联合调用多类分析；章节组织应体现这些关系，避免按研究方向罗列零散关联。
 
 “机器学习理论”部分依次介绍机器学习理论基础、二分类、多分类、凸学习与算法稳定性、深度学习理论和迁移学习理论，详细规划见 `plans/learning-theory-outline.md`。全书分卷、内容边界与迁移约定见 `plans/book-structure.md`。
 

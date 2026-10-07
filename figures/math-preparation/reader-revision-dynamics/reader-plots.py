@@ -62,7 +62,7 @@ def overlap():
     ax.scatter([.5,1.5],[.5,.5],color=YELLOW,s=18,zorder=3)
     ax.set(xlim=(-.3,2.3),ylim=(-.03,1.17),xticks=[0,1,2],yticks=[0,.5,1],xlabel=r'输出位置 $t$',ylabel='重叠长度',title='全部位置的卷积输出')
     ax.grid(axis='y')
-    save(fig,'continuous-convolution-overlap',size,'04-graphs-and-signals/02-signal-representation-and-processing.tex',
+    save(fig,'continuous-convolution-overlap',size,'03-graphs-and-signals/01-signal-representation-and-processing.tex',
       'Separate the integration variable from the output location and interpret convolution as overlap area.',
       'f=g=1_[0,1]; g(t-tau) supported on [t-1,t]; (f*g)(t)=max(0,min(1,t)-max(0,t-1))',
       {'output_positions':[.5,1.5],'curve_points':401,'curve_interval':[-.3,2.3]})
@@ -117,7 +117,7 @@ def quadratic_variation():
     axes[1].legend(loc='upper left',handlelength=1.7)
     for ax in axes:ax.grid(axis='y')
     np.savetxt(HERE/'brownian-increments.csv',np.c_[t[1:],increments,path[1:]],delimiter=',',header='time,increment,cumulative_path',comments='',fmt='%.17g')
-    save(fig,'brownian-quadratic-variation',size,'03-random-variables-distributions-and-causality/01-random-variables.tex',
+    save(fig,'brownian-quadratic-variation',size,'04-random-variables-distributions-and-causality/01-random-variables.tex',
       'Quadratic variation is accumulated along time on the same coupled sample, distinct from endpoint variance across samples.',
       'delta W_i=sqrt(1/4096)*epsilon_i with seeded independent N(0,1); coarse increments sum the same fine increments; Q_m(t)=sum completed coarse increments squared; E Q_m(1)=1 and Var Q_m(1)=2/m',
       {'seed':seed,'fine_intervals':n,'coarse_intervals':[64,1024],'endpoint_sums':values,

@@ -92,7 +92,7 @@
 - `tex/references.bib`：集中管理书籍、期刊与会议文献。
 - `scripts/audit_index_terms.py`：审计正文词条、英文映射、语义别名和已生成索引产物。
 - `tex/styles/tufte-book.cls` 与 `tex/styles/tufte-common.def`：项目固定使用的 Tufte-LaTeX 模板文件。
-- `tex/01-mathematical-preliminaries/`：数学准备，17章分属计数、分析与优化，线性和非线性空间，随机变量、分布与因果响应，图与信号，演化、控制、决策与博弈五个部分。
+- `tex/01-mathematical-preliminaries/`：数学准备，17章分属计数、分析与优化，线性和非线性空间，图与信号，随机变量、分布与因果响应，演化、控制、决策与博弈，数学与机器学习六个部分。
 - `tex/02-foundations/`：基础、理论和可信性，包括机器学习基础、机器学习理论、机器学习可信性。
 - `tex/03-models/`：模型，包括经典模型、神经网络模型、概率图模型。
 - `tex/04-paradigms/`：范式，包括强化学习、知识的获取、知识的演进与迁移。
@@ -101,7 +101,7 @@
 - 每卷的 `volume.tex` 只管理卷及其部分内容，各部分使用子目录中的 `part.tex`。
 - 全集中的卷、部分和章连续编号；单卷省略卷首页和卷级目录，部分、章和正文页码均从 1 开始。
 - `plans/book-structure.md`：六卷结构、内容边界与目录设计约定。
-- [数学准备阅读结构](plans/mathematical-preliminaries-reading-structure.md)：数学卷的章节职责、概念依赖与完整讲解要求；合并前定位号与最终17章的对应见[实施映射](docs/math-restructure/authoring-contract.md)。
+- [数学准备阅读结构](plans/mathematical-preliminaries-reading-structure.md)：数学卷的章节职责、概念依赖与讲解安排；合并前定位号与现行17章的对应见[章目映射](plans/mathematical-preliminaries-chapter-map.md)。
 - `plans/learning-theory-outline.md`：机器学习理论部分的六章大纲。
 - [神经网络模型大纲](plans/neural-network-models-outline.md)：九章安排、各节内容与模型、训练、泛化的内容边界。
 - `figures/`：书中图像与可编辑绘图源文件。
@@ -131,8 +131,8 @@ bash tests/check-book-editions.sh
 make test
 ```
 
-`make test` 的索引审计基线为 `calls=2371`、`unique=2018`、`mappings=1976`、
-`aliases=2`、`errors=0`。交付前还需运行 `./build.sh all`，扫描七份构建日志，
+`make test` 的索引审计基线为 `calls=2354`、`unique=2017`、`mappings=1975`、
+`aliases=1`、`errors=0`。交付前还需运行 `./build.sh all`，扫描七份构建日志，
 并检查七版封面、前言、数学符号、参考文献和索引的范围、排序、双语格式、合并页码与链接。
 
 ## 许可

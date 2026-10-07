@@ -33,32 +33,35 @@
 | --- | --- | --- |
 | 第一卷：数学准备 | 第一部分：计数、分析与优化 | `tex/01-mathematical-preliminaries/01-mathematical-language-combinatorics-analysis-optimization/` |
 | 第一卷：数学准备 | 第二部分：线性和非线性空间 | `tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/` |
-| 第一卷：数学准备 | 第三部分：随机变量、分布与因果响应 | `tex/01-mathematical-preliminaries/03-random-variables-distributions-and-causality/` |
-| 第一卷：数学准备 | 第四部分：图与信号 | `tex/01-mathematical-preliminaries/04-graphs-and-signals/` |
+| 第一卷：数学准备 | 第三部分：图与信号 | `tex/01-mathematical-preliminaries/03-graphs-and-signals/` |
+| 第一卷：数学准备 | 第四部分：随机变量、分布与因果响应 | `tex/01-mathematical-preliminaries/04-random-variables-distributions-and-causality/` |
 | 第一卷：数学准备 | 第五部分：演化、控制、决策与博弈 | `tex/01-mathematical-preliminaries/05-dynamical-systems-control-decision-and-games/` |
-| 第二卷：基础、理论和可信性 | 第六部分：机器学习基础 | `tex/02-foundations/01-basics/` |
-| 第二卷：基础、理论和可信性 | 第七部分：机器学习理论 | `tex/02-foundations/02-learning-theory/` |
-| 第二卷：基础、理论和可信性 | 第八部分：机器学习可信性 | `tex/02-foundations/03-trustworthiness/` |
-| 第三卷：模型 | 第九部分：经典模型 | `tex/03-models/01-classic-models/` |
-| 第三卷：模型 | 第十部分：神经网络模型 | `tex/03-models/02-neural-network-models/` |
-| 第三卷：模型 | 第十一部分：概率图模型 | `tex/03-models/03-probabilistic-graphical-models/` |
-| 第四卷：范式 | 第十二部分：强化学习 | `tex/04-paradigms/01-reinforcement-learning/` |
-| 第四卷：范式 | 第十三部分：知识的获取 | `tex/04-paradigms/02-efficient-knowledge-use/` |
-| 第四卷：范式 | 第十四部分：知识的演进与迁移 | `tex/04-paradigms/03-knowledge-evolution-and-transfer/` |
-| 第五卷：应用 | 第十五部分：自然语言处理 | `tex/05-applications/01-natural-language-processing/` |
-| 第五卷：应用 | 第十六部分：图像处理 | `tex/05-applications/02-image-processing/` |
-| 第五卷：应用 | 第十七部分：推荐与搜索 | `tex/05-applications/03-recommendation-and-search/` |
-| 第六卷：系统 | 第十八部分：机器学习系统 | `tex/06-systems/01-machine-learning-systems/` |
+| 第一卷：数学准备 | 第六部分：数学与机器学习 | `tex/01-mathematical-preliminaries/06-mathematics-and-machine-learning/` |
+| 第二卷：基础、理论和可信性 | 第七部分：机器学习基础 | `tex/02-foundations/01-basics/` |
+| 第二卷：基础、理论和可信性 | 第八部分：机器学习理论 | `tex/02-foundations/02-learning-theory/` |
+| 第二卷：基础、理论和可信性 | 第九部分：机器学习可信性 | `tex/02-foundations/03-trustworthiness/` |
+| 第三卷：模型 | 第十部分：经典模型 | `tex/03-models/01-classic-models/` |
+| 第三卷：模型 | 第十一部分：神经网络模型 | `tex/03-models/02-neural-network-models/` |
+| 第三卷：模型 | 第十二部分：概率图模型 | `tex/03-models/03-probabilistic-graphical-models/` |
+| 第四卷：范式 | 第十三部分：强化学习 | `tex/04-paradigms/01-reinforcement-learning/` |
+| 第四卷：范式 | 第十四部分：知识的获取 | `tex/04-paradigms/02-efficient-knowledge-use/` |
+| 第四卷：范式 | 第十五部分：知识的演进与迁移 | `tex/04-paradigms/03-knowledge-evolution-and-transfer/` |
+| 第五卷：应用 | 第十六部分：自然语言处理 | `tex/05-applications/01-natural-language-processing/` |
+| 第五卷：应用 | 第十七部分：图像处理 | `tex/05-applications/02-image-processing/` |
+| 第五卷：应用 | 第十八部分：推荐与搜索 | `tex/05-applications/03-recommendation-and-search/` |
+| 第六卷：系统 | 第十九部分：机器学习系统 | `tex/06-systems/01-machine-learning-systems/` |
 
-数学准备卷按[阅读结构](mathematical-preliminaries-reading-structure.md)组织为17章，分为五个部分。第一部分为“数学对象与逻辑”“计数与计算”“测度与分析”“最优化”“函数空间”；第二部分为“线性空间”“非线性空间与流形”；第三部分为“随机变量”“随机分布”“因果响应”；第四部分为“图的表示与计算”“信号的表示与计算”；第五部分为“行动和状态”“策略的实现与轨迹控制”“策略的价值与优化”“多方策略的响应与演化”“数学基础与后续研究”。阅读结构保留合并前的讨论定位号，正文按17章连续编号；[实施映射](../docs/math-restructure/authoring-contract.md)记录新旧文件归属。每个部分首页后设置一页无编号的阅读指引，只说明本部分内容与章节组织，不进入目录。
+数学准备卷按[阅读结构](mathematical-preliminaries-reading-structure.md)组织为17章，分为六个部分。第一部分为“数学对象与逻辑”“计数与计算”“测度与分析”“最优化”“函数空间”；第二部分为“线性空间”“非线性空间与流形”；第三部分为“信号的表示与计算”“图的表示与计算”；第四部分为“随机变量”“随机分布”“因果响应”；第五部分为“行动和状态”“策略的实现与轨迹控制”“策略的价值与优化”“多方策略的响应与演化”；第六部分仅含“数学基础与后续研究”。阅读结构保留合并前的讨论定位号，正文按17章连续编号；[现行文件映射](mathematical-preliminaries-chapter-map.md)记录新旧文件归属。每个部分首页后设置一页无编号的阅读指引，只说明本部分内容与章节组织，不进入目录。
+
+第17章先用环境、候选类、目标与约束统一描述学习问题，再区分采样、经验求解和总体评价。在共同框架上提出表示与逼近、优化与收敛、观测与统计、扰动与响应、跨情境学习、约束与动态六类分析关系，分别明确分析对象、所求结论与成立条件。后续任务可以联合调用这些分析；具体方法由模型结构、观测条件和反馈方式选择。
 
 VC维、Natarajan维、图维、DS维、伪维和胖打散维的组合定义、有限模式例与示意图集中在第一卷“计数与计算”章。第二卷机器学习理论部分复用这些对象，主讲它们怎样进入一致收敛、样本复杂度和可学习性结论，不重复放置同一组教学图。
 
-第六部分包含“引言”“模型简介”“范式简介”三章。第七部分包含“机器学习理论基础”“二分类学习的可学习性”“多分类学习的可学习性”“一般学习的可学习性”“深度学习的可学习性”“迁移学习的可学习性”六章。第八部分包含“可信机器学习基础”“可靠性”“鲁棒性”“公平性”“目标对齐与行为约束”“可解释性”“隐私保护”“对抗安全”八章。第二卷三个部分均在部首页后设置一页无编号且不进入目录的阅读指引。经典模型部分包含“经典模型简介”“回归”“分类”“聚类”“降维”和“集成学习”六章；神经网络模型部分包含大纲规定的九章；概率图模型部分按[十四章大纲](probabilistic-graphical-models-outline.md)接入正文。其余没有正文的部分只保留部分入口，不设置占位章节。
+第七部分包含“引言”“模型简介”“范式简介”三章。第八部分包含“机器学习理论基础”“二分类学习的可学习性”“多分类学习的可学习性”“一般学习的可学习性”“深度学习的可学习性”“迁移学习的可学习性”六章。第九部分包含“可信机器学习基础”“可靠性”“鲁棒性”“公平性”“目标对齐与行为约束”“可解释性”“隐私保护”“对抗安全”八章。第二卷三个部分均在部首页后设置一页无编号且不进入目录的阅读指引。经典模型部分包含“经典模型简介”“回归”“分类”“聚类”“降维”和“集成学习”六章；神经网络模型部分包含大纲规定的九章；概率图模型部分按[十四章大纲](probabilistic-graphical-models-outline.md)接入正文。其余没有正文的部分只保留部分入口，不设置占位章节。
 
 ## 内容边界
 
-数学准备卷在概念的主讲位置建立动机、直觉、正式条件与例子，后续章节按当前用途回指。概率、随机过程与统计在“随机变量”章内共同组织；随机逼近的平均动力系统归“行动和状态”。图傅里叶与图滤波归图章，规则索引上的信号分解和采样归信号章，完整状态核构造归状态章。第五部分先给定行动讨论状态演化，再研究已知模型下的轨迹控制、策略价值及多方响应；估计误差、稳定性、成本、安全和均衡分别陈述所保证的对象及条件。
+数学准备卷在概念的主讲位置建立动机、直觉、正式条件与例子，后续章节按当前用途回指。概率、随机过程与统计在“随机变量”章内共同组织；随机逼近的平均动力系统归“行动和状态”。规则索引上的信号分解和采样先在信号章建立，图章再用连接关系推广变化、传播和谱表示；图傅里叶与图滤波归图章，完整状态核构造归状态章。图的分离判据先按纯图结构定义，概率独立与因果解释在后面的随机变量和因果章补上所需假设。第五部分先给定行动讨论状态演化，再研究已知模型下的轨迹控制、策略价值及多方响应；估计误差、稳定性、成本、安全和均衡分别陈述所保证的对象及条件。
 
 基础部分提供贯穿全书的任务、评价、范式与模型概念，并说明可学习性回答算法在规定条件下能否被证明学到符合标准的结果，可信性则检查所得模型和使用流程能否适应真实应用要求。理论部分由“机器学习理论基础”统一规定学习问题，再从同分布二分类逐步扩展到多分类、一般损失、深度网络和分布变化；基础章在本章小结前以“研究内容”集中梳理发展历史，由研究地图概括问题与信息、泛化机制、实现与扩展，再以“当前前沿”讨论算法相关泛化、预训练与上下文、规模机制、变化环境以及统计、计算与可验证性的统一，后续各章不再单设前沿节。
 

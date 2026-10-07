@@ -1,0 +1,1479 @@
+\chapter{数学基础与后续研究}
+\label{chap:mathematics-and-future-research}
+
+温度观测可以用来预测后继温度、寻找相似工况，也可以帮助选择加热策略。
+这些任务都从环境取得样本，依据样本学得某种对象，再评价它的表现。
+但训练损失小，还没有回答几个问题：候选模型能否表达所需规律，训练是否已经收敛，
+样本上的结论能否推广到总体，执行策略后温度能否满足安全要求？
+它们讨论的对象不同，所需数学分析也不同。
+
+前面各章建立了空间与映射、随机变量与分布、状态与轨迹的数学语言。
+本章将这些对象接到一个共同学习过程，说明机器学习中的研究问题怎样归约为
+这些对象上的表示、优化、统计、响应、跨情境与动态分析。
+这里建立的是便于定位问题的简化框架；具体模型下的证明和算法由后续各卷展开。
+
+\section{学习的统一框架：环境、采样、求解与评价}
+\label{sec:future-unified-learning-framework}
+\label{sec:future-learning-data-and-use}
+
+要描述学习，既需要说明希望得到什么，也需要说明能够看到什么。
+环境提供观测，采样形成样本集，学习算法按给定要求选出候选，评价过程再检验其表现。
+监督、无监督与强化学习可以共用这些环节，差别落在观测、候选和反馈机制上。
+
+\subsection{学习问题的组成：环境、候选类、目标与约束}
+\label{sec:future-learning-common-objects}
+
+把任务要求简记为
+\begin{equation}
+  \mathcal M=(\mathcal E,\mathcal H,\ell,\mathcal C).
+  \label{eq:future-unified-learning-problem}
+\end{equation}
+环境$\mathcal E$规定观测怎样产生；交互任务中，它还规定状态怎样响应行动。
+候选类$\mathcal H$规定允许学习的函数、表示、概率模型或策略。
+损失$\ell$规定怎样为表现计分，约束$\mathcal C$规定哪些候选和行为可以接受。
+用$h$统一表示候选对象，将满足约束的候选集合记为
+$\mathcal H_{\mathcal C}=\{h\in\mathcal H:h\text{满足}\mathcal C\}$。
+候选类可以具有线性空间结构，也可以只是一个非线性函数族。
+参数化$\Phi:\Theta\to\mathcal H$给出候选的坐标表示$h_{\bm\theta}=\Phi(\bm\theta)$，
+实际能选择的范围是$\Phi(\Theta)\cap\mathcal H_{\mathcal C}$。
+
+评价需要指定一条记录$\zeta$及其分布。
+静态记录可以是输入与标签，交互记录可以是整条轨迹。
+将环境和候选共同确定的评价分布记为$P_{\mathcal E}^{h}$。
+在损失可积时，总体风险为
+\begin{equation}
+  R_{\mathcal M}(h)
+  =\mathbb E_{\zeta\sim P_{\mathcal E}^{h}}[\ell(h,\zeta)].
+  \label{eq:future-unified-population-risk}
+\end{equation}
+它把候选映成一个数，是候选类上的泛函。
+总体学习问题是在可行类上求$\inf_h R_{\mathcal M}(h)$；若最小值能取到，总体解集合为
+$\mathcal H^\star_{\mathcal M}=\argmin_{h\in\mathcal H_{\mathcal C}}R_{\mathcal M}(h)$。
+解可能不唯一，最小值也可能无法取到。
+回报最大化可以取负改写为损失最小化；概率约束、多目标等要求仍须另行说明。
+
+静态任务中，候选不参与评价记录的生成，因而$P_{\mathcal E}^{h}=P$。
+此时将$R_{\mathcal M}(h)$简记为$R_P(h)$。
+监督学习取$Z=(X,Y)$，$P$包含输入与标签的联合规律；无监督学习通常取$Z=X$，
+但仍需规定重构、分组或密度等目标。
+概率模型$h$定义的分布记为$q_h$，与真实观测分布$P$区分。
+例如$\ell(h,x)=-\log q_h(x)$，仍由真实观测规律评价模型给出的概率。
+强化学习则以策略$h=\pi$选择行动，轨迹分布会随策略改变。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{lXXX}
+    \toprule
+    学习形式 & 候选对象$h$ & 评价记录$\zeta$ & 目标与分布\\
+    \midrule
+    有监督学习 & 预测函数 & 输入与标签$(\bm x,y)$ & 预测损失；联合分布$P$\\
+    无监督学习 & 表示、簇中心或概率模型 & 无标签观测$\bm x$ & 重构、分组或密度目标；观测分布$P$\\
+    强化学习 & 从可得信息选择行动的策略$\pi$ & 轨迹$\tau$ & 累计成本或负回报；策略诱导分布$P_{\mathcal E}^{\pi}$\\
+    \bottomrule
+  \end{tabularx}
+  \caption{共同框架的三种实例。候选、记录和目标不同，后面的数学分析仍可共用。}
+  \label{tab:future-learning-paradigm-interfaces}
+\end{table*}
+
+\subsection{学习过程的环节：总体问题、样本集与算法输出}
+\label{sec:future-sampling-and-empirical-objective}
+\label{sec:future-population-empirical-computation}
+
+总体目标由环境规律定义，但学习者通常只能取得有限观测。
+用$\Gamma_n$表示样本预算为$n$时的采样机制，将样本集统一记为$D$。
+静态独立同分布采样是基准设定
+\begin{equation}
+  D=(Z_1,\ldots,Z_n)\sim P^n.
+  \label{eq:future-sampling-law}
+\end{equation}
+相关观测、主动查询或交互采样需要其他采样机制。
+$\Gamma_n$说明怎样获得样本，学习算法$A$说明取得样本后怎样构造目标并选出候选。
+
+这里将$A$定义为完整学习过程，包含经验目标的构造和求解。
+它接收$D$以及$(\mathcal H,\ell,\mathcal C)$，产生经验目标$\widehat R_D$和学得对象。
+用$U$汇集初始化、小批量选择等算法随机性，计算到第$k$步的输出写成
+\begin{equation}
+  (\widehat R_D,h_D^{(k)})
+  =A^{(k)}(D,U;\mathcal H,\ell,\mathcal C).
+  \label{eq:future-learning-algorithm-output}
+\end{equation}
+$k$是计算编号；固定计算预算后，候选输出简记为$h_D$。
+经验目标是算法构造和求解的依据，图中把它单独画成输出，便于说明正在优化什么。
+后文分析学习结果时，主要比较候选分量$h_D$，无需同时比较整个经验目标。
+
+独立同分布设定下，\term{经验风险}（empirical risk）是候选在样本集上的平均损失。
+按它选择最优候选，就是\term{经验风险最小化}
+（empirical risk minimization, ERM）：
+\begin{equation}
+  \widehat R_D(h)=\frac1n\sum_{i=1}^{n}\ell(h,Z_i),
+  \qquad
+  \widehat h_D\in\argmin_{h\in\mathcal H_{\mathcal C}}\widehat R_D(h).
+  \label{eq:future-unified-empirical-problem}
+\end{equation}
+相关、多来源或交互样本中的$\widehat R_D$须按采样机制和目标构造，不能默认简单平均已经适用。
+若约束含未知总体量，还需构造经验约束$\widehat{\mathcal C}_D$，检验其总体可行性。
+后面直接比较同一可行类上的经验与总体问题时，默认该类已经给定。
+
+总体解、理想经验解$\widehat h_D$和有限计算输出$h_D^{(k)}$各有不同角色。
+训练分析研究算法能否接近经验目标所要求的解；统计分析研究学得对象在总体上的表现。
+$D$随机时，经验目标是随机泛函；固定$D$后，算法随机性仍可使$\{h_D^{(k)}\}$成为随机序列。
+这两层随机性需要分开分析。
+
+\subsection{静态学习：从观测分布到采样与总体评价}
+\label{sec:future-static-learning-process}
+
+图~\ref{fig:future-unified-learning-framework}将求解与评价接在一起。
+环境确定$P$，采样得到$D$；学习算法以$D$和任务要求为输入，输出经验目标与学得对象。
+评价时另取样本集$D_{\mathrm{eval}}$，将它与$h_D$共同输入评价环节。
+若评价损失可观测，样本平均$\widehat R_{D_{\mathrm{eval}}}(h_D)$就是图中的“总体评价”：
+用有限样本估计对象在总体上的表现。
+真正的总体风险$R_P(h_D)$仍由未知分布$P$定义。
+从总体评价到总体风险的连接表示统计估计与误差分析，有限样本通常不能直接给出精确真值。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/math-preparation/reading-restructure/ch17/static-learning-framework}
+  \caption{静态学习的共同流程。学习算法接收样本集和候选类、损失、约束，
+  产出经验目标与学得对象。独立评价样本与学得对象共同形成样本上的总体评价，
+  再通过统计分析联系真正的总体风险；分布到风险的虚线表示期望定义。}
+  \label{fig:future-unified-learning-framework}
+\end{figure*}
+
+独立评价样本若也来自$P$，可以用于估计已经训练好的候选的风险。
+训练与测试结果不同，可以完全发生在同一个$P$下：有限抽样有误差，候选又是根据训练样本选择的。
+评价分布真正改变时，才需要进一步分析环境差异。
+自监督、弱监督与偏好学习还会从观测构造代理目标，需要说明它怎样联系最终评价要求。
+
+\subsection{交互学习：策略诱导的分布、采样与状态反馈}
+\label{sec:future-interactive-learning-process}
+
+行动参与观测生成时，需要把反馈展开。
+环境内部状态记为$s_t$，行动为$a_t$；环境依据行动更新状态，再产生新观测$o_{t+1}$。
+行动者使用已经获得的观测与历史$I_t$选择行动；保留完整历史时，
+$I_{t+1}=(I_t,a_t,o_{t+1})$。
+采集策略$\beta$与执行策略$\pi$都遵循这个信息接口，不能直接访问隐状态。
+完全可观测时才可以将策略输入简写为状态。
+这里$t$是环境时间，与计算编号$k$区分。
+
+采集与执行使用同一个环境，但承担不同职责。
+$\beta$与环境形成采集轨迹分布$P_{\mathcal E}^{\beta}$，经$\Gamma_n$采样得到$D$。
+学习算法仍以$D$及$(\mathcal H,\ell,\mathcal C)$为输入，构造经验目标并输出$h_D=\pi$。
+执行$\pi$形成评价轨迹分布$P_{\mathcal E}^{\pi}$，另行采样得到$D_{\mathrm{eval}}$，
+据此估计
+\[
+  R_{\mathcal M}(\pi)
+  =\mathbb E_{\tau\sim P_{\mathcal E}^{\pi}}[\ell(\pi,\tau)].
+\]
+离线样本来自$\beta$时，须说明怎样支持$\pi$的求解与评价，不能直接把来源轨迹平均当成任意策略的风险。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/math-preparation/reading-restructure/ch17/interactive-learning-framework}
+  \caption{交互学习保留静态流程的采样、学习与评价环节。
+  上方用$\beta$采集并学习，下方部署学得策略$\pi$并采样评价。
+  中间只有一个共享环境：行动更新内部状态，新观测进入$I_t$，两种策略都从可得信息选择行动。
+  它们表示不同运行阶段，不同时控制同一次行动。总体评价是有限轨迹样本的估计，
+  总体风险是它所联系的理论目标；在线更新时可据$\pi$构造下一轮$\beta$。}
+  \label{fig:future-interactive-learning-framework}
+\end{figure*}
+
+同一过程可以离线执行一次，也可以在线反复运行。
+后一种情形中，已学得的策略会影响下一轮能看到哪些样本，因此采样、求解与行动相互联系。
+轨迹的理论描述可以包含状态，实际样本只包含采集到的字段；这一区别会限制能够评价的目标。
+
+\section{从学习场景提出关键数学问题}
+\label{sec:future-mathematical-question-map}
+\label{sec:future-mathematical-questions-and-learning-guarantees}
+
+学习理论与可信性要求需要落实成明确的数学问题。
+给定什么对象，它属于哪个空间，哪些映射或观测已经可用，要证明什么极限、误差或概率关系，
+这些条件共同决定问题的含义。
+下面按学习过程中的场景提出问题；同一场景可以涉及多个问题，
+不同场景也可以共享同一个问题。问题框陈述分析对象与所求性质，
+后续各节再研究成立条件和适用工具。
+
+\subsection{固定数据训练模型：表示、最优解与训练序列}
+\label{sec:future-core-learning-problem-map}
+
+用已有温度记录训练预测器时，需要分开模型能够表示什么、训练目标能否达到，
+以及具体更新能否到达所需结果。
+表达能力（expressivity）讨论候选范围，优化讨论目标泛函，收敛讨论算法产生的序列。
+
+\begin{mathproblem}[目标的表示与逼近]
+  \label{question:future-representation}
+  给定目标空间$\mathsf Y$、参考对象$g\in\mathsf Y$、
+  表示映射$\Phi:\Theta\to\mathsf Y$及距离$d_{\mathsf Y}$，
+  是否有$\bm\theta\in\Theta$满足$\Phi(\bm\theta)=g$？若没有，
+  \[
+    \inf_{\bm\theta\in\Theta}
+      d_{\mathsf Y}(\Phi(\bm\theta),g)
+  \]
+  有多大，能否由某个候选达到？
+\end{mathproblem}
+
+这里的$g$可以是预测函数、概率分布或策略。
+表示学习还需要判断压缩映射是否保留任务所需区别：
+不同工况若已被映到同一点，后续预测器就无法仅靠该表示区分它们。
+网络加深、增加宽度、改变低秩或对称结构，都是改变表示范围，
+但表示范围扩大不保证算法能找到所需候选。
+
+\begin{mathproblem}[目标泛函的极小值与解]
+  \label{question:future-minimizer}
+  固定训练样本$D$，给定可行候选集合$\mathcal H_{\mathcal C}$
+  及其上的目标泛函$F_D:\mathcal H_{\mathcal C}\to\mathbb R$。
+  下确界$\inf_hF_D(h)$是否有限、是否能够达到？
+  极小值的解集合$\argmin_hF_D(h)$是否非空，解是否唯一，
+  哪些条件能够刻画全局最优或局部驻点？
+\end{mathproblem}
+
+采用参数化时，目标变为$F_D\circ\Phi$，需要区分函数解与参数解。
+同一预测函数可以对应多个参数，因而函数最优解唯一不意味着参数唯一。
+多目标训练、公平约束与行为约束也要先确定当前泛函和可行集合，
+再研究这项极值问题。
+
+\begin{mathproblem}[训练序列的极限与速度]
+  \label{question:future-convergence}
+  固定$D$，给定配有距离$d_{\mathsf X}$的状态空间$\mathsf X$、
+  初始状态$z^{(0)}$及更新映射$T_{D,k}:\mathsf X\to\mathsf X$，构造
+  \[
+    z^{(k+1)}=T_{D,k}(z^{(k)}).
+  \]
+  是否存在$z^\star\in\mathsf X$使
+  $d_{\mathsf X}(z^{(k)},z^\star)\to0$？极限是否满足所求最优性或不动点条件？
+  能否给出误差$r(k)$的衰减界及达到精度$\epsilon$所需的计算量？
+\end{mathproblem}
+
+状态可以是参数、函数或包含动量与价值估计的联合状态。
+固定映射时，序列由$T_D$的反复复合产生；更新随步长或历史改变时，
+则是一列不同映射的作用结果。
+在具有相应线性或光滑结构的空间中，连续计算过程还可写成
+$\dot z(u)=V_D(z(u))$，研究$u\to\infty$时的函数轨迹，其中$u$是计算时间。
+随机更新产生随机序列，需要进一步规定期望、依概率或几乎处处的收敛。
+
+收敛的对象与方式必须明确。
+参数通过$\Phi$产生函数，目标泛函又把函数映成实数，
+因此参数收敛、函数收敛、目标值收敛与残差趋于零是不同命题。
+在函数空间中，一致收敛、$L^2(P)$收敛与弱收敛也不能互相替代。
+收敛速度可以比较状态距离，也可以比较目标差或残差，
+所用$r(k)$必须对应选定的误差。
+深度学习的过参数化、初始梯度与隐式偏差，分别改变表示范围、更新映射或所选极限；
+所得训练结论仍需另接到总体表现。
+
+\subsection{用有限样本学习总体规律：泛化与可学习性}
+\label{sec:future-generalization-learnability-map}
+
+训练完成后，温度预测器还要面对新的观测。
+泛化（generalization）问根据有限数据选出的候选能否在规定总体上表现良好；
+它讨论随机样本及数据依赖输出，不再只是固定$D$上的训练序列。
+
+\begin{mathproblem}[有限观测对总体泛函的近似]
+  \label{question:future-generalization}
+  给定观测分布$P$、采样机制$\Gamma_n$、损失函数类
+  $\{\ell(h,\cdot):h\in\mathcal H_{\mathcal C}\}$及由样本构造的$\widehat R_D$，
+  经验泛函能否近似总体泛函$R_P(h)=\mathbb E_P[\ell(h,Z)]$？
+  对指定精度与置信度，能否控制
+  \[
+    \begin{gathered}
+      \sup_{h\in\mathcal H_{\mathcal C}}
+        |R_P(h)-\widehat R_D(h)|,\\
+      R_P(h_D)-\inf_hR_P(h)\text{？}
+    \end{gathered}
+  \]
+\end{mathproblem}
+
+一个抽样前固定候选的误差界，不能直接代入由同一批数据选出的$h_D$。
+模型选择、超参数选择与反复使用验证结果，都增加了这种选择依赖。
+共同控制整个损失类是一条路线，直接分析算法如何依赖样本是另一条路线。
+二分类、多分类、一般损失和神经网络改变损失类的结构，
+但仍要回答有限观测如何支持总体泛函的问题。
+
+\begin{mathproblem}[具有统一保证的学习规则是否存在]
+  \label{question:future-learnability}
+  给定候选类、损失及允许的分布族，是否存在学习规则$A$，使对任意
+  $\epsilon>0$、$\delta\in(0,1)$，存在有限样本数$n(\epsilon,\delta)$，
+  将$A$的候选输出记为$h_D$，即
+  $(\widehat R_D,h_D)=A(D,U;\mathcal H,\ell,\mathcal C)$，
+  对族内每个$P$都满足
+  \[
+    \mathbb P_{D,U}\!\left\{
+      R_P(h_D)-\inf_{h\in\mathcal H_{\mathcal C}}R_P(h)
+      \leq\epsilon
+    \right\}\geq1-\delta\text{？}
+  \]
+  所需样本数如何增长，该规则能否由可停机程序实现，所需计算资源有多大？
+\end{mathproblem}
+
+可学习性（learnability）讨论规则在指定问题族中的存在与预算，
+强于某次训练或某个分布上的成功。
+样本复杂度、可计算性与高效性分别约束样本、程序实现与资源，不能相互代替。
+算法稳定性、样本压缩与神经网络的选解性质，可以服务于这项保证，
+但它们各自涉及的对象仍需明确。
+
+\subsection{已有数据用于新情境：迁移与离线策略学习}
+\label{sec:future-transfer-theory-map}
+
+旧工况数据用于新工况预测，与旧策略记录用于新策略学习，
+都可能出现采集数据的分布与目标评价分布不同。
+共同困难是：来源观测能够支持什么目标结论，不能只比较两组实际样本是否相同。
+
+\begin{mathproblem}[来源观测与目标风险的连接]
+  \label{question:future-source-target}
+  给定来源观测律$P_{\mathrm s}$及其采样数据$D$，
+  目标风险泛函$R_{\mathrm t}:\mathcal H_{\mathcal C}\to\mathbb R$，
+  以及允许的来源与目标关系，能否由来源观测识别并估计$R_{\mathrm t}(h)$？
+  怎样构造$\widehat R_D$，使
+  \[
+    \sup_{h\in\mathcal H_{\mathcal C}}
+      |R_{\mathrm t}(h)-\widehat R_D(h)|
+  \]
+  得到有用的界，进而控制根据$D$选择的候选在目标情境中的超额风险？
+\end{mathproblem}
+
+固定预测任务的迁移取$R_{\mathrm t}(h)=R_{P_{\mathrm t}}(h)$。
+离线强化学习则取来源律$P_{\mathcal E}^{\beta}$及
+$R_{\mathrm t}(\pi)=\mathbb E_{P_{\mathcal E}^{\pi}}[\ell(\pi,\tau)]$；
+目标轨迹律随候选策略改变，即使环境相同也可能偏离采集轨迹律。
+用旧轨迹评价固定$\pi$是一项估计问题，从同一数据选$\pi$还要处理选择依赖，
+所以它又调用数学问题~\ref{question:future-generalization}。
+离线学习时通常没有新策略产生的样本集，
+所求关系不能默认建立在已经取得两组完整轨迹的前提上。
+
+迁移到新任务时，输出空间、损失或约束也可能改变。
+需要规定共享的是样本信息、表示、参数还是适应规则，
+并在同一个目标任务与预算下比较迁移和不迁移的风险。
+少样本学习利用这些额外信息，元学习把适应规则作为候选并评价任务族中的适应后风险；
+它们分别联合表示问题、两层采样问题和适应求解问题。
+领域泛化还要规定未见目标环境的允许范围，
+不能由一个来源与目标之间的界推出任意新环境上的保证。
+
+\subsection{观测、标签或目标不完整：识别与代理目标}
+\label{sec:future-information-proxy-map}
+
+来源记录未覆盖目标行为时，问题可能不只是估计误差大，而是目标根本无法确定。
+多来源标签、自监督目标、示范和偏好也会遇到这种信息不足。
+先判断观测能确定什么，才有理由讨论更多样本怎样提高精度。
+
+\begin{mathproblem}[可观测规律是否确定所求量]
+  \label{question:future-identification}
+  给定允许的环境集合、观测分布映射$\mathcal O$及目标量映射$V$，
+  是否对任意两个允许环境都有
+  \[
+    \mathcal O(\mathcal E)=\mathcal O(\mathcal E')
+    \quad\Longrightarrow\quad
+    V(\mathcal E)=V(\mathcal E')\text{？}
+  \]
+  若不成立，增加什么观测或结构条件，才能消除与目标有关的歧义？
+\end{mathproblem}
+
+可识别性（identifiability）要求相同可观测规律不能对应不同目标值。
+它是数学问题~\ref{question:future-source-target}的前提之一，
+也用于判断弱监督能否恢复潜在标签、偏好能否确定所需奖励，以及观测能否支持干预效应。
+多个来源若共享同一个错误，其一致不能自动当作独立证据。
+
+代理目标是能够从观测计算、但与真实任务目标不同的评分。
+自监督和对齐还要把代理优化的结果接到真实要求。
+
+\begin{mathproblem}[代理泛函能否支持真实目标]
+  \label{question:future-proxy-risk}
+  给定同一候选集合上的代理泛函$\widetilde R$与真实泛函$R$，
+  假设相关风险有限且两个下确界有限，是否存在非减函数$\psi$，
+  满足$\lim_{r\downarrow0}\psi(r)=0$，并对所有候选$h$都有
+  \[
+    R(h)-\inf_gR(g)
+    \leq\psi\!\left(\widetilde R(h)-\inf_g\widetilde R(g)\right)\text{？}
+  \]
+  若不能，哪些误差或遗漏的约束阻止了代理最优转成真实目标上的好结果？
+\end{mathproblem}
+
+即使代理优化已经收敛，也还缺少两个目标之间的关系；
+搜索更充分时，还可能放大代理误差。
+因此它们同时使用识别问题、泛函极值问题及来源与目标风险的比较，
+而不只是训练序列的收敛。
+
+\subsection{固定模型投入使用：扰动、可靠预测与公平要求}
+\label{sec:future-robustness-security-map}
+\label{sec:future-reliability-map}
+\label{sec:future-fairness-alignment-interpretation-map}
+
+部署模型时，输入可能受到噪声、缺失或攻击，使用者也可能依据概率和预测范围采取行动。
+鲁棒性要求指定改变对象与允许范围，可靠性要求指定能够兑现的概率或决策承诺。
+两者的比较量不同，不能由一个平均准确率代替。
+
+\begin{mathproblem}[允许变化中的响应与最坏损失]
+  \label{question:future-robustness}
+  给定固定候选$h$、输入$x$、允许变化集合$\mathcal U(x)$及输出距离$d$，
+  能否控制$\sup_{x'\in\mathcal U(x)}d(h(x'),h(x))$？
+  若原标签$y$在该范围内仍有效，最坏损失
+  \[
+    \sup_{x'\in\mathcal U(x)}\ell(h,(x',y))
+  \]
+  有多大？若改变的是分布，则对给定分布集合$\mathcal Q$，
+  能否控制$\sup_{Q\in\mathcal Q}R_Q(h)$？
+\end{mathproblem}
+
+鲁棒性（robustness）由允许集合与比较量共同定义。
+对抗安全还要规定攻击者可修改的输入、数据、模型或运行组件，
+以及可查询的信息、攻击预算与损害事件。
+输入攻击使用上述固定模型问题，投毒要把它改成训练数据经过算法后的响应，
+执行攻击则可能进入轨迹约束。
+几个攻击未成功的观测，不能代替整个允许集合上的保证。
+
+\begin{mathproblem}[预测与决策的概率关系是否满足要求]
+  \label{question:future-reliability}
+  给定评价分布$P$、标签$Y\in\{0,1\}$、概率预测器$p(X)$、预测集合规则$C_D(X)$
+  或接受事件，所声明的概率关系是否成立？
+  例如，理想校准与边缘覆盖分别要求
+  \[
+    \begin{gathered}
+      \mathbb E[Y\mid p(X)]=p(X),\\
+      \mathbb P\{Y\in C_D(X)\}\geq1-\alpha,
+    \end{gathered}
+  \]
+  其中$\alpha\in(0,1)$是允许未覆盖概率。
+  接受部分的条件风险、指定群体的条件率是否满足给定限制，
+  有限观测能以多大置信度支持这些声明？
+\end{mathproblem}
+
+可靠性（reliability）把不确定性表达接到频率、覆盖和决策风险。
+校准、覆盖与选择性风险是不同要求；边缘覆盖也不自动保证每个输入或群体的条件覆盖。
+估计条件分布或参数不确定性、检验预测声明与构造有效保证，承担不同职责。
+
+公平性把比较量进一步限定到群体条件分布。
+例如，正预测率与给定真实标签后的错误率规定不同约束；
+它们能否同时成立，需要回到数学问题~\ref{question:future-minimizer}检查可行集与目标取舍，
+能否从群体样本确认，则使用数学问题~\ref{question:future-generalization}。
+标准本身由任务和使用情境规定，数学分析检查其可行性与证据。
+
+可解释性也须指定参照对象。
+简单代理$g$解释固定模型$h$时，研究的是数学问题~\ref{question:future-representation}中的行为逼近；
+输入归因与内部干预研究指定响应，训练点影响则改变样本后重新学习。
+如果解释要支持现实行动补救，还需识别干预后果、规定可行行动与成本，
+不能把模型对某个字段的响应直接当成现实因果关系。
+
+\subsection{训练数据变化与模型发布：稳定性、隐私与遗忘}
+\label{sec:future-privacy-unlearning-map}
+
+删除或替换温度记录后重新训练，算法可能产生不同输出。
+稳定性比较输出损失如何变化，隐私比较观察者能否区分随机发布结果，
+遗忘比较删除后机制能否接近重新训练的结果。
+它们共用$D\mapsto h_D$，却提出不同的数学要求。
+
+样本稳定性可规定相邻关系$D\sim D'$，再问
+$\sup_z|\ell(h_D,z)-\ell(h_{D'},z)|$能否被控制。
+这是一项指定数据变化下的响应问题，也可以成为总体风险分析的依据。
+参数距离小是否足够，还需检查参数到预测和损失的映射。
+
+\begin{mathproblem}[随机输出律的可区分程度]
+  \label{question:future-output-law}
+  给定数据相邻关系、随机发布机制$M_D$和输出事件$B$，
+  两个输出律的差异能否满足规定的概率界？
+  差分隐私要求对所有相邻$D,D'$及每个可测事件$B$都有
+  \[
+    \mathbb P\{M_D\in B\}
+    \leq e^{\epsilon_{\mathrm{priv}}}
+       \mathbb P\{M_{D'}\in B\}+\delta_{\mathrm{priv}}.
+  \]
+  若参照改成删除记录后重新训练的输出律，遗忘机制的输出能否在规定的分布距离
+  或不可区分标准下接近这一参照？
+\end{mathproblem}
+
+差分隐私（differential privacy）的概率来自机制随机性，比较时两个数据集固定。
+它与预测置信度、输出损失稳定性都不同；
+保护单位、可见结果及多次发布决定承诺的范围\scite{dwork2014privacy}。
+机器遗忘（machine unlearning）以重训为参照，
+降低已删除记录上的拟合程度本身不证明接近重训，
+保留平均效用也不自动兑现隐私保证。
+
+\subsection{学习结果继续行动或更新：轨迹、累计表现与多方响应}
+\label{sec:future-feedback-theory-map}
+
+加热策略会影响状态与下一次观测，持续学习则会影响后续任务中的候选。
+需要把序列放回信息时序和反馈过程，区分最终输出、整段运行和长期累计表现。
+
+\begin{mathproblem}[闭环轨迹能否满足长期要求]
+  \label{question:future-closed-loop}
+  给定环境$\mathcal E$、可得信息结构、策略$\pi$及允许轨迹集合$\mathcal S$，
+  由策略诱导的轨迹律$P_{\mathcal E}^{\pi}$是否满足
+  \[
+    \mathbb P_{\tau\sim P_{\mathcal E}^{\pi}}\{\tau\in\mathcal S\}
+    \geq1-\alpha,
+  \]
+  或更强的逐轨迹约束？累计成本、到达概率或长期状态是否满足指定要求，
+  学习与模型估计误差会使这些量改变多少？
+\end{mathproblem}
+
+这是一项策略到轨迹再到行为要求的分析。
+单步预测校准、训练收敛或有限安全测试，都不能直接替代闭环结论。
+对齐与安全学习需要检查代理目标和行为约束在执行中是否保持，
+离线策略还要先回答数学问题~\ref{question:future-source-target}中的证据与覆盖问题。
+
+\begin{mathproblem}[序列相对于比较者的累计表现]
+  \label{question:future-cumulative-comparison}
+  给定反馈时序、候选序列$h_t$、第$t$轮损失函数$f_t$，
+  以及预先规定的比较序列集合$\mathcal K_T$，能否控制
+  \[
+    \begin{aligned}
+      &\sum_{t=1}^Tf_t(h_t)\\
+      &\quad-\inf_{(g_1,\ldots,g_T)\in\mathcal K_T}
+         \sum_{t=1}^Tf_t(g_t)\text{？}
+    \end{aligned}
+  \]
+  控制需要怎样的反馈、变化预算和资源，能否使单位轮次的差趋于零？
+\end{mathproblem}
+
+固定比较者与允许移动的比较者产生不同的遗憾问题。
+概念漂移要限制目标或比较者怎样变化，持续学习还需单独评价旧任务风险的保持。
+当前任务预测准确、旧能力保留、累计损失小与最终参数收敛，分别提出不同的命题。
+
+\begin{mathproblem}[多方响应能否达到所求均衡]
+  \label{question:future-equilibrium}
+  给定各方可行策略、损失$R_i(\pi_i,\pi_{-i})$及响应或学习规则，
+  是否存在联合策略$\pi^\star$，使每方都不能通过单方改变降低自己的损失，即
+  \[
+    R_i(\pi_i^\star,\pi_{-i}^\star)
+    \leq R_i(\pi_i,\pi_{-i}^\star)
+  \]
+  对每方$i$及其所有可行$\pi_i$成立？学习产生的联合状态序列能否趋近这种条件？
+\end{mathproblem}
+
+其中$\pi_{-i}$表示除第$i$方以外的其他策略。
+合作、零和与一般和设定决定共同极值、鞍点或均衡是否是合适目标。
+均衡存在性与学习序列趋近均衡，又分别连接极值结构和序列收敛，
+不能用共同训练损失下降替代各方的响应条件。
+
+\subsection{共同数学问题与后续分析的对应}
+\label{sec:future-mathematical-tool-roles}
+
+上述场景并不各自需要一套互不相通的数学。
+迁移与离线策略共享来源到目标的风险连接，可靠性与公平共享条件概率的估计，
+稳定性与隐私共享数据变化但比较不同输出，训练、持续更新与多方学习都产生序列，
+却采用不同的极限或累计比较量。
+表~\ref{tab:future-theory-trust-math-map}按数学问题整理后文入口。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{lXX}
+    \toprule
+    关键数学问题 & 对象与所求性质 & 后续分析入口\\
+    \midrule
+    \ref{question:future-representation}：表示 & 映射的像、目标距离与最佳逼近 & 第~\ref{sec:future-representation-structure}节\\
+    \ref{question:future-minimizer}：极值 & 泛函、可行集合、解与最优性 & 第~\ref{sec:future-fixed-objective-properties}节\\
+    \ref{question:future-convergence}：收敛 & 空间上的迭代、极限与速度 & 第~\ref{sec:future-fixed-sample-optimization}节\\
+    \ref{question:future-generalization}：观测与总体 & 随机泛函及数据依赖风险 & 第~\ref{sec:future-observation-sampling}节\\
+    \ref{question:future-learnability}：学习规则 & 统一概率保证、样本与计算预算 & 第~\ref{sec:future-selection-population-risk}节，联合求解分析\\
+    \ref{question:future-source-target}：来源与目标 & 两个风险泛函的联系 & 第~\ref{sec:future-cross-context-learning}节\\
+    \ref{question:future-identification}：识别 & 观测等价下目标是否唯一 & 第~\ref{sec:future-identifiability-information}节\\
+    \ref{question:future-proxy-risk}：代理与真实目标 & 两个泛函的最优性及超额风险关系 & 识别分析，联合极值与行为约束分析\\
+    \ref{question:future-robustness}：最坏响应 & 扰动集合内的距离、损失与风险 & 第~\ref{sec:future-actions-states-observations}节\\
+    \ref{question:future-reliability}：概率要求 & 条件频率、覆盖与决策风险 & 第~\ref{sec:future-empirical-population-statistical-error}节，联合约束分析\\
+    \ref{question:future-output-law}：输出律 & 相邻或参照输出的概率比较 & 第~\ref{sec:future-data-changes-privacy-explanation}节\\
+    \ref{question:future-closed-loop}：长期约束 & 策略诱导轨迹的事件与累计量 & 第~\ref{sec:future-objectives-constraints}节\\
+    \ref{question:future-cumulative-comparison}：累计表现 & 相对比较序列的损失差 & 第~\ref{sec:future-changing-task-sequence}节与反馈分析\\
+    \ref{question:future-equilibrium}：多方响应 & 联合策略上的均衡条件 & 第~\ref{sec:future-objectives-constraints}节，联合求解分析\\
+    \bottomrule
+  \end{tabularx}
+  \caption{按共同数学问题组织后续分析。问题框负责规定给定对象与所求性质，
+  后文负责说明场景条件、分析工具及结论边界。}
+  \label{tab:future-theory-trust-math-map}
+\end{table*}
+
+后续分析应先辨认空间、映射、观测与比较量的结构，再选择工具。
+例如，数学问题~\ref{question:future-convergence}中的序列，
+可能来自有限维仿射映射、函数空间上的非线性算子或随机更新；
+数学问题~\ref{question:future-generalization}中的观测，
+可能独立、相关或依赖历史选择。
+这些条件改变适用的分析方法，而不是改变问题本身要回答的性质。
+
+\section{表示与逼近分析：候选类能否表示目标}
+\label{sec:future-representation-structure}
+
+本节分析数学问题~\ref{question:future-representation}：
+给定目标、表示范围与比较方式，判断目标能否表示，以及不能精确表示时的最佳误差。
+
+学习算法只能从允许的候选中选择对象。在学习问题
+$\mathcal M=(\mathcal E,\mathcal H,\ell,\mathcal C)$中，
+环境和目标规定希望做到什么，$\mathcal H_{\mathcal C}$则规定允许用什么实现。
+如果这个范围本身无法表示需要的函数、分布或策略，增加样本或延长训练也无法越过
+候选限制。本节分析这个限制：目标能否精确表示；不能精确表示时，最好还能做到什么程度。
+这两问都比较候选对象，暂时不评价学习算法实际找到了哪个对象。
+
+\subsection{精确表示：目标是否属于候选类}
+\label{sec:future-exact-representation}
+
+先由任务指定一个参考目标$g$。它可以是希望恢复的预测规律、需要压缩的已有模型，
+也可以是满足某项行为要求的策略。精确表示问的是
+\[
+  g\in\mathcal H_{\mathcal C}\ ?
+\]
+这里的相等由任务规定：可以要求所有允许输入上的输出相同，也可以只要求在评价
+分布下几乎处处相同。目标尚未知时，这个问题仍有意义；我们可以在一类可能的目标上
+研究候选是否足够，而不是先假定训练已经揭示了真实目标。
+
+参数化$\Phi:\Theta\to\mathcal H$提供候选的表示方式。
+判断表达能力时，需要检查是否存在$\bm\theta$使$\Phi(\bm\theta)=g$并满足约束。
+参数个数不是这个判断本身：不同参数可能表示同一个候选，参数化也可能没有覆盖
+全部允许候选。此时实际范围是$\Phi(\Theta)\cap\mathcal H_{\mathcal C}$。
+
+固定特征下的线性预测属于特征函数张成的空间，因而可以借助线性组合、秩和子空间
+判断哪些目标能够表示。核模型把这一问题放到具有内积的函数空间中。
+神经网络由层的复合规定候选，所得函数类通常不是线性子空间；分析时要保留激活函数、
+深度、宽度和结构约束，检查这些条件允许哪些函数。卷积、对称性或共享参数进一步
+限制可表示范围，不能只凭模型的名称断言它能够表达当前任务。
+
+\subsection{最佳逼近：候选限制造成多大误差}
+\label{sec:future-best-approximation}
+
+目标不在候选类中时，精确表示的否定结论还没有说明实际影响。
+需要按任务指定误差$d$，比较
+\begin{equation}
+  e_{\mathrm{app}}(g,\mathcal H_{\mathcal C})
+  =\inf_{h\in\mathcal H_{\mathcal C}}d(h,g).
+  \label{eq:future-candidate-approximation-error}
+\end{equation}
+例如，可以比较函数的平方积分误差、重构误差或分布差异。
+若任务直接以总体风险评价，也可以比较当前候选类与更大参考类的最佳风险。
+这种差距由候选限制产生，即使经验问题精确求解，它仍可能存在。
+
+不同空间结构决定怎样分析这个下确界。在Hilbert空间的闭线性子空间上，正交投影给出
+最佳逼近；低秩矩阵的重构可借助奇异值分解。非线性神经网络通常没有同样的投影公式，
+需要结合输入范围、目标的正则性与网络结构，研究误差怎样随候选规模改变。
+第~\ref{chap:functional-analysis-and-approximation}章提供这些空间与逼近的入口。
+
+压缩、蒸馏和共享表示都可以据此定位：改变候选范围后，目标还能表示多少？
+表达范围扩大又会改变后面的求解难度和统计分析条件。
+因此，表示与逼近确定的是最好可能达到什么程度；学习算法能否达到这个程度，
+还要继续分析经验目标和算法序列。
+
+\section{优化与收敛分析：怎样求解固定的学习问题}
+\label{sec:future-parameters-mappings-learning-trajectories}
+
+数学问题~\ref{question:future-minimizer}与~\ref{question:future-convergence}
+分别研究固定目标的解，以及算法产生的序列。本节按可行域、目标与更新的结构选择分析工具。
+
+候选限制确定后，需要从候选中求出一个合适对象。
+现在固定$\mathcal M=(\mathcal E,\mathcal H,\ell,\mathcal C)$及样本集$D$，
+讨论经验目标$\widehat R_D$上的问题和学习算法的输出：
+\[
+  \inf_{h\in\mathcal H_{\mathcal C}}\widehat R_D(h),
+  \qquad \{h_D^{(k)}\}_{k\geq0}.
+\]
+前者规定要解什么，后者记录计算到第$k$步时得到了什么。
+问题存在最优解，不意味着算法能够到达它；目标下降，也不意味着参数收敛。
+优化与收敛分析需要分别回答这两层问题。
+
+\subsection{优化问题的分析：解的存在性、唯一性与最优性条件}
+\label{sec:future-fixed-objective-properties}
+
+在构造更新以前，需要确认所要求的最优解是否存在，以及怎样判断一个候选已经最优。
+这层分析只使用固定目标与可行域，还没有选择具体算法。
+
+\subsubsection{可行域与目标的性质}
+\label{sec:future-feasible-set-objective-properties}
+
+采用参数化$h=\Phi(\bm\theta)$时，令
+$\Theta_{\mathcal C}=\{\bm\theta:\Phi(\bm\theta)\in\mathcal H_{\mathcal C}\}$，
+并记$F_D(\bm\theta)=\widehat R_D(\Phi(\bm\theta))$。
+若参数化没有覆盖原候选类，应先收窄到实际表示的范围，再讨论求解误差。
+问题的性质由当前可行域和当前目标共同决定。
+
+目标下有界时可以讨论下确界，但最优值未必由某个候选达到。
+有限维中，非空紧可行域与连续目标是一组保证达到最小值的充分条件。
+无界参数域则要进一步检查目标是否阻止参数逃向无穷。
+凸性帮助把局部最优接到全局最优；严格凸性可以在凸可行域上保证解至多一个。
+正则项可能帮助选解，但也改变了目标；硬约束直接改变可行集合，还须核对其是否非空。
+
+线性模型不自动具有唯一训练解，这还取决于特征与损失。
+神经网络的复合参数化通常使目标非凸，同一函数还可能有多个参数代表。
+因此，研究“解是否唯一”必须说明讨论的是参数还是候选函数。
+
+\subsubsection{最优性条件与等价求解形式}
+\label{sec:future-optimality-equivalent-formulations}
+
+可微无约束问题的内点最优参数必须满足
+\[
+  \nabla F_D(\bm\theta)=\bm0.
+\]
+对凸目标，这也是全局最优的充分条件；对非凸目标，它只刻画驻点，不能排除鞍点。
+带约束时，还需结合可行性、乘子与适当的约束条件。
+这些判断让我们知道算法应达到什么，而不是仅观察训练曲线是否趋于平坦。
+
+空间结构也可能给出等价求解形式。线性平方损失可化为投影和正规方程；
+有限评价点与适当范数惩罚下，核函数问题可以转为有限系数问题。
+神经网络的链式求导则帮助计算最优性残差。
+这些都是分析和求解已定义学习问题的工具，具体条件见
+第~\ref{chap:optimization}章与第~\ref{chap:functional-analysis-and-approximation}章。
+
+\subsection{求解过程的分析：迭代构造、收敛与计算误差}
+\label{sec:future-fixed-sample-optimization}
+
+最优性条件确定了求解目标，实际更新却可能无法到达它。
+因而要把学习算法产生的序列作为新的分析对象，并规定停止时允许多大误差。
+
+\subsubsection{更新规则的构造与收敛目标}
+\label{sec:future-update-rule-convergence-target}
+
+算法需要规定从当前状态怎样产生下一状态。
+参数化训练可以写成
+\[
+  \bm\theta^{(k+1)}=T_D(\bm\theta^{(k)},\xi^{(k+1)}),
+\]
+其中$\xi^{(k+1)}$表示本次更新使用的随机输入，属于算法随机性$U$。
+动量或辅助变量参与更新时，应把它们也纳入算法状态。
+这里$k$是计算编号，与环境运行的时间$t$区分。
+
+收敛目标可以是经验目标差趋于零、驻点残差趋于零，或参数及候选在指定距离下收敛。
+这些结论需要分别证明：小梯度未必表示全局目标差小，目标值收敛也未必决定唯一参数。
+某些学习更新直接逼近估计方程或不动点，其残差才是应分析的量。
+
+\subsubsection{序列所在的空间与更新映射}
+\label{sec:future-iteration-space-and-operator}
+
+判断收敛以前，要把算法状态、空间和比较方式对应起来。
+有限维参数配欧氏距离时，可以使用范数、矩阵与紧致性；
+直接更新函数时，要规定函数空间的范数或拓扑，并核对更新是否仍落在这个空间中。
+例如在$L^2(P)$中，函数距离忽略零测集上的差异，
+不能从这种收敛直接推出每个输入点上的预测都收敛。
+由参数序列转到函数序列，也需检查表示映射$\Phi$在所选比较方式下是否连续。
+
+空间完备且固定更新$T_D$把空间映到自身时，如果存在$q\in[0,1)$使
+\[
+  d_{\mathsf X}(T_Dz,T_Dz')
+  \leq q\,d_{\mathsf X}(z,z')
+\]
+对空间内所有$z,z'$成立，那么压缩映射定理给出唯一不动点$z^\star$，并有
+$d_{\mathsf X}(z^{(k)},z^\star)\leq q^k d_{\mathsf X}(z^{(0)},z^\star)$。
+这里完备性保证极限仍属于空间，压缩性同时控制存在性、唯一性和几何速度。
+但不动点是否为训练最优解，需要另行建立更新方程与最优性条件的联系。
+非线性更新并不排除这项工具，关键是它在所分析范围内是否满足压缩条件。
+
+有限维仿射更新$\bm z^{(k+1)}=\bm B\bm z^{(k)}+\bm c$，
+可以围绕不动点写出误差$\bm e^{(k+1)}=\bm B\bm e^{(k)}$。
+对任意初值误差都趋于零的条件是谱半径$\rho(\bm B)<1$；
+矩阵幂的范数进一步描述衰减和可能的暂态放大。
+因此，即使渐近收敛成立，有限步中仍要检查误差是否先明显增大。
+这些线性工具的基础见线性空间与状态演化章节。
+
+更新不构成压缩时，可以改为控制目标下降、迭代间距离或其他Lyapunov量。
+非扩张映射只保证距离不增，一般不足以单独推出普通迭代收敛；
+还需结合空间结构、平均化更新、渐近正则性或其他条件。
+在无限维空间中，有界序列也不自动具有范数收敛子列，
+弱紧致性与弱下半连续性可能只能支持弱极限及其最优性。
+因此，空间结构决定能够获得哪种收敛，映射结构决定能够使用哪种递推论证。
+第~\ref{chap:functional-analysis-and-approximation}章提供相关函数空间与算子基础。
+
+\subsubsection{确定性迭代的收敛与速度}
+\label{sec:future-deterministic-training-convergence}
+
+确定性更新产生普通序列，可以从单步误差怎样变化入手。
+例如梯度下降采用
+\[
+  \bm\theta^{(k+1)}
+  =\bm\theta^{(k)}-\eta_k\nabla F_D(\bm\theta^{(k)}).
+\]
+光滑性给出目标变化的上界，步长决定更新是否足够小，从而建立下降不等式。
+目标下有界时，累加下降量可以帮助控制驻点残差；凸性或更强的曲率条件，
+进一步把残差接到最优值及收敛速度。
+
+线性、凸学习可以利用全局结构分析这条序列。
+非线性神经网络常需检查局部光滑性、参数是否留在分析区域，以及所得结论只涉及
+驻点还是最优解。正确求导提供方向，不能单独保证下降和收敛。
+
+\subsubsection{随机迭代的收敛与误差}
+\label{sec:future-stochastic-optimization-trajectory}
+
+固定$D$之后，随机初始化和小批量抽取仍会使算法产生随机序列。
+若$\bm g^{(k)}$是随机梯度，分析常从条件均值入手：
+\[
+  \mathbb E[\bm g^{(k)}\mid\mathscr F_k]
+  =\nabla F_D(\bm\theta^{(k)}),
+\]
+其中$\mathscr F_k$是抽取本次随机输入前的信息。
+这个条件说明平均方向对准固定经验目标；还需控制方差、步长与迭代的稳定性，
+才能建立期望、依概率或几乎处处的收敛结论。
+
+固定步长下需要估计残余噪声误差，递减步长则需核对噪声能否随更新得到控制。
+步长减小过快，算法可能尚未接近目标就几乎停止移动；减小过慢，又可能无法抑制累积噪声。
+随机过程与随机逼近提供相应工具。
+这层随机性来自算法，样本集能否代表总体仍是下一节的问题。
+
+\subsubsection{有限计算的误差与资源需求}
+\label{sec:future-finite-learning-computation}
+
+实际训练在有限步停止。对可行输出，可以用
+\begin{equation}
+  \varepsilon_{\mathrm{opt}}(k,D,U)
+  =\widehat R_D(h_D^{(k)})
+   -\inf_{h\in\mathcal H_{\mathcal C}}\widehat R_D(h),
+  \label{eq:future-finite-optimization-error}
+\end{equation}
+衡量尚未完成的求解；只保证驻点时则应报告相应残差。
+有中间不可行候选的算法，还需要记录约束违反程度。
+
+给定所需精度后，再分析迭代数、每步成本、存储和通信。
+近似求导、积分或内层求解的误差若进入更新，就要判断它们是否破坏下降或留下误差下限。
+这些运算服务于训练分析，不另构成一种学习问题。
+本节回答的是固定样本上的目标能否求到所需程度；经验求解如何支持总体结论，
+需要把这项误差接到采样与统计分析。
+
+\section{观测与统计分析：有限信息能支持什么学习结论}
+\label{sec:future-observation-sampling}
+
+本节研究数学问题~\ref{question:future-generalization}、\ref{question:future-learnability}与
+\ref{question:future-identification}，并将这些工具用于数学问题~\ref{question:future-reliability}
+中的概率声明。采样结构与目标量决定所需的统计分析。
+
+固定样本集上的优化回答了怎样得到候选输出$h_D$，学习还要回答它在总体中表现如何。
+本节分析环境、采样、经验量与学得对象之间的联系：样本代表什么总体，
+有限观测能估计什么，根据这些观测选出的对象又能得到什么保证。
+其中既有有限抽样造成的误差，也有学习算法依赖样本造成的选择问题。
+统计分析需要先确定目标是否能从观测中识别，再研究估计和学习的误差。
+本节固定观测机制及待评价总体，解释有限证据怎样支持目标量与学得对象的总体表现。
+来源与使用情境之间的分布、任务或策略关系另在第~\ref{sec:future-cross-context-learning}节展开。
+
+\subsection{从环境到观测分布：样本代表哪个总体}
+\label{sec:future-environment-observation-population}
+
+总体结论必须先说明评价对象。环境$\mathcal E$与观测方式确定分布$P$；
+监督学习中$Z=(X,Y)$，因此$P$包含输入与结果的联合规律，只有输入边缘分布并不足以确定预测风险。
+无监督学习只观测$X$，也仍需由损失规定要评价重构、分组还是密度拟合。
+
+采集到的观测未必代表所关心的全部对象。例如，只观察已展示对象的反馈，
+样本就反映展示机制下的规律。需要评价未展示对象时，还须说明两者的联系。
+交互学习也要分别写出采集策略$\beta$和评价策略$\pi$诱导的分布；
+环境相同，策略不同仍可能使可见轨迹不同。
+这里所问的是环境怎样进入观测与评价，以及目标量能否由这些观测支持。
+
+当前小节先确定要评价哪个总体，并核对采集机制与它的关系。
+同一个分布下两组有限样本不同，属于抽样波动；
+采集分布与使用时的分布不同，则增加了跨情境的学习问题。
+第~\ref{sec:future-cross-context-learning}节专门研究这种关系，
+这里继续分析给定观测规律下的有限证据。
+
+\subsection{从分布到有限样本：采样条件与经验分布}
+\label{sec:future-sampling-conditions-empirical-distribution}
+
+采样机制$\Gamma_n$把环境规律转成实际样本集$D$。
+独立同分布的基准设定为$D=(Z_1,\ldots,Z_n)\sim P^n$，其经验分布与经验风险为
+\[
+  \widehat P_D=\frac1n\sum_{i=1}^{n}\delta_{Z_i},
+  \qquad
+  \widehat R_D(h)=\int\ell(h,z)\,\mathrm d\widehat P_D(z),
+\]
+其中$\delta_{Z_i}$是在样本$Z_i$处的点质量。
+经验分布是有限抽样得到的随机对象，偏离$P$并不表示环境发生了迁移。
+
+样本的数量不能单独决定证据强度。连续观测可能相关，多个来源可能共享误差，
+主动选择观测还会使后续样本依赖已有历史。
+独立样本可以使用大数定律与集中不等式，相关和自适应样本则需要相应的依赖条件、
+条件期望或随机过程分析。交互样本还要检查采集策略是否覆盖评价策略所需的状态与行动，
+否则未观测的结果不能仅靠增加同类记录恢复。
+
+依赖结构怎样进入误差，可以先从一个固定候选看出。
+设第$i$个观测上的损失为$L_i=\ell(h,Z_i)$，各项二阶矩有限，则
+\[
+  \operatorname{Var}\!\left(\frac1n\sum_{i=1}^n L_i\right)
+  =\frac1{n^2}\sum_{i=1}^n\sum_{j=1}^n
+    \operatorname{Cov}(L_i,L_j).
+\]
+独立同分布时，非对角协方差为零，方差成为$\operatorname{Var}(L_1)/n$。
+连续轨迹中的损失若持续正相关，这些非对角项会增加平均值的方差；
+把一条轨迹切成许多片段，不会自动得到同样数量的独立证据。
+这里协方差解释波动规模，不能单凭二阶矩推出任意强的尾概率界。
+
+对相关序列，可以用混合条件刻画相隔较远的观测如何减弱依赖，
+再通过分块和相应的集中不等式控制经验平均。
+对按历史选择行动的采样，可以把观测量减去给定已有历史的条件期望，
+得到条件均值为零的鞅差序列，再用鞅集中不等式控制累积随机误差。
+这一步围绕条件期望展开：若条件期望本身随策略变化，
+还须说明这些条件量怎样联系所求总体量，不能把鞅控制直接当成目标风险的保证。
+第~\ref{chap:random-variables}章提供随机过程、条件期望与集中分析的基础。
+
+\subsection{从经验量到总体量：统计误差与一致收敛}
+\label{sec:future-empirical-population-statistical-error}
+
+对抽样前固定的$h$，独立同分布且损失可积时，大数定律联系
+$\widehat R_D(h)$与$R_P(h)$；更强的尾部条件允许给出有限样本误差界。
+这一步研究的是一个固定候选的经验平均能否估计总体平均。
+例如，若$0\leq\ell(h,Z)\leq B$、$B>0$，$n$个样本独立同分布，
+则Hoeffding不等式给出
+\[
+  \mathbb P\!\left\{|\widehat R_D(h)-R_P(h)|>\epsilon\right\}
+  \leq2\exp\!\left(-\frac{2n\epsilon^2}{B^2}\right).
+\]
+这把样本数、允许误差与失败概率联系起来。
+若损失无界，需要另行控制尾部；若样本相关，则不能直接沿用这个独立样本界。
+
+训练会在许多候选之间选择，仅对一个预先固定候选的误差界还不够。
+若可行候选类有限，含$m$个候选，对每个候选使用上述不等式，再对失败事件取并集，
+可得以至少$1-\delta$的概率，
+\[
+  \sup_{h\in\mathcal H_{\mathcal C}}|R_P(h)-\widehat R_D(h)|
+  \leq B\sqrt{\frac{\log(2m/\delta)}{2n}}.
+\]
+候选数越多，搜索中遇到偶然低经验损失的机会越多，所需统计控制也越强。
+无限候选类不能直接用候选数作并集界，需要用覆盖数、VC维或Rademacher复杂度等工具
+控制整个损失函数类；一致收敛研究的就是这些候选的误差能否共同趋于零。
+下一小节将说明它怎样支持根据样本选择候选。
+
+评价学得对象时，应另记评价样本集$D_{\mathrm{eval}}$。
+若它独立于训练及选择过程，且来自同一$P$，那么给定$h_D$以后，
+$\widehat R_{D_{\mathrm{eval}}}(h_D)$可以估计$R_P(h_D)$。
+前者仍是随机估计，后者才是真正的总体风险；测试结果与训练结果不同，
+可以完全发生在同一个$P$下。反复依据评价结果调整模型，会重新引入选择依赖，
+需要另行分析评价证据。
+
+所求总体量也决定统计对象。概率校准比较条件发生频率，预测集合覆盖比较未来结果落入集合的事件概率。
+它们需要相应的经验量与采样关系，不能仅由平均训练损失推出。
+例如，校准要检查预测概率相近的对象中事件实际发生的频率，
+覆盖要检查未来结果落入预测集合的概率；置信区间、条件概率估计与可交换性分析
+分别控制相关频率和覆盖事件。条件保证与总体平均保证也需要区分，
+总体覆盖达到要求并不意味着每种工况都达到同样的覆盖。
+对校准，先固定概率预测器和评价分组，再用条件频率及其置信区间检查各组；
+若同一数据还用于选择分组或调整预测器，需要处理额外选择依赖。
+对预测覆盖，可以用与训练分开的校准样本构造误差分数，
+在校准分数与未来分数可交换时，利用未来分数的秩控制未覆盖概率。
+这类秩论证不要求知道真实条件分布，却只支持所规定的边缘覆盖，
+不能无条件升级为逐输入的条件覆盖。
+对选择性预测，要同时估计接受事件的概率和接受部分的损失；
+接受率太低时，条件风险的估计证据也会变弱。
+第~\ref{chap:random-variables}章的估计、集中与可交换性工具分别说明这些关系怎样成立。
+
+\subsection{从经验选择到总体表现：风险一致性与可学习性}
+\label{sec:future-selection-population-risk}
+
+学习算法会根据$D$选择$h_D$，因此不能直接把固定候选的统计结论代入这个随机输出。
+一条分析路线同时控制预先给定的可行候选类：
+\[
+  \Delta_D=
+  \sup_{h\in\mathcal H_{\mathcal C}}
+  |R_P(h)-\widehat R_D(h)|.
+\]
+若$h_D\in\mathcal H_{\mathcal C}$的经验求解误差至多为$\eta_D$，在相关风险有限时，有
+\[
+  R_P(h_D)-\inf_{h\in\mathcal H_{\mathcal C}}R_P(h)
+  \leq2\Delta_D+\eta_D.
+\]
+这个比较将经验求解与总体表现连接起来：两次经验与总体的转换需要统计控制，
+剩下一项由优化过程控制。风险一致性研究左侧能否趋于零；
+总体解可能不唯一，因此风险一致不要求函数逐点收敛到某个指定解。
+
+要控制$\Delta_D$，需要把候选类的结构接到统计误差上。
+VC维用能够实现所有二值标记的最大输入规模刻画二值函数类的容量，
+不是线性参数空间专用方法，也不等于参数坐标数。
+神经网络形成非线性候选族后，仍可研究其容量；范数或结构条件还可以限制输出与损失的变化，
+从而得到更适合当前任务的统计界。
+覆盖数用有限精度下需要多少代表函数来描述候选类，
+Rademacher复杂度则衡量损失函数类对样本上独立随机正负号的拟合能力。
+后者通过对称化把未知总体与经验量的差转成随机符号下的函数类上确界，
+再利用范数、平滑性或组合结构控制这个上确界。
+正则化若确实限制了所分析的类，就可以减小这类统计项，
+但限制过强也可能增大表示与逼近误差；降低经验损失、限制复杂度与增加有效样本
+因此作用于不同的误差来源\scite{mohri2018foundations,bartlettmendelson2002}。
+另一条路线直接分析算法：样本替换是否显著改变输出损失，或输出与样本有多强的信息依赖。
+稳定性与算法信息由此服务于泛化判断，不必先控制整个候选类。
+
+可学习性进一步问，在指定分布族和候选类下，是否存在算法，
+使一个有限样本预算能够在允许的分布上，对给定精度$\epsilon$和置信水平$1-\delta$共同保证小总体超额风险。
+这是学习是否可能及需要多少证据的问题，而不只是某条训练序列能否收敛。
+\BookPartRef{part:learning-theory}{第二卷“基础、理论和可信性”的“机器学习理论”部分}
+在不同候选结构与采样条件下展开这些分析。
+
+\subsection{观测不足的边界：目标识别与信息获取}
+\label{sec:future-identifiability-information}
+
+有限样本误差之外，还要问观测是否包含确定目标所需的信息。
+若两个允许的环境产生相同可观测分布，却对应不同目标量，
+即使取得无限多同类样本，也无法凭这些观测区分目标。
+可识别性（identifiability）研究的是观测规律能否确定所求量，
+与估计已经可识别的量有多准确不同。
+例如，采集策略在某个状态从不选择强加热，两个环境可以在所有已采集行动上完全一致，
+只在强加热的效果上不同。它们产生相同来源轨迹律，却给出不同目标策略价值。
+这个构造说明：缺少覆盖或额外结构关系时，即使知道来源分布的精确真值，也不能确定目标价值。
+可识别性分析通过比较这样的环境来判断信息是否足够；
+统计下界还可以比较近似不可区分的环境，用概率分布距离或信息量证明有限观测不可避免的误差。
+
+弱监督和自监督常由可见字段构造代理损失，即用能够计算的目标帮助学习真正关心的任务。
+代理损失小能否推出任务风险小，需要另外建立两者之间的关系。
+例如仅重构传感器读数，可能保留幅度变化却忽略故障类别所需的区别；
+若没有规定表示应保留的任务信息，代理优化本身不能排除这种结果。
+分析可以检查条件分布是否由表示保留、代理最优解是否也满足任务要求，
+或能否将代理超额风险转成任务超额风险的上界。
+这里既有表示问题，也有目标识别与风险比较，不能归结为优化是否收敛。
+
+来源融合需要说明来源依赖怎样影响潜在真值的识别。
+例如两个标签来源若复制同一个上游判断，它们的一致不能当作两个独立支持。
+需要写出来源输出与潜在标签的联合分布，再检查条件独立、噪声率或锚点信息
+是否足以确定潜在规律；缺失观测还要区分缺失机制能否忽略。
+奖励学习需要说明示范与偏好能确定何种奖励或行为目标，
+因果任务则需联系观测与干预机制，而不能把观测条件概率直接当成干预效应。
+第~\ref{chap:causal-inference}章展开这些机制关系。
+
+证据不足时，可以补充结构假设，或主动取得新的观测。
+查询标签、选择来源和探索行动都会改变采样机制$\Gamma_n$。
+分析时要比较它们消除了哪些歧义、减少了多少目标误差，并计入获取成本。
+信息量可以衡量观测的区分能力；若希望改善实际决策，还要按任务损失比较新增信息的价值。
+交互探索同时影响可见样本与运行代价，这两方面将在策略与动态分析中结合起来。
+
+\section{扰动与响应分析：改变对象后结果如何变化}
+\label{sec:future-actions-states-observations}
+\label{sec:future-trustworthy-machine-learning}
+
+数学问题~\ref{question:future-robustness}与~\ref{question:future-output-law}
+都规定改变对象后比较什么。本节按样本、输入与问题设定的变化，
+分别分析距离、损失和随机输出律的响应。
+
+前面的分析固定了问题条件，研究候选能否表示目标、训练能否收敛，以及样本结论能否
+推广到总体。条件改变以后，要重新判断原有结果可以保留多少。扰动与响应分析需要
+写清改变的对象、允许的改变范围和比较量。同样一次输入修改，写入样本集并重新训练，
+与交给固定模型预测，作用于学习过程的不同位置。
+
+\subsection{样本集$D$的扰动：学习算法的输出如何变化}
+\label{sec:future-data-changes-privacy-explanation}
+
+固定问题$\mathcal M$、算法和计算预算，将样本集从$D$改成$D'$，比较
+$h_D$与$h_{D'}$，其中算法随机性分别记为$U$与$U'$。这里可以替换一条记录、删除指定记录或改变样本权重。
+响应量可以是函数距离、测试损失差，也可以是随机输出的概率律，选择哪一种取决于
+研究要求。
+
+算法稳定性以测试损失为比较量，问少量样本改变是否显著影响学习结果。若相邻样本集
+上的测试损失差统一有界，便可以结合独立抽样的替换论证，控制期望泛化差。
+因此稳定性是一项样本响应性质，也能成为泛化问题的分析方法；参数变化小是否足以
+推出损失变化小，还取决于模型与损失的连续性。
+
+差分隐私也改变样本集，但比较对外发布的随机输出，例如学得对象$h_D$的事件概率。
+内部构造的经验目标不自动具有同样的隐私保证。对规定的相邻$D,D'$及可测事件$B$，
+要求
+\[
+  \mathbb P_U\{h_D(U)\in B\}
+  \leq e^\epsilon\mathbb P_{U'}\{h_{D'}(U')\in B\}+\delta.
+\]
+概率来自算法随机性，样本集在比较时固定。相邻关系规定保护单位，事件$B$规定观察者
+能区分什么。
+
+构造隐私机制时，需要把样本影响转成概率律的变化。
+例如发布向量统计量$\bm q(D)$，可先计算相邻数据集上的全局敏感度
+\[
+  \Delta_q=\sup_{D\sim D'}\lVert\bm q(D)-\bm q(D')\rVert_1,
+\]
+其中$D\sim D'$表示规定的相邻关系。
+若$\Delta_q$有限且非零，在每个坐标加入独立、尺度为$\Delta_q/\epsilon$的Laplace噪声，
+三角不等式便将两个输出密度的比值控制在$e^\epsilon$以内，
+由此得到该次发布的$(\epsilon,0)$差分隐私。
+这是范数敏感度与密度比共同进入证明的例子；敏感度无界时，
+须先限制统计量或每条记录的贡献，不能直接沿用有限噪声尺度。
+训练中的多次随机发布或更新还需组合分析，
+隐私预算、噪声造成的求解误差与总体效用也要分别控制。
+机器遗忘则以删除记录后重新训练的输出为参照，研究修改后的模型是否
+接近这一参照。它们使用共同的算法映射，却要求不同的损失或分布比较。
+
+\subsection{输入$x$的扰动：固定候选的输出如何变化}
+\label{sec:future-input-neighborhood-response}
+
+固定学得候选$h_D$，改变一次输入$x\to x'$，比较$h_D(x)$与$h_D(x')$。
+输入鲁棒性进一步规定允许邻域$\mathcal U(x)$，问邻域内的预测或损失是否满足要求。
+监督任务若保持标签$y$有效，可研究
+\[
+  \sup_{x'\in\mathcal U(x)}\ell(h_D,(x',y)).
+\]
+噪声、缺失特征和对抗扰动可以给出不同邻域；邻域必须与任务语义一致，不能在实际
+标签也会改变时继续假定原标签正确。
+
+线性映射可用算子范数直接控制有限变化。非线性映射可以从导数和局部展开分析，
+但中心点导数只控制一阶响应；要给出整个邻域的保证，还需控制余项或沿途的导数。
+将最坏损失用于训练，会构成一个新的学习目标，其求解与泛化仍分别需要优化与统计分析。
+
+解释也可以使用响应，但应先指定要解释的查询，例如某个类别得分或策略的长期价值。
+输入导数说明固定模型的局部变化，训练点影响说明重赋权后的学习结果，
+特征贡献则依赖预先规定的替代方式与基线。这些数值回答的查询不同，不必一致。
+修改模型为$h'$或干预内部计算时，也须比较指定查询上的效果及其他行为的保持，
+不能把同一候选类内的编辑直接说成候选类变化。模型响应若要说明真实行动的后果，
+还需要环境机制与因果识别条件。
+
+\subsection{问题设定$\mathcal M$的扰动：风险、最优值与解如何变化}
+\label{sec:future-problem-setting-response}
+\label{sec:future-knowledge-evolution-transfer}
+
+环境、候选类、损失或约束改变，会产生新问题$\mathcal M'$。
+可以固定候选比较它在两种设定中的风险，也可以重新求解，比较最优值与解集合。
+目标变化时须统一评价尺度，候选空间变化时须规定解之间如何比较；否则“变好多少”
+尚未成为明确的数学判断。
+
+例如目标函数受到小扰动时，最优值可能变化不大，最优解却可能因多解或平坦区域而显著改变。
+要把目标扰动转成解距离的界，需要唯一性、曲率或误差界等额外条件。
+这种敏感性分析描述两个问题的数学联系；怎样利用来源信息学习目标任务，
+还须说明可用数据与适应规则，见第~\ref{sec:future-cross-context-learning}节。
+
+分布鲁棒性用允许的分布集合$\mathcal Q$规定变化范围，研究$\sup_{Q\in\mathcal Q}R_Q(h)$这样的最坏风险。
+持续学习则使目标随轮次移动，需要将更新误差与目标漂移分开，并同时评价新任务适应
+和旧任务保留。换测度、分布距离、最优解的敏感性与动态跟踪，都是这些问题的数学
+入口；采用哪一个入口，由改变的对象和所求响应决定。
+
+\section{跨情境学习分析：分布、任务与策略改变后怎样学习}
+\label{sec:future-cross-context-learning}
+
+本节展开数学问题~\ref{question:future-source-target}，
+区分固定任务的分布变化、策略改变诱导的轨迹变化与任务适应。
+任务沿时间变化时，再联合数学问题~\ref{question:future-cumulative-comparison}分析累计表现。
+
+已有知识用于新情境时，需要研究两个学习过程之间的关系。
+变化可能发生在观测分布、任务目标或采集与执行策略上，也可能形成不断移动的任务序列。
+样本扰动固定问题与算法后比较输出；这里则允许训练所依据的来源与实际目标不同，
+问哪些信息可以共享、怎样修正学习目标，以及什么条件下能保证目标表现。
+这些问题会共同调用表示、优化、统计与响应分析，不能仅由其中一种分析包办。
+
+\subsection{固定任务下的分布变化：来源风险怎样联系目标风险}
+\label{sec:future-source-target-transfer}
+
+为了区分来源与目标，记采集数据的分布为$P_{\mathrm s}$，目标评价分布为$P_{\mathrm t}$。
+下标$\mathrm s$表示来源，$\mathrm t$表示目标，与环境时间$t$无关。
+在共同观测空间、共同候选类与同一个损失下，对固定候选$h$，有
+\begin{equation}
+  R_{P_{\mathrm t}}(h)-\widehat R_D(h)
+  =\bigl[R_{P_{\mathrm t}}(h)-R_{P_{\mathrm s}}(h)\bigr]
+   +\bigl[R_{P_{\mathrm s}}(h)-\widehat R_D(h)\bigr].
+  \label{eq:future-source-target-error-split}
+\end{equation}
+右侧第一项来自来源与目标的分布差异，第二项来自有限来源样本。
+即使第二项随样本增多而趋于零，第一项仍可能保留。
+如果$P_{\mathrm s}=P_{\mathrm t}$，两组实际样本不同也不会产生第一项；
+因此，样本不相同与总体分布改变是两件事。
+等式本身也适用于随机输出$h_D$，但控制此时的第二项还要处理样本参与选择$h_D$的问题。
+
+旧工况与新工况可能只是输入出现的频率不同，也可能连相同输入下的温度规律都改变了。
+这两种情况需要不同假设和校正方法。
+交互学习中则取$P_{\mathrm s}=P_{\mathcal E}^{\beta}$、
+$P_{\mathrm t}=P_{\mathcal E}^{\pi}$；分布差异可以来自策略，环境本身无须改变。
+而且$\pi$由数据学得时，目标轨迹分布也随学习结果改变。
+这使策略学习不仅要处理数据选择候选，还要处理候选选择未来数据的反馈。
+
+下面的超额风险界先针对静态任务：来源分布与目标评价分布都固定，不随候选$h$改变。
+策略的目标轨迹律随$\pi$变化，不能直接把固定$P_{\mathrm t}$下的类内最小风险
+当成最优策略风险；策略比较在下一小节分析。
+在这个静态设定下，固定共同候选类、损失与可行集，记
+\[
+  \begin{aligned}
+    \Delta_{\mathrm s,D}
+    &=\sup_{h\in\mathcal H_{\mathcal C}}
+      |R_{P_{\mathrm s}}(h)-\widehat R_D(h)|,\\
+    d_{\ell}(P_{\mathrm s},P_{\mathrm t})
+    &=\sup_{h\in\mathcal H_{\mathcal C}}
+      |R_{P_{\mathrm s}}(h)-R_{P_{\mathrm t}}(h)|.
+  \end{aligned}
+\]
+第二个量只比较当前候选类与损失能看到的分布差异。
+若相关风险有限，且$h_D$的来源经验求解误差至多为$\eta_D$，则两次连接经验风险与来源风险，
+再两次连接来源风险与目标风险，可以得到
+\begin{equation}
+  R_{P_{\mathrm t}}(h_D)
+  -\inf_{h\in\mathcal H_{\mathcal C}}R_{P_{\mathrm t}}(h)
+  \leq2\Delta_{\mathrm s,D}+2d_{\ell}(P_{\mathrm s},P_{\mathrm t})+\eta_D.
+  \label{eq:future-transfer-excess-risk}
+\end{equation}
+与同分布的超额风险界相比，这里多出了不能靠来源样本数直接消除的分布差异项。
+该界把困难分开，但若目标标签不可见，$d_{\ell}$通常也不能直接由数据估计。
+这时必须利用来源与目标之间更具体的关系。
+
+一种关系是输入出现的频率改变，而给定输入后的结果规律保持不变。
+这称为协变量偏移（covariate shift），即
+$P_{\mathrm s}(Y\mid X)=P_{\mathrm t}(Y\mid X)$，但两侧的输入边缘分布可以不同。
+若存在相对于同一基准测度的输入密度$p_{\mathrm s}(x)$与$p_{\mathrm t}(x)$，
+且目标输入分布对来源输入分布绝对连续，定义密度比
+$w(x)=p_{\mathrm t}(x)/p_{\mathrm s}(x)$，便有
+\begin{equation}
+  R_{P_{\mathrm t}}(h)
+  =\mathbb E_{(X,Y)\sim P_{\mathrm s}}
+     [w(X)\ell(h,(X,Y))].
+  \label{eq:future-target-risk-weighting}
+\end{equation}
+这是换测度：把来源样本在平均值中的权重，调整为目标情境所需的频率。
+可据此构造加权经验目标，再对加权损失类进行集中与一致收敛分析。
+实际权重需要估计时，还须控制密度比估计误差。
+
+例如，在一个教学设定中，旧工况记录有九成来自低温、仅一成来自高温，
+目标工况两者各占一半，且每类工况内的输入与结果规律不变。
+两类样本的权重分别为$5/9$和$5$，使加权期望恢复目标比例。
+但高温记录少，赋予它们大权重会放大估计波动。
+如果来源数据完全没有高温记录，目标却会遇到高温，所需密度比便无法在来源上定义。
+裁剪过大的权重可以控制波动，却会引入偏差；
+补充目标数据则改变了可用信息和覆盖情况。
+而且若相同输入下的温度规律已经变化，仅按输入频率加权也不能恢复目标风险。
+
+更一般的迁移学习（transfer learning）利用来源任务学到的样本信息、表示或参数，
+帮助目标任务学习；迁移的对象不必是样本本身。
+当任务相同而分布改变时，领域适应（domain adaptation）研究如何让来源经验适用于目标领域。
+分析输入分布差异时，可以用候选诱导的分布差异度量；
+例如二分类中的$\mathcal H\!\Delta\!\mathcal H$散度，比较一对分类器的分歧概率在两个领域中相差多少。
+相应目标误差界还含有同一候选在两域共同达到小误差的条件，
+因此把输入表示分布对齐并不自动保证目标预测正确\scite{bendavid2010adaptation}。
+
+对于不同标签空间或不同损失的新任务，式~\eqref{eq:future-transfer-excess-risk}不能直接套用。
+需要明确共享的是哪些表示或参数，以及来源目标与目标任务之间的联系。
+例如，使用来源参数作为目标训练的初值，会改变有限计算的求解路径；
+把目标参数限制在来源参数附近，则同时改变候选限制与逼近误差。
+迁移收益要在同一个目标任务、数据预算和评价口径下，
+与不使用来源信息的学习结果比较。
+若来源信息使目标表现变差，就发生负迁移（negative transfer）。
+仅有大量来源样本或相似的输入边缘分布，仍不足以排除这种情况。
+分布差异分析说明已有证据能支持多少目标结论；
+第~\ref{sec:future-data-changes-privacy-explanation}节比较改变具体样本后的算法响应，
+第~\ref{sec:future-problem-setting-response}节则讨论问题设定改变后的风险与解。
+
+\subsection{从采集轨迹到执行策略：离线评价与策略学习}
+\label{sec:future-offline-policy-learning}
+
+策略会影响下一步所见的数据，因而来源与目标的关系要沿整段轨迹展开。
+离策略评价（off-policy evaluation）用采集策略$\beta$的记录，
+估计另一个固定策略$\pi$的表现。
+离线强化学习（offline reinforcement learning）还要利用这批固定记录选择策略，
+学习期间不通过新的环境交互补充数据。
+前者估计指定策略，后者根据估计结果寻找策略；两者共同依赖轨迹覆盖，
+后者还增加了数据参与策略选择的问题\scite{sutton2018,levine2020offline}。
+
+取有限时域$T$，轨迹记为$\tau$，假设初始分布、环境转移及观测机制相同，
+唯一改变的是根据可得历史$I_t$选择行动的策略。
+若两种策略的行动分布有密度，且目标轨迹分布对采集轨迹分布绝对连续，
+轨迹密度比为
+\[
+  w_{\pi}(\tau)
+  =\frac{\mathrm dP_{\mathcal E}^{\pi}}
+         {\mathrm dP_{\mathcal E}^{\beta}}(\tau)
+  =\prod_{t=0}^{T-1}\frac{\pi(a_t\mid I_t)}{\beta(a_t\mid I_t)}.
+\]
+离散行动时，密度就是行动概率。
+比值中的环境因子因相同而消去，行动选择的因子保留下来。
+这里还要求策略所用历史与记录的信息足以确定这些概率，
+不能把未记录的策略输入悄然从比值中删去。
+
+设可从记录计算的轨迹损失为$\ell(\pi,\tau)$。
+对固定$\pi$、真实权重及可积的加权损失，换测度给出
+\begin{equation}
+  R_{\mathcal M}(\pi)
+  =\mathbb E_{\tau\sim P_{\mathcal E}^{\beta}}
+      [w_{\pi}(\tau)\ell(\pi,\tau)].
+  \label{eq:future-off-policy-change-measure}
+\end{equation}
+这说明如何从采集分布下的平均连接目标分布下的平均。
+若有独立采集的轨迹$\tau_1,\ldots,\tau_n$，
+可用加权样本平均估计右侧。
+即使换测度成立，长轨迹上的概率比连乘也可能使权重高度不均匀，
+因此误差分析还需加权损失的矩或尾部条件。
+逐步加权、状态与行动的访问分布比以及模型估计，
+分别改变要估计的统计对象，并引入相应的权重或模型误差。
+其中访问分布可以由第~\ref{chap:policy-value-and-optimization}章的占用度量描述，
+它记录策略在运行中访问各状态与行动的频率。
+
+评价能够成立，仍不代表直接优化这项估计就能学到可靠策略。
+若从同一批数据中寻找$\pi$，算法可能选中估计恰好偏乐观的候选，
+特别是采集记录很少涉及的行动。
+因此需要对候选策略共同控制评价误差，或用独立数据评价选定策略。
+在固定、预先给定的候选策略集合上，假设以高概率共同成立
+$|\widehat R_D(\pi)-R_{\mathcal M}(\pi)|\leq b_D(\pi)$，
+其中$b_D(\pi)$是策略相关的误差上界。
+对于最小化损失，可以按
+\[
+  \widehat\pi\in\argmin_{\pi}
+    \{\widehat R_D(\pi)+b_D(\pi)\}
+\]
+选择策略。在同一个共同成立的事件上，对任一候选$\pi$，有
+\[
+  \begin{aligned}
+    R_{\mathcal M}(\widehat\pi)
+    &\leq\widehat R_D(\widehat\pi)+b_D(\widehat\pi)\\
+    &\leq\widehat R_D(\pi)+b_D(\pi)\\
+    &\leq R_{\mathcal M}(\pi)+2b_D(\pi).
+  \end{aligned}
+\]
+给损失估计加上不确定性代价，就不会仅因某个策略的估计过于乐观而选择它。
+这称为悲观估计（pessimistic estimation）；最大化回报时，相应使用回报下界。
+真正的保证依赖误差界能否在相关候选上共同成立，任意添加惩罚项不能替代这一步。
+
+限制策略偏离采集行为，可以减少对低覆盖区域的依赖；
+用价值函数或环境模型学习策略，则需要继续分析估计误差如何经过动态规划和闭环执行传播。
+这些方法分别控制访问范围、统计不确定性或误差传播，通常也会限制能够取得的改进。
+例如，旧加热策略从未使用强加热，记录就无法直接说明强加热的效果。
+既不补充观测又不加入可验证的结构关系时，保守方法只能限制这类选择，不能凭空恢复其真实价值。
+更换训练轨迹后比较学得策略的变化，属于样本扰动；
+这里的核心则是采集证据如何支持一个可能改变未来轨迹分布的策略。
+
+\subsection{从已有任务到新任务：共享对象与适应后的风险}
+\label{sec:future-task-adaptation}
+
+改变任务时，必须先规定什么信息能够共享。
+温度预测器学到的传感器表示，可以帮助另一台设备预测温度；
+但如果新任务改成判断故障类别，输出空间和损失都已改变，
+就不能只比较原来的两个温度风险。
+需要为目标任务定义候选、损失与风险，再说明共享表示或参数如何进入目标学习。
+共享表示可能降低目标训练所需的自由度，也可能丢失目标所需的区别。
+这分别接到表示与逼近、统计复杂度和适应求解，迁移效果由这些因素共同决定。
+
+如果希望少量样本就能适应许多新任务，可以把适应规则本身作为学习对象。
+设任务$j$有分布$P_j$与损失$\ell_j$，任务从分布$\rho$抽取；
+$D_j$是该任务内的适应样本，$B_{\bm\phi}$是由共享参数$\bm\phi$指定的适应规则，
+输出任务候选$B_{\bm\phi}(D_j)$。
+元学习（meta-learning）研究如何从已有任务学得这类规则，
+使它在新任务中经过适应后仍有较好的表现。
+相应目标是
+\[
+  \mathcal J(\bm\phi)
+  =\mathbb E_{j\sim\rho}\,
+    \mathbb E_{D_j\sim P_j^{n_j}}
+      [R_j(B_{\bm\phi}(D_j))],
+  \qquad
+  R_j(h)=\mathbb E_{Z\sim P_j}[\ell_j(h,Z)],
+\]
+其中$n_j$是任务内适应样本数，这里采用任务内独立同分布的简化设定。
+这个期望有两层：任务内有限样本决定适应质量，有限训练任务决定规则能否适用于新任务。
+增加同一任务的样本不能直接替代增加独立训练任务。
+分析需要分层采样、任务级与任务内的集中或容量控制；
+适应规则的求解则可能涉及内外层优化。
+若新任务不再来自$\rho$，还要分析任务分布的变化，而不是直接沿用同任务族的保证
+\scite{baxter2000}。
+
+共享信息是否有益，应落到适应后风险与同预算基线的比较。
+例如，把所有任务强制使用同一个预测器，可能减少估计波动，却增加任务冲突造成的逼近误差；
+共享表示而保留各任务自己的输出映射，则允许部分区别继续存在。
+少样本学习因而不是仅靠减少训练样本重新描述普通训练，
+而是要明确额外信息从哪里来、限制了哪个数学对象，以及该限制是否适合目标任务。
+
+\subsection{随时间变化的任务：适应、保留与跟踪}
+\label{sec:future-changing-task-sequence}
+
+任务不只可能一次改变，还可能沿时间连续变化。
+记第$t$轮的分布与损失为$P_t$和$\ell_t$，当前候选为$h_t$，风险为
+$R_t(h)=\mathbb E_{Z\sim P_t}[\ell_t(h,Z)]$。
+此时一个固定总体的风险已不足以描述要求：
+学习者既要在当前任务上表现良好，也可能需要保留旧任务能力。
+
+持续学习（continual learning）研究在依次接收任务或数据时，
+如何吸收新信息并保留仍有用的旧能力。
+例如，以学习第$j$个任务后保留的候选$h_j$为参照，
+可以用$R_j(h_t)-R_j(h_j)$记录后续更新对旧任务$j$表现的影响。
+这个差值只比较同一个旧任务上的两次输出，可能为正也可能为负；
+它与当前任务风险$R_t(h_t)$是两个不同指标。
+回放旧数据改变训练采样与目标权重，约束参数更新改变可行更新范围，
+扩充表示则改变候选类。分析时要分别检查旧风险、新风险与资源成本，
+不能仅用参数变化小代替行为保留。
+
+对于不断漂移的目标，还可以相对于一列比较候选$\{h_t^\star\}$定义动态遗憾
+\[
+  \operatorname{Reg}^{\mathrm{dyn}}_T
+  =\sum_{t=1}^T\bigl[\ell_t(h_t,Z_t)-\ell_t(h_t^\star,Z_t)\bigr].
+\]
+其中$\ell_t(h,Z_t)$表示候选$h$在第$t$轮观测上的损失，
+比较候选的允许范围、可用信息与变化预算必须预先规定。
+若比较者可以任意快速改变，而学习者又只能在行动后取得反馈，
+一般不能期待很小的动态遗憾。
+为得到有用界，常用分布变化量、目标函数变化量或比较者路径长度约束漂移，
+再结合在线优化、随机过程与动态跟踪分析更新速度能否跟上变化\scite{math-zinkevich2003online}。
+最终参数是否收敛、当前预测是否准确与长期累计损失是否小，
+因此是三个不同的数学问题。
+
+\section{约束与动态分析：如何学习满足长期要求的策略}
+\label{sec:future-objectives-constraints}
+\label{sec:future-objectives-values-policies}
+
+本节把数学问题~\ref{question:future-closed-loop}与~\ref{question:future-equilibrium}
+放入反馈过程，联合极值、收敛、统计和代理目标分析，研究可行策略与实际长期行为。
+
+策略学习可以调用前面的表示、优化、统计和响应分析，但它还形成反馈：
+策略选择行动，环境据此演化，新的观测又进入学习。研究对象因此包含学得策略、
+由它诱导的轨迹和长期要求。下面依次说明要求怎样建模、策略怎样求解，
+以及样本和闭环行为怎样支持评价。
+
+\subsection{目标与约束建模：可行策略集合如何定义}
+\label{sec:future-policy-information-and-trajectory-law}
+\label{sec:future-reinforcement-learning-sequential-decision}
+
+沿用第~\ref{sec:future-interactive-learning-process}节的信息接口，策略由可得观测与历史$I_t$
+选择行动$a_t\sim\pi(\cdot\mid I_t)$。如果压缩历史，还需规定更新方式，
+并判断是否保留决策所需区别。采集策略$\beta$与执行策略$\pi$使用同类信息结构，
+但对应不同运行阶段。
+
+固定环境与策略，就得到轨迹分布$P_{\mathcal E}^{\pi}$。理论轨迹可以包含内部状态，
+实际样本只含采集到的字段，这一区别影响目标能否被识别。
+将累计成本或负回报写入损失$\ell(\pi,\tau)$，总体问题为
+\[
+  \inf_{\pi\in\mathcal H_{\mathcal C}}
+  R_{\mathcal M}(\pi),
+  \qquad
+  R_{\mathcal M}(\pi)
+  =\mathbb E_{\tau\sim P_{\mathcal E}^{\pi}}\ell(\pi,\tau).
+\]
+约束可以规定合法行动、累计预算或轨迹留在安全集合的概率。
+平均成本、失效概率与尾部风险是不同要求，不能仅凭小期望损失相互替代。
+尾部风险若作为优化目标，需用指定风险泛函替代普通期望；作为约束时则写入$\mathcal C$。
+可行策略类$\mathcal H_{\mathcal C}$由这些要求定义；含未知总体量的约束，
+还需区分训练时估计的条件与真实环境中的可行性。
+
+\subsection{策略求解：怎样优化目标并处理约束}
+\label{sec:future-policy-solution}
+
+策略首先是一个从可得信息到行动分布的候选映射。表示分析问候选类能否包含符合
+信息与约束要求的策略；若将历史压缩成当前输入，还要判断这种压缩是否丢失决策
+所需区别。更大的参数空间并不能补回采样时没有获得的信息。
+
+采集策略$\beta$与环境形成采集分布，采样机制由此取得$D$。
+学习算法$A$接收$D$与候选类、损失、约束，构造经验目标$\widehat R_D$并输出$h_D=\pi$。
+优化分析研究这一学习目标的解与策略更新序列。
+已知模型下可以用价值递推或占用流量表达目标，未知模型下可以用随机更新估计价值
+或调整策略；这些是求解同一任务的不同数学形式。
+线性逼近可以分析平均更新方程，非线性参数化则需检查局部曲率、估计偏差及随机
+序列的条件。价值估计收敛、策略趋于驻点和找到最优策略，是不同结论。
+
+统计分析连接采集样本与所求策略表现。$\beta$与$\pi$不同时，须检查来源覆盖及评价
+目标能否识别，不能将来源轨迹平均直接当作目标策略的价值。
+在线学习可以根据当前$\pi$构造下一轮$\beta$；这使以后样本依赖先前学习结果，
+需要分析自适应采样，不能继续默认所有样本独立同分布。
+环境或其他参与者响应发生变化时，还需用扰动分析检查原有结论是否保持。
+
+\subsection{闭环验证：学得策略能否满足长期要求}
+\label{sec:future-environment-state-trajectories}
+
+训练输出仍须回到规定的总体目标评价。固定学得策略$\pi$后，评价损失可观测时，
+可以另行采集
+评价样本集$D_{\mathrm{eval}}$，由轨迹损失形成样本评价
+$\widehat R_{D_{\mathrm{eval}}}(\pi)$。它估计理论上的$R_{\mathcal M}(\pi)$，
+并不直接读取未知分布$P_{\mathcal E}^{\pi}$计算期望。
+若反复根据评价结果调整策略，评价样本又参与了选择，需要重新检查统计证据。
+使用来源策略的样本评价时，则仍依赖相应的覆盖与识别条件。
+
+总体期望也未回答全部运行要求。例如轨迹安全可以规定
+\[
+  \mathbb P_{\tau\sim P_{\mathcal E}^{\pi}}
+  \{s_t\in K,\ 0\leq t\leq T\}\geq1-\alpha.
+\]
+这一判断涉及整段状态演化；隐状态不能直接观测时，还需要状态估计、环境模型或
+可识别的证据。动力系统的稳定性、集合保持与概率界可以分析这种要求，
+它们与训练参数序列的收敛使用不同对象和条件。
+
+在线累计表现还可以与固定比较策略的累计损失比较。多方学习将候选扩展为联合策略，
+分别规定各方目标，考察他方策略固定时，一方是否能够通过单独改变策略获益。
+这些评价分别引入遗憾或均衡条件，而不要求把所有目标
+合成一个期望风险。学习迭代收敛，不能自动推出小遗憾、均衡或闭环安全；
+实际需要哪项结论，应由目标与约束决定。
+
+交互学习由此将四类通用分析连接到轨迹：表示限定可以选择的策略，
+优化说明学习更新能达到什么，统计说明观测可以支持什么评价，
+响应说明环境与策略改变后保证覆盖哪里。约束与长期行为分析再检查学得策略运行时
+是否满足任务要求，使学习过程与行动后果在同一个框架中相接。
+
+\section{本章小结}
+\label{sec:future-summary}
+
+学习可以用环境、候选类、目标与约束描述任务要求，再用采样机制与学习算法描述
+有限观测怎样产生经验目标和学得对象。静态任务中，候选不改变观测分布；
+交互任务中，策略选择行动并影响后续观测，采集与执行仍共用同一个环境。
+评价样本提供总体表现的估计，真正的总体风险及其保证需要统计分析。
+
+温度预测、工况分组与加热策略因而可以共用一种定位问题的方式。
+候选限制决定什么结果可能实现，优化序列决定训练能够达到什么程度，
+采样决定有限证据能够支持哪些总体判断。输入、样本或问题设定改变时，
+再比较指定输出与风险的响应。已有信息用于新分布或新任务时，
+需要建立来源与目标的关系，分开抽样误差、分布差异与适应效果；
+学得对象参与行动时，还须检验约束与整段运行行为。
+这些结论相互补充，不能由训练损失小或一次测试成功相互替代。
+
+后续模型、理论与范式章节将在各自的候选结构、损失和观测条件下展开方法。
+阅读一个新的学习问题时，可以先写清它讨论的对象、固定的条件和所求结论，
+再判断需要哪种分析。线性或非线性、独立或相关、静态或交互等设定，
+决定采用什么工具及结论适用于哪里，而不改变这一共同过程。

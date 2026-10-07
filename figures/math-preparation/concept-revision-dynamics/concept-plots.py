@@ -105,7 +105,7 @@ def amplitude_phase():
                  xlabel="频率索引 k", ylabel="相位（弧度）")
     phase_ax.set_title("非零系数相位", pad=4)
     phase_ax.legend(loc="upper left", ncols=2)
-    save(fig, "amplitude-phase", 169, 84, "04-graphs-and-signals/02-signal-representation-and-processing.tex",
+    save(fig, "amplitude-phase", 169, 84, "03-graphs-and-signals/01-signal-representation-and-processing.tex",
          "Why can equal Fourier magnitudes describe different sequences?",
          {"sequence": "x[n]=cos(2*pi*n/8)", "shift": "z[n]=x[(n-2) mod 8]",
           "DFT": "X[k]=sum_(n=0)^7 x[n]*exp(-2*pi*i*k*n/8)"},

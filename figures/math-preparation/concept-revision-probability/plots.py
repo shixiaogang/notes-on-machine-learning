@@ -77,7 +77,7 @@ b.plot(n, np.ones_like(n), color=RED, linestyle="--", label=r"$\mathbb{E}V_n$")
 b.set(xlabel="$n$", ylabel="概率或期望", xlim=(2, 100), ylim=(0, 1.12),
       title="(b) 概率变小，期望不变")
 b.legend(loc="center right")
-save(fig, "probability-vanishing-spikes", "03-random-variables-distributions-and-causality/01-random-variables.tex",
+save(fig, "probability-vanishing-spikes", "04-random-variables-distributions-and-causality/01-random-variables.tex",
      "Almost sure/probability convergence need not control expectation without uniform integrability.",
      "U~Uniform(0,1); V_n(U)=n*I(U<=1/n); E[V_n]=1; P(V_n>1)=1/n for n>=2.",
      {"left_n": [4, 16], "right_n": [2, 100], "uniform_support": [0, 1]},
@@ -137,7 +137,7 @@ a.axvline(0, color=GRAY, linestyle=":", linewidth=0.6)
 a.set(xlabel="输入 $x$", ylabel="响应或拟合值", xlim=(-0.3, 3.3), ylim=(8.45, 14.2))
 a.legend(loc="lower left", bbox_to_anchor=(0, 1.02), ncol=3,
          handlelength=1.6, columnspacing=1)
-save(fig, "statistics-local-boundary-fit", "03-random-variables-distributions-and-causality/01-random-variables.tex",
+save(fig, "statistics-local-boundary-fit", "04-random-variables-distributions-and-causality/01-random-variables.tex",
      "Local linear fitting returns the fitted intercept to the boundary instead of averaging one-sided responses.",
      "Weighted least squares on design [1,x]; constant=sum(w*y)/sum(w)=10.25; linear fit=9.2+1.4*x.",
      {"target_x": 0, "weights_are": "fixed teaching construction, not kernel values inferred from a bandwidth"},
@@ -162,7 +162,7 @@ a.set(xlabel=r"翻转概率 $\varepsilon$", ylabel="信息量（nat）",
       xlim=(0, 0.5), ylim=(0, 0.79))
 a.legend(loc="center right")
 assert np.allclose(hb + mutual, np.log(2))
-save(fig, "information-binary-channel-information", "03-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex",
+save(fig, "information-binary-channel-information", "04-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex",
      "Noise divides a fixed input entropy into revealed information and remaining uncertainty.",
      "X~Bernoulli(.5); N~Bernoulli(epsilon) independent; Y=X xor N; H(X|Y)=Hb(epsilon); I(X;Y)=log(2)-Hb(epsilon). Natural logarithms; 0*log(0)=0.",
      {"input_probability": 0.5, "epsilon_domain": [0, 0.5], "samples": 501, "unit": "nat"},
@@ -196,7 +196,7 @@ for ax, joint, title in zip(axs, joints, ["(a) 模型甲", "(b) 模型乙"]):
         spine.set_visible(False)
     assert np.allclose(joint.sum(axis=0), [0.5, 0.5])
     assert np.allclose(joint.sum(axis=1), [0.5, 0.5])
-save(fig, "causal-cross-world-couplings", "03-random-variables-distributions-and-causality/03-causal-response-and-structure.tex",
+save(fig, "causal-cross-world-couplings", "04-random-variables-distributions-and-causality/03-causal-response-and-structure.tex",
      "Identical intervention marginals and zero ATE do not determine individual effects or conditional counterfactuals.",
      "Joint matrices for (Y(0),Y(1)): A=[[.5,0],[0,.5]], B=[[0,.5],[.5,0]]. Both marginals Bernoulli(.5); ATE=0. Individual effects are 0 under A, and +1/-1 with probabilities .5/.5 under B.",
      {"rows": "Y(0)=0,1", "columns": "Y(1)=0,1", "shared_color_range": [0, 0.5]},

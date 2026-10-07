@@ -138,7 +138,7 @@ def kernel_distinguishability():
           'gaussian_mmd_squared': '1.5 + 0.5*exp(-2) - 2*exp(-0.5)',
           'gaussian_mmd': float(np.sqrt(mmd_squared)),
           'estimation': 'exact population expectations; no sample estimator'},
-         'tex/01-mathematical-preliminaries/03-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex')
+         'tex/01-mathematical-preliminaries/04-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex')
 
 
 if __name__ == '__main__':

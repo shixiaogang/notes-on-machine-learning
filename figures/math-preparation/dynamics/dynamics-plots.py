@@ -25,8 +25,8 @@ BLUE, RED, YELLOW = '#7998AD', '#D57B70', '#D6B35D'
 INK, STROKE, GREY, PALE = '#222222', '#4C4D4F', '#747A80', '#EDF2F5'
 RECORDS = {}
 CHAPTERS = {
-    'convolution-boundaries': '04-graphs-and-signals/02-signal-representation-and-processing.tex',
-    'aliasing-curves': '04-graphs-and-signals/02-signal-representation-and-processing.tex',
+    'convolution-boundaries': '03-graphs-and-signals/01-signal-representation-and-processing.tex',
+    'aliasing-curves': '03-graphs-and-signals/01-signal-representation-and-processing.tex',
     'euler-stability': '05-dynamical-systems-control-decision-and-games/01-action-and-state.tex',
     'kalman-density-update': '05-dynamical-systems-control-decision-and-games/01-action-and-state.tex',
     'cost-thresholds': '05-dynamical-systems-control-decision-and-games/03-policy-value-and-optimization.tex',
