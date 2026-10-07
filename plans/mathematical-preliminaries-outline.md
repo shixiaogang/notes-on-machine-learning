@@ -2085,13 +2085,13 @@ LQR能闭合为矩阵递推，一般连续状态控制则需要函数形式的�
 | --- | --- | --- |
 | [引言](../tex/02-foundations/01-basics/01-introduction.tex) | 特征向量、逻辑函数、对数损失、经验平均与梯度更新；混淆矩阵及不同分母的比率指标 | 第1、3、6、9、11至12章 |
 | [模型简介](../tex/02-foundations/01-basics/02-machine-learning-models.tex) | 函数族、线性与非线性变换、距离与间隔；联合与条件概率、似然与后验；交叉熵、KL与Brier评分 | 第1、3至4、6至7、9、11至12、17章 |
-| [学习范式简介](../tex/02-foundations/01-basics/03-machine-learning-paradigms.tex) | 条件预测、期望回报、样本与任务上的平均、多目标与内外层目标、对比概率和加权参数更新；主要用于说明学习对象 | 第1、3至4、6、9、11至12、17章 |
+| [范式简介](../tex/02-foundations/01-basics/03-machine-learning-paradigms.tex) | 条件预测、期望回报、样本与任务上的平均、多目标与内外层目标、对比概率和加权参数更新；主要用于说明学习对象 | 第1、3至4、6、9、11至12、17章 |
 
 ### 第二卷：机器学习理论
 
 | 正文章节 | 正文已使用的数学与作用 | 准备章节 |
 | --- | --- | --- |
-| [统计学习框架](../tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex) | 可测空间与损失、随机样本和算法随机性、期望风险、下确界、量词次序、有限编码与可计算性 | 第1至3、9章 |
+| [机器学习理论基础](../tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex) | 可测空间与损失、随机样本和算法随机性、期望风险、下确界、量词次序、有限编码与可计算性 | 第1至3、9章 |
 | [二分类学习的可学习性](../tex/02-foundations/02-learning-theory/02-binary-classification.tex) | 子集与二项式计数、生长函数；独立副本、对称化、集中与随机符号；间隔、凸组合及指数损失 | 第1至2、4至6、9至10、12章 |
 | [多分类学习的可学习性](../tex/02-foundations/02-learning-theory/03-multiclass-classification.tex) | 多值标记、有限集合限制与组合结构；Natarajan维、图维与DS维所需的计数和伪立方体；统计与计算下界的不同对象 | 第1至2、5、9至10、12章 |
 | [一般学习的可学习性](../tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex) | 尺度敏感函数类；样本替换与期望恒等式；光滑非负损失的梯度自界、强凸与弱凸、PL条件；互信息与条件互信息 | 第2至6、9至10、12章 |

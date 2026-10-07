@@ -57,7 +57,7 @@
    - `03-probabilistic-graphical-models/`：概率图模型
 4. `tex/04-paradigms/`：第四卷“范式”
    - `01-reinforcement-learning/`：强化学习
-   - `02-efficient-knowledge-use/`：知识的高效利用
+   - `02-efficient-knowledge-use/`：知识的获取
    - `03-knowledge-evolution-and-transfer/`：知识的演进与迁移
 5. `tex/05-applications/`：第五卷“应用”
    - `01-natural-language-processing/`：自然语言处理
@@ -68,7 +68,7 @@
 
 数学准备卷按 `plans/mathematical-preliminaries-reading-structure.md` 组织为17章。大纲保留合并前的讨论定位号，实施章号以正文为准；原线性代数与矩阵分析合入“线性空间”，概率论、随机过程与统计合入“随机变量”，图与信号同属第四部分，控制先于价值优化。最终章目与迁移映射见 `docs/math-restructure/authoring-contract.md`。
 
-“机器学习理论”部分依次介绍统计学习框架、二分类、多分类、凸学习与算法稳定性、深度学习理论和迁移学习理论，详细规划见 `plans/learning-theory-outline.md`。全书分卷、内容边界与迁移约定见 `plans/book-structure.md`。
+“机器学习理论”部分依次介绍机器学习理论基础、二分类、多分类、凸学习与算法稳定性、深度学习理论和迁移学习理论，详细规划见 `plans/learning-theory-outline.md`。全书分卷、内容边界与迁移约定见 `plans/book-structure.md`。
 
 后续新增章节时，应放入其所属卷和部分的目录中；图像资源放入 `figures/`，并在 LaTeX 源文件中以相对路径引用。
 

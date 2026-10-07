@@ -40,21 +40,71 @@
   \usebibmacro{book:author-title}\setunit{\addspace}
   \printtext{In\addspace}\printfield{booktitle}
   \newunit\printfield{year}\newunit\printfield{pages}\usebibmacro{finentry}}
-% 无排序压缩；每次引用打印完整条目，可带前注和定位信息。
+% 无排序压缩；每篇文献使用独立编号和边注，可带前注和定位信息。
 % \sidecite[参见][第 3 章]{bishop2006}；\cite 使用完全相同的接口。
-\NewDocumentCommand{\sidecite}{o o m}{%
-  \sidenote{\booknotefont\IfNoValueTF{#1}{\fullcite{#3}}%
-    {\IfNoValueTF{#2}{\fullcite[#1]{#3}}{\fullcite[#1][#2]{#3}}}}}
-\RenewDocumentCommand{\cite}{o o m}{%
-  \IfNoValueTF{#1}{\sidecite{#3}}%
-    {\IfNoValueTF{#2}{\sidecite[#1]{#3}}{\sidecite[#1][#2]{#3}}}}
-% 句末引用继续当前段落，并把标记和中文句号连续输出，避免二者在行末被拆开。
 \makeatletter
-\NewDocumentCommand{\scite}{m}{%
-  \stepcounter\@mpfn%
-  \protected@xdef\@thefnmark{\thempfn}%
-  \@footnotemark\nobreak。%
-  \book@tufte@footnotetext[0pt]{%
-    \color@begingroup\booknotefont\fullcite{#1}\color@endgroup}%
-  \ignorespaces}
+\ExplSyntaxOn
+\cs_new_protected:Npn \book_sidecite_note:n #1
+  {
+    \stepcounter\@mpfn
+    \protected@xdef\@thefnmark{\thempfn}
+    \@footnotemark
+    \book@tufte@footnotetext[0pt]
+      {\color@begingroup\booknotefont #1\color@endgroup}
+  }
+\cs_new_protected:Npn \book_sidecite_separator:
+  {
+    \nobreak
+    \hbox{\@textsuperscript{\normalfont\footnotesize\multfootsep}}
+    \nobreak
+  }
+\bool_new:N \l_book_sidecite_first_bool
+\cs_new_protected:Npn \book_sidecite_one:nnn #1#2#3
+  {
+    \book_sidecite_note:n
+      {%
+        \IfNoValueTF{#1}
+          {\fullcite{#3}}
+          {
+            \IfNoValueTF{#2}
+              {\fullcite[#1]{#3}}
+              {\fullcite[#1][#2]{#3}}
+          }
+      }%
+  }
+\cs_new_protected:Npn \book_sidecite_each:nnn #1#2#3
+  {
+    \unskip\nobreak
+    \bool_set_true:N \l_book_sidecite_first_bool
+    \clist_map_inline:nn {#3}
+      {
+        \bool_if:NTF \l_book_sidecite_first_bool
+          {\bool_set_false:N \l_book_sidecite_first_bool}
+          {\book_sidecite_separator:}
+        \book_sidecite_one:nnn {#1} {#2} {##1}
+      }
+  }
+\cs_new_protected:Npn \book_scite_each:n #1
+  {
+    \unskip\nobreak
+    \bool_set_true:N \l_book_sidecite_first_bool
+    \clist_map_inline:nn {#1}
+      {
+        \bool_if:NTF \l_book_sidecite_first_bool
+          {\bool_set_false:N \l_book_sidecite_first_bool}
+          {\book_sidecite_separator:}
+        \book_sidecite_note:n {\fullcite{##1}}
+      }
+  }
+\NewDocumentCommand{\sidecite}{o o m}
+  {\book_sidecite_each:nnn {#1} {#2} {#3}\ignorespaces}
+\RenewDocumentCommand{\cite}{o o m}
+  {\book_sidecite_each:nnn {#1} {#2} {#3}\ignorespaces}
+% 句末引用把相邻标记和中文句号连续输出；源码中已有句号时将其吸收。
+\NewDocumentCommand{\scite}{m t。}
+  {
+    \book_scite_each:n {#1}
+    \nobreak。\ignorespaces
+  }
+\ExplSyntaxOff
 \makeatother
