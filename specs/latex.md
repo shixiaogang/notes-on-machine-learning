@@ -80,8 +80,8 @@
 每次修改后至少检查：
 
 1. 运行 `bash tests/check-book-editions.sh` 检查结构与最小索引流水线，运行 `make test`
-   检查词条提取、映射、别名、索引产物和部首页奇数页分页（含标签与目录页码）。当前审计基线为 `calls=2291`、`unique=1965`、
-   `mappings=1924`、`aliases=2`、`errors=0`。
+   检查词条提取、映射、别名、索引产物和部首页奇数页分页（含标签与目录页码）。当前审计基线为 `calls=2327`、`unique=1976`、
+   `mappings=1935`、`aliases=2`、`errors=0`。
 2. `./build.sh build` 或无参数调用只构建全集；`./build.sh volume <slug>` 构建指定单卷，`./build.sh volumes` 构建六个单卷，`./build.sh all` 构建全集与六个单卷。日常验收与交付验收均使用 `all` 覆盖七版。
 3. 七个约定产物 `target/machine-learning-notes.pdf` 与六个 `target/volN-<slug>.pdf` 均非空，并直接位于 `target/`。
 4. 七份日志均没有未定义引用、重复标签、缺失文献、缺失字形或致命错误；跨卷引用在单卷中显示范围感知的文字回退。

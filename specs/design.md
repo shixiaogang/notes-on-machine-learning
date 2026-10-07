@@ -38,9 +38,10 @@
 `BookAmber` 赭（A66A25）、`BookMuted` 灰（64717B）、`BookPaper` 浅灰（F3F5F5）、`BookRule` 分隔线（DCE3E5）。
 图中输入、模型、输出、损失分别使用 `FigureInput`、`FigureModel`、`FigureOutput`、`FigureLoss`。
 单张图不重新定义色值。颜色不能是唯一的语义提示。
-神经网络的细密拓扑使用集中定义的专用调色板：`NNInput` 蓝（2687EA）表示输入或前向数据，
-`NNHidden` 紫（9464DA）表示隐藏计算，`NNOutput` 青（12ADA7）表示输出，
-`NNGradient` 深橙（A95B13）表示回传梯度，`NNLine` 灰蓝（8A9CB6）表示普通连接。
+神经网络的细密拓扑在基础样式中定义语义色：`NNInput` 表示输入或前向数据，
+`NNHidden` 表示隐藏计算，`NNOutput` 表示输出，`NNGradient` 表示回传梯度，
+`NNLine` 表示普通连接。第二卷与第三卷加载统一科研图覆盖层，将这些语义色映射为
+低饱和蓝、红、黄与深灰；其他卷未加载覆盖层时使用基础的蓝、紫、青、深橙与灰蓝色值。
 节点采用18%浅色填充和1.1 pt轮廓，普通连接约0.85 pt，主路径约1.2 pt；
 成组模块统一使用浅蓝底板 `NNPanel`，无职责颜色的主路径使用 `NNWire`；
 梯度路径另用虚线，图例保持白底无色块。可复用节点与箭头样式位于 `tex/styles/neural-figures.tex`。

@@ -130,7 +130,7 @@ bash tests/check-book-editions.sh
 make test
 ```
 
-`make test` 的索引审计基线为 `calls=2291`、`unique=1965`、`mappings=1924`、
+`make test` 的索引审计基线为 `calls=2292`、`unique=1966`、`mappings=1925`、
 `aliases=2`、`errors=0`。交付前还需运行 `./build.sh all`，扫描七份构建日志，
 并检查七版封面、前言、数学符号、参考文献和索引的范围、排序、双语格式、合并页码与链接。
 

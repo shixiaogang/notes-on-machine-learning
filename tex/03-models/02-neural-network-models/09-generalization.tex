@@ -218,6 +218,31 @@ Choi等进一步发现，优化器排名对超参数搜索范围和调节预算�
 
 选解指标本身也要有边界。“平坦极小点泛化更好”需要指定参数坐标与扰动尺度，保持函数不变的重缩放可以改变曲率。使用平坦性评价时，应说明怎样处理这种歧义，不能只凭损失曲面看起来宽就判定未来风险更低\scite{dinh2017sharp}
 
+\subsection{邻域最坏损失与SAM}
+\label{sec:generalization-sam}
+
+若希望训练点附近的参数扰动也保持较低损失，可以把当前损失替换为指定邻域内的最坏值。\term{锐度感知最小化}（sharpness-aware minimization, SAM）考虑
+\begin{equation}
+  \min_{\bm w}\ \max_{\lVert\bm\epsilon\rVert_2\leq\rho}
+    \mathcal L(\bm w+\bm\epsilon)\text{。}
+  \label{eq:generalization-sam}
+\end{equation}
+对内层目标在$\bm w$处作一阶近似且$\nabla\mathcal L(\bm w)\ne\bm0$时，欧氏球上的近似最大化点为
+\[
+  \bm\epsilon^\star
+  =\rho\frac{\nabla\mathcal L(\bm w)}
+              {\lVert\nabla\mathcal L(\bm w)\rVert_2}\text{。}
+\]
+随后在扰动点计算梯度，却把更新施加到原参数：$\bm w^+=\bm w-\eta\nabla\mathcal L(\bm w+\bm\epsilon^\star)$。图~\ref{fig:generalization-sam}把这两个步骤分开：红箭头寻找邻域内的高损失方向，黄色箭头再降低该处损失。实际小批量实现常用同一批数据完成两次前后向；零梯度、归一化层状态、扰动范数以及参数分组都需要明确约定\scite{foret2021sam}
+\begin{figure}[htbp]
+  \centering
+  \input{figures/generalization-sam}
+  \caption{SAM一次近似更新的几何过程。灰线为教学目标$L(\bm w)=(4w_1^2+w_2^2)/2$的等高线，红色虚线是以当前参数为中心、半径$\rho=0.45$的扰动邻域。红箭头沿当前梯度的一阶近似到达边界高损失点，黄色箭头使用该扰动点的梯度更新原参数。图示解释两次梯度读取的位置，不表示SAM必然找到内层精确最大值或必然改善泛化。}
+  \label{fig:generalization-sam}
+\end{figure}
+
+SAM改变的是指定参数坐标和范数下的邻域目标；重参数化会改变同一个函数对应的扰动集合。$\rho$过小会接近普通更新，过大则可能让一阶近似失效或损害拟合。它也不等同于对输入扰动的鲁棒训练，后者改变的是样本空间。是否采用SAM，应同时比较训练成本、训练损失与独立验证风险，而不能把参数邻域较平直接当成任务泛化的充分条件。
+
 \subsection{权重衰减}
 \label{sec:generalization-weight-decay}
 
@@ -259,7 +284,7 @@ Choi等进一步发现，优化器排名对超参数搜索范围和调节预算�
 \begin{figure}[htbp]
   \centering
   \input{figures/generalization-dropout}
-  \caption{一个三单元隐藏层的构造性Dropout示意。中间单元被屏蔽，灰色虚线为本次不参与前向计算的路径，其余实线仍传递信息。此图只展示一个掩码样本；实际保留概率不由图中剩余单元比例决定，训练时按式\eqref{eq:generalization-dropout}缩放。}
+  \caption{一个三单元隐藏层的构造性Dropout示意。中间单元保留浅灰$h_2$轮廓并标出$m_2=0$，说明它只是本批被屏蔽，而非永久删除；灰色虚线为本次不参与前向计算的路径。底部公式带明确区分保留概率$q=1-p$与丢弃概率$p$，并给出inverted Dropout在训练时除以$q$、推理时无需再缩放的约定。}
   \label{fig:generalization-dropout}
 \end{figure}
 
