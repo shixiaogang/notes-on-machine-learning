@@ -64,32 +64,6 @@ def mobius():
          {'g': g, 'h': h}, 'Distinguish accumulated subset values from newly contributed interaction.')
 
 
-def interval_patterns():
-    fig, axes = new_figure(112, 89, ncols=2, gridspec_kw={'width_ratios': [1, 1.22]})
-    all_rows = []
-    for ax, m in zip(axes, [2, 3]):
-        patterns = list(itertools.product([0, 1], repeat=m))
-        for row, pattern in enumerate(patterns):
-            possible = pattern != (1, 0, 1)
-            for col, value in enumerate(pattern):
-                ax.plot(col, row, 'o', ms=4.5, color=RED if value else BLUE,
-                        mfc=RED if value else 'white', mew=.9)
-            ax.text(-.72, row, ''.join(map(str, pattern)), ha='right', va='center')
-            if not possible:
-                ax.plot(m - .45, row, marker='x', ms=5, color=MUTED, mew=1.1)
-            all_rows.append({'input_count': m, 'pattern': pattern, 'realizable': possible})
-        ax.set_xlim(-1.62, m - .1); ax.set_ylim(7.65, -.9)
-        ax.set_xticks(range(m), [f'$x_{j+1}$' for j in range(m)])
-        ax.set_yticks([]); ax.tick_params(length=0)
-        ax.spines[['left', 'bottom']].set_visible(False)
-        ax.set_title('两个输入' if m == 2 else '三个输入')
-    fig.subplots_adjust(left=.03, right=.985, bottom=.11, top=.9, wspace=.13)
-    save(fig, 'combinatorics-interval-shattering-patterns',
-         ['interval classifier: h_[a,b](x)=I(a<=x<=b)', 'ordered distinct inputs'],
-         {'input_count': [2, 3]}, {'all_patterns': all_rows},
-         'Read every pattern required by shattering; locate the missing 101 pattern.')
-
-
 def fat_square():
     fig, axes = new_figure(169, 70, ncols=2)
     points = {}
@@ -248,7 +222,7 @@ def locality():
 
 
 def main():
-    for function in [mobius, interval_patterns, fat_square, power_convergence, clarke,
+    for function in [mobius, fat_square, power_convergence, clarke,
                      chord, majorizer, point_readout, locality]:
         function()
     record = {'purpose': 'Reader revision, first five mathematical chapters',

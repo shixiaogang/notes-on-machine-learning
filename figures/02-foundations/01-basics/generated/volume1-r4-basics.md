@@ -48,7 +48,7 @@ Edit ONLY the road category fill in the semantic-segmentation RIGHTMOST panel. R
 
 ## 选定原始输出与科学核对
 
-- `figures/02-foundations/01-basics/generated/v1r4-vision-tasks.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-cbe3fa0e-4267-4b3b-9864-53779a1aecb2.png`
-- `figures/02-foundations/01-basics/generated/v1r4-self-supervised-mask.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-c366be15-b979-45ec-bd05-17c418629dc0.png`
+- `https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r4-vision-tasks.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-cbe3fa0e-4267-4b3b-9864-53779a1aecb2.png`
+- `https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r4-self-supervised-mask.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-c366be15-b979-45ec-bd05-17c418629dc0.png`
 
 1.3 已逐个核对三个面板的对象数量、位置、检测框范围和分割类别；第一次局部修订将轮胎、车灯等归回车辆类别，第二次移除分割面板中的白色道路标线空洞。3.5 已逐词、逐边核对原句/遮蔽句/目标隔离、全部上下文汇合和反馈，随后只将偏粗文字减细，结构保持。大模型原生输出未经插值放大。尺寸、独立校样与灰度检查见 `build/volume1-r3-basics/`。

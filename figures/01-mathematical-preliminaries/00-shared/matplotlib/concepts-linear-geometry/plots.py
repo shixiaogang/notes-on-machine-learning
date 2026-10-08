@@ -46,76 +46,6 @@ def save(fig, name, facts):
     plt.close(fig)
 
 
-def dual_balls():
-    fig, axs = plt.subplots(1, 3, figsize=(169 / 25.4, 65 / 25.4),
-                            layout="constrained")
-    angle = np.linspace(0, 2 * np.pi, 721)
-    curves = [np.array([[1, 0, -1, 0, 1], [0, 1, 0, -1, 0]]),
-              np.array([np.cos(angle), np.sin(angle)]),
-              np.array([[-1, 1, 1, -1, -1], [-1, -1, 1, 1, -1]])]
-    maxima = [2., np.sqrt(5), 3.]
-    witnesses = [np.array([1., 0.]), np.array([2., -1.]) / np.sqrt(5),
-                 np.array([1., -1.])]
-    for ax, curve, maximum, witness, color, name, value in zip(
-            axs, curves, maxima, witnesses, (BLUE, RED, YELLOW),
-            (r"(a) $\|r\|_1\leq1$", r"(b) $\|r\|_2\leq1$",
-             r"(c) $\|r\|_\infty\leq1$"), ("2", r"\sqrt{5}", "3")):
-        prepare_axes(ax)
-        ax.fill(*curve, color=color, alpha=.12)
-        ax.plot(*curve, color=color)
-        x = np.linspace(-1.3, 1.3, 301)
-        ax.plot(x, 2*x - maximum, ls="--", color=GRAY, lw=.6)
-        ax.scatter(*witness, s=24, color=INK, zorder=3)
-        ax.annotate(r"$r_* $", xy=witness, xytext=(-23, 10),
-                    textcoords="offset points", fontsize=9)
-        ax.set(title=name, xlabel=r"$r_1$", ylabel=r"$r_2$",
-               xlim=(-1.35, 1.35), ylim=(-1.35, 1.35), aspect="equal",
-               xticks=[-1, 0, 1], yticks=[-1, 0, 1])
-        ax.text(.02, .96, rf"$h={value}$", transform=ax.transAxes,
-                va="top", fontsize=9)
-    save(fig, "linear-dual-unit-balls", {
-        "question": "How does the same linear functional change under different perturbation budgets?",
-        "formula": "max(2*r1-r2) over each unit ball; support line 2*r1-r2=h",
-        "parameters": {"z": [2, -1], "p": [1, 2, "infinity"],
-            "positive_maxima": maxima,
-            "maximizers": [r.tolist() for r in witnesses]},
-        "sampling": "721 uniform circle angles, exact polygon vertices; common equal axes.",
-        "design": "Three equally scaled unit balls; only boundary, supporting line and maximizer are shown.",
-    })
-
-
-def gap_direction():
-    epsilon = .02
-    gamma = np.logspace(-3, 0, 501)
-    shift = np.sqrt((gamma/2)**2 + epsilon**2) - gamma/2
-    degrees = np.rad2deg(.5 * np.arctan2(2*epsilon, gamma))
-    assert np.all(shift <= epsilon)
-    fig, axs = plt.subplots(2, 1, figsize=(112/25.4, 91/25.4),
-                            sharex=True, layout="constrained")
-    for ax in axs:
-        prepare_axes(ax)
-        ax.set_xscale("log")
-        ax.set_xlim(1.e-3, 1.)
-    axs[0].plot(gamma, shift, color=YELLOW)
-    axs[0].axhline(epsilon, color=GRAY, ls="--", lw=.6)
-    axs[0].set(ylabel=r"特征值增量 $\Delta\lambda_{\max}$",
-               ylim=(0, .023), yticks=[0, .01, .02])
-    axs[0].text(.64, .82, r"$\|E\|_2=0.02$", transform=axs[0].transAxes,
-                va="top", fontsize=9)
-    axs[1].plot(gamma, degrees, color=YELLOW)
-    axs[1].set(xlabel=r"原始谱隙 $\gamma$", ylabel=r"方向转角 $\theta$（度）",
-               ylim=(0, 47), yticks=[0, 15, 30, 45])
-    save(fig, "matrix-gap-direction", {
-        "question": "Can small eigenvalue changes coexist with large changes in the corresponding direction?",
-        "formulas": ["A=diag(1+gamma,1); E=[[0,epsilon],[epsilon,0]]",
-            "delta_lambda_max=sqrt((gamma/2)^2+epsilon^2)-gamma/2",
-            "theta=0.5*atan2(2*epsilon,gamma)"],
-        "parameters": {"epsilon": epsilon, "gamma_range": [.001, 1.]},
-        "sampling": "501 logarithmically spaced gamma; exact analytic expressions; angles displayed in degrees.",
-        "design": "Stacked panels share the spectral-gap axis; different outputs retain separate units.",
-    })
-
-
 def strip_geometry():
     radius, width = 2., .3
     theta = np.pi/2 + np.linspace(-.6, .6, 401)
@@ -173,7 +103,7 @@ def strip_geometry():
 
 
 if __name__ == "__main__":
-    for build in (dual_balls, gap_direction, strip_geometry):
+    for build in (strip_geometry):
         build()
     (asset_path(OUT, "sources.json")).write_text(json.dumps({
         "created": "2026-10-06", "software": {"matplotlib": matplotlib.__version__,

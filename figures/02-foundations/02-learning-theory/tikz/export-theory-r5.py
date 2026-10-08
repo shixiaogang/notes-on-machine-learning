@@ -1,4 +1,4 @@
-"""Export 15 accepted chapter 4–9 diagrams as genuine vector PDF and SVG.
+"""Export 14 accepted chapter 4–9 diagrams as genuine vector PDF and SVG.
 
 Run from the repository root with Python 3 and PyMuPDF installed. By default
 compile the accompanying project-dependent TeX export sheet with XeLaTeX.
@@ -18,7 +18,6 @@ OUT = ROOT / "figures/02-foundations/02-learning-theory/tikz"
 BUILD = ROOT / "build/theory-vector-export"
 FIGURES = [
     ("4.2", "no-free-lunch", 112, 50),
-    ("5.5", "rademacher-flips", 167.76, 105.99),
     ("8.3", "spectral-product", 112, 70),
     ("8.4", "ntk-linearization", 169, 74),
     ("8.6", "minimum-norm", 86.67, 63.72),
@@ -34,7 +33,7 @@ FIGURES = [
     ("4.4", "model-selection", 112, 70),
 ]
 MODEL_REFERENCE = {
-    suffix: f"figures/02-foundations/02-learning-theory/generated/v1r4-theory-{suffix}.png"
+    suffix: f"https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/02-learning-theory/generated/v1r4-theory-{suffix}.png"
     for suffix in ("stability", "conditional-information", "deep-selection", "ntk-features", "environment-sampling")
 }
 

@@ -40,43 +40,6 @@ def save(fig, name, size_mm, facts, source):
     plt.close(fig)
 
 
-def pseudoinverse():
-    fig, axes = plt.subplots(1, 2)
-    fig.subplots_adjust(left=.07, right=.99, bottom=.2, top=.86, wspace=.30)
-    ax = axes[0]
-    t = np.linspace(-1.2, 3.2, 160)
-    ax.plot(t, 2-t, color=BLUE)
-    ax.annotate('', xy=(1, 1), xytext=(0, 0),
-                arrowprops={'arrowstyle': '->', 'color': RED, 'lw': 1.1})
-    ax.scatter([0, 1, 2], [0, 1, 0], c=[INK, RED, BLUE], s=18, zorder=3)
-    ax.text(.1, -.29, '$0$', color=INK)
-    ax.text(1.15, 1.15, r'$x^\dagger=(1,1)$', color=RED)
-    ax.text(2, -.72, '$(2,0)$', ha='center', color=BLUE)
-    ax.text(-.85, 2.78, r'$x_1+x_2=2$', color=BLUE)
-    ax.set(xlim=(-1.2, 3.2), ylim=(-1.2, 3.2), xlabel='$x_1$', ylabel='$x_2$')
-    ax.set_aspect('equal')
-    ax.set_xticks([0, 1, 2, 3]); ax.set_yticks([0, 1, 2, 3])
-    ax.set_title('参数空间：选择最小范数')
-    ax = axes[1]
-    ax.plot([-.4, 3.1], [0, 0], color=BLUE)
-    ax.plot([2, 2], [0, 1], color=MUTED, ls='--', lw=.6)
-    ax.scatter([2], [1], color=INK, s=18, zorder=3)
-    ax.scatter([2], [0], color=RED, s=18, zorder=3)
-    ax.text(2.13, 1.08, r'$b=(2,1)$', color=INK)
-    ax.text(.4, -.4, r'$Ax^\dagger=(2,0)$', color=RED)
-    ax.text(.2, .17, r'$\operatorname{col}(A)$', color=BLUE)
-    ax.set(xlim=(-.4, 3.1), ylim=(-.7, 2.1), xlabel='输出的第一坐标', ylabel='输出的第二坐标')
-    ax.set_xticks([0, 1, 2, 3]); ax.set_yticks([0, 1, 2])
-    ax.set_aspect('equal')
-    ax.set_title('输出空间：最小残差已固定')
-    save(fig, 'matrix-pseudoinverse-two-selections', [169, 70],
-         {'A': [[1, 1], [0, 0]], 'b': [2, 1],
-          'least_squares_family': '[1+t,1-t], t in R',
-          'minimum_norm_parameter': [1, 1], 'projected_output': [2, 0],
-          'residual_b_minus_Ax': [0, 1], 'squared_norm': '2+2*t**2'},
-         'tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/01-linear-algebra-and-matrix-analysis.tex')
-
-
 def cech_rips():
     side = .9
     h = np.sqrt(3)*side/2
@@ -144,7 +107,6 @@ def kernel_distinguishability():
 
 
 if __name__ == '__main__':
-    pseudoinverse()
     cech_rips()
     kernel_distinguishability()
     record = {'style': style_record(), 'figures': RECORDS,

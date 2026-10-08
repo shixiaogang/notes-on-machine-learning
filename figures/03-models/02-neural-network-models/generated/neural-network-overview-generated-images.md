@@ -6,7 +6,7 @@
 
 - 素材：`neural-overview-neuron-divergence.png`；标注源：`neural-overview-biological-neuron.tex`。
 - 单幅完整生成，包含一个轴突分支到两个接收神经元的场景；不拼接或复用三张单细胞图。
-- 输入1：`neural-overview-biological-neuron.png`，只参考早期单细胞图中组件清楚的形态。
+- 输入1：[neural-overview-biological-neuron.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/03-models/02-neural-network-models/generated/neural-overview-biological-neuron.png)，只参考早期单细胞图中组件清楚的形态。
 - 输入2：`neural-overview-brain-anatomy.png`，只参考自然解剖插画的风格和颜色。
 - 该形态为教学构造，不能当作真实回路重建。图像模型仅绘制解剖外形，精确连接方向与结构名称由图源和图注说明。
 
@@ -25,7 +25,7 @@ Anatomical constraints: conceptual CNS neurons, no Schwann cell nuclei inside sh
 ## 当前使用：人脑自然形态与互补视图
 
 - 素材：`neural-overview-brain-anatomy.png`；标注源：`neural-overview-visual-cortex.tex`。
-- 输入：`neural-overview-neuron-circuit.png`，只作为自然解剖绘制的风格参考；该三细胞链式中间方案未在正文使用。
+- 输入：[neural-overview-neuron-circuit.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/03-models/02-neural-network-models/generated/neural-overview-neuron-circuit.png)，只作为自然解剖绘制的风格参考；该三细胞链式中间方案未在正文使用。
 - 模型仅提供脑的外侧与内侧形态。脑区点位、中央沟和距状沟标注、what与where箭头由 TikZ 绘制。
 - 排版叠加中，what使用赭色实线，where使用蓝色虚线，两者加粗并衬白，以提高在浅色脑组织底图上的辨识度；这不改变生成式原图像素。
 - 点位为教学定位或位置投影，不表示个体脑的实测功能区边界。
@@ -43,7 +43,7 @@ Scientific constraints: a HUMAN brain, preserve plausible relative lobe shapes, 
 
 ## 中间风格参考：三细胞链式画面（未用于正文）
 
-素材：`neural-overview-neuron-circuit.png`。用户随后将连接要求改为“一对二”，故不使用这一版回路，仅留作人脑插画的风格来源记录。
+素材：[neural-overview-neuron-circuit.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/03-models/02-neural-network-models/generated/neural-overview-neuron-circuit.png)。用户随后将连接要求改为“一对二”，故不使用这一版回路，仅留作人脑插画的风格来源记录。
 
 ```text
 Use case: scientific-educational.
@@ -61,7 +61,7 @@ Scientific constraints: central nervous system neurons, do not draw Schwann-cell
 
 ## 生物神经元形态
 
-- 文件：`neural-overview-biological-neuron.png`。
+- 文件：[neural-overview-biological-neuron.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/03-models/02-neural-network-models/generated/neural-overview-biological-neuron.png)。
 - 生成日期：2026-10-02。
 - 生成方式：内置 `image_gen.imagegen` 工具；工具未公开具体模型名称或版本。
 - 使用位置：`tex/03-models/02-neural-network-models/01-overview.tex`，由 `neural-overview-biological-neuron.tex` 复用三次并添加中文标注及连接箭头。

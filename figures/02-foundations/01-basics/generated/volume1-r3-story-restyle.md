@@ -4,7 +4,7 @@
 
 ## reliability-story
 
-输入：`figures/02-foundations/03-trustworthiness/generated/trust-reliability-review.png`。输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-reliability-story.png`。
+输入：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/trust-reliability-review.png`。输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-reliability-story.png`。
 
 提示词：
 
@@ -12,7 +12,7 @@ Restyle the existing selective email processing scene. Two input emails enter on
 
 ## fairness-story
 
-输入：`figures/02-foundations/03-trustworthiness/generated/trust-fairness-opportunity.png`。输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-fairness-story.png`。
+输入：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/trust-fairness-opportunity.png`。输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-fairness-story.png`。
 
 提示词：
 
@@ -20,7 +20,7 @@ Restyle this same-qualification different-opportunity scene. Upper and lower app
 
 ## alignment-story
 
-输入：`figures/02-foundations/03-trustworthiness/generated/trust-alignment-mail-goal.png`。输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-alignment-story.png`。
+输入：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/trust-alignment-mail-goal.png`。输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-alignment-story.png`。
 
 提示词：
 

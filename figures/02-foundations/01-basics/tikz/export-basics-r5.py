@@ -22,17 +22,17 @@ PROOF = args.proof.resolve()
 OUT = ROOT / "figures/02-foundations/01-basics/tikz"
 QA = args.qa.resolve()
 FIGURES = [
-    ("1.2", "introduction-nlp-tasks", 111, 59, "v1r3-nlp-tasks.png"),
+    ("1.2", "introduction-nlp-tasks", 111, 59, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-nlp-tasks.png"),
     ("2.3", "models-discriminative-generative", 168, 113, None),
-    ("3.1", "paradigms-supervised-process", 168, 80, "v1r3-supervised.png"),
-    ("3.3", "paradigms-reinforcement-loop", 168, 82, "v1r3-reinforcement-upper.png"),
-    ("3.5", "paradigms-self-supervised-mask", 111, 81, "v1r4-self-supervised-mask.png"),
-    ("3.13", "paradigms-federated-process", 168, 103, "v1r3-federated.png"),
-    ("1.3", "introduction-vision-tasks", 168, 60, "v1r4-vision-tasks.png"),
-    ("1.4", "introduction-data-split", 111, 60, "v1r3-data-split.png"),
-    ("3.7", "paradigms-contrastive-process", 168, 91, "v1r3-contrastive.png"),
-    ("3.8", "paradigms-active-learning", 168, 95, "v1r3-active-learning.png"),
-    ("3.12", "paradigms-meta-learning", 168, 115, "v1r3-meta-learning.png"),
+    ("3.1", "paradigms-supervised-process", 168, 80, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-supervised.png"),
+    ("3.3", "paradigms-reinforcement-loop", 168, 82, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-reinforcement-upper.png"),
+    ("3.5", "paradigms-self-supervised-mask", 111, 81, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r4-self-supervised-mask.png"),
+    ("3.13", "paradigms-federated-process", 168, 103, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-federated.png"),
+    ("1.3", "introduction-vision-tasks", 168, 60, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r4-vision-tasks.png"),
+    ("1.4", "introduction-data-split", 111, 60, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-data-split.png"),
+    ("3.7", "paradigms-contrastive-process", 168, 91, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-contrastive.png"),
+    ("3.8", "paradigms-active-learning", 168, 95, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-active-learning.png"),
+    ("3.12", "paradigms-meta-learning", 168, 115, "https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-meta-learning.png"),
 ]
 
 OUT.mkdir(exist_ok=True)
@@ -81,7 +81,7 @@ for index, (number, name, width, height, reference) in enumerate(FIGURES):
         "source_canvas_mm": [width, height],
         "export_crop_pt": list(crop),
         "raster_images": 0,
-        "reference_bitmap": f"figures/02-foundations/01-basics/generated/{reference}" if reference else None,
+        "reference_bitmap": reference,
         "route": "complete TikZ reconstruction of accepted model design" if reference else "existing exact TikZ mechanism refined",
     })
     target.close()

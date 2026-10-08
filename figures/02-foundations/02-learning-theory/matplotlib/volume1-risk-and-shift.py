@@ -1,9 +1,9 @@
-"""Rebuild four teaching figures at their final book dimensions.
+"""Rebuild three teaching figures at their final book dimensions.
 
 Run from any directory: python figures/02-foundations/02-learning-theory/matplotlib/volume1-risk-and-shift.py
 Dependencies: Python 3.11+, NumPy, Matplotlib (versions saved in metadata).
 All inputs are explicit teaching constructions, not experimental observations.
-The two qualitative trajectories preserve the original cubic Bezier paths.
+The qualitative trajectories preserve the original cubic Bezier paths.
 PDF/SVG contain vector paths and embedded/subset font outlines; PNG is a preview.
 """
 from pathlib import Path
@@ -133,32 +133,6 @@ def double_descent():
           [["population",*r] for r in p]+[["training",*r] for r in tr]))
 
 
-def grokking():
-    training = [((2,36),(10,31),(12,4),(19,2)), ((19,2),(36,1),(70,1),(96,1))]
-    testing = [((2,37),(23,36),(50,36),(60,34)), ((60,34),(68,30),(69,6),(79,3)),
-               ((79,3),(85,2),(91,2),(96,2))]
-    tr = bezier_path(training, (99,46)); te = bezier_path(testing, (99,46))
-    assert np.all(np.diff(tr[:,1])<=1e-12) and np.all(np.diff(te[:,1])<=1e-12)
-    fig = canvas(height=64)
-    ax = fig.add_axes([.12,.24,.82,.69]); clean_axes(ax)
-    ax.set(xlim=(0,1), ylim=(0,1), xticks=[], yticks=[])
-    ax.set_xlabel("训练进程",labelpad=15); ax.set_ylabel("错误比例",labelpad=5)
-    ax.axvspan(19/99,65/99,color="#EDF2F5",zorder=0)
-    ax.plot(tr[:,0],tr[:,1],color=BLUE,ls="--",lw=1.2)
-    ax.plot(te[:,0],te[:,1],color=RED,lw=1.3)
-    for x, text in [(19/99,r"$t_{\mathrm{fit}}$"),(65/99,r"$t_{\mathrm{gen}}$")]:
-        ax.axvline(x,0,.86,color=GRAY,lw=.8,ls=":")
-        ax.text(x,-.035,text,ha="center",va="top")
-    ax.text(.30,.85,"测试错误率",color=RED)
-    ax.text(.30,.10,"经验零一风险",color=BLUE)
-    save(fig,"grokking",{"size_mm":[112,64], "kind":"Qualitative Bezier teaching path",
-         "training_control_points":training,"test_control_points":testing,
-         "normalization":[99,46], "markers":[19/99,65/99],
-         "sampling":"201 t values per cubic; horizontal coordinate is schematic training progress"},
-         (["series","training_progress_position","error_position"],
-          [["training",*r] for r in tr]+[["test",*r] for r in te]))
-
-
 def distribution_shift():
     fig=canvas(height=65)
     axes=[fig.add_axes([.065+i*.325,.275,.255,.48]) for i in range(3)]
@@ -197,6 +171,6 @@ def distribution_shift():
 
 if __name__=="__main__":
     OUT.mkdir(exist_ok=True)
-    error_decomposition();double_descent();grokking();distribution_shift()
+    error_decomposition();double_descent();distribution_shift()
     (OUT/"volume1-risk-and-shift.json").write_text(json.dumps(META,ensure_ascii=False,indent=2))
-    print("Saved four vector PDF/SVG figures, PNG previews, sampled CSVs and metadata.")
+    print("Saved three vector PDF/SVG figures, PNG previews, sampled CSVs and metadata.")
