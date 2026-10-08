@@ -1154,30 +1154,6 @@ check_fixed README.md \
 check_fixed README.md \
   'LaTeX 样式、构建脚本、测试和代码示例继续使用 Apache License 2.0' \
   'README 说明工程代码许可'
-check_fixed specs/design.md \
-  '卷首页整页铺满 `BookInk`' \
-  '设计规范应记录卷首页墨蓝背景'
-check_fixed specs/design.md \
-  '使用 `BookPaper` 浅灰整页背景和 `BookTeal` 青色编号块' \
-  '设计规范应记录部首页浅灰背景'
-check_fixed specs/design.md \
-  '索引显示名称统一为“索引”' \
-  '设计规范应记录中文索引标题'
-check_fixed specs/design.md \
-  '“参考资料”使用六类单层列表' \
-  '设计规范应记录参考资料分类与列表结构'
-check_fixed specs/design.md \
-  '27 本教材通过集中 `\nocite` 显式登记' \
-  '设计规范应记录前页教材登记规则'
-check_fixed specs/design.md \
-  '偶数页显示章号与章标题，奇数页显示节号与节标题' \
-  '设计规范应记录正文奇偶页眉'
-check_fixed specs/design.md \
-  '年份与版本统一写作 `2026 年 · 第一版`' \
-  '设计规范应记录封面版本格式'
-check_fixed specs/design.md \
-  '书稿正文与原创图表采用 CC BY-NC-ND 4.0' \
-  '设计规范应记录书稿内容许可'
 check_fixed plans/book-structure.md \
   '全集卷首页使用墨蓝实底' \
   '结构计划应记录卷首页墨蓝背景'

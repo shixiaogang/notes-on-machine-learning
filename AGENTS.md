@@ -1,87 +1,33 @@
 # 项目说明
 
-这是一本使用 LaTeX 编写的中文机器学习笔记，基于 `tufte-book` 模板修改，并通过 Git 管理变更。
+这是一本基于 `tufte-book` 的中文 LaTeX 机器学习笔记。项目入口与构建环境见 [README](README.md)。
 
-## 目录职责
+## 开始任务
 
-- `tex/`：书籍的主内容、LaTeX 源文件及项目固定使用的 Tufte 模板文件。
-- `specs/`：供 agent 遵循的开发规范。
-- `plans/`：开发计划与任务拆解。
-- `figures/`：书籍中使用的图像资源。
-- `fonts/`：项目固定使用的字体文件、校验清单及其上游许可证。
-- `build/`：LaTeX 中间产物与编译缓存，不纳入 Git。
-- `target/`：全集和六个单卷的成品 PDF 及构建校验记录，随正文一起提交。
+开始任何修改前必须阅读 [开发要求](specs/development.md)，检查 `git status --short` 与 `git worktree list`。每个独立任务使用自己的 worktree 和分支；继续任务时复用原工作区，所有编辑、资源生成、构建、测试和提交均在该工作区执行。不得覆盖、暂存或清理其他任务的成果，不共享可写的 `build/`、`target/`。
 
-## 开发规范索引
+按任务阅读并遵循相关规范，完整索引见 [specs/README.md](specs/README.md)：
 
-开始编写或修改内容前，必须阅读与任务相关的开发规范：
+- [LaTeX 与数学记号](specs/latex.md)：正文组织、符号、公式、宏、引用与编译。
+- [写作](specs/writings.md)：凡涉及正文、大纲、图注或示例文字，必须先阅读，交稿前完成自查；各章保留独立的 `\section{本章小结}`。
+- [图像](specs/figures.md)：选型、配色、标注、来源与复现。
+- [样式](specs/design.md)：字体、版式与语义环境。
 
-- `specs/notations.md`：变量字形、集合、索引、迭代、切片及公式排版。
-- `specs/figures.md`：TikZ 优先原则、生成式图像、配色、标注及可复现性。
-- `specs/writings.md`：问题驱动的概念铺陈、逻辑衔接、自然中文、术语、引用、改写示例及交稿检查。
-- `specs/latex.md`：文件组织、命名、交叉引用、宏、依赖及编译检查。
-- `specs/design.md`：封面与内页、字体、颜色、数学及代码环境、边注引文和图表版式。
-- `specs/commits.md`：提交消息格式、类型与范围、变更划分及历史整理；创建提交前必须阅读并遵循。
+## 内容与资源
 
-通用原则及完整说明见 `specs/README.md`。如果不同规范之间存在冲突，以更具体的规范为准。
+- `tex/` 按“卷—部分—章”组织，卷和部分目录使用两位序号；入口分别为 `volume.tex`、`part.tex`。新增章节接入所属入口，不复制全集与单卷正文。
+- 内容边界与规划以 [计划索引](plans/README.md) 及其链接的大纲为准；完成状态以实际正文入口为准。结构变化时同步相关大纲与章目映射，不保留已完成的过程讨论。
+- `figures/` 按卷、部分和制作方式归档，跨部分资源放入 `00-shared/`；保留图源、数据与生成记录，使用相对路径。字体及许可证位于 `fonts/`。
 
-## 写作要求
+## 验证与交付
 
-凡涉及正文、章节大纲、图表说明或示例文字，必须先阅读 `specs/writings.md`，并在交稿前完成其中的自查。以优秀技术作者和资深研发工程师的标准写作：技术准确，逻辑严密，讲解循序渐进，语言自然，体谅读者的理解负担。
+每次提交前必须在任务 worktree 中执行：
 
-- 引入新概念前，先说明当前问题或已有方法的不足；核心术语首次出现时，紧接白话解释，再逐步展开定义、机制和推导。
-- 按“读者已知什么—还缺什么—新概念如何补上”组织内容。段落靠因果、条件、递进或转折衔接，不靠“首先、其次、再次、最后”串联。
-- 开篇提出的问题必须在正文中得到回应，结尾收拢答案与适用边界。同一概念的名称与符号保持一致。
-- 每章末尾必须设置独立的 `\section{本章小结}`；新增或重构章节时不得省略，也不得将小结并入其他小节。
-- 数学准备卷每个部分首页后设置一页无编号阅读指引，只介绍本部分主要内容和章节组织；不进入目录，不提供推荐阅读顺序。
-- 使用具体、直接的中文，主动预判理解难点。避免空话、术语堆叠、反复总结和整齐划一的段落模板；比喻、设问与“你／我们”应服务于解释。
-- 初稿完成后，分别检查逻辑、技术准确性与语言。发现概念跳步、论证缺口或读者难以跟上的句子，先修订再交稿。
+```sh
+./build.sh all
+./build.sh check-target
+```
 
-## 内容结构
+七份 PDF 与 `target/.build-manifest.json` 必须对应当前正文、图源、字体及构建输入，并与源文件一起暂存；不得绕过提交检查。其他测试和 PDF 检查按变更范围及相关规范执行。
 
-书籍采用“卷—部分—章—节”结构。`tex/` 下按卷设置带两位序号的英文目录，每卷以 `volume.tex` 为入口；卷内各部分再使用带两位序号的英文子目录，以 `part.tex` 为入口。目录前缀按所属层级从 01 开始，书中的部分号和章号则全书连续编号。
-
-1. `tex/01-mathematical-preliminaries/`：第一卷“数学准备”
-   - `01-mathematical-language-combinatorics-analysis-optimization/`：计数、分析与优化
-   - `02-linear-algebra-and-geometry/`：线性和非线性空间
-   - `03-graphs-and-signals/`：图与信号
-   - `04-random-variables-distributions-and-causality/`：随机变量、分布与因果响应
-   - `05-dynamical-systems-control-decision-and-games/`：演化、控制、决策与博弈
-   - `06-mathematics-and-machine-learning/`：数学与机器学习；仅含第17章“数学基础与后续研究”。
-2. `tex/02-foundations/`：第二卷“基础、理论和可信性”
-   - `01-basics/`：机器学习基础
-   - `02-learning-theory/`：机器学习理论
-   - `03-trustworthiness/`：机器学习可信性
-3. `tex/03-models/`：第三卷“模型”
-   - `01-classic-models/`：经典模型
-   - `02-neural-network-models/`：神经网络模型
-   - `03-probabilistic-graphical-models/`：概率图模型
-4. `tex/04-paradigms/`：第四卷“范式”
-   - `01-reinforcement-learning/`：强化学习
-   - `02-efficient-knowledge-use/`：知识的获取
-   - `03-knowledge-evolution-and-transfer/`：知识的演进与迁移
-5. `tex/05-applications/`：第五卷“应用”
-   - `01-natural-language-processing/`：自然语言处理
-   - `02-image-processing/`：图像处理
-   - `03-recommendation-and-search/`：推荐与搜索
-6. `tex/06-systems/`：第六卷“系统”
-   - `01-machine-learning-systems/`：机器学习系统；承接数据、训练与部署相关内容。
-
-数学准备卷按 `plans/mathematical-preliminaries-reading-structure.md` 组织为17章。大纲保留合并前的讨论定位号，实施章号以正文为准；原线性代数与矩阵分析合入“线性空间”，概率论、随机过程与统计合入“随机变量”，图与信号同属第三部分，先讲信号再讲图，随机变量、分布与因果响应后移至第四部分，控制先于价值优化。最终章目与文件映射见 `plans/mathematical-preliminaries-chapter-map.md`；第一卷第六部分仅含第17章。
-
-第17章从统一学习框架出发，区分环境、候选类、目标与约束，以及采样、求解和评价的过程。在共同对象上提出表示与逼近、优化与收敛、观测与统计、扰动与响应、跨情境学习、约束与动态六类分析关系，再说明不同学习设定下的分析对象、所求结论和适用工具。具体任务可以联合调用多类分析；章节组织应体现这些关系，避免按研究方向罗列零散关联。
-
-“机器学习理论”部分依次介绍机器学习理论基础、二分类、多分类、凸学习与算法稳定性、深度学习理论和迁移学习理论，详细规划见 `plans/learning-theory-outline.md`。全书分卷、内容边界与迁移约定见 `plans/book-structure.md`。
-
-后续新增章节时，应放入其所属卷和部分的目录中；图像资源放入 `figures/`，并在 LaTeX 源文件中以相对路径引用。
-
-## 提交前的成品一致性
-
-每次提交前必须运行 `./build.sh all` 和 `./build.sh check-target`。全集为
-`target/machine-learning-notes.pdf`，六个单卷为 `target/volN-<slug>.pdf`。
-七份 PDF 与 `target/.build-manifest.json` 必须对应当前正文、图源、字体及构建输入，
-并与正文一起暂存；不得提交过期或遗漏的成品。新克隆后运行
-`git config --local core.hooksPath .githooks` 启用版本化提交检查。
-索引只收录当前出版单元正文实际调用的 `\term` / `\termalias`；词典登记本身不产生条目。
-全集和单卷的部首页必须使用奇数正文页码；需要补页时，空白页不显示页眉或页码，目录、书签及标签仍指向部首页。
-正文第 1 页也必须位于 PDF 的实际奇数页，以同步正文页码与 PDF 页面序号的奇偶。
+主工作区用于查看基线和串行集成；集成后按最终源文件重新构建并校验。交付时说明 worktree、分支、验证结果及是否已提交或集成，清理前确认成果已保存且可恢复。

@@ -71,16 +71,20 @@ def normalize(title: str) -> str:
 def assignments(root: Path) -> list[dict]:
     rows = []
     for match in re.finditer(
-        r"^\| (\d+) \| (\d+) \| ([^|]+) \| ([^|]+\.tex) \|$",
+        r"^\| (\d+) \| ([^|]+) \| ([^|]+\.tex) \|$",
         (root / CONTRACT).read_text(), re.M,
     ):
-        number, locator, title, path = match.groups()
+        number, title, path = match.groups()
         rows.append({
-            "chapter": int(number), "outline_locator": int(locator),
+            "chapter": int(number),
             "title": title.strip(), "path": str(VOLUME / path.strip()),
         })
     if len(rows) != 17:
         raise ValueError(f"Expected 17 assignments, found {len(rows)}")
+    if [row["chapter"] for row in rows] != list(range(1, 18)):
+        raise ValueError("Chapter assignments must use current numbers 1 through 17 in order")
+    if len({row["path"] for row in rows}) != 17:
+        raise ValueError("Chapter assignments must have unique source paths")
     return rows
 
 
@@ -88,13 +92,9 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
     result: dict[int, list[dict]] = {}
     current = None
     for line_no, line in enumerate(text.splitlines(), 1):
-        chapter = re.match(
-            r"## 第(\d+)章 (.+?)(?:（旧细纲定位(\d+)）)?$", line,
-        )
+        chapter = re.match(r"## 第(\d+)章 (.+)$", line)
         if chapter:
-            # Visible chapter numbers follow the current book; subsection
-            # locators retain their historical numbering for traceability.
-            current = int(chapter[3] or chapter[1])
+            current = int(chapter[1])
             result[current] = [{
                 "number": str(current), "level": 1,
                 "title": chapter[2], "outline_line": line_no,
@@ -104,7 +104,7 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
             current = None
         if current is None:
             continue
-        match = re.match(r"### (\d+(?:\.\d+)+) (.+)", line)
+        match = re.match(r"#{3,7} (\d+(?:\.\d+)+) (.+)", line)
         if not match:
             match = re.match(r"\s*- \*\*(\d+(?:\.\d+)+) (.+?)\*\*", line)
         if not match:
@@ -365,6 +365,8 @@ def audit_chapter(root: Path, row: dict, expected: list[dict]) -> dict:
     text = uncomment(raw)
     headings = tex_headings(text)
     issues = []
+    if not expected or normalize(row["title"]) != normalize(expected[0]["title"]):
+        issues.append({"kind": "chapter_map_title_mismatch"})
     # Extra paragraph labels such as a proof sketch are recorded separately.
     # All outline titles, including the deepest ones, must occur in order.
     expected_titles = {normalize(item["title"]) for item in expected}
@@ -439,7 +441,7 @@ def main() -> int:
     rows = assignments(root)
     selected = [row for row in rows if not args.chapter or row["chapter"] in args.chapter]
     reports = [
-        audit_chapter(root, row, expected[row["outline_locator"]]) for row in selected
+        audit_chapter(root, row, expected[row["chapter"]]) for row in selected
     ]
     part_guides = audit_part_guides(root)
     # Read immutable Git objects so a clean build directory cannot silently

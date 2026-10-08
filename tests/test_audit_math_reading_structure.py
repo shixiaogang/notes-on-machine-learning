@@ -13,6 +13,34 @@ AUDIT = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(AUDIT)
 
 
+class CurrentChapterStructureTests(unittest.TestCase):
+    def test_current_chapter_numbers_include_nested_titles(self):
+        headings = AUDIT.outline_headings(
+            "## 第8章 信号的表示与计算\n"
+            "### 8.1 信号的表示\n"
+            "#### 8.1.1 有限表示\n"
+            "##### 8.1.1.1 变换\n"
+            "###### 8.1.1.1.1 条件\n"
+            "## 第9章 图的表示与计算\n"
+            "### 9.1 关系结构\n"
+        )
+        self.assertEqual(list(headings), [8, 9])
+        self.assertEqual([item["level"] for item in headings[8]], [1, 2, 3, 4, 5])
+        self.assertEqual(headings[9][1]["number"], "9.1")
+
+    def test_chapter_map_rejects_duplicate_current_numbers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / AUDIT.CONTRACT).parent.mkdir(parents=True)
+            rows = [f"| {n} | 章节{n} | part/chapter{n}.tex |" for n in range(1, 18)]
+            (root / AUDIT.CONTRACT).write_text("\n".join(rows))
+            self.assertEqual([row["chapter"] for row in AUDIT.assignments(root)], list(range(1, 18)))
+            rows[-1] = "| 16 | 章节17 | part/chapter17.tex |"
+            (root / AUDIT.CONTRACT).write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "current numbers"):
+                AUDIT.assignments(root)
+
+
 class Chapter17RetirementTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

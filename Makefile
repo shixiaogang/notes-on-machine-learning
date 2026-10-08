@@ -2,7 +2,7 @@
 
 test:
 	./tests/check-index-terms.sh
-	python3 -m unittest -v tests/test_target_pdfs.py
+	python3 -m unittest -v tests/test_target_pdfs.py tests/test_audit_math_reading_structure.py
 	bash tests/check-build-clean.sh
 	bash tests/check-part-openings.sh
 
