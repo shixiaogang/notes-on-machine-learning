@@ -549,7 +549,7 @@ check_cross_volume_refs() {
 
   while IFS= read -r path; do
     tex_files+=("$path")
-  done < <(find tex -type f -path 'tex/0[1-5]-*/*.tex' -print | sort)
+  done < <(find tex -type f -path 'tex/0[1-6]-*/*.tex' -print | sort)
 
   labels_file="$(mktemp "${TMPDIR:-/tmp}/book-labels.XXXXXX")"
   refs_file="$(mktemp "${TMPDIR:-/tmp}/book-refs.XXXXXX")"

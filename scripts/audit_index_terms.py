@@ -21,13 +21,21 @@ VOLUMES = (
     "05-applications",
     "06-systems",
 )
-EXPECTED_CALLS = 2291
-EXPECTED_UNIQUE_TERMS = 1965
+EXPECTED_CALLS = 2584
+EXPECTED_UNIQUE_TERMS = 2251
 SHARED_TERM_FILES = (Path("tex/styles/environments.tex"),)
 VERBATIM_ENVIRONMENTS = {"verbatim", "Verbatim", "lstlisting", "minted"}
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 ABBREVIATION_RE = re.compile(
     r"^(?:\$[^$\n]+\$[- ]*)?[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)*$"
+)
+# 大小写只能提供默认判断。以下名称按原论文的命名方式核验：
+# 混合大小写的缩写仍登记展开；独立模型或基准专名不反向猜测全称。
+VERIFIED_ABBREVIATIONS = frozenset(
+    {"HyDE", "BERT-LeaQuR", "NeuQS", "ConvDR", "IRCoT"}
+)
+VERIFIED_PROPER_NAMES = frozenset(
+    {"BM25", "BGE-M3", "DUET", "BRIGHT", "BEIR"}
 )
 RESERVED_INDEX_CHARACTERS = set('@!|"')
 
@@ -713,6 +721,10 @@ def _contains_reserved_character(value: str) -> bool:
 
 
 def _is_abbreviation(value: str) -> bool:
+    if value in VERIFIED_PROPER_NAMES:
+        return False
+    if value in VERIFIED_ABBREVIATIONS:
+        return True
     return bool(ABBREVIATION_RE.fullmatch(value))
 
 

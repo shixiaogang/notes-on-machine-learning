@@ -386,6 +386,29 @@ class MappingAndAuditTests(unittest.TestCase):
 
         self.assertEqual(diagnostics, [])
 
+    def test_audit_uses_verified_names_before_capitalization(self) -> None:
+        occurrences = [
+            self.occurrence("HyDE"),
+            self.occurrence("BM25"),
+        ]
+        expansion = self.mapping("HyDE", "hypothetical document embeddings")
+
+        self.assertEqual(
+            self.audit_index_terms.audit(occurrences, [expansion]), []
+        )
+        missing = self.audit_index_terms.audit(occurrences, [])
+        self.assertEqual(
+            [item.code for item in missing],
+            ["MISSING_ABBREVIATION_EXPANSION"],
+        )
+        invented = self.audit_index_terms.audit(
+            occurrences,
+            [expansion, self.mapping("BM25", "invented expansion")],
+        )
+        self.assertEqual(
+            [item.code for item in invented], ["UNEXPECTED_ENGLISH_MAPPING"]
+        )
+
     def test_audit_assigns_cross_volume_term_to_global_first_occurrence(self) -> None:
         occurrences = [
             self.occurrence("共享词", volume="03-models"),
