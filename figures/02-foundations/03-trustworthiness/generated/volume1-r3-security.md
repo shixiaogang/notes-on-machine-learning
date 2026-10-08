@@ -5,7 +5,7 @@
 
 ## membership-inference
 
-资源：`figures/02-foundations/03-trustworthiness/generated/v1r3-membership-inference.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-a48ecb75-1507-4415-8353-9ab751a655e0.png`。
+资源：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-membership-inference.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-a48ecb75-1507-4415-8353-9ab751a655e0.png`。
 
 生成提示词：
 
@@ -15,7 +15,7 @@ Membership inference architecture. Five horizontal modules, centers x=.10,.32,.5
 
 ## dp-noise
 
-资源：`figures/02-foundations/03-trustworthiness/generated/v1r3-dp-noise.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-b3eeca52-9778-4537-ac59-24ffbad95a7b.png`。
+资源：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-dp-noise.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-b3eeca52-9778-4537-ac59-24ffbad95a7b.png`。
 
 生成提示词：
 
@@ -25,7 +25,7 @@ Differential privacy architecture, two adjacent alternative publish paths. LEFT 
 
 ## unlearning
 
-资源：`figures/02-foundations/03-trustworthiness/generated/v1r3-unlearning.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-8514019f-7af2-4899-86a1-b3fc1d851352.png`。
+资源：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-unlearning.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-8514019f-7af2-4899-86a1-b3fc1d851352.png`。
 
 生成提示词：
 
@@ -35,7 +35,7 @@ Machine unlearning architecture, TWO horizontal aligned tracks. UPPER centers x=
 
 ## threat-model
 
-资源：`figures/02-foundations/03-trustworthiness/generated/v1r3-threat-model.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-99492fc7-bbf8-4b24-a2ac-34a4b7c8919a.png`。
+资源：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-threat-model.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-99492fc7-bbf8-4b24-a2ac-34a4b7c8919a.png`。
 
 生成提示词：
 
@@ -45,7 +45,7 @@ Threat model architecture with three independent side-by-side panels, not a sequ
 
 ## security-entrypoints
 
-资源：`figures/02-foundations/03-trustworthiness/generated/v1r3-security-entrypoints.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-0294f81b-c13e-42a0-8ffb-85453142e13c.png`。
+资源：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-security-entrypoints.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-0294f81b-c13e-42a0-8ffb-85453142e13c.png`。
 
 生成提示词：
 
@@ -55,7 +55,7 @@ Attack surface architecture. Five aligned modules along one horizontal baseline:
 
 ## prompt-injection
 
-资源：`figures/02-foundations/03-trustworthiness/generated/v1r3-prompt-injection.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-340bf2ce-535b-4a5c-ad5e-c748b3ad85bc.png`。
+资源：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-prompt-injection.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-340bf2ce-535b-4a5c-ad5e-c748b3ad85bc.png`。
 
 生成提示词：
 
@@ -65,7 +65,7 @@ Prompt injection and authorization architecture. Wide two-row routing. Far left 
 
 ## defense-depth
 
-资源：`figures/02-foundations/03-trustworthiness/generated/v1r3-defense-depth.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-758627fc-05ae-48da-bc82-2f8e61e90061.png`。
+资源：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-defense-depth.png`。内置工具原始输出：`/Users/robbieshi/.codex/generated_images/01a108ff-bacd-7620-806b-20971b190207/exec-758627fc-05ae-48da-bc82-2f8e61e90061.png`。
 
 生成提示词：
 

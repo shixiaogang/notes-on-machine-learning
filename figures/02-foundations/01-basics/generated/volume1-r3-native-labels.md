@@ -4,7 +4,7 @@
 
 ## membership-inference
 
-输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-membership-inference.png`。
+输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-membership-inference.png`。
 
 原生标注提示：
 
@@ -18,7 +18,7 @@ Change ONLY the typography of this already correct scientific architecture illus
 
 ## dp-noise
 
-输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-dp-noise.png`。
+输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-dp-noise.png`。
 
 原生标注提示：
 
@@ -32,7 +32,7 @@ Change ONLY the typography of this already correct scientific architecture illus
 
 ## unlearning
 
-输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-unlearning.png`。
+输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-unlearning.png`。
 
 原生标注提示：
 
@@ -46,7 +46,7 @@ Change ONLY the typography of this already correct scientific architecture illus
 
 ## threat-model
 
-输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-threat-model.png`。
+输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-threat-model.png`。
 
 原生标注提示：
 
@@ -60,7 +60,7 @@ Change ONLY the typography of this already correct scientific architecture illus
 
 ## security-entrypoints
 
-输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-security-entrypoints.png`。
+输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-security-entrypoints.png`。
 
 原生标注提示：
 
@@ -74,7 +74,7 @@ Change ONLY the typography of this already correct scientific architecture illus
 
 ## prompt-injection
 
-输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-prompt-injection.png`。
+输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-prompt-injection.png`。
 
 原生标注提示：
 
@@ -88,7 +88,7 @@ Change ONLY the typography of this already correct scientific architecture illus
 
 ## defense-depth
 
-输出：`figures/02-foundations/03-trustworthiness/generated/v1r3-defense-depth.png`。
+输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-defense-depth.png`。
 
 原生标注提示：
 

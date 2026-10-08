@@ -225,7 +225,7 @@ Use case: style-transfer. Edit this existing scientific diagram only to unify it
 
 ## 根节点协助的旧范式改色
 
-3.10、3.11、3.14 已替换为 `v1r3-multi-task-learning.png`、`v1r3-transfer-learning.png`、`v1r3-combination-alphago.png`。具体提示与检查记录见 `volume1-r3-paradigm-restyle.md`。
+3.10、3.11、3.14 已替换为 [v1r3-multi-task-learning.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-multi-task-learning.png)、`v1r3-transfer-learning.png`、`v1r3-combination-alphago.png`。具体提示与检查记录见 `volume1-r3-paradigm-restyle.md`。
 
 ## 最终物理尺寸与接口复核修订
 
@@ -274,18 +274,18 @@ Revise ONLY native typography in this finished scientific architecture diagram. 
 
 这些源图以工作区 `figures/scenes/v1r3-*.png` 文件为实际引用；前述“阶段输出”只保留生成轨迹。字体名称仅表示外观参考，不声称栅格图片嵌入了某种字体。
 
-- `v1r3-nlp-tasks.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-ce9f5839-1a58-4de1-9d5f-711a19480222.png`
-- `v1r3-data-split.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b0df4cde-e780-40da-b44e-de4ebf0a08d6.png`
-- `v1r3-supervised.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-7e75ec8c-6003-4189-a147-6867b53e286b.png`
-- `v1r3-reinforcement-upper.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-09faac7b-8c2a-45da-b10e-5a40245e716a.png`
-- `v1r3-contrastive.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-f78bfc13-23d3-4ae3-a667-8573488db4d6.png`
-- `v1r3-active-learning.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b9d2b25d-9c35-4675-81a8-b92beae2ba2c.png`
-- `v1r3-federated.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-1ef98ae6-1be7-480b-8dca-c5c55e7c4b54.png`
-- `v1r3-unsupervised.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b9c83d10-540c-4557-ac80-08ab7bbd2cef.png`
-- `v1r3-semi-supervised.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b41df9bd-325d-4abb-bc36-bc8dbafbb54d.png`
-- `v1r3-continual.png`：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-bd526713-cabb-43ea-b47c-3a28533d7c63.png`
+- [v1r3-nlp-tasks.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-nlp-tasks.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-ce9f5839-1a58-4de1-9d5f-711a19480222.png`
+- [v1r3-data-split.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-data-split.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b0df4cde-e780-40da-b44e-de4ebf0a08d6.png`
+- [v1r3-supervised.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-supervised.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-7e75ec8c-6003-4189-a147-6867b53e286b.png`
+- [v1r3-reinforcement-upper.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-reinforcement-upper.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-09faac7b-8c2a-45da-b10e-5a40245e716a.png`
+- [v1r3-contrastive.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-contrastive.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-f78bfc13-23d3-4ae3-a667-8573488db4d6.png`
+- [v1r3-active-learning.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-active-learning.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b9d2b25d-9c35-4675-81a8-b92beae2ba2c.png`
+- [v1r3-federated.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-federated.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-1ef98ae6-1be7-480b-8dca-c5c55e7c4b54.png`
+- [v1r3-unsupervised.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-unsupervised.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b9c83d10-540c-4557-ac80-08ab7bbd2cef.png`
+- [v1r3-semi-supervised.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-semi-supervised.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-b41df9bd-325d-4abb-bc36-bc8dbafbb54d.png`
+- [v1r3-continual.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-continual.png)：`/Users/robbieshi/.codex/generated_images/01a1095d-88df-7112-97e9-3d6f1631669b/exec-bd526713-cabb-43ea-b47c-3a28533d7c63.png`
 
-图3.12最终字体细化由根节点完成并直接保存 `v1r3-meta-learning.png`，原始输出及具体提示见 `volume1-r3-meta-fonts.md`。图3.10、3.11、3.14见 `volume1-r3-paradigm-restyle.md`。最终书中宽度111mm或168mm；未为提高名义DPI进行人工插值放大。
+图3.12最终字体细化由根节点完成并直接保存 [v1r3-meta-learning.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-meta-learning.png)，原始输出及具体提示见 `volume1-r3-meta-fonts.md`。图3.10、3.11、3.14见 `volume1-r3-paradigm-restyle.md`。最终书中宽度111mm或168mm；未为提高名义DPI进行人工插值放大。
 
 ## 图3.8：实际书宽下的最终字重修订
 

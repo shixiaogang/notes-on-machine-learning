@@ -4,6 +4,7 @@ All values come from the displayed formulas. No random observations, fitting,
 data filtering, downsampling, or post-export image editing is used.
 """
 from pathlib import Path
+import sys
 import json
 import hashlib
 import platform
@@ -18,7 +19,6 @@ ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'build.sh').is_f
 sys.path.insert(0, str(ROOT / 'figures/00-shared'))
 from resource_paths import asset_path
 
-import sys
 sys.path.insert(0, str(ROOT / 'figures/01-mathematical-preliminaries/00-shared/matplotlib'))
 from plot_style import (configure, prepare_figure, style_record, CN, EN, BLUE, RED, YELLOW, INK, MUTED, GRID, YELLOW_FILL)
 configure()

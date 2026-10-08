@@ -5,6 +5,7 @@ Analytic expressions, domains, discretization and software versions are saved
 in manifest.json alongside the PDF/SVG/PNG outputs.
 """
 from pathlib import Path
+import sys
 import json
 import numpy as np
 import matplotlib
@@ -16,7 +17,6 @@ ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'build.sh').is_f
 sys.path.insert(0, str(ROOT / 'figures/00-shared'))
 from resource_paths import asset_path
 
-import sys
 sys.path.insert(0, str(ROOT / 'figures/01-mathematical-preliminaries/00-shared/matplotlib'))
 from plot_style import (configure, prepare_figure, style_record, CN, EN, BLUE, RED, YELLOW, INK, MUTED, GRID, YELLOW_FILL)
 configure()
@@ -118,44 +118,6 @@ def spectral_shrinkage():
     ax.legend(frameon=False,fontsize=8)
     save(fig,"functional-spectral-shrinkage",{"formula":"mu_j=j^(-2); retention=mu_j/(mu_j+lambda)","parameters":{"lambda":[.01,.1],"directions":25},"sampling":"All first 25 integer spectral directions. This figure does not truncate the definition of the infinite-dimensional effective dimension."})
 
-def weighted_projection():
-    fig,axs=axes(2,70)
-    b=np.array([2.,1.]);v=np.array([1.,1.])
-    for ax,g,c,title in zip(axs,[np.eye(2),np.diag([1.,4.])],[BLUE,RED],["(a) 欧氏内积","(b) 第二坐标权重为 4"]):
-        p=v*(v@g@b)/(v@g@v)
-        ax.plot([-.1,2.4],[-.1,2.4],color=LINE,lw=.6)
-        ax.annotate("",b,xytext=p,arrowprops={"arrowstyle":"-","color":c,"linewidth":1.1,"linestyle":"--"})
-        ax.annotate("",p,xytext=(0,0),arrowprops={"arrowstyle":"->","color":c,"linewidth":1.1})
-        ax.scatter([b[0]],[b[1]],color=INK,s=24);ax.scatter([p[0]],[p[1]],color=c,s=24)
-        ax.text(2.05,.80,r"$\mathbf{b}$",fontsize=10)
-        ax.text(p[0]-.15,p[1]+.2,r"$\mathbf{p}$",fontsize=10)
-        ax.set(title=title,xlabel="第一坐标",ylabel="第二坐标",xlim=(-.15,2.55),ylim=(-.15,2.55),aspect="equal")
-    save(fig,"linear-algebra-weighted-projection",{"formula":"p=v*(v^T G b)/(v^T G v)","parameters":{"b":[2,1],"v":[1,1],"metrics":[[[1,0],[0,1]],[[1,0],[0,4]]],"projections":[[1.5,1.5],[1.2,1.2]]},"sampling":"Exact vector coordinates; no data or numerical optimization."})
-
-def svd_geometry():
-    rotation=lambda t:np.array([[np.cos(t),-np.sin(t)],[np.sin(t),np.cos(t)]])
-    u,v=rotation(np.pi/6),rotation(np.pi/5);s=np.diag([2.,.4]);a=u@s@v.T
-    theta=np.linspace(0,2*np.pi,721);circle=np.array([np.cos(theta),np.sin(theta)])
-    fig,axs=axes(2,75)
-    for ax,curve,basis,lengths,title in [(axs[0],circle,v,[1.,1.],"(a) 输入单位圆"),(axs[1],a@circle,u,[2.,.4],"(b) 输出椭圆")]:
-        ax.plot(*curve,color=YELLOW)
-        for k,c in enumerate([BLUE,RED]):
-            end=basis[:,k]*lengths[k]
-            ax.annotate("",end,xytext=(0,0),arrowprops={"arrowstyle":"->","color":c,"linewidth":1.1})
-            label = (rf"$\mathbf{{v}}_{k+1}$" if ax is axs[0]
-                     else rf"$\sigma_{k+1}\mathbf{{u}}_{k+1}$")
-            ax.text(end[0]+.08,end[1]+.06,label,fontsize=9)
-        ax.set(title=title,xlabel="第一坐标",ylabel="第二坐标",aspect="equal",xlim=(-2.35,2.35),ylim=(-1.7,1.7))
-    save(fig,"matrix-analysis-svd-geometry",{"formula":"A=R(pi/6)*diag(2,0.4)*R(pi/5)^T; x=(cos(theta),sin(theta))", "parameters":{"singular_values":[2,.4]},"sampling":"721 uniform angles on [0,2*pi]; panels use identical coordinate scales."})
-
-def matrix_sensitivity():
-    eps=np.logspace(-4,-1,301);eta=1.e-4
-    fig,(ax,)=axes()
-    ax.loglog(eps,eta/(np.sqrt(2)*eps),color=BLUE,label="系数的相对变化")
-    ax.loglog(eps,np.full_like(eps,eta/2),color=RED,ls="--",label="响应的相对变化")
-    ax.set(xlabel="列差异 ε̃",ylabel="相对变化量")
-    ax.legend(frameon=False,fontsize=8)
-    save(fig,"matrix-analysis-coefficient-sensitivity",{"formula":"X=[[1,1],[0,eps]], y=(2,0), dy=(0,eta); beta=(2,0), dbeta=(-eta/eps,eta/eps). relative_beta=eta/(sqrt(2)*eps), relative_y=eta/2", "parameters":{"eta":eta,"epsilon_range":[1.e-4,.1]},"sampling":"301 logarithmically spaced epsilon values; exact solutions, no inverse computed."})
 
 def circle_distances():
     fig,axs=axes(2,72);theta=np.linspace(0,2*np.pi,721)
@@ -174,8 +136,8 @@ def circle_distances():
 
 if __name__ == "__main__":
     for build in [recurrence, convergence, optimization, functional_tents,
-                  spectral_shrinkage, weighted_projection, svd_geometry,
-                  matrix_sensitivity, circle_distances]:
+                  spectral_shrinkage,
+                  circle_distances]:
         build()
     (asset_path(OUT, "manifest.json")).write_text(json.dumps({"purpose":"Teaching constructions; no experimental data.",
         "style":style_record(),"numpy":np.__version__,"matplotlib":matplotlib.__version__,"fonts":{"Chinese":CN,"Latin":EN,"math":"Matplotlib STIX"},

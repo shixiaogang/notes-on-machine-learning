@@ -8,7 +8,7 @@
 
 ## 自动处理与人工复核
 
-文件：`trust-reliability-review.png`
+文件：[trust-reliability-review.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/trust-reliability-review.png)
 
 提示词：
 
@@ -16,7 +16,7 @@
 
 ## 相同资格下的不同待遇
 
-文件：`trust-fairness-opportunity.png`
+文件：[trust-fairness-opportunity.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/trust-fairness-opportunity.png)
 
 提示词：
 
@@ -24,7 +24,7 @@
 
 ## 可测指标与实际目标
 
-文件：`trust-alignment-mail-goal.png`
+文件：[trust-alignment-mail-goal.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/trust-alignment-mail-goal.png)
 
 提示词：
 
@@ -32,7 +32,7 @@
 
 ## 删除记录与消除训练影响
 
-文件：`trust-privacy-deletion.png`
+文件：[trust-privacy-deletion.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/trust-privacy-deletion.png)
 
 提示词：
 

@@ -4,7 +4,7 @@
 
 ## multi-task-learning
 
-输入：`figures/02-foundations/01-basics/generated/paradigms-multi-task-learning.png`。输出：`figures/02-foundations/01-basics/generated/v1r3-multi-task-learning.png`。
+输入：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/paradigms-multi-task-learning.png`。输出：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/v1r3-multi-task-learning.png`。
 
 提示词：
 
@@ -14,7 +14,7 @@ Restyle this multi-task learning scene. One road scene is shared by a central le
 
 ## transfer-learning
 
-输入：`figures/02-foundations/01-basics/generated/paradigms-transfer-learning.png`。输出：`figures/02-foundations/01-basics/generated/v1r3-transfer-learning.png`。
+输入：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/paradigms-transfer-learning.png`。输出：`figures/02-foundations/01-basics/generated/v1r3-transfer-learning.png`。
 
 提示词：
 
@@ -24,7 +24,7 @@ Restyle this transfer learning scene. The collection of source-domain animal/veh
 
 ## combination-alphago
 
-输入：`figures/02-foundations/01-basics/generated/paradigms-combination-alphago.png`。输出：`figures/02-foundations/01-basics/generated/v1r3-combination-alphago.png`。
+输入：`https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/paradigms-combination-alphago.png`。输出：`figures/02-foundations/01-basics/generated/v1r3-combination-alphago.png`。
 
 提示词：
 

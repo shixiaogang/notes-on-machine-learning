@@ -4,7 +4,7 @@ This image was created with OpenAI's built-in image generation tool on
 2026-09-27. No post-processing was applied beyond copying the generated PNG files
 into this directory.
 
-## `introduction-vision-example.png`
+## [introduction-vision-example.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/01-basics/generated/introduction-vision-example.png)
 
 Prompt:
 

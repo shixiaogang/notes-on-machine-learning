@@ -4,11 +4,11 @@
 
 | 图 | 底图 | 最终源 | 印刷宽度 |
 |---|---|---|---|
-| 10.3 | `v1r3-trust-decision.png` | `../trust-decision-consequences.tex` | 112 mm |
-| 11.2 | `v1r3-trust-uncertainty.png` | `../trust-uncertainty-sources.tex` | 169 mm |
-| 11.6 | `v1r3-trust-conformal.png` | `../trust-conformal-construction.tex` | 169 mm |
-| 12.3 | `v1r3-trust-adversarial-training.png` | `../trust-adversarial-training-loops.tex` | 169 mm |
-| 14.3 | `v1r3-trust-authorization.png` | `../trust-authorized-execution.tex` | 112 mm |
+| 10.3 | [v1r3-trust-decision.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-trust-decision.png) | `../trust-decision-consequences.tex` | 112 mm |
+| 11.2 | [v1r3-trust-uncertainty.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-trust-uncertainty.png) | `../trust-uncertainty-sources.tex` | 169 mm |
+| 11.6 | [v1r3-trust-conformal.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-trust-conformal.png) | `../trust-conformal-construction.tex` | 169 mm |
+| 12.3 | [v1r3-trust-adversarial-training.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-trust-adversarial-training.png) | `../trust-adversarial-training-loops.tex` | 169 mm |
+| 14.3 | [v1r3-trust-authorization.png](https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r3-trust-authorization.png) | `../trust-authorized-execution.tex` | 112 mm |
 
 五幅图分别调用、分别检查，并再次用图像模型调整为思源黑体 Regular、Source Sans 3 Regular 风格，按字号区分层次。保形图中九个残差 0.1,…,0.9、k=8、q=0.8 与教材构造一致；不确定性图的 0.2、0.5、0.8 是教学候选预测，条长只作示意；对抗训练概率条为教学示意。所有连线按最终科学语义检查，保形图删除了校准数据通向预测器的多余连线；授权图移除被拒动作通向结果的连线。生成图中曲线与条形是教学示意，准确数值以原生标签和图注为准，不作为实测证据。
 

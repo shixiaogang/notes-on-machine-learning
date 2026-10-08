@@ -8,7 +8,7 @@
 
 对象/标签：三行“属性与规范”“证据能力”“威胁与生命周期”；同层“关键问题”与“责任主体”。三行职责依次对应任务责任方/受影响者/领域规则、技术论证/复核边界、有权主体决策/运行处置。横线为无方向的同层对应，不表示算法执行流；不跨行添加因果或授权边。
 
-科学难点：技术证据不能自动代替授权决策；角色图标不能暗示已通过验证。候选初稿右列文档勾号被编辑为中性记录横线。保留问题、角色，删除重复解释进入图注。最终资产：figures/02-foundations/03-trustworthiness/generated/v1r4-trust-three-layers.png。组合源：figures/02-foundations/03-trustworthiness/tikz/trust-three-layers.tex。
+科学难点：技术证据不能自动代替授权决策；角色图标不能暗示已通过验证。候选初稿右列文档勾号被编辑为中性记录横线。保留问题、角色，删除重复解释进入图注。最终资产：https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r4-trust-three-layers.png。组合源：figures/02-foundations/03-trustworthiness/tikz/trust-three-layers.tex。
 
 ## 13.4：三阶段干预 + 精确ROC
 
@@ -16,9 +16,9 @@
 
 对象/标签：数据记录、虚线未知标签记录（?）、补覆盖、核标签、训练网格、min_f R(f)、Δ(f)≤η、分数、随机选择、阈值1、阈值2、两条1/2分支、唯一合并输出ŷ。箭头：记录→训练→分数→随机选择→两阈值→预测决策。补覆盖箭头进入记录集合。不得增加真实标签→选择器的边。
 
-科学难点：未知标签不能当失败；预测ŷ不是保证获选；固定一半随机化独立于真实标签；各阶段措施可以组合，但不保证单项达标便产生系统公平。初稿“获选”改为ŷ、移除大上下留白、将全图标签变为明显常规字重。最终资产：figures/02-foundations/03-trustworthiness/generated/v1r4-trust-fairness-intervention.png。组合源：figures/02-foundations/03-trustworthiness/tikz/trust-fairness-intervention-stages.tex。
+科学难点：未知标签不能当失败；预测ŷ不是保证获选；固定一半随机化独立于真实标签；各阶段措施可以组合，但不保证单项达标便产生系统公平。初稿“获选”改为ŷ、移除大上下留白、将全图标签变为明显常规字重。最终资产：https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/generated/v1r4-trust-fairness-intervention.png。组合源：figures/02-foundations/03-trustworthiness/tikz/trust-fairness-intervention-stages.tex。
 
-定量面板独立：figures/02-foundations/03-trustworthiness/matplotlib/trust-fairness-roc.py、trust-fairness-roc-data.json、trust-fairness-roc-metadata.json；输出PDF/SVG为真实矢量，PNG仅预览。坐标均按正文示例构造，第一组阈值(0.1,0.5)/(0.3,0.9)，等权混合(0.2,0.7)，第二组点亦(0.2,0.7)。共用零原点、0–1范围、等比例坐标；线段为凸组合可达区域，不拟合确定性ROC曲线，不将构造写成实验。模型未生成或覆盖ROC数值面板。
+定量面板独立：https://github.com/shixiaogang/notes-on-machine-learning/blob/5da5ef3277c33d80f2feb5c2b75a693c245d4435/figures/02-foundations/03-trustworthiness/matplotlib/trust-fairness-roc.py、trust-fairness-roc-data.json、trust-fairness-roc-metadata.json；输出PDF/SVG为真实矢量，PNG仅预览。坐标均按正文示例构造，第一组阈值(0.1,0.5)/(0.3,0.9)，等权混合(0.2,0.7)，第二组点亦(0.2,0.7)。共用零原点、0–1范围、等比例坐标；线段为凸组合可达区域，不拟合确定性ROC曲线，不将构造写成实验。模型未生成或覆盖ROC数值面板。
 
 PDF字体兼容性：仓库思源黑体OTF为CFF，Matplotlib Type42 PDF虽然可提取中文、列出嵌入字体，却在真实PDF渲染中漏掉中文字形。改为Type3矢量字形后，已检查独立PDF和LaTeX导入校样，全部中文恢复。Type3的CharProcs实际字形程序已检查有内容；通用验证器用extract_font检查时会给“possibly unembedded”误警告，不能据此认定缺失。SVG保留路径字形，源字体文件未改。
 
