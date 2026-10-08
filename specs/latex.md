@@ -78,8 +78,8 @@
 每次修改后至少检查：
 
 1. 运行 `bash tests/check-book-editions.sh` 检查结构与最小索引流水线，运行 `make test`
-   检查词条提取、映射、别名与索引产物。当前审计基线为 `calls=1683`、`unique=1480`、
-   `mappings=1440`、`aliases=2`、`errors=0`。
+   检查词条提取、映射、别名与索引产物。当前审计基线为 `calls=1775`、`unique=1549`、
+   `mappings=1510`、`aliases=2`、`errors=0`。
 2. `./build.sh build` 或无参数调用只构建全集；`./build.sh volume <slug>` 构建指定单卷，`./build.sh volumes` 构建五个单卷，`./build.sh all` 构建全集与五个单卷。日常验收与交付验收均使用 `all` 覆盖六版。
 3. 六个约定产物 `build/main.pdf` 与五个 `build/<slug>.pdf` 均非空，并直接位于 `build/`。
 4. 六份日志均没有未定义引用、重复标签、缺失文献、缺失字形或致命错误；跨卷引用在单卷中显示范围感知的文字回退。
