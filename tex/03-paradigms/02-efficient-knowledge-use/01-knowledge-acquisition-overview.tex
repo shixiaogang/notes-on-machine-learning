@@ -10,6 +10,8 @@
 
 先看四条形式不同的记录。“照片甲的物种是鸢尾”给出一个类别答案；“照片乙与照片丙来自同一株花”给出样本关系；“玫瑰与鸢尾在当前单标签体系中互斥”给出类别约束；“根据未遮蔽区域恢复被遮蔽花瓣”则给出一个训练目标。它们分别支持分类损失、关系一致性、受约束预测和表示学习，不能因为最终都存进训练文件就把它们视为同一种标签。
 
+把第一条记录展开来看：照片甲是对象，“鸢尾”是内容，所用物种名录与拍摄地区限定了答案的含义和适用范围。为了以后能检查这个判断，还要知道是谁根据哪些材料作答、操作是否完成，以及答案是否经过复核。人工已经提交答案，与独立复核已经确认答案正确，是两个不同进展。下面的表示把这些信息分开保存。
+
 \begin{definition}[知识记录]
   \label{def:knowledge-acquisition-record}
   在本部分中，一条\term{知识记录}（knowledge record）包含六项：
@@ -21,7 +23,42 @@
 
 这里的\term{知识}是能够解释观测、约束学习或支持任务的上位概念；\term{候选知识}（candidate knowledge）是已经形成记录、但尚未确认能否用于既定范围的知识。类别答案写入某个样本时形成\term{标签}（label），标签只是知识记录的一种具体形式；标签、关系、约束或恢复目标进入训练过程并影响参数更新时，才承担\term{监督信号}（supervision signal）的作用。同一条记录可以同时是候选知识、标签和监督信号，但三个名称分别强调验证状态、记录形式和训练用途，不能互相替代。
 
-这个表示还刻意保留了几个容易被文件格式抹平的区别。\term{未知}（unknown）表示当前证据不足以确定内容，\term{不适用}（not applicable）表示任务范围本来就不包含该对象；\term{弃权}（abstention）则是来源完成检查后不输出任务判断的动作。来源动作只使用“作答／弃权”，执行状态只使用“未请求／失败／未处理”：未请求表示没有向该来源发起任务，失败表示发起后未完成，未处理表示任务仍在等待执行。多来源融合后仍不能形成可用结论时，融合结果记为“未决”；审计证据不足以裁决质量时，审计结果记为“无法裁决”。“信息不足”“缺少知识”和“规范歧义”等只作为这些状态的原因码，不再与状态名称并列。某位植物学家可以因信息不足而弃权，规则也可以因花朵被遮挡而弃权；复核者随后能够确认这次动作符合规范，但不能据此把未知内容改成已知。“不是玫瑰”才是否定内容。若把这些情况都编码为类别0，模型得到的不是更多知识，而是含义混乱的监督信号。
+\term{未知}（unknown）表示该记录尚未确定任务内容，\term{不适用}（not applicable）表示任务范围本来就不包含该对象；\term{弃权}（abstention）则是来源完成检查后不输出任务判断的动作。未发起请求时没有来源动作，程序执行失败也不构成主动弃权。表~\ref{tab:knowledge-acquisition-record-states}集中列出各层状态，再用五条记录说明它们怎样组合；后续章节沿用这套约定。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{25mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{55mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
+    \toprule
+    \textbf{记录层} & \textbf{允许取值} & \textbf{回答的问题} \\
+    \midrule
+    执行状态 & 未请求、未处理、处理中、成功、失败 & 是否请求；已请求后尚未开始、正在处理、完成或失败 \\
+    来源动作 & 作答、弃权；无动作时为空 & 来源是否提交判断，还是主动不作判断 \\
+    语义状态 & 已给出、未知、不适用 & 任务内容是否确定，对象是否在范围内 \\
+    验证状态 & 候选、已核验、已拒绝 & 指定属性是否通过核验 \\
+    规则触发结果 & 触发、未触发、无法确定 & 条件是否成立；保存在$s_{\mathrm{cond}}$的具名记录中 \\
+    \bottomrule
+  \end{tabularx}
+
+  \medskip
+
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{30mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{19mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{17mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{30mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{18mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
+    \toprule
+    \textbf{记录情形} & \textbf{执行} & \textbf{动作} & \textbf{内容／语义} & \textbf{验证} & \textbf{条件或核验依据} \\
+    \midrule
+    尚未向人工发起请求 & 未请求 & — & 空／未知 & 候选 & 尚未发起任务 \\
+    人工提交物种判断 & 成功 & 作答 & 鸢尾／已给出 & 候选 & 依据照片与名录作答 \\
+    人工因遮挡而弃权 & 成功 & 弃权 & 空／未知 & 候选 & 判定所需局部不可见 \\
+    规则运行但未触发 & 成功 & — & 空／未知 & 候选 & 条件检查结果：未触发 \\
+    复核确认第二条正确 & 成功 & 作答 & 鸢尾／已给出 & 已核验 & 独立证据支持物种判断 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{知识记录的状态约定与填写示例。示例均以照片甲为对象，采用同一名录和地区范围；前四行表示独立情形，末行是第二行核验后的记录。破折号表示动作字段为空，不是第三种作答行为；末行保留原来源动作，复核依据另存。}
+  \label{tab:knowledge-acquisition-record-states}
+\end{table*}
+
+规则运行成功只说明条件检查完成：条件不成立时可记“未触发”，不必伪造一次弃权；范围外对象则按适用前提记为不适用。核验也要说明检查了什么。复核者可以确认植物学家的弃权符合规范，但不能据此把未知的物种改成已知。多来源融合仍未形成可用结论时称为“未决”；审计的处理阶段与“正确、错误、无法裁决”等质量结论另行记录，见第~\ref{chap:knowledge-quality-assessment-correction}章。“信息不足”“规范歧义”等是原因，“不是玫瑰”是否定内容，它们都不应与未知共同编码为类别0。
 
 图~\ref{fig:knowledge-acquisition-observation-to-knowledge}把同一批花卉照片放在三个层次中观察。原始像素是观测；由人工、规则、模型或数据变换形成的答案、关系、约束与目标先是候选知识；训练过程再依据其语义选择相应的损失或约束。图中的“待核验”尤其重要：一个目标能够被自动构造，只说明形式上得到了记录，不说明该记录正确，更不说明它有助于最终识别。
 
@@ -38,7 +75,7 @@
   \centering
   \small
   \setlength{\tabcolsep}{3pt}
-  \begin{tabularx}{\linewidth}{@{}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{25mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{43mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{45mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}X@{}}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{25mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{43mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{45mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
     \toprule
     \textbf{不足类型} & \textbf{花卉识别中的表现} & \textbf{需要补充或改变的内容} & \textbf{可观察的验收依据} \\
     \midrule
@@ -85,16 +122,16 @@
   \centering
   \small
   \setlength{\tabcolsep}{4pt}
-  \begin{tabularx}{\linewidth}{@{}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{31mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}X>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{45mm}@{}}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{35mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{22mm}@{}}
     \toprule
     \textbf{研究内容} & \textbf{核心问题与主要内容} & \textbf{后续章节} \\
     \midrule
-    从人工获取知识 & 怎样把需求变成可回答的任务，并选择交互方式、样本、标注者与投入 & 第~\ref{chap:knowledge-acquisition-human}章“基于人工的知识获取” \\
-    从规则获取知识 & 怎样通过模式匹配、知识关联和约束推理产生有依据的候选判断 & 第~\ref{chap:rule-based-knowledge-acquisition}章“基于规则的知识获取” \\
-    从模型获取知识 & 怎样准备模型、组织输入、计算候选答案，并根据反馈改进获取过程 & 第~\ref{chap:knowledge-acquisition-model-based}章“基于模型的知识获取” \\
-    从数据本身获取知识 & 怎样利用观测内容、样本关系和数据分组构造训练目标与约束 & 第~\ref{chap:data-derived-knowledge-acquisition}章“基于数据本身的知识获取” \\
-    融合多来源知识 & 怎样描述来源差异，对齐对象与语义，并形成综合结果或安排联合使用 & 第~\ref{chap:knowledge-fusion}章“知识的融合” \\
-    评估与修正知识 & 怎样建立判断依据、估计质量、定位问题，并验证修正是否有效 & 第~\ref{chap:knowledge-quality-assessment-correction}章“知识的质量评估与修正” \\
+    从人工获取知识 & 怎样把需求变成可回答的任务，并选择交互方式、样本、标注者与投入 & 第~\ref{chap:knowledge-acquisition-human}章 \\
+    从规则获取知识 & 怎样通过模式匹配、知识关联和约束推理产生有依据的候选判断 & 第~\ref{chap:rule-based-knowledge-acquisition}章 \\
+    从模型获取知识 & 怎样准备模型、组织输入、计算候选答案，并根据反馈改进获取过程 & 第~\ref{chap:knowledge-acquisition-model-based}章 \\
+    从数据本身获取知识 & 怎样利用观测内容、样本关系和数据分组构造训练目标与约束 & 第~\ref{chap:data-derived-knowledge-acquisition}章 \\
+    融合多来源知识 & 怎样描述来源差异，对齐对象与语义，并形成综合结果或安排联合使用 & 第~\ref{chap:knowledge-fusion}章 \\
+    评估与修正知识 & 怎样建立判断依据、估计质量、定位问题，并验证修正是否有效 & 第~\ref{chap:knowledge-quality-assessment-correction}章 \\
     \bottomrule
   \end{tabularx}
   \caption{本部分研究内容与章节分工。前四行按知识的主要来源划分，后两行处理多来源共同使用和质量闭环；它们不是六种互斥的文件格式或算法。}
@@ -105,16 +142,16 @@
 
 \begin{table*}[htbp]
   \centering
-  \footnotesize
-  \setlength{\tabcolsep}{2pt}
-  \begin{tabularx}{\linewidth}{@{}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{15mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{21mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{22mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{21mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{19mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{27mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}X@{}}
+  \small
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{15mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{37mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{28mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{43mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
     \toprule
-    \textbf{来源} & \textbf{准备资源} & \textbf{典型输出} & \textbf{覆盖限制} & \textbf{主要成本} & \textbf{常见错误} & \textbf{独立核验入口} \\
+    \textbf{来源} & \textbf{准备与投入} & \textbf{典型输出} & \textbf{限制与易错处} & \textbf{核验入口} \\
     \midrule
-    人工 & 任务说明、界面、人员与示例 & 物种答案、花朵区域、弃权或解释 & 受人员能力、可观察信息与时间限制 & 设计、培训、逐项判断与复核 & 歧义理解、疲劳、系统性偏好、随意作答 & 专家复核、重复标注、金标准样本与留出抽查 \\
-    规则 & 词表、物种知识、模式与适用条件 & 匹配结果、知识关联、互斥或层级约束 & 只覆盖已编码条件，例外与概念变化需维护 & 规则开发、冲突处理和版本维护 & 过度匹配、漏掉变体、规则冲突、条件过期 & 反例集、覆盖审计、规则溯源与人工抽查 \\
-    模型 & 基础模型、提示或输入组织、推理资源 & 类别候选、区域、相似关系或生成材料 & 依赖模型能力、输入表达与训练分布 & 模型准备、调用、筛选和必要更新 & 高置信错误、偏差复制、提示敏感、来源同质 & 独立标注、异源模型、可验证规则与任务留出集 \\
-    数据本身 & 未标注观测、变换方法、配对或分组依据 & 恢复目标、跨视图关系、簇分配或顺序约束 & 只能利用观测中存在且构造过程保留的结构 & 数据处理、增广、配对和训练计算 & 捷径学习、错误配对、变换改变语义、分组混杂 & 目标任务留出集、消融、人工检查与跨分布评价 \\
+    人工 & 规范、界面与培训；逐项判断和复核 & 类别、区域、解释或弃权 & 受能力与可见证据限制；歧义、疲劳和偏好可致错 & 独立专家复核、金标准与留出抽查 \\
+    规则 & 词表、模式与适用条件；开发和版本维护 & 匹配、关联与约束 & 只覆盖已编码条件；过度匹配、漏变体和条件过期 & 反例集、来源追踪与覆盖审计 \\
+    模型 & 模型与输入组织；调用、筛选和更新 & 类别、区域、关系或生成材料 & 依赖能力与分布；高置信错误和来源偏差可被复制 & 独立标注、可验证规则与任务留出集 \\
+    数据本身 & 观测与构造依据；处理、增广和训练 & 恢复目标、视图关系与分组 & 依赖保留的结构；错误配对、语义改变和捷径学习 & 构造检查、消融与独立下游评价 \\
     \bottomrule
   \end{tabularx}
   \caption{四类知识来源的使用条件。各行都以花卉任务为背景比较准备、输出、覆盖、成本与核验入口；颜色、存储格式或是否自动执行都不是来源分类依据。}
@@ -147,21 +184,25 @@
 
 标注规模和来源数量增加后，问题从取得单个答案扩展到解释来源差异。Whitehill等人在2009年的模型中联合推断图像标签、标注者能力和样本难度，说明简单多数票会忽略谁在什么样本上更可靠。Ratner等人在2017年发布的Snorkel让专家把启发式知识写成标注函数，再用生成式来源模型估计这些函数的准确性和相关性。两项工作分别从人员与程序化规则进入多来源建模，但共同前提是观测到的分歧确实含有足以区分来源与真值的信息；来源高度相关时，“多人同意”或“多条规则同意”都可能夸大证据\scite{whitehill2009crowdlabels,ratner2017}
 
+% 段末引文约57mm高，连同正文预留，避免与前三条边注挤在页底。
+\Needspace{110mm}
 另一条路线从观测内部构造目标。BERT的遮蔽语言模型先遮住部分词元，再要求模型根据上下文恢复原内容，使没有下游任务标签的文本也能参与表示学习；该工作于2018年发布预印本，2019年发表于NAACL。这里增加的是预训练目标及由此学得的表示，不是目标任务的正确答案。Bommasani等人在2021年的\term{基础模型}（foundation model）报告中进一步把“大规模宽数据训练、再适配多种下游任务”的模式作为共同研究对象，同时强调下游系统会继承基础模型的缺陷。因而，构造内部目标、学得可迁移表示和获得花卉类别答案是三个需要分别验证的结果\scite{devlin2019,bommasani2021foundation}
 
 生成模型随后直接参与构造训练材料。Self-Instruct让语言模型生成指令、输入与输出，过滤无效或相似项目后再用于微调，展示了“共同生成新任务材料”与“给已有样本预测答案”的区别。DeepSeek-R1的2025年原始报告（arXiv v1）又组合了模型生成、拒绝采样、可验证任务的规则奖励以及面向一般场景的奖励模型。两项工作都把生成与筛选连成过程，但筛选器仍有覆盖范围，生成材料也可能继承生成模型的盲点；本章只讨论训练知识从哪里来和如何检查，不展开强化学习与模型训练算法\scite{wang2023selfinstruct,deepseek2025r1}
 
+% 后两条边注合计约96mm，避免承接前两条长引文造成连续下移。
+\Needspace{150mm}
 近期研究进一步把选择、生成和核验共同设计。2026年发表于TACL的ActiveLLM使用大语言模型在文本少样本场景中选择待标注实例，回应传统查询策略的冷启动困难，但其证据限定在论文所研究的模型、数据集和选择协议。弱到强泛化研究于2023年公开预印本、2024年正式发表于ICML；该工作把弱模型生成的标签用于训练更强模型，观察到强学习者在若干任务上可以超过弱监督者，却仍未恢复强模型的全部能力，不能据此认为弱来源普遍足以监督更强系统\scite{bayer2026activellm,burns2023weaktostrong}
 
 模型输出反复回流还带来新的覆盖风险。Shumailov等人研究了递归使用模型生成数据的情形，在其理论与实验设置中观察到原分布尾部逐代消失的\term{模型坍塌}（model collapse）现象。这个结论针对不加区分地递归使用生成内容的条件，不等于任何合成数据都会导致退化；它提醒获取方案保留真实数据、来源谱系与独立证据，并检查新一轮材料是否真的增加了信息\scite{shumailov2024collapse}
 
 表~\ref{tab:knowledge-acquisition-history-works}先沿研究问题、获取机制、信息增量和验证边界横向比较上述代表工作。这个比较不把跨任务性能压成统一排名，也不以发表年份推断方法优劣。
 
-\begin{table*}[htbp]
+\begin{table*}[p]
   \centering
   \footnotesize
   \setlength{\tabcolsep}{2.5pt}
-  \begin{tabularx}{\linewidth}{@{}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{28mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{29mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{34mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}p{34mm}>{\setlength{\parindent}{0pt}\RaggedRight\arraybackslash}X@{}}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{28mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{29mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{34mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{34mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
     \toprule
     \textbf{代表工作} & \textbf{研究问题} & \textbf{来源或获取机制} & \textbf{增加的可用信息} & \textbf{主要假设、验证边界与后续入口} \\
     \midrule
@@ -196,8 +237,9 @@
 \section{本章小结}
 \label{sec:knowledge-acquisition-summary}
 
-知识获取不是把照片、标签和损失函数装进同一个文件，而是先说明目标任务缺少什么，再取得含义明确、范围清楚且可追溯的答案、关系、约束或训练目标。花卉识别中的原始照片提供观测，物种答案解释观测，同一对象关系和类别约束补充结构，恢复目标提供另一种训练依据。只有把对象、结构化来源字段、内容、适用范围、语义状态和验证状态这六项保留下来，并在来源字段中继续区分取得条件、来源动作与执行状态，未知、不适用、弃权、未请求、失败、未处理和明确否定才不会在训练前被混淆，候选内容也不会被误当成已经核验的结果。
+知识获取从目标任务的缺口出发，取得含义明确、范围清楚且可追溯的答案、关系、约束或训练目标。花卉照片提供观测，物种答案解释观测，同一对象关系和类别约束补充结构，恢复目标提供另一种训练依据。分开记录执行、作答、内容与核验进展，才能避免把“成功取得一个答案”误解为“已经确认答案正确”。
 
 人工、规则、模型和数据本身提供不同证据，融合与质量改进负责让这些证据能够共同使用并经受检查。一个清楚的获取方案应当说明所需知识、可用来源、主要假设、分项成本和验收依据；数量增加、置信度提高或训练损失下降都不能单独证明知识可靠且有用。固定预算下的效果与达到固定效果所需的投入，是评价方案的两种互补口径。
 
+\Needspace{7\baselineskip}
 历史上的问题从逐例提供答案和编码专家规则，扩展到选择查询、多来源建模、数据内部目标以及模型生成与核验。自动化扩大了可处理规模，也增加了来源依赖、错误累积和分布覆盖退化的风险。后续各章将分别展开四类来源的获取机制，再讨论多来源融合和质量闭环；这些方法可以组合，但每一项新增记录仍要回到“增加了什么信息、依据是什么、适用于哪里”接受检验。
