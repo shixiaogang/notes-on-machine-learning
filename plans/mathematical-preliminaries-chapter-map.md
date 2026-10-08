@@ -1,6 +1,6 @@
 # 数学准备现行章目与文件映射
 
-正文为六部分、17章；第六部分“数学与机器学习”只含第17章。下表使用现行正文章号，路径相对于 `tex/01-mathematical-preliminaries/`。章内层级见[阅读结构](mathematical-preliminaries-reading-structure.md)。全集章号在全书连续生成，单卷章号在卷内从1开始。
+正文为六部分、17章；第六部分“数学与机器学习”只含第17章，以对象定义、任务表述、按对象组织的方法联系和独立小结四节连接机器学习问题与数学知识。下表使用现行正文章号，路径相对于 `tex/01-mathematical-preliminaries/`。章内层级见[阅读结构](mathematical-preliminaries-reading-structure.md)。全集章号在全书连续生成，单卷章号在卷内从1开始。
 
 | 章 | 章节 | 相对路径 |
 | --- | --- | --- |
