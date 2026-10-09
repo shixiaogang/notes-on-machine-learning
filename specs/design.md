@@ -21,7 +21,8 @@
 | 用途 | 中文 | 英文 |
 | --- | --- | --- |
 | 正文、`\songti` | 思源宋体 | STIX Two Text |
-| 标题、`\heiti`、`\term` | 思源黑体 | Source Sans 3 |
+| 标题、`\heiti` | 思源黑体 | Source Sans 3 |
+| `\term`、`\termalias` | 思源黑体 Regular | Source Sans 3 Regular |
 | 数学陈述、引文、边注、图表注、`\kaishu` | 霞鹜文楷 | STIX Two Text |
 | 代码 | 霞鹜文楷等宽 | Source Code Pro |
 | 图内文字、`\figurefont` | 霞鹜文楷 | Source Sans 3 |
