@@ -56,6 +56,9 @@ require_latexmk() {
 prepare_fonts() {
   local font_file
   local required_fonts=(
+    FiraMath-Regular.otf
+    STIXTwoMath-Regular.otf
+    SourceHanSansSC-Normal.otf
     LXGWWenKai-Medium.ttf
     LXGWWenKai-Regular.ttf
     LXGWWenKaiMono-Regular.ttf

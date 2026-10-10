@@ -1,0 +1,24 @@
+255: \subsection{替代梯度与时间反向传播}
+256: \label{sec:snn-surrogate}
+257: 
+258: 监督任务需要将输出误差分配到多层连接。设每个样本含$K$步输入脉冲，标签为$y$，输出读出为$\bm z=K^{-1}\sum_t\bm s_{\mathrm{out}}^{(t)}$，可以用$\ell(\bm z,y)$训练分类器。其他读出可使用膜电位、过滤后的输出或发放时间；读出改变时，损失及其求导也应同步改变。
+259: 
+260: 困难在式\eqref{eq:snn-discrete-fire}的阶跃函数。$H$在阈值之外的普通导数为0，阈值处不连续。直接将其导数带入链式法则，几乎处处得不到能调整发放的信号；小幅改变权重还可能在越过阈值时突然改变整条轨迹。\term{替代梯度}（surrogate gradient）在前向计算中保留离散发放，在反向计算中用一个有限、非零的函数代替阶跃导数。例如，令$z=v-\vartheta$，使用
+261: \begin{equation}
+262:   \frac{\partial s}{\partial v}\ \rightsquigarrow\
+263:   \psi(z)=\frac{c}{(1+\kappa|z|)^2},\qquad c,\kappa>0\text{。}
+264:   \label{eq:snn-surrogate-derivative}
+265: \end{equation}
+266: 符号$\rightsquigarrow$表示指定替代规则，不表示真实导数相等。靠近阈值的单元收到较强训练信号，远离阈值的单元收到较弱信号。$c$改变梯度幅度，$\kappa$改变有效宽度；两者与阈值及电位尺度有关\scite{neftci2019surrogate}
+267: 
+268: 替代规则也进入复位的导数。对本章的减法复位，若不停止复位路径的求导，有
+269: \begin{equation}
+270:   \frac{\partial u_i^{(t)}}{\partial v_i^{(t)}}
+271:   \ \rightsquigarrow\ 1-\vartheta\psi(v_i^{(t)}-\vartheta)\text{。}
+272:   \label{eq:snn-reset-gradient}
+273: \end{equation}
+274: 若实现中把复位脉冲视为常数，这个导数改为1。它们前向相同，反向却不同；硬复位的表达式也要单独求导。说明训练方法时，应明确复位是否参与反向计算，不能只写“使用替代梯度”。
+275: 
+276: 将$\bm q^{(t)}$、$\bm u^{(t)}$和所需延迟状态合并为$\bm h^{(t)}$，网络可写为$\bm h^{(t)}=F_{\bm\theta}(\bm h^{(t-1)},\bm x_t)$。第\ref{chap:recurrent-networks}章的时间展开和共享参数梯度累积因此仍然适用。区别在于发放及相关路径的局部导数由替代规则指定。梯度需要跨层和跨时间传播，较长窗口增加激活存储，截断展开则遗漏被切断的历史影响。替代梯度通常既不是原离散网络损失的精确梯度，也不保证是某个统一平滑目标的梯度；它是一种有用但需要验证的学习近似。
+277: 
+278: \begin{algorithm}[脉冲网络的监督训练]

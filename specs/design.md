@@ -25,10 +25,10 @@
 | `\term`、`\termalias` | 思源黑体 Regular | Source Sans 3 Regular |
 | 数学陈述、引文、边注、图表注、`\kaishu` | 霞鹜文楷 | STIX Two Text |
 | 代码 | 霞鹜文楷等宽 | Source Code Pro |
-| 图内文字、`\figurefont` | 霞鹜文楷 | Source Sans 3 |
+| 新重绘图内文字 | 思源黑体 Normal；说明用霞鹜文楷 | Fira Math（数学缺字用 STIX Two Math） |
 | 数学公式 | — | STIX2 |
 
-中文斜体使用文楷，英文书名和论文标题使用真正的斜体。字体从仓库 `fonts/` 加载，缺失时明确报错；增补字体同时更新许可证和校验清单。STIX2 的 Type 1 数学实现保持与 `\bm` 兼容，不混用 `unicode-math`。
+中文斜体使用文楷，英文书名和论文标题使用真正的斜体。字体从仓库 `fonts/` 加载，缺失时明确报错；增补字体同时更新许可证和校验清单。正文 STIX2 的 Type 1 数学实现保持与 `\bm` 兼容，不混用 `unicode-math`。图内 Fira Math 由独立绘图流程加载，TikZ 单独编译为字体已嵌入的 PDF，再接入正文，不改变书籍数学宏。历史内联图的 `\figurefont` 保留原加载接口。
 
 正文使用 `BookInk`，强调与结构使用 `BookTeal`，辅助文字使用 `BookMuted`。数学陈述沿用定义青、定理蓝、引理浅蓝、示例黄的层级。图形使用集中定义的语义颜色，颜色之外还须有文字、形状或线型提示；具体图形约定不在此重复维护。
 

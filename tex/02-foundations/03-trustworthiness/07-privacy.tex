@@ -116,8 +116,8 @@
 
 \begin{figure*}[!htb]
   \centering
-  \input{figures/02-foundations/03-trustworthiness/tikz/trust-membership-inference}
-  \caption{受控成员推断审计。本示意的成员与非成员候选按同一分布抽取，目标模型仅以训练集$D$训练；候选记录$z=(\bm x,y)$通过获准接口取得输出。记录图标数量只表示分组，不代表成员先验。若真实标签$y$已知，可据此计算损失；输出向量旁的柱形仅作图标，不代表实测概率。攻击器由辅助成员数据训练，在验证数据上确定阈值后，到独立审计集统计成员命中率与非成员误报率。目标成员标记$m$只用于核验，不是攻击器输入。流程不保证攻击成功，权限、查询预算与成员先验须同时报告。}
+  \includegraphics[width=164.600mm]{figures/02-foundations/03-trustworthiness/generated/membership-inference/figure.png}
+  \caption{受控成员推断审计。本示意假定成员与非成员候选按同一分布抽取，目标模型仅以训练集$D$训练；候选记录$z=(\bm x,y)$通过获准接口取得输出。记录图标数量只表示分组，不代表成员先验。若真实标签$y$已知，可据此计算损失。攻击器由辅助成员数据训练，给出成员或非成员判定；完整审计还需在验证数据上确定阈值，并到独立审计集统计成员命中率与非成员误报率。目标成员真值只用于核验，不是攻击器输入。流程不保证攻击成功，权限、查询预算与成员先验须同时报告。}
   \label{fig:trust-membership-inference}
 \end{figure*}
 
@@ -228,6 +228,15 @@ Carlini等人的\term{似然比攻击}（Likelihood Ratio Attack, LiRA）将比�
 
 因此，一轮DP-SGD需要保留“逐样本”这个计算单位：先分别计算梯度，再分别裁剪，随后求和加噪，最后更新参数。若先把整批梯度相加再裁剪，得到的虽然也是有界向量，却不等于式~\eqref{eq:privacy-dpsgd}，不能直接沿用其逐样本抽样分析。训练结束只发布最终模型时，还须确认日志或中间检查点没有额外公开未受保护的梯度。
 
+图~\ref{fig:dp-sgd-update}沿一次更新展示裁剪、聚合、加噪和参数更新的顺序；隐私账本还需累计多步更新的代价。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=164.600mm]{figures/02-foundations/03-trustworthiness/generated/dp-sgd-update/figure.png}
+  \caption{独立计算批次内各样本梯度$\bm g_i$，先按阈值$c$裁剪：$\operatorname{clip}_c(\bm g_i)=\bm g_i\min\{1,c/\lVert\bm g_i\rVert_2\}$。裁剪后的梯度求和并加入高斯噪声$\bm Z$，再除以批次大小$b$并更新参数。隐私账本累计抽样率$q$、噪声尺度$\sigma$和更新步数$T$等条件下的消耗，需与保护单位、邻接和抽样约定匹配。向量长度与高斯曲线仅为机制示意。}
+  \label{fig:dp-sgd-update}
+\end{figure*}
+
 裁剪防止单个样本无限影响更新，却可能引入偏差；噪声进一步降低可辨识程度，也会影响优化。训练轮数、抽样率和噪声强度共同决定预算。用户级保护通常需要限制一个用户的总贡献，不能只逐条裁剪后无条件相加。
 
 更具体地说，可将高斯噪声写为$\bm Z\sim\mathcal N(\bm0,\sigma^2c^2\bm I)$，其中$\sigma$是相对于裁剪阈值的噪声乘子。若采用独立抽样，每个样本以概率$q$进入本次更新，批次大小是随机的，分母也应按实现和证明采用固定归一化常数或相应处理，不能直接套用固定$b$的公式。Abadi等人的DP-SGD通过裁剪、加噪与矩会计将深度网络训练中的多次访问纳入隐私分析；后续实现也常使用第~\ref{sec:privacy-repeated-use}节介绍的Rényi差分隐私会计，把多次更新的保护强度合并计算。
@@ -247,6 +256,15 @@ Carlini等人的\term{似然比攻击}（Likelihood Ratio Attack, LiRA）将比�
 拒绝低共识查询还会改变学生收到的训练分布。罕见邮件类型可能恰好更难形成共识，因而更少获得标签；这需要按群体检验获得监督标签的比例及学生模型的效用；标签获得比例并不是预测集合的覆盖率。PATE的操作顺序是先训练不发布的教师，再为事先说明来源的非敏感输入请求带噪标签，用这些标签训练学生；每次新增教师查询都产生需要计入的隐私访问。与DP-SGD相比，PATE把保护接口放在监督标签上，允许教师内部使用不同训练算法，但需要适合学生学习的非敏感输入，并承受查询数与共识不足的限制。DP-SGD直接在私有训练更新中限制影响，不依赖教师分片或这类输入。两者都需匹配保护单位，不能只比较最终噪声数值大小来判断谁保护更强。
 
 学生训练只有在不再访问敏感教师或原始数据时才属于后处理。把学生继续放回私人数据上训练，会重新产生需要计入的访问。
+
+图~\ref{fig:pate-private-teachers}展示私有教师与发布学生之间的信息边界：公开查询通过受保护的聚合标签参与学生训练，而私有样本不直接交给学生。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=164.600mm]{figures/02-foundations/03-trustworthiness/generated/pate-private-teachers/figure.png}
+  \caption{互不重叠的私有分区分别训练不发布的教师。非敏感公开输入查询各教师，投票经加噪聚合和带噪门控后给出受保护标签，低共识时可以不回答。学生只使用公开输入和受保护标签训练并发布；私有样本与单个教师不进入学生。聚合与是否回答的决定均计入查询隐私代价。条形仅示意类别投票，不是测量结果。}
+  \label{fig:pate-private-teachers}
+\end{figure*}
 
 \paragraph{协作方可见的中间更新}
 \label{sec:privacy-collaborative-computation}
@@ -292,12 +310,12 @@ $\Delta F=\sup_{D\sim D'}|F(D)-F(D')|$。
 
 图~\ref{fig:trust-dp-neighbors}用相差一条记录的计数说明随机化的作用。上部把准确计数与同分布噪声分别送入加法运算，下部显示由随机机制产生的输出分布。观察者拿到的是一次随机输出；保证约束两种可能数据下的全部输出事件，而不是要求这次输出相同。
 
-\begin{figure}[!htb]
+\begin{figure*}[!htb]
   \centering
-  \input{figures/02-foundations/03-trustworthiness/tikz/trust-dp-neighbors}
+  \includegraphics[width=111.404mm]{figures/02-foundations/03-trustworthiness/tikz/trust-dp-neighbors/figure.pdf}
   \caption{相邻数据集与随机机制的输出分布。两组记录仅相差新增的一条，计数分别为3和4；每条路径各加一个独立的尺度1拉普拉斯噪声，对应$\Delta F=1$、$\epsilon=1$、$\delta=0$。加法节点显示噪声如何进入发布值；两侧是相邻数据的替代发布情形，不表示同时公开两次结果。下部实线与虚线是解析密度，阴影比较同一事件$E=[5,6]$的概率，横轴仅展示部分范围。观察者得到一次输出；隐私保证要求对所有相邻数据和所有输出事件成立，不能只看曲线重叠。}
   \label{fig:trust-dp-neighbors}
-\end{figure}
+\end{figure*}
 
 对前述关键词邮件数，记录级敏感度为1。若选择$\epsilon=0.5$，就向准确计数加尺度为2的Laplace噪声。真实计数相差1的两种数据会产生大量重叠输出，查询者不能再仅凭一个精确整数区分目标邮件是否存在。如果保护单位改为一个用户，而每人最多贡献10封相关邮件，计数敏感度变为10；保持相同$\epsilon$需要尺度为20的噪声，除非重新设计贡献限制。这些数值只是定义和机制的代入，显示保护单位、效用损失与实际实现如何相连。
 
@@ -364,8 +382,8 @@ Rényi散度上界。沿用第一卷记号，对概率分布$P,Q$和$\alpha>1$�
 
 \begin{figure*}[htbp]
   \centering
-  \input{figures/02-foundations/03-trustworthiness/tikz/trust-unlearning-reference}
-  \caption{撤回记录与消除训练影响的两条路径。下方清理数据$D\setminus F$留下撤回位置，上方旧模型$A(D)$不会因此自动改变；更新程序$U$另行读取旧模型、原数据和撤回集合。更新结果与从未使用$F$的重训练参照比较输出分布；精确遗忘要求同分布，近似遗忘须声明距离或可区分性标准。}
+  \includegraphics[width=164.600mm]{figures/02-foundations/03-trustworthiness/generated/unlearning-reference/figure.png}
+  \caption{撤回记录与消除训练影响的两条路径。清理数据得到$D\setminus F$，旧模型$A(D)$不会因此自动改变；更新程序$U$另行读取旧模型、原数据和撤回集合。更新结果与从未使用$F$的重训练参照比较输出分布；精确遗忘要求同分布，近似遗忘须声明距离或可区分性标准。}
   \label{fig:trust-privacy-deletion}
 \end{figure*}
 

@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -16,7 +17,7 @@ MANIFEST = 'target/.build-manifest.json'
 
 
 def inputs():
-    paths = [ROOT / name for name in ['build.sh', '.latexmkrc', 'scripts/check_target_pdfs.py']]
+    paths = [ROOT / name for name in ['build.sh', '.latexmkrc', '.gitattributes', 'scripts/check_target_pdfs.py']]
     for directory in ['tex', 'figures', 'fonts']:
         paths.extend(p for p in (ROOT / directory).rglob('*')
                      if p.is_file() and p.name != '.DS_Store' and '__pycache__' not in p.parts)
@@ -31,7 +32,7 @@ def git(*args):
 def check_index():
     current = inputs()
     staged = git('ls-files', '-z', '--', 'tex', 'figures', 'fonts', 'build.sh',
-                 '.latexmkrc', 'scripts/check_target_pdfs.py').decode().split('\0')
+                 '.latexmkrc', '.gitattributes', 'scripts/check_target_pdfs.py').decode().split('\0')
     staged = {p for p in staged if p and Path(p).name != '.DS_Store'
               and '__pycache__' not in Path(p).parts}
     if staged != set(current):
@@ -52,6 +53,23 @@ def pdf_hashes():
             raise ValueError(f'PDF 为空、损坏或尚未构建完成：{name}')
         result[name] = hashlib.sha256(data).hexdigest()
     return result
+
+
+def staged_matches(name, data):
+    staged = git('show', ':' + name)
+    if staged == data:
+        return True
+    if name not in ['target/' + n for n in PDFS]:
+        return False
+    pointer = re.fullmatch(
+        rb'version https://git-lfs.github.com/spec/v1\noid sha256:([0-9a-f]{64})\nsize ([0-9]+)\n',
+        staged)
+    if not pointer:
+        return False
+    attribute = git('check-attr', '--cached', 'filter', '--', name).decode().strip()
+    return (attribute == name + ': filter: lfs'
+            and pointer[1].decode() == hashlib.sha256(data).hexdigest()
+            and int(pointer[2]) == len(data))
 
 
 def main():
@@ -80,7 +98,7 @@ def main():
         if args.staged:
             check_index()
             for name in [MANIFEST] + ['target/' + n for n in PDFS]:
-                if git('show', ':' + name) != (ROOT / name).read_bytes():
+                if not staged_matches(name, (ROOT / name).read_bytes()):
                     raise ValueError(f'成品尚未暂存或暂存版本已过期：{name}；请暂存 target/ 后重试。')
         print('成品检查通过：target/ 七个 PDF 与当前正文一致。')
 

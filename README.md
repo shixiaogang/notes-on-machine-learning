@@ -15,6 +15,11 @@
 
 成品位于 `target/`：全集为 `machine-learning-notes.pdf`，单卷为 `volN-<slug>.pdf`；`build/` 保存编译缓存。正文、图源和成品一起纳入版本管理。
 
+全集 PDF 使用 Git LFS 保存。安装 Git LFS 后执行 `git lfs install --skip-repo` 和 `git lfs pull`，
+即可取得完整 PDF；`--skip-repo` 保留项目的版本化钩子。提交与推送全集时也需要 Git LFS。
+成品校验同时验证 LFS 指针的
+SHA-256 和文件大小与本地 PDF 一致。
+
 日常可只构建全集或指定单卷：
 
 ```sh
