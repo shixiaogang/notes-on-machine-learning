@@ -107,7 +107,7 @@
 \end{equation}
 沿某些方向反复缩小，会形成\term{梯度消失}（vanishing gradients）；反复放大，则可能形成\term{梯度爆炸}（exploding gradients）。算子范数给出上界$\lVert\nabla_{\bm h^{(s)}}\ell\rVert_2\leq\prod_{l>s}\lVert\bm J_l\rVert_2\,\lVert\nabla_{\bm h^{(L)}}\ell\rVert_2$。这个上界不能反过来证明所有梯度方向都爆炸，实际方向、奇异向量对齐和抵消同样重要。
 
-循环网络沿时间重复使用状态映射，出现同类雅可比连乘。饱和激活的小导数、权重尺度、网络深度和递推长度都会影响传播。裁剪可以限制已经算出的异常大梯度，不能恢复已经衰减到接近0的历史信号。另一方面，状态保存了某个输入的信息，也不保证损失能沿该信息的路径训练早期参数：前向记忆与反向信用分配需要分别检查。
+循环网络沿时间重复使用状态映射，出现同类Jacobian矩阵连乘。饱和激活的小导数、权重尺度、网络深度和递推长度都会影响传播。裁剪可以限制已经算出的异常大梯度，不能恢复已经衰减到接近0的历史信号。另一方面，状态保存了某个输入的信息，也不保证损失能沿该信息的路径训练早期参数：前向记忆与反向信用分配需要分别检查。
 
 \section{优化方法}
 \label{sec:training-optimizers}
@@ -122,7 +122,7 @@
 
 为了比较不同方法，可以把优化器看成一个带记忆的更新过程：接收当前位置的信息，读取历史状态，按规则计算参数增量，再保存下一步需要的状态。分类维度来自这个过程的四个组成部分：
 \begin{itemize}
-  \item \textbf{输入。} 基本方法接收当前参数与完整或抽样梯度；曲率方法还使用Hessian、输出雅可比或Fisher相关信息，步长搜索还需评估候选位置的损失。输入的精度、抽样方式和获取成本，限定了方法能作出怎样的判断。
+  \item \textbf{输入。} 基本方法接收当前参数与完整或抽样梯度；曲率方法还使用Hessian、输出Jacobian矩阵或Fisher相关信息，步长搜索还需评估候选位置的损失。输入的精度、抽样方式和获取成本，限定了方法能作出怎样的判断。
   \item \textbf{状态。} 无动量SGD不保存与参数同规模的历史缓冲；动量保存方向，AdaGrad与RMSProp保存平方梯度统计，Adam同时保存两种矩，L-BFGS保存有限组参数差与梯度差。状态还可能是分层矩阵、行列因子和调度进度，其大小与遗忘方式决定成本和适应速度。
   \item \textbf{方法。} 可直接沿梯度缩放，也可先平滑方向、按坐标调整尺度、求解耦合方向的线性系统，或提取符号、整形奇异值。裁剪、阻尼、偏差修正与学习率调度可以参与这个计算；近似方式决定保留哪些关系、舍弃哪些信息。
   \item \textbf{输出。} 对训练循环而言，输出是参数增量$\Delta\bm\theta^{(t)}$或等价的新参数，以及更新后的历史状态。比较增量的方向、长度、坐标间比例和约束可行性，才能看出前三个维度最终怎样影响训练；梯度范数受限不意味着参数增量也有同一上限。
@@ -137,21 +137,20 @@
 \subsection{梯度下降与随机梯度下降}
 \label{sec:training-gradient-schedules}
 
-先不增加历史状态或曲率近似，只沿当前梯度更新，便能看清步长、光滑性和抽样噪声之间的基本关系。后面的方法都需要以这个基准区分自己改变了哪个部分。\term{梯度下降}（gradient descent）使用完整目标梯度；\term{随机梯度下降}（stochastic gradient descent, SGD）使用抽样梯度，小批量版本以多个样本平均。它们的基本更新都是
+沿用\BookSectionRef{sec:opt-gradient-descent}{第一卷“数学准备”的梯度下降小节}
+和\BookSectionRef{sec:opt-stochastic-gradient-stability}{第一卷“数学准备”的近似更新方法小节}。
+本章对网络训练目标$\mathcal L$使用完整梯度或小批量梯度$\bm g^{(t)}$，更新为
 \begin{equation}
   \bm\theta^{(t)}=\bm\theta^{(t-1)}-\eta_t\bm g^{(t)}\text{。}
   \label{eq:training-sgd}
 \end{equation}
-对梯度为$L_s$-Lipschitz的可微目标，完整梯度更新满足
-\begin{equation}
-  \mathcal L(\bm\theta-\eta\nabla\mathcal L)
-  \leq\mathcal L(\bm\theta)
-    -\eta(1-L_s\eta/2)\lVert\nabla\mathcal L\rVert_2^2\text{。}
-  \label{eq:training-descent-bound}
-\end{equation}
-因此$0<\eta<2/L_s$给出这一步的下降保证。非光滑网络、随机梯度以及不满足全局光滑条件的目标，需要另外分析；实际损失不必每一步都下降。
+当目标梯度为$L_s$-Lipschitz时，卷一的下降引理给出完整梯度在$0<\eta<2/L_s$下的一步下降。
+ReLU切换点、局部光滑范围和抽样噪声需要分别核查，不能把该保证直接用于每次网络训练更新。
 
-小批量SGD的每一步既受到当前下降方向影响，也受到抽样噪声影响。若$\bm g=\nabla\mathcal L+\bm\xi$、条件均值$\mathbb E\bm\xi=\bm0$，代入光滑性上界并取条件期望，得到
+小批量SGD的每一步既受到当前下降方向影响，也受到抽样噪声影响。
+若$\bm g=\nabla\mathcal L+\bm\xi$，给定当前参数时
+$\mathbb E[\bm\xi\mid\bm\theta]=\bm0$且$\mathbb E[\lVert\bm\xi\rVert_2^2\mid\bm\theta]<\infty$，
+代入光滑性上界并取条件期望，得到
 \begin{equation}
   \begin{aligned}
   \mathbb E[\mathcal L(\bm\theta-\eta\bm g)\mid\bm\theta]
@@ -196,7 +195,9 @@ SGD的优势是更新简单、额外状态少，小批量避免每一步遍历�
 \subsection{动量法}
 \label{sec:training-momentum}
 
-第\ref{sec:training-curvature}节中，陡方向的梯度来回变号，缓方向却持续指向谷底。只读取当前梯度，不能利用这种持续性区别。\term{动量法}（momentum）将历史梯度积累为更新方向，使往返分量部分抵消、同向分量持续推进；它也能平滑部分抽样波动。采用未归一化的累积约定，令
+第\ref{sec:training-curvature}节中，陡方向的梯度来回变号，缓方向却持续指向谷底。
+使用\BookSectionRef{sec:opt-curvature-acceleration}{第一卷“数学准备”的动量与加速小节}
+建立的历史方向，但把完整梯度换成当前训练梯度。采用未归一化的累积约定，令
 \begin{equation}
   \bm m^{(t)}=\beta\bm m^{(t-1)}+\bm g^{(t)},\qquad
   \bm\theta^{(t)}=\bm\theta^{(t-1)}-\eta_t\bm m^{(t)},
@@ -205,19 +206,16 @@ SGD的优势是更新简单、额外状态少，小批量避免每一步遍历�
 \end{equation}
 交替的梯度会部分抵消，持续同向的梯度会积累。如果$\bm g^{(t)}$近似恒定，累积量趋向$\bm g/(1-\beta)$，因此调整$\beta$也改变有效更新尺度。另一约定在梯度前乘$1-\beta$；比较实现时要同时对应学习率。
 
-动量怎样改变曲率方向上的传播，可以在二次目标中看清。沿特征值为$\lambda$的方向，固定$\eta,\beta$时的误差满足
-\begin{equation}
-  e^{(t)}=(1-\eta\lambda+\beta)e^{(t-1)}-\beta e^{(t-2)}\text{。}
-  \label{eq:training-momentum-quadratic}
-\end{equation}
-它从单步收缩变为二阶递推，收敛取决于两个特征根，而不只取决于$1-\eta\lambda$。对曲率介于$\lambda_{\min}>0$与$\lambda_{\max}$之间的精确二次目标，取$\eta=4/(\sqrt{\lambda_{\max}}+\sqrt{\lambda_{\min}})^2$、$\beta=[(\sqrt\kappa-1)/(\sqrt\kappa+1)]^2$，特征根的最大模为$(\sqrt\kappa-1)/(\sqrt\kappa+1)$。这是该二次模型的渐近速率，重根时还可能带多项式因子，不能当成任意网络的逐步损失界。
+卷一在精确二次目标下分析了动量的二阶误差递推与谱速率。
+网络训练中的曲率和梯度样本都会变化，因此固定二次模型的最优系数不自动适用；
+较大的$\beta$既延长历史记忆，也放大未归一化缓冲的有效尺度。
 
 动量只增加一个$p$维缓冲，但也使更新具有惯性。梯度突然换方向时，旧方向不会立即消失；较大的$\beta$提供更长历史，也可能让响应迟缓。它对噪声的平滑和对有效步长的放大应一起考虑。
 
-\subsection{Nesterov加速方法}
+\subsection{Nesterov加速梯度}
 \label{sec:training-nesterov}
 
-动量保存旧方向，也可能在接近谷底时继续推动参数。Nesterov方法让梯度读取历史方向预计到达的位置，以修正这种惯性。\term{Nesterov加速方法}（Nesterov accelerated gradient, NAG）在历史方向指向的前瞻位置计算梯度，而不是只对当前位置的梯度做累积。对式\eqref{eq:training-momentum}的约定，可写为
+动量保存旧方向，也可能在接近谷底时继续推动参数。Nesterov方法让梯度读取历史方向预计到达的位置，以修正这种惯性。\term{Nesterov加速梯度}（Nesterov accelerated gradient, NAG）在历史方向指向的前瞻位置计算梯度，而不是只对当前位置的梯度做累积。对式\eqref{eq:training-momentum}的约定，可写为
 \begin{align}
   \bar{\bm\theta}^{(t)}&=\bm\theta^{(t-1)}-\eta_t\beta\bm m^{(t-1)},\\
   \bm m^{(t)}&=\beta\bm m^{(t-1)}+
@@ -379,14 +377,12 @@ AdamW将权重衰减与矩统计分开，公式及其与L2惩罚的区别见第\
 \subsection{牛顿法、阻尼与步长控制}
 \label{sec:training-second-order}
 
-第\ref{sec:training-curvature}节中的主曲率方向未必与坐标轴对齐，逐坐标缩放因而可能保留严重的方向差异。二阶局部模型用Hessian描述耦合，让更新沿曲率方向分别调整幅度。对当前参数附近的小变化$\bm\Delta$，二次近似为
-\begin{equation}
-  \mathcal L(\bm\theta+\bm\Delta)
-  \approx\mathcal L(\bm\theta)+\bm g^{\top}\bm\Delta
-               +\tfrac12\bm\Delta^{\top}\bm H\bm\Delta\text{。}
-  \label{eq:training-local-quadratic}
-\end{equation}
-\term{牛顿法}（Newton's method）在$\bm H$正定时取$\bm\Delta=-\bm H^{-1}\bm g$，也就是求解线性系统$\bm H\bm\Delta=-\bm g$。对精确正定二次函数，一步到达极小点；一般非线性目标的近似只在局部可靠。Hessian不正定时，该方向未必下降，求解二次模型还可能没有最小值。
+第\ref{sec:training-curvature}节中的主曲率方向未必与坐标轴对齐，逐坐标缩放可能留下明显的方向差异。
+\BookSectionRef{sec:opt-newton-gauss-newton}{第一卷“数学准备”的牛顿与Gauss--Newton小节}
+已建立二次模型与曲率修正。在网络中，使用当前训练Hessian $\bm H$与梯度$\bm g$，
+解阻尼系统$(\bm H+\lambda\bm I)\bm\Delta=-\bm g$，再选择步长。
+可逆性只保证线性方程可解，正定性才保证该二次模型的最小点；
+光滑、正定及Hessian规则性条件失效时，不能沿用局部二次收敛结论。
 
 \term{阻尼}（damping）用$\bm H+\lambda\bm I$调整曲率，$\lambda>0$足够大时可使其正定。\term{线搜索}（line search）在已有方向上试验多个步长，用实际目标检查下降；\term{信赖域}（trust region）则限制$\lVert\bm\Delta\rVert_2\leq r$，只在局部模型可信的范围内寻找更新，并依据预测下降与实际下降的吻合程度调节$r$。三种思路分别控制曲率、沿方向的距离和模型使用范围，可以组合。
 
@@ -395,44 +391,25 @@ AdamW将权重衰减与矩统计分开，公式及其与L2惩罚的区别见第\
 \subsection{BFGS与L-BFGS}
 \label{sec:training-quasi-newton}
 
-牛顿法每次计算完整曲率的成本较高。若相邻迭代的梯度差能够反映参数移动造成的变化，就可以用这些差量近似曲率作用，减少直接求二阶导数的需求。\term{拟牛顿方法}（quasi-Newton methods）不逐次计算完整Hessian，而利用相邻参数和梯度变化构造近似。令$\bm s^{(t)}=\bm\theta^{(t)}-\bm\theta^{(t-1)}$，$\bm y^{(t)}=\nabla\mathcal L(\bm\theta^{(t)})-\nabla\mathcal L(\bm\theta^{(t-1)})$，逆曲率近似$\bm B$应满足割线关系$\bm B\bm y=\bm s$。BFGS采用
-\begin{equation}
-  \begin{aligned}
-  \bm B_{\mathrm{new}}
-    &=(\bm I-\rho\bm s\bm y^{\top})\bm B
-       (\bm I-\rho\bm y\bm s^{\top})+\rho\bm s\bm s^{\top},\\
-  \rho&=1/(\bm y^{\top}\bm s)\text{。}
-  \end{aligned}
-  \label{eq:training-bfgs}
-\end{equation}
-若$\bm B$正定且$\bm y^{\top}\bm s>0$，更新保留正定性。后者不满足时需跳过、阻尼或另外处理，不能直接除以任意内积。L-BFGS只保存最近$k$组$(\bm s,\bm y)$，通过两轮递推计算$\bm B\bm g$，存储从$O(p^2)$降到$O(kp)$。
+沿用\BookSectionRef{sec:opt-quasi-newton}{第一卷“数学准备”的拟牛顿方法小节}，
+令$\bm s^{(t)}=\bm\theta^{(t)}-\bm\theta^{(t-1)}$、
+$\bm y^{(t)}=\nabla\mathcal L(\bm\theta^{(t)})-\nabla\mathcal L(\bm\theta^{(t-1)})$。
+卷一以$\bm B$近似Hessian；本节以$\bm C$近似其逆，割线关系因此为$\bm C\bm y=\bm s$。
+两种表示对应同一BFGS曲率更新，不可把Hessian近似直接乘梯度当作逆曲率方向。
+正定初始近似及$\bm y^\top\bm s>0$仍是保持正定性的条件；
+L-BFGS仅保存最近$k$组变化，减少大网络的历史存储。
 
 小批量噪声可能让梯度差主要反映样本变化，而非参数变化，导致曲率估计失真。拟牛顿方法因此需要关注梯度差的数据一致性、批量和阻尼。完整矩阵的存储和线性求解仍是大网络使用二阶信息的主要约束\scite{bottou2018optimization}
 
-L-BFGS不需要先恢复$\bm B$的全部元素。算法~\ref{alg:training-lbfgs}给出两轮递推：先从最新变化向过去消去$\bm y_j$方向，再从过去到现在补回$\bm s_j$方向。每组历史都需要$\bm y_j^{\top}\bm s_j>0$；不满足时应在收集阶段处理。
-\begin{algorithm}[L-BFGS两轮递推]
-  \label{alg:training-lbfgs}
-  \begin{algorithmic}[1]
-    \Require 当前梯度$\bm g$，按时间排序的$k$组$(\bm s_j,\bm y_j)$，正定初始近似$\bm B_0$
-    \Ensure 逆曲率作用后的方向$\bm r$，参数沿$-\bm r$更新
-    \State $\bm q\gets\bm g$，$\rho_j\gets1/(\bm y_j^{\top}\bm s_j)$
-    \For{$j=k,\ldots,1$}
-      \State $a_j\gets\rho_j\bm s_j^{\top}\bm q$
-      \State $\bm q\gets\bm q-a_j\bm y_j$
-    \EndFor
-    \State $\bm r\gets\bm B_0\bm q$
-    \For{$j=1,\ldots,k$}
-      \State $b_j\gets\rho_j\bm y_j^{\top}\bm r$
-      \State $\bm r\gets\bm r+\bm s_j(a_j-b_j)$
-    \EndFor
-  \end{algorithmic}
-\end{algorithm}
-常见$\bm B_0=\gamma\bm I$，尺度可取最近一组的$\gamma=(\bm s_k^{\top}\bm y_k)/(\bm y_k^{\top}\bm y_k)>0$。两轮递推每步约$O(kp)$，仍要另行确定步长；线搜索可能增加多次目标和梯度评估。这个开销与一个只做逐元素运算的优化器不同。
+卷一已给出L-BFGS两轮递推，无须恢复完整逆曲率矩阵。
+对$p$个网络参数，$k$组历史的存储与方向计算均为$O(kp)$；
+线搜索还会增加目标和梯度评估。训练循环必须让这些评估使用一致的数据与随机状态，
+否则梯度差可能主要来自批量或Dropout变化，失去近似同一曲率的含义。
 
 \subsection{广义Gauss--Newton方法}
 \label{sec:training-generalized-curvature}
 
-第\ref{sec:training-stationary-points}节说明了非凸Hessian可以包含负方向，直接求解未必得到下降步。GGN舍去网络输出非线性带来的一部分曲率，保留输出损失中更易控制的部分。令单样本网络输出为$\bm z_i=f_{\bm\theta}(\bm x_i)\in\mathbb R^c$，输出雅可比为$\bm J_i\in\mathbb R^{c\times p}$，单样本损失为$\ell_i=\ell(\bm z_i,y_i)$。复合损失的Hessian可以分为
+第\ref{sec:training-stationary-points}节说明了非凸Hessian可以包含负方向，直接求解未必得到下降步。GGN舍去网络输出非线性带来的一部分曲率，保留输出损失中更易控制的部分。令单样本网络输出为$\bm z_i=f_{\bm\theta}(\bm x_i)\in\mathbb R^c$，输出Jacobian矩阵为$\bm J_i\in\mathbb R^{c\times p}$，单样本损失为$\ell_i=\ell(\bm z_i,y_i)$。复合损失的Hessian可以分为
 \begin{equation}
   \begin{aligned}
   \bm H=\frac1n\sum_i\bigg[
@@ -451,16 +428,21 @@ L-BFGS不需要先恢复$\bm B$的全部元素。算法~\ref{alg:training-lbfgs}
 \subsection{自然梯度与Fisher度量}
 \label{sec:training-natural-gradient}
 
-病态曲率也提醒我们，参数坐标中的相同距离未必对应相同的预测变化。自然梯度改用输出分布变化衡量步长，从函数行为而非裸参数长度构造局部方向。如果网络定义条件概率$p_{\bm\theta}(y\mid\bm x)$，还可以按输出分布变化的大小衡量参数步长。\term{Fisher信息矩阵}（Fisher information matrix）在这里为
+网络若定义条件概率$p_{\bm\theta}(y\mid\bm x)$，可使用
+\BookSectionRef{sec:information-natural-gradient-update}{第一卷“数学准备”的自然梯度更新小节}
+中的分布度量。固定输入评价分布$P_X$，本节的模型Fisher为
 \begin{equation}
   \bm F=\mathbb E_{\bm x}\mathbb E_{y\sim p_{\bm\theta}(\cdot\mid\bm x)}
     [\bm a\bm a^{\top}],\qquad
   \bm a=\nabla_{\bm\theta}\log p_{\bm\theta}(y\mid\bm x)\text{。}
   \label{eq:training-fisher}
 \end{equation}
-在满足常规可微条件时，邻近参数的平均KL散度二阶项为$\tfrac12\bm\Delta^{\top}\bm F\bm\Delta$。\term{自然梯度}（natural gradient）按这一分布度量构造下降方向，基本形式为$-(\bm F+\lambda\bm I)^{-1}\bm g$。理想的无阻尼度量具有重参数化不变性，实际阻尼和近似会改变该性质\scite{martens2020natural}
-
-这个方向可从一个局部约束问题推出：在$\bm\Delta^{\top}\bm F\bm\Delta/2\leq\delta$内最小化$\bm g^{\top}\bm\Delta$。若$\bm F$正定且梯度非零，拉格朗日条件给出$\bm\Delta=-c\bm F^{-1}\bm g$，再由约束确定$c=\sqrt{2\delta/(\bm g^{\top}\bm F^{-1}\bm g)}$。因此，自然梯度按“输出分布改变多少”分配方向，而普通梯度按当前参数坐标的欧氏长度分配方向。
+在卷一的固定支持与规则性条件下，邻近参数的平均KL二阶项为
+$\bm\Delta^\top\bm F\bm\Delta/2$。
+网络可能存在冗余参数，使$\bm F$奇异；实际计算常解
+$(\bm F+\lambda\bm I)\bm\Delta=-\bm g$，其中$\lambda>0$为阻尼。
+这是自然梯度的正则化实现，不能把它直接等同于正定度量下的理想方向；
+阻尼和近似都会影响重参数化不变性\scite{martens2020natural}
 
 对负对数似然、以自然参数表示的指数族输出，合适定义下的GGN与模型Fisher可以相等。用训练标签的梯度外积直接平均得到的\term{经验Fisher}（empirical Fisher）却通常不同，因为标签来自数据，而非当前模型分布。Hessian、GGN、模型Fisher和经验Fisher描述的对象不同，只有给定输出模型与期望口径后才能讨论等价关系。
 
@@ -547,7 +529,7 @@ K-FAC的优势是以层结构保留比对角方法更多的方向关系，同时
     \midrule
     牛顿法 & 损失Hessian & 显式$O(p^2)$ & 求解与阻尼；可用矩阵--向量乘积 \\
     BFGS／L-BFGS & 参数差与梯度差 & $O(p^2)$／$O(kp)$ & 割线信息、线搜索及噪声敏感性 \\
-    GGN & 输出损失曲率与输出雅可比 & 显式$O(p^2)$ & 可迭代求解；省略输出非线性项 \\
+    GGN & 输出损失曲率与输出Jacobian矩阵 & 显式$O(p^2)$ & 可迭代求解；省略输出非线性项 \\
     自然梯度 & 输出概率的Fisher度量 & 显式$O(p^2)$ & 模型期望、阻尼与近似 \\
     K-FAC & 层内Fisher的Kronecker因子 & 每块$O(m^2+d^2)$ & 因子统计、求逆及层间近似 \\
     Shampoo & 历史梯度的维度Gram矩阵 & 每块$O(m^2+d^2)$ & 矩阵根；不是自动的Hessian近似 \\
@@ -577,7 +559,7 @@ K-FAC的优势是以层结构保留比对角方法更多的方向关系，同时
 \label{sec:training-normalization-principles}
 特征归一化改变送入后续映射的表示，也改变反向经过这些表示的导数。输入预处理通常从训练集拟合固定变换，网络内的归一化则可能在每次前向中重新计算统计量。二者都处理特征，但参照来源和梯度依赖不同。
 
-要判断一种归一化怎样影响训练，需把“除以尺度”展开为含统计依赖的映射。这样才能把它与第\ref{sec:training-gradient-propagation}节的局部雅可比联系起来，而不只查看输出方差。对一个统计集合$S$，常见的中心化与标准差缩放为
+要判断一种归一化怎样影响训练，需把“除以尺度”展开为含统计依赖的映射。这样才能把它与第\ref{sec:training-gradient-propagation}节的局部Jacobian矩阵联系起来，而不只查看输出方差。对一个统计集合$S$，常见的中心化与标准差缩放为
 \begin{equation}
   \mu_S=\frac1{|S|}\sum_{j\in S}x_j,\qquad
   v_S=\frac1{|S|}\sum_{j\in S}(x_j-\mu_S)^2,\qquad
@@ -788,7 +770,7 @@ RMSNorm省去中心化与偏移，统计操作较少，并保留共同偏移对�
 
 \paragraph{残差块中的放置与尺度配合。}
 
-层归一化的统计范围不变，放置位置与残差尺度仍会改变第\ref{sec:training-gradient-propagation}节的雅可比连乘\scite{shleifer2021normformer,wang2022deepnet}Pre-LN残差块形如$\bm h'=\bm h+F(\operatorname{LN}(\bm h))$，Post-LN形如$\bm h'=\operatorname{LN}(\bm h+F(\bm h))$。前者保留未经过本步归一化的直接路径，后者对合并结果共同归一化；输出尺度、梯度路径和初始化需求不同，第\ref{sec:transformer-residual-normalization}节展开了具体结构。
+层归一化的统计范围不变，放置位置与残差尺度仍会改变第\ref{sec:training-gradient-propagation}节的Jacobian矩阵连乘\scite{shleifer2021normformer,wang2022deepnet}Pre-LN残差块形如$\bm h'=\bm h+F(\operatorname{LN}(\bm h))$，Post-LN形如$\bm h'=\operatorname{LN}(\bm h+F(\bm h))$。前者保留未经过本步归一化的直接路径，后者对合并结果共同归一化；输出尺度、梯度路径和初始化需求不同，第\ref{sec:transformer-residual-normalization}节展开了具体结构。
 
 直接路径有利于把梯度送回较早层，但Pre-LN分支仍可能很弱，整体尺度仍需管理；Post-LN约束合并后的表示，却让归一化导数进入每个块的传播。选择位置应配合残差尺度与初始化。
 
@@ -916,7 +898,7 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
 
 \subsubsection{可逆仿射}
 \label{sec:training-actnorm}
-可逆生成模型需要逐样本可逆、且行列式容易计算的尺度变换。\term{ActNorm}用首批数据初始化通道仿射$Y_{i,j,u,v}=s_jX_{i,j,u,v}+b_j$，之后直接学习$s_j,b_j$，不再重估每批统计。取$s_j=\exp(a_j)$可保证非零尺度；单样本对数雅可比行列式为$hw\sum_j\log|s_j|$。其优势是逐样本计算一致、可逆性明确，代价是初始数据影响起点，后续输出不再保证零均值和单位方差\scite{kingma2018glow}
+可逆生成模型需要逐样本可逆、且行列式容易计算的尺度变换。\term{ActNorm}用首批数据初始化通道仿射$Y_{i,j,u,v}=s_jX_{i,j,u,v}+b_j$，之后直接学习$s_j,b_j$，不再重估每批统计。取$s_j=\exp(a_j)$可保证非零尺度；单样本对数Jacobian行列式为$hw\sum_j\log|s_j|$。其优势是逐样本计算一致、可逆性明确，代价是初始数据影响起点，后续输出不再保证零均值和单位方差\scite{kingma2018glow}
 
 \subsubsection{通道响应与图结构}
 \label{sec:training-grn-qknorm}
@@ -934,7 +916,7 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
 
 \subsection{归一化方法的比较与选择}
 \label{sec:training-normalization-comparison}
-比较方法时，可以回到第\ref{sec:training-curvature}节的方向尺度与第\ref{sec:training-gradient-propagation}节的雅可比连乘。特征归一化改变输入或隐藏表示，参数归一化改变生成映射的权重；二者可能共同改善尺度，但输出方差相近不足以说明训练行为相同。选择时需同时检查以下维度：
+比较方法时，可以回到第\ref{sec:training-curvature}节的方向尺度与第\ref{sec:training-gradient-propagation}节的Jacobian矩阵连乘。特征归一化改变输入或隐藏表示，参数归一化改变生成映射的权重；二者可能共同改善尺度，但输出方差相近不足以说明训练行为相同。选择时需同时检查以下维度：
 \begin{itemize}
   \item \textbf{作用对象。} 调整的是输入、隐藏特征还是权重，决定直接改变计算图的哪一部分。
   \item \textbf{统计范围。} 跨样本、表示内部、单通道空间或通道组，决定计算依赖和统计元素数；白化还需估计特征间的协方差。
@@ -1015,9 +997,9 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
   \bm J_{l+1}=\bm I+a_l\bm J_{F_l}\text{。}
   \label{eq:training-residual-jacobian}
 \end{equation}
-其中$a_l$为分支尺度，$\bm J_{F_l}$为分支雅可比。原来的纯变换连乘改为含恒等项的连乘；分支在初始阶段较小时，网络可以从接近恒等映射的状态开始学习调整。这是传播路径的改变，并非对每一层输出强制归一化。
+其中$a_l$为分支尺度，$\bm J_{F_l}$为分支Jacobian矩阵。原来的纯变换连乘改为含恒等项的连乘；分支在初始阶段较小时，网络可以从接近恒等映射的状态开始学习调整。这是传播路径的改变，并非对每一层输出强制归一化。
 
-恒等项不保证任意深度下梯度稳定。若$a_l\bm J_{F_l}=-\bm I$，一层雅可比仍可为0；若每层都沿同一方向放大，连乘仍可能增长。一个粗上界为$\prod_l(1+|a_l|\lVert\bm J_{F_l}\rVert_2)\leq\exp(\sum_l|a_l|\lVert\bm J_{F_l}\rVert_2)$，它说明分支尺度和总深度需要共同考虑。具体初始化、归一化与尺度方案要结合网络分析，而不能无条件宣称某个深度缩放最优。
+恒等项不保证任意深度下梯度稳定。若$a_l\bm J_{F_l}=-\bm I$，一层Jacobian矩阵仍可为0；若每层都沿同一方向放大，连乘仍可能增长。一个粗上界为$\prod_l(1+|a_l|\lVert\bm J_{F_l}\rVert_2)\leq\exp(\sum_l|a_l|\lVert\bm J_{F_l}\rVert_2)$，它说明分支尺度和总深度需要共同考虑。具体初始化、归一化与尺度方案要结合网络分析，而不能无条件宣称某个深度缩放最优。
 
 当维度改变时，路径写为$\bm P_l\bm h^{(l)}+F_l(\bm h^{(l)})$，投影$\bm P_l$代替恒等矩阵。下采样和投影可能丢失部分方向，因而需区别恒等捷径与投影捷径。第\ref{chap:convolutional-networks}章的ResNet与第\ref{chap:transformer}章的残差块均是这一框架的具体组织。
 
@@ -1033,7 +1015,7 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
 \end{equation}
 门接近0时主要保留输入，接近1时主要使用新计算。Highway网络在深度方向采用此类选择，LSTM的遗忘门和输入门则在时间方向分别控制保留与写入；这些门可以独立，不一定总和为1。GRU的更新门在旧状态与候选状态之间调节比例，重置门控制候选计算对历史的使用。
 
-把门视为当前固定值时，保留项的局部导数为$\operatorname{diag}(\bm1-\bm g_l)$。如果门依赖输入，完整雅可比还包含$\operatorname{diag}(F_l(\bm h)-\bm h)\bm J_{g_l}$，不能省略后再当成精确推导。时间方向上，长段保留门的乘积仍可能衰减；门长期饱和还会使门参数自身难学。初始化门偏置可以改变初始保留倾向，但是否有利取决于所需记忆长度和写入需求。
+把门视为当前固定值时，保留项的局部导数为$\operatorname{diag}(\bm1-\bm g_l)$。如果门依赖输入，完整Jacobian矩阵还包含$\operatorname{diag}(F_l(\bm h)-\bm h)\bm J_{g_l}$，不能省略后再当成精确推导。时间方向上，长段保留门的乘积仍可能衰减；门长期饱和还会使门参数自身难学。初始化门偏置可以改变初始保留倾向，但是否有利取决于所需记忆长度和写入需求。
 
 \subsection{跨层连接与密集连接}
 \label{sec:training-dense-connections}
@@ -1057,7 +1039,7 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
 
 对线性或近似线性激活，常见Xavier尺度为$\operatorname{Var}(W_{i,j})=2/(d_{\mathrm{in}}+d_{\mathrm{out}})$；对ReLU前向传播，He尺度为$2/d_{\mathrm{in}}$。后者中的2补偿对称输入下ReLU约保留一半平方幅度的效应。卷积中的$d_{\mathrm{in}}$要计入核位置与输入通道；分组连接、残差求和和门控则需按实际结构修正。第\ref{chap:feedforward-networks}章已经给出逐层初始化推导\scite{he2015rectifiers}
 
-\term{正交初始化}（orthogonal initialization）令方阵权重满足$\bm W^{\top}\bm W=\bm I$，线性映射保持欧氏范数；矩形权重则只能在相应子空间或行、列方向具有类似性质。\term{恒等初始化}（identity initialization）将适当的方阵设为单位矩阵，让初始线性路径直接传递状态。两者只约束初始权重，后续无约束更新会改变这些性质，非线性激活也会改变整体雅可比。
+\term{正交初始化}（orthogonal initialization）令方阵权重满足$\bm W^{\top}\bm W=\bm I$，线性映射保持欧氏范数；矩形权重则只能在相应子空间或行、列方向具有类似性质。\term{恒等初始化}（identity initialization）将适当的方阵设为单位矩阵，让初始线性路径直接传递状态。两者只约束初始权重，后续无约束更新会改变这些性质，非线性激活也会改变整体Jacobian矩阵。
 
 \BookSectionRef{sec:neural-tangent-kernel}{第二卷“基础、理论和可信性”的“深度学习的可学习性”章“基于参数梯度初始值的可学习性”节}
 通过初始参数梯度和核矩阵说明，起点不只决定激活方差，也决定最初可用的学习方向。实际有限宽度网络可能离开近似固定核的区域，因而初始化仍需结合结构检查；它提供合适出发点，不保证整个训练过程一直保持相同谱性质。
@@ -1065,7 +1047,7 @@ WS不保证输出激活的统计，因为输出还依赖输入和空间结构。
 \subsection{参数约束}
 \label{sec:training-parameter-constraints}
 
-初始化改善出发时的传播，无约束更新却可能逐渐破坏它。若希望训练期间持续限制线性映射，可通过投影、结构化参数化或惩罚维持约束。这对应第\ref{sec:training-gradient-propagation}节中每一步雅可比尺度的管理，而不是仅在第0步选择一个矩阵。
+初始化改善出发时的传播，无约束更新却可能逐渐破坏它。若希望训练期间持续限制线性映射，可通过投影、结构化参数化或惩罚维持约束。这对应第\ref{sec:training-gradient-propagation}节中每一步Jacobian矩阵尺度的管理，而不是仅在第0步选择一个矩阵。
 
 约束要写进参数生成或更新过程。暂定更新不满足硬约束时，投影会把它改成可行参数；结构化参数化从一开始就生成可行矩阵；惩罚则允许暂时甚至持续违反，只通过损失和梯度增加代价。因而“约束”通常不表示每步检查失败就报错或停止训练。下面把三种做法展开。
 

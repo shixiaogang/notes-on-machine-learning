@@ -592,7 +592,9 @@ T5的代表预训练任务是恢复被删去的连续片段。图~\ref{fig:trans
 \end{equation}
 值梯度汇集所有查询对同一值的读取贡献；权重梯度比较不同值对当前输出变化的作用。即使注意力权重暂固定，值路径也会传递梯度，完整求导还需要继续沿得分路径回传。
 
-对第$i$行，把有效权重写为列向量$\bm a_i$，其Softmax雅可比为$\operatorname{diag}(\bm a_i)-\bm a_i\bm a_i^{\top}$。与该行的权重梯度相乘，得到
+对第$i$行，把有效权重写为列向量$\bm a_i$。
+沿用\BookEquationRef{eq:analysis-softmax-jacobian}{第一卷“数学准备”的softmax Jacobian公式}，
+与该行的权重梯度相乘，得到
 \begin{equation}
   (\bm G_{\mathrm S})_{i,j}
    =\bm A_{i,j}\left((\bm G_{\mathrm A})_{i,j}
@@ -1062,7 +1064,7 @@ Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共
 
 \subsubsection{归一化位置：Pre-LN、Post-LN与组合}
 
-归一化的位置改变残差路径。Post-LN子层$\bm y=\operatorname{LN}(\bm x+F(\bm x))$的雅可比为$\bm J_{\mathrm{LN}}(\bm I+\bm J_F)$，直接路径也要经过LN；Pre-LN的雅可比为$\bm I+\bm J_F\bm J_{\mathrm{LN}}$，恒等路径绕过LN。Xiong等在特定初始化与模型分析下比较了两者的梯度尺度，并解释了原始Post-LN训练中学习率预热的重要性；Pre-LN改善该问题的条件不能扩写为所有深度和优化设置都更优\scite{xiong2020layernorm}
+归一化的位置改变残差路径。Post-LN子层$\bm y=\operatorname{LN}(\bm x+F(\bm x))$的Jacobian矩阵为$\bm J_{\mathrm{LN}}(\bm I+\bm J_F)$，直接路径也要经过LN；Pre-LN的Jacobian矩阵为$\bm I+\bm J_F\bm J_{\mathrm{LN}}$，恒等路径绕过LN。Xiong等在特定初始化与模型分析下比较了两者的梯度尺度，并解释了原始Post-LN训练中学习率预热的重要性；Pre-LN改善该问题的条件不能扩写为所有深度和优化设置都更优\scite{xiong2020layernorm}
 
 也可以在子层前和输出端分别归一化，控制输入与支路输出的尺度。例如，把子层的归一化输入记为$\bm u$，计算
 \begin{equation}
@@ -1079,7 +1081,7 @@ Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共
 
 直接堆叠残差块仍可能积累过大的更新或使深层分支难以学习。一般子层可写为$\bm h^{(l)}=b_l\bm h^{(l-1)}+a_lF_l(\bm h^{(l-1)})$，其中$a_l$控制新增变换，$b_l$控制原表示的传递。固定缩放可以与深度相关，可学习缩放则让训练决定每条分支的影响；它们都要与归一化和初始化共同考虑。
 
-\term{ReZero}给每条残差支路设置一个初始化为0的可学习标量$a_l$，使用$\bm h^{(l)}=\bm h^{(l-1)}+a_lF_l(\bm h^{(l-1)})$。在该残差堆叠不含其他破坏恒等路径的操作时，初始映射和局部雅可比都是恒等。初始步骤中支路内部参数梯度受$a_l=0$抑制，但门参数有梯度$\partial\ell/\partial a_l=\langle\bm g^{(l)},F_l(\bm h^{(l-1)})\rangle$，门偏离0后支路开始收到监督。它调整新增层何时参与计算，不等于将支路内部全部权重置零\scite{bachlechner2020rezero}
+\term{ReZero}给每条残差支路设置一个初始化为0的可学习标量$a_l$，使用$\bm h^{(l)}=\bm h^{(l-1)}+a_lF_l(\bm h^{(l-1)})$。在该残差堆叠不含其他破坏恒等路径的操作时，初始映射和局部Jacobian矩阵都是恒等。初始步骤中支路内部参数梯度受$a_l=0$抑制，但门参数有梯度$\partial\ell/\partial a_l=\langle\bm g^{(l)},F_l(\bm h^{(l-1)})\rangle$，门偏离0后支路开始收到监督。它调整新增层何时参与计算，不等于将支路内部全部权重置零\scite{bachlechner2020rezero}
 
 门也可以是逐特征向量或输入相关函数，形成不同粒度的残差控制。向量门增加参数，自适应门增加计算和新的梯度路径；Sigmoid门如果希望初始接近关闭，偏置与饱和程度就需配合。更广的跨层连接还可把早期层的表示相加或拼接到深层，相加要求维度匹配，拼接会增加宽度并通常需要投影。这些改变影响表示复用、保存激活的数量和梯度路径，不能只依据最短路径长度评价整网优化。
 
@@ -1120,7 +1122,7 @@ Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共
 \subsection{收敛性}
 \label{sec:transformer-convergence}
 
-Softmax雅可比$\bm J=\operatorname{diag}(\bm a)-\bm a\bm a^{\top}$的谱范数不超过$1/2$。可由每行绝对值之和$2a_j(1-a_j)\leq1/2$以及对称性得到这一界。它控制的是对得分的局部敏感度；当权重接近单点时，雅可比还可能趋近零。因此，Softmax本身不会无限放大得分梯度，却可能使某些评分参数难以收到足够梯度。
+Softmax的Jacobian矩阵$\bm J=\operatorname{diag}(\bm a)-\bm a\bm a^{\top}$的谱范数不超过$1/2$。可由每行绝对值之和$2a_j(1-a_j)\leq1/2$以及对称性得到这一界。它控制的是对得分的局部敏感度；当权重接近单点时，Jacobian矩阵还可能趋近零。因此，Softmax本身不会无限放大得分梯度，却可能使某些评分参数难以收到足够梯度。
 
 注意力对输入的敏感度还包含查询、键和值的变化。单头记$\bm Z=\bm A\bm V$，固定掩码时微分为
 \begin{equation}
