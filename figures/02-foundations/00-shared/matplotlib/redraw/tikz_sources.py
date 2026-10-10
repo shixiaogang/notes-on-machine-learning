@@ -89,6 +89,8 @@ for f in scope:
 \end{tikzpicture}'''.replace('PANEL',panel(key))
     if key in {'learning-theory-curvature-stability','models-spatial-objectives','learning-theory-minimum-norm','trust-technical-scope','trust-robust-neighborhood','trust-certified-region','trust-actionable-recourse','trust-threat-model-coordinates'}:
         s=s.replace('FigureYellowFill','LancetGreen!12!white').replace('FigureYellow','LancetGreen')
+    if key=='learning-theory-domain-classifier':s=s.replace('FigureRed','LancetGreen')
+    if key in {'trust-robust-neighborhood','trust-counterfactual-nearest','trust-adversarial-perturbation'}:s=s.replace('FigureRedFill','LancetGreen!12!white')
     if key=='trust-certified-region':s=s.replace('rectangle (110,73)','rectangle (110,80)')
     if key in mixed:route='Matplotlib panels + TikZ composition'
     s=s.replace('✓',r'{\FigureMissingMathGlyphFont ✓}')

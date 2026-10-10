@@ -69,7 +69,9 @@ def double_descent():
           [["population",*r] for r in p]+[["training",*r] for r in tr]))
 
 def distribution_shift():
+    # 三类偏移共用 8–8.5 pt 字号，在全宽上原生重排，避免放大文字。
     fig=canvas(height=65)
+    fig.set_size_inches(164.6/25.4,65/25.4)
     axes=[fig.add_axes([.065+i*.325,.275,.255,.48]) for i in range(3)]
     x=np.linspace(-3,3,601)
     normal=lambda mu:np.exp(-.5*((x-mu)/.65)**2)/(.65*np.sqrt(2*np.pi))
@@ -95,7 +97,7 @@ def distribution_shift():
     fig.legend(handles,["源域","目标域"],loc="lower center",bbox_to_anchor=(.5,.005),
                ncols=2,frameon=False,handlelength=2,columnspacing=2,fontsize=8.5)
     assert abs(.65+.35-1)<1e-12 and np.all((eta_s>=0)&(eta_s<=1))
-    save(fig,"distribution-shift",{"size_mm":[112,65], "origin":"Normalized teaching distributions",
+    save(fig,"distribution-shift",{"size_mm":[164.6,65], "origin":"Normalized teaching distributions",
          "covariate":"Normal(-0.9,0.65^2) vs Normal(0.9,0.65^2), full domain R, visible [-3,3]",
          "labels":{"source":[.65,.35],"target":[.35,.65]},
          "concept":"eta_s(x)=sigmoid(2x), eta_t(x)=sigmoid(-2x)",

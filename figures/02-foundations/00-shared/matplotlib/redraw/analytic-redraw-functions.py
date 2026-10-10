@@ -1,3 +1,6 @@
+# 固定浅绿：Lancet Green 与白色按18%混合。
+GREEN_FILL = "#E3EFE9"
+
 def flat():
  s=np.linspace(-1,1,70);fig,axs=plt.subplots(1,2,figsize=(112*MM,71*MM),layout='constrained',sharex=True,sharey=True)
  for ax,factor,title,c in zip(axs,[.45,.08],['窄谷','宽谷'],[RED,BLUE]):
@@ -42,8 +45,8 @@ def support():
  fig,axs=plt.subplots(1,3,figsize=(169*MM,68*MM),layout='constrained',sharex=True,sharey=True)
  for ax,(lo,hi),lab,mass in zip(axs,[(1.5,3.5),(3,5),(3.9,5.9)],'abc',[0,.5,.95]):
   ax.fill_between([1,4],[1/3]*2,color=BLUE_FILL);ax.plot([1,1,4,4],[0,1/3,1/3,0],color=BLUE)
-  ax.fill_between([lo,hi],[.5]*2,color=RED_FILL);ax.plot([lo,lo,hi,hi],[0,.5,.5,0],color=RED,ls='--')
-  if hi>4:ax.add_patch(Rectangle((4,0),hi-4,.5,facecolor=RED,alpha=.3,edgecolor='none'))
+  ax.fill_between([lo,hi],[.5]*2,color=GREEN_FILL);ax.plot([lo,lo,hi,hi],[0,.5,.5,0],color=GREEN,ls='--')
+  if hi>4:ax.add_patch(Rectangle((4,0),hi-4,.5,facecolor=GREEN,alpha=.3,edgecolor='none'))
   ax.set(title=f'({lab})',xlim=(0,6),ylim=(0,.6),xlabel=r'$x$',xticks=[0,2,4,6],yticks=[0,1/3,.5],yticklabels=['0',r'$1/3$',r'$1/2$'])
   ax.text(3,.56,rf'$u_T={mass}$',ha='center')
  axs[0].set_ylabel(r'密度 $p$');axs[0].text(1.5,.22,r'$p_S$');axs[2].text(4.9,.40,r'$p_T$')
@@ -52,8 +55,8 @@ def support():
 def importance():
  x=np.linspace(0,1,101); points=np.array([.1,.3,.5,.7,.9]);weights=2*points
  fig,ax=plt.subplots(figsize=(112*MM,74*MM),layout='constrained')
- ax.fill_between(x,0,2*x,color=RED_FILL);ax.plot(x,2*x,color=RED);ax.axhline(1,color=MUTED,ls='--',lw=.8)
- ax.scatter(points,2*points,s=45*weights,facecolor=BLUE_FILL,edgecolor=BLUE,zorder=5)
+ ax.fill_between(x,0,2*x,color=BLUE_FILL);ax.plot(x,2*x,color=BLUE);ax.axhline(1,color=MUTED,ls='--',lw=.8)
+ ax.scatter(points,2*points,s=45*weights,facecolor=GREEN_FILL,edgecolor=GREEN,zorder=5)
  ax.text(.07,1.11,'源域');ax.text(.83,2.04,'目标域')
  ax.set(xlim=(0,1.05),ylim=(0,2.22),xlabel=r'$x$',ylabel=r'密度 $p(x)$',xticks=[0,.1,.3,.5,.7,.9,1],yticks=[0,1,2])
  for px,w in zip(points,weights):ax.annotate(rf'$w={w:g}$',(px,2*px),xytext=(0,8 if w<.3 else -18),textcoords='offset points',ha='center')
