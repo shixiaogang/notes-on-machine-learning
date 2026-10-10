@@ -34,6 +34,8 @@ git config --local core.hooksPath .githooks
 
 提交前完整构建并校验七份 PDF，将源文件、成品与 `target/.build-manifest.json` 一并暂存。按变更范围运行检查：
 
+`make test` 还需要 Poppler 提供的 `pdfinfo`，用于核对 PDF 中的标题链接目标与实际页码。
+
 ```sh
 make test
 bash tests/check-book-editions.sh
