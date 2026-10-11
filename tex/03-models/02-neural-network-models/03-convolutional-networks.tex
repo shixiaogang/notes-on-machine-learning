@@ -216,7 +216,10 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 \subsection{卷积的实现}
 \label{sec:cnn-implementation}
 
-实现一个卷积映射，既要选择求得输出的计算算法，也要安排数据的存储与读取。下面先按\emph{如何计算局部乘积及其和}展开六条算法路线：直接逐项计算，改写为矩阵乘法，或利用多项式、滤波变换、傅里叶变换及核的低秩结构。矩阵路线中的Strassen属于矩阵乘法的内部算法。节末再简要讨论展开、取数、分块与融合等工程选择，说明同一算法怎样组织实际计算。
+同一个卷积层可以用不同算法得到相同的预激活值。
+\BookSectionRef{sec:signal-analysis-fast-transforms}{第一卷“卷积映射的快速计算”}
+已经建立矩阵化、Toom--Cook、Winograd、FFT及空间可分离核的代数算法、数值例子与误差边界。
+这里固定本层的批量、通道和采样设置，说明直接计算的成本，以及这些算法怎样复用输入与可学习核，再讨论数据如何存储和读取。
 
 此前的单矩阵例子只保留一个数值平面，现在将第~\ref{sec:cnn-overview}节的多通道组织写成张量。一个通道在全部空间位置上的响应构成一张\term{特征图}（feature map）。单个输入的形状为$\bm X\in\mathbb R^{h\times w\times c_{\mathrm{in}}}$，普通密集卷积的核张量为$\bm W\in\mathbb R^{k_h\times k_w\times c_{\mathrm{in}}\times c_{\mathrm{out}}}$。固定一个输出通道，其核覆盖全部输入通道：对空间窗口和输入通道共同求和，产生一个输出值；换用另一组核权重便产生另一个输出通道。因此输入通道轴参与求和，输出通道轴保留在结果中，图~\ref{fig:cnn-channels}给出了对应示意。
 
@@ -226,7 +229,12 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 \]
 即一个窗口的元素数与全部输出位置数。普通密集卷积需要$c_{\mathrm{out}}qm$次乘加；比较额外存储时，输入、核和最终输出不计入工作区。这里把输入数值与核权重相乘称为\emph{核心乘法}，另行计算固定变换中的加减与常数乘法。减少核心乘法并不自动减少总耗时，后文会同时交代新增的计算与存储。
 
-这些算法有两种不同的出发点。矩阵化汇集原有点积，随后可以改变矩阵乘法的内部算法；变换类算法则先对输入与核作线性组合，用较少的组合乘法恢复输出。后一条路线之所以可行，是因为一个乘积可以同时包含多个原始乘积，后续加减又能消去不需要的项。空间可分离路线还要利用核自身的低秩结构。
+矩阵化把本层的每个窗口作为一列，每个核作为一行。按一致顺序展平后，窗口矩阵为$\bm P\in\mathbb R^{q\times m}$，核矩阵为$\bm W_{\mathrm{loc}}\in\mathbb R^{c_{\mathrm{out}}\times q}$；加入偏置$\bm b\in\mathbb R^{c_{\mathrm{out}}}$后，预激活为
+\begin{equation}
+ \bm Z_{\mathrm{col}}=\bm W_{\mathrm{loc}}\bm P+\bm b\bm1_m^\top.
+ \label{eq:cnn-im2col}
+\end{equation}
+其中$\bm1_m$是$m$维全一向量。这个矩阵等式恢复同一个局部点积，并未自动减少普通算法的乘加量。
 
 \subsubsection{直接计算：逐项求和}
 \label{sec:cnn-direct-implementation}
@@ -257,398 +265,42 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 \end{equation}
 直接算法逐项保留局部求和结构，额外工作区可以只包含若干累积器，但算术量随核面积、通道数与输出位置数相乘。相邻窗口包含重复输入，并不意味着必须重复从主内存读取；这种复用属于第~\ref{sec:cnn-engineering}节的数据调度问题。判断一种计算算法时，应先固定数学运算及其乘加量，再考察它在具体存储层次中的执行方式。
 
-\subsubsection{矩阵化计算与Strassen递归乘法}
-\label{sec:cnn-matrix-algorithm}
+\subsubsection{多通道卷积的变换复用}
+\label{sec:cnn-transform-reuse}
 
-直接算法中的局部点积彼此具有相同长度，可以集中交给\term{通用矩阵乘法}（general matrix multiplication, GEMM）计算。从代数上把每个输入窗口展平成一列，得到$\bm P\in\mathbb R^{q\times m}$；每个输出核展平成一行，得到$\bm W_{\mathrm{loc}}\in\mathbb R^{c_{\mathrm{out}}\times q}$。所有输出写为
+本层的多个输出通道读取相同的窗口，同一个核又作用于多个位置。这两种共享关系决定了变换能被复用多少次。
+以步长一、无空洞的$3\times3$核为例，\BookSectionRef{sec:signal-analysis-fast-winograd}{第一卷中的Winograd滤波计算}
+已用固定矩阵$\bm B^\top,\bm G,\bm A^\top$将一个$4\times4$输入块变为$2\times2$输出。
+固定一个样本的输入块，对输入通道$c$和输出通道$o$，分别形成核变换$\bm U_{c,o}=\bm G\bm W_{c,o}\bm G^\top$与输入变换$\bm V_c=\bm B^\top\bm X_c\bm B$。其中$\bm W_{c,o}\in\mathbb R^{3\times3}$是核在通道$(c,o)$上的空间切片，$\bm X_c\in\mathbb R^{4\times4}$是该输入块在通道$c$上的空间切片。
+通道累积与输出恢复写成
 \begin{equation}
-  \bm Z_{\mathrm{col}}=\bm W_{\mathrm{loc}}\bm P+\bm b\bm1_m^\top\text{。}
-  \label{eq:cnn-im2col}
+ \bm Y_o=\bm A^\top\left(\sum_c\bm U_{c,o}\odot\bm V_c\right)\bm A.
+ \label{eq:cnn-winograd-channel-reuse}
 \end{equation}
-其中$\bm1_m$为$m$维全一向量，计算后将列索引还原为批量和空间索引即可。矩阵的每一列对应一个空间窗口，每一行输出对应一个核；乘积中的第$(o,\ell)$个元素正是第$o$个核与第$\ell$个窗口的点积。多输入通道并不改变这个关系，只是让每个窗口列更长；多输出通道则让核矩阵增加行数。展开的元素顺序必须与核的展平顺序一致；例如先遍历核行、核列，再遍历通道，就不能把核按通道优先展平。
+输入变换可供多个输出通道复用，核变换可供多个空间块与批量样本复用。
+由于输出变换是线性的，先对通道求和再恢复，与逐通道恢复后相加等价，却只需为每个输出通道执行一次恢复。
+若同时处理$n_{\mathrm{tile}}$个输入块，在每个变换位置上还可把核组合排成$c_{\mathrm{out}}\times c_{\mathrm{in}}$矩阵，输入组合排成$c_{\mathrm{in}}\times n_{\mathrm{tile}}$矩阵。
+$F(2\times2,3\times3)$由此可以组织为十六组通道矩阵乘法，变换算法与GEMM能够组合使用。
 
-对式\eqref{eq:cnn-matrix-example}，按行优先排列窗口与窗口中的元素，有
-\begin{equation}
-  \bm P=\begin{bmatrix}
-    1&2&3&5&6&7&9&10&11\\
-    2&3&4&6&7&8&10&11&12\\
-    5&6&7&9&10&11&13&14&15\\
-    6&7&8&10&11&12&14&15&16
-  \end{bmatrix}\text{，}
-  \label{eq:cnn-im2col-example}
-\end{equation}
-核行为$(1,0,0,-1)$，矩阵乘积得到九个$-5$。例如前两列分别是$(1,2,5,6)^\top$和$(2,3,6,7)^\top$，同一核行与它们相乘，得到$1-6$与$2-7$，图~\ref{fig:cnn-matrix-algorithm}给出了对应关系。这种矩阵表示没有减少普通算法的$c_{\mathrm{out}}qm$次乘加，却把全部局部点积集中成同一个矩阵乘法。$\bm P$可以是一个用于推导的逻辑矩阵，是否真的复制每个元素，留到第~\ref{sec:cnn-engineering}节讨论。
+实现时将输出切为不重叠的$2\times2$块，各自读取$4\times4$输入块，再恢复四个空间输出并加偏置。
+相邻输出块起点相隔两格，输入块重叠两行或两列；边缘不足一块时需要填充或单独处理。
+变换核保存十六个系数，而原核只有九个系数，活动值工作区也会扩大；分块可以限制同时保存的变换值。
+更大的输出块通常还会增加变换成本和数值敏感性，步长与空洞率改变后也不能直接沿用这些矩阵。
 
+频域路线有相同的通道共享关系。对适当翻转并补零后的核，每个频率上的输出为$\widehat y_o=\sum_c\widehat x_c\widehat k_{c,o}$，随后对各输出通道反变换，并按本层规则裁剪和选取输出位置。
+若补零后的二维网格含$N$个位置，核心频域乘加量为$O(n_{\mathrm b}c_{\mathrm{in}}c_{\mathrm{out}}N)$；输入、核和输出的变换成本分别为
+\begin{align*}
+ \text{输入变换：}\quad &O(n_{\mathrm b}c_{\mathrm{in}}N\log N),\\
+ \text{核变换：}\quad &O(c_{\mathrm{in}}c_{\mathrm{out}}N\log N),\\
+ \text{输出变换：}\quad &O(n_{\mathrm b}c_{\mathrm{out}}N\log N).
+\end{align*}
+这里$N$是二维网格的总位置数，复数乘法也不能按一次实数乘法计价。
+输入频谱可供多个输出核复用，核频谱在参数不变时可跨样本复用；训练更新参数后需要重算。
+Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu2014fft}
 
-\begin{figure*}[htb]
-  \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-matrix-algorithm/figure.pdf}
-  \caption{局部点积如何成为矩阵乘法。图中只取前两个相邻窗口，按核行、核列的顺序展平成$\bm P$的两列；核按相同顺序展平成一行。矩阵乘法同时得到这两个窗口的输出，完整计算包含九列。这里画的是代数上的窗口矩阵，是否实际复制全部数值由工程实现决定。}
-  \label{fig:cnn-matrix-algorithm}
-\end{figure*}
-矩阵化之后还可以选择不同的矩阵乘法算法。下面的Strassen改变块乘法数量，它从属于矩阵乘法这条计算路线，与是否显式保存窗口是两个问题。
-
-\paragraph{Strassen递归乘法}
-\label{sec:cnn-strassen}
-
-设$\bm C=\bm A\bm B$，将两个输入矩阵和结果矩阵各按$2\times2$等形状划分，普通算法给出
-\begin{equation}
-  \begin{aligned}
-    \bm C_{1,1}&=\bm A_{1,1}\bm B_{1,1}+\bm A_{1,2}\bm B_{2,1},\\
-    \bm C_{1,2}&=\bm A_{1,1}\bm B_{1,2}+\bm A_{1,2}\bm B_{2,2},\\
-    \bm C_{2,1}&=\bm A_{2,1}\bm B_{1,1}+\bm A_{2,2}\bm B_{2,1},\\
-    \bm C_{2,2}&=\bm A_{2,1}\bm B_{1,2}+\bm A_{2,2}\bm B_{2,2}\text{。}
-  \end{aligned}
-  \label{eq:cnn-classical-block-product}
-\end{equation}
-四个输出各含两次块乘法，共需八次。Strassen算法用七个组合块乘积替代这八次乘法，定义
-\begin{equation}
-  \begin{aligned}
-    \bm M_1&=(\bm A_{1,1}+\bm A_{2,2})(\bm B_{1,1}+\bm B_{2,2}),\\
-    \bm M_2&=(\bm A_{2,1}+\bm A_{2,2})\bm B_{1,1},\\
-    \bm M_3&=\bm A_{1,1}(\bm B_{1,2}-\bm B_{2,2}),\\
-    \bm M_4&=\bm A_{2,2}(\bm B_{2,1}-\bm B_{1,1}),\\
-    \bm M_5&=(\bm A_{1,1}+\bm A_{1,2})\bm B_{2,2},\\
-    \bm M_6&=(\bm A_{2,1}-\bm A_{1,1})(\bm B_{1,1}+\bm B_{1,2}),\\
-    \bm M_7&=(\bm A_{1,2}-\bm A_{2,2})(\bm B_{2,1}+\bm B_{2,2})\text{。}
-  \end{aligned}
-  \label{eq:cnn-strassen-products}
-\end{equation}
-由这些结果恢复输出：
-\begin{equation}
-  \begin{aligned}
-    \bm C_{1,1}&=\bm M_1+\bm M_4-\bm M_5+\bm M_7,\\
-    \bm C_{1,2}&=\bm M_3+\bm M_5,\qquad
-    \bm C_{2,1}=\bm M_2+\bm M_4,\\
-    \bm C_{2,2}&=\bm M_1-\bm M_2+\bm M_3+\bm M_6\text{。}
-  \end{aligned}
-  \label{eq:cnn-strassen-recovery}
-\end{equation}
-这种组合靠的是多余项的抵消，而不是省略某个输入块。以左上输出为例，把四个中间量按左因子归并，有
-\begin{equation}
-  \begin{aligned}
-    \bm M_1+\bm M_4-\bm M_5+\bm M_7
-    ={}&\bm A_{1,1}(\bm B_{1,1}+\bm B_{2,2}-\bm B_{2,2})\\
-       &+\bm A_{1,2}(-\bm B_{2,2}+\bm B_{2,1}+\bm B_{2,2})\\
-       &+\bm A_{2,2}(\bm B_{1,1}+\bm B_{2,2}
-                       +\bm B_{2,1}-\bm B_{1,1}
-                       -\bm B_{2,1}-\bm B_{2,2})\\
-    ={}&\bm A_{1,1}\bm B_{1,1}+\bm A_{1,2}\bm B_{2,1}\text{。}
-  \end{aligned}
-  \label{eq:cnn-strassen-cancellation}
-\end{equation}
-展开过程没有交换左右因子，因而对矩阵块同样成立。其余三个输出也可按式\eqref{eq:cnn-strassen-recovery}验证。核查例子取
-\[
-  \bm A=\begin{bmatrix}1&2\\3&4\end{bmatrix},\qquad
-  \bm B=\begin{bmatrix}5&6\\7&8\end{bmatrix}\text{。}
-\]
-七个中间乘积依次为$65,35,-2,8,24,22,-30$，恢复后的结果是$\left[\begin{smallmatrix}19&22\\43&50\end{smallmatrix}\right]$，与普通乘法一致。
-
-这一层递归将八次块乘法降为七次，块加减却从四次增为十八次，其中十次用于形成乘法输入，八次用于恢复输出。对$n\times n$方阵递归时，每个子问题的边长减半，加减的工作量仍与本层全部元素数成正比，因此$T(n)=7T(n/2)+O(n^2)$，得到$O(n^{\log_2 7})$。指数降低来自每层少一个乘法子问题，额外加减则是所支付的代价\scite{strassen1969}
-
-实现时通常只递归到合适阈值，底层仍调用高效GEMM；奇数尺寸需要拆分尾部或补齐，临时块应复用，某些加减可并入数据打包。卷积可在式\eqref{eq:cnn-im2col}的矩阵乘法阶段接入该算法，但$c_{\mathrm{out}}\times q$与$q\times m$常高度不对称，盲目补成方阵会浪费大量工作。递归、额外加减与写回可能抵消节省；相减还会改变舍入误差的传播。Strassen是可用的矩阵算法路线，不能由渐近指数直接推出它适合每个卷积层。
-
-\subsubsection{Toom--Cook：求值、乘法与插值}
-\label{sec:cnn-toom-cook}
-
-有限序列还可写成多项式$X(z)=\sum_i x_i z^i$、$K(z)=\sum_a k_a z^a$。因为$z^i z^a=z^{i+a}$，乘积中$z^j$的系数正是
-\[
-  c_j=\sum_{i+a=j}x_i k_a\text{，}
-\]
-即完整数学卷积的第$j$个输出。若输入与核分别长$n_x,n_k$，乘积次数至多为$n_x+n_k-2$，需要恢复$n_x+n_k-1$个系数。直接算法逐一形成$n_xn_k$个乘积；另一种办法是先知道乘积多项式在足够多的点上取什么值，再解出系数。Toom--Cook方法将多项式分块，在选定点求值，逐点相乘，再插值恢复乘积；图~\ref{fig:cnn-transform-algorithms}给出这条计算路径。
-
-次数不超过$L-1$的多项式由$L$个不同有限点的值唯一确定：两组候选系数的差若在这$L$个点都为零，就会使次数不超过$L-1$的非零多项式有$L$个根，这不可能。求值等于将系数转换为这些点值，插值则从点值恢复系数。选点固定后，两个转换都是固定的线性运算；原来许多系数间的乘法，被集中到点值的逐项乘法中。
-
-两个一次多项式只需在$0,1,\infty$三个点相乘，其中$\infty$表示取最高次项系数。令$m_0=x_0k_0$、$m_\infty=x_1k_1$、$m_1=(x_0+x_1)(k_0+k_1)$，则
-\begin{equation}
-  (x_0+x_1z)(k_0+k_1z)
-  =m_0+(m_1-m_0-m_\infty)z+m_\infty z^2\text{。}
-  \label{eq:cnn-toom-example}
-\end{equation}
-中间系数本来是$x_0k_1+x_1k_0$，现在通过一次组合乘法减去两端乘积得到。四次数据与核之间的乘法降为三次；这一最小例子也称Karatsuba乘法。例如$\bm x=(1,2)$、$\bm k=(1,-1)$时，三个乘积为$1,0,-2$，恢复得到系数$(1,1,-2)$。
-
-为了连接下一节的小块滤波，考虑长度三与长度二的完整卷积。此时$X(z)=x_0+x_1z+x_2z^2$、$K(z)=k_0+k_1z$，乘积$S(z)=\sum_{j=0}^3c_jz^j$需要四项系数。取$0,1,-1,\infty$，形成
-\begin{equation}
-  \begin{aligned}
-    r_0&=x_0k_0,\qquad r_\infty=x_2k_1,\\
-    r_+&=(x_0+x_1+x_2)(k_0+k_1),\\
-    r_-&=(x_0-x_1+x_2)(k_0-k_1)\text{。}
-  \end{aligned}
-  \label{eq:cnn-toom-three-two-evaluation}
-\end{equation}
-这里$S(1)=c_0+c_1+c_2+c_3$，$S(-1)=c_0-c_1+c_2-c_3$，$S(0)=c_0$，最高次项系数为$c_3$。将正、负一点的值相加或相减，便分别分离偶数次与奇数次系数，得到
-\begin{equation}
-  \begin{aligned}
-    c_0&=r_0, &c_1&=(r_+-r_-)/2-r_\infty,\\
-    c_2&=(r_++r_-)/2-r_0, &c_3&=r_\infty\text{。}
-  \end{aligned}
-  \label{eq:cnn-toom-three-two-recovery}
-\end{equation}
-对$\bm x=(1,2,3)$、$\bm k=(1,-1)$，四个乘积为$r_0=1,r_+=0,r_-=4,r_\infty=-3$，恢复出$(1,1,1,-3)$。六次核心乘法降为四次，但求值与恢复中的加减、除以二仍需执行。$\infty$只是取最高次项的记号，不能把无穷大的浮点数传入计算。
-
-\paragraph{三段分块与递归}
-
-三段分块进一步展示插值过程。对两个二次多项式，在$0,1,-1,2,\infty$求值并相乘，记结果为$r_0,r_1,r_{-1},r_2,r_\infty$。乘积次数至多为四，正好需要五个条件：$c_0,c_4$由两端直接给出；$r_1+r_{-1}$分离偶数次项，$r_1-r_{-1}$给出$c_1+c_3$；再用$r_2$区分这两个奇数次系数。乘积系数$c_0,\ldots,c_4$可按下式恢复：
-\begin{equation}
-  \begin{aligned}
-    c_0&=r_0,\qquad c_4=r_\infty,\\
-    c_2&=(r_1+r_{-1})/2-c_0-c_4,\\
-    v&=(r_1-r_{-1})/2,\\
-    u&=(r_2-c_0-4c_2-16c_4)/2,\\
-    c_3&=(u-v)/3,\qquad c_1=v-c_3\text{。}
-  \end{aligned}
-  \label{eq:cnn-toom-three}
-\end{equation}
-这里$u,v$只是插值中间量。五次求值后的乘法替代九次原始系数乘法，但新增了求值加减、常数乘除和插值。例如$\bm x=(1,2,3)$、$\bm k=(1,-1,2)$的五个点值乘积是$1,12,8,119,6$；式\eqref{eq:cnn-toom-three}先给出$c_2=3,v=2,u=5$，再得到$c_3=1,c_1=1$，完整输出为$(1,1,3,1,6)$。
-
-长序列可以每$\ell$项分为一段，写成$X(z)=X_0(z)+z^\ell X_1(z)+z^{2\ell}X_2(z)$，核也同样分段。把$z^\ell$暂看成外层变量，刚才的五次乘法就变为五个短多项式乘法；每个段内乘积再递归计算。插值后将第$j$个段内结果平移$j\ell$位，并把重叠系数相加。对两条长度相近的序列，三等分递归满足$T(n)=5T(n/3)+O(n)$，理想成本为$O(n^{\log_3 5})$；它不能直接作为长输入与短CNN核的复杂度，因为两者形状并不相近。
-
-实现需选择分块长度和求值点，保存或流式产生求值结果，并把恢复的系数按原位置累加。求值点过大或插值中出现相近量相减，可能放大浮点误差；低精度下尤其要检查变换后的动态范围。数学卷积与网络互相关可通过翻转核及裁剪建立对应，但网络通常只需一小段输出，计算完整多项式乘积可能浪费工作。Toom--Cook解释了“用变换交换乘法与加法”的一般思路，接下来的Winograd则直接面向小块滤波输出。
-
-\subsubsection{Winograd最小滤波：直接恢复小块输出}
-\label{sec:cnn-winograd}
-
-Toom--Cook说明了怎样通过点值恢复完整卷积，但CNN只需要每个小块中的若干合法输出。Winograd最小滤波沿用“变换、相乘、恢复”的结构，将恢复目标改为这些输出。要理解固定变换矩阵从何而来，可以先从多项式余数出发，再把完整卷积算法转置为滤波算法。
-
-\paragraph{多项式余数怎样保留乘积信息}
-
-多项式除以$z-t$的余数是常数$S(t)$；因此在$t$处求值，也可以理解为保留关于$z-t$的余数。\term{多项式中国剩余定理}说明：若若干基多项式两两互素，则关于它们的各个余数共同确定一个关于其乘积的余数。这里的“互素”表示没有共同的非恒定因子；重构结果的次数小于基多项式乘积的次数。这个次数条件保证唯一性，不能只给若干余数而忽略剩余的高次项。
-
-沿用式\eqref{eq:cnn-toom-three-two-evaluation}，选取$z,z-1,z+1$，其乘积为$M(z)=z^3-z$。由于$S$次数至多为三、最高次项系数是$r_\infty$，可写成
-\begin{equation}
-  S(z)=r_\infty M(z)+R(z),\qquad \deg R<3\text{。}
-  \label{eq:cnn-winograd-polynomial-remainder}
-\end{equation}
-在$0,1,-1$处，$M$都为零，故$R$保留$S$在这三点的值$r_0,r_+,r_-$。下面三个二次多项式各自在一个点等于一、在另外两点等于零：
-\[
-  L_0(z)=1-z^2,\quad
-  L_+(z)=(z^2+z)/2,\quad
-  L_-(z)=(z^2-z)/2\text{。}
-\]
-因而余数的具体重构式是
-\begin{equation}
-  R(z)=r_0L_0(z)+r_+L_+(z)+r_-L_-(z)\text{。}
-  \label{eq:cnn-winograd-remainder-reconstruction}
-\end{equation}
-代入并展开$r_\infty(z^3-z)+R(z)$，就得到式\eqref{eq:cnn-toom-three-two-recovery}的四项系数。该例中一次基多项式的余数就是点值，所以余数重构与Toom--Cook插值给出同一个计算过程；选择更一般的基多项式时，余数也可能是低次多项式，而非一个数值。
-
-\paragraph{从完整卷积转为小块滤波}
-
-固定长度三的核$\bm g=(g_0,g_1,g_2)^\top$，将它与长度二的向量$\bm b$作完整数学卷积，可写为$\bm s=\bm H_{\bm g}\bm b$，其中
-\begin{equation}
-  \bm H_{\bm g}=\begin{bmatrix}
-    g_0&0\\g_1&g_0\\g_2&g_1\\0&g_2
-  \end{bmatrix},\qquad
-  \bm H_{\bm g}^\top\bm d=
-  \begin{bmatrix}
-    d_0g_0+d_1g_1+d_2g_2\\
-    d_1g_0+d_2g_1+d_3g_2
-  \end{bmatrix}\text{。}
-  \label{eq:cnn-winograd-filter-transposition}
-\end{equation}
-右侧正是长度四输入$\bm d$经过长度三核产生的两个互相关输出。把前面完整卷积的线性计算图转置，就可将“两个输入、四个完整输出”变为“四个输入、两个合法输出”，核心乘法仍为四次。
-
-更具体地，若完整卷积算法写为$\bm s=\bm R[(\bm E\bm g)\odot(\bm Q\bm b)]$，其中$\bm E,\bm Q$负责求值、$\bm R$负责恢复，则固定核后，整个映射是$\bm R\operatorname{Diag}(\bm E\bm g)\bm Q$。转置后得到
-\[
-  \bm H_{\bm g}^\top\bm d
-    =\bm Q^\top[(\bm E\bm g)\odot(\bm R^\top\bm d)]\text{。}
-\]
-这里$\operatorname{Diag}$把向量放到对角线上；转置只反转线性变换的顺序，逐项乘法仍使用相同的四个核组合。将固定系数$1/2$在数据变换与核变换之间重新分配，就得到下面常用的公式。这也解释了它与前节转置卷积的联系：利用的是线性映射的转置，而不是求逆。
-
-记$F(m,r)$为用$r$个核系数计算$m$个相邻互相关输出，这里的$m$指一个小块的输出数。$F(2,3)$读取$d_0,d_1,d_2,d_3$，核为$g_0,g_1,g_2$，目标是
-\[
-  y_0=d_0g_0+d_1g_1+d_2g_2,\qquad
-  y_1=d_1g_0+d_2g_1+d_3g_2\text{。}
-\]
-直接计算需要六次数据与核的乘法。通过固定变换，计算
-\begin{equation}
-  \begin{aligned}
-    m_1&=(d_0-d_2)g_0,\\
-    m_2&=(d_1+d_2)(g_0+g_1+g_2)/2,\\
-    m_3&=(d_2-d_1)(g_0-g_1+g_2)/2,\\
-    m_4&=(d_1-d_3)g_2,\\
-    y_0&=m_1+m_2+m_3,\qquad y_1=m_2-m_3-m_4\text{，}
-  \end{aligned}
-  \label{eq:cnn-winograd-one-dimensional}
-\end{equation}
-就能用四次核心乘法恢复同样的两个输出。恢复式可以逐项验证：
-\begin{equation}
-  \begin{aligned}
-    m_2+m_3&=d_1g_1+d_2(g_0+g_2),\\
-    m_2-m_3&=d_1(g_0+g_2)+d_2g_1\text{。}
-  \end{aligned}
-  \label{eq:cnn-winograd-recovery-principle}
-\end{equation}
-第一式加上$m_1=(d_0-d_2)g_0$，消去$d_2g_0$，便恢复$y_0$；第二式减去$m_4=(d_1-d_3)g_2$，消去$d_1g_2$，便恢复$y_1$。每个组合乘积同时承担多个原始项，输出恢复负责消去多余项。
-
-把这组标量计算写成矩阵形式，便能区分输入变换、核变换和输出恢复。适用于这里互相关方向的矩阵为
-\begin{equation}
-  \bm B^\top=\begin{bmatrix}
-    1&0&-1&0\\0&1&1&0\\0&-1&1&0\\0&1&0&-1
-  \end{bmatrix},\quad
-  \bm G=\begin{bmatrix}
-    1&0&0\\1/2&1/2&1/2\\1/2&-1/2&1/2\\0&0&1
-  \end{bmatrix}\text{，}
-  \label{eq:cnn-winograd-matrices-bg}
-\end{equation}
-\begin{equation}
-  \bm A^\top=\begin{bmatrix}1&1&1&0\\0&1&-1&-1\end{bmatrix}\text{。}
-  \label{eq:cnn-winograd-matrix-a}
-\end{equation}
-它们的尺寸分别为$4\times4$、$4\times3$和$2\times4$。令$\bm d=(d_0,d_1,d_2,d_3)^\top$、$\bm g=(g_0,g_1,g_2)^\top$，则式\eqref{eq:cnn-winograd-one-dimensional}等价于
-\begin{equation}
-  \bm m=(\bm B^\top\bm d)\odot(\bm G\bm g),
-  \qquad \bm y=\bm A^\top\bm m\text{，}
-  \label{eq:cnn-winograd-vector-transform}
-\end{equation}
-其中$\bm m=(m_1,m_2,m_3,m_4)^\top$，$\bm y=(y_0,y_1)^\top$。
-
-图~\ref{fig:cnn-winograd-example}取$\bm d=(1,2,3,4)$、$\bm g=(1,2,3)$，得到$\bm m=(-2,15,1,-6)$，再恢复$(14,20)$；直接计算也给出$1+4+9=14$和$2+6+12=20$。输入变换需要四次加减，核变换可用三次加减与两次乘以$1/2$，输出恢复需要四次加减。含$1/2$的核变换可在核参数不变时复用，不应把全部变换开销计为零。
-\begin{figure*}[htb]
-  \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-winograd-example/figure.pdf}
-  \caption{一维$F(2,3)$的完整数值路径。输入$\bm d=(1,2,3,4)^\top$与核$\bm g=(1,2,3)^\top$分别变为四个组合值，按位置相乘得到$\bm m=(-2,15,1,-6)^\top$，再用输出变换恢复两个互相关结果。四次核心乘法替代直接算法的六次乘法，加减与固定系数变换仍有成本。}
-  \label{fig:cnn-winograd-example}
-\end{figure*}
-
-\paragraph{沿两个轴组合变换}
-
-复用上述三个矩阵，把一维变换沿两个轴组合，$3\times3$核$\bm K$与$4\times4$输入块$\bm D$产生$2\times2$输出：
-\begin{equation}
-  \begin{aligned}
-    \bm U&=\bm G\bm K\bm G^\top,\qquad
-    \bm V=\bm B^\top\bm D\bm B,\\
-    \bm Y&=\bm A^\top(\bm U\odot\bm V)\bm A\text{。}
-  \end{aligned}
-  \label{eq:cnn-winograd-transform}
-\end{equation}
-左乘处理行方向，右乘处理列方向；因此$\bm U,\bm V$均为$4\times4$，逐元素乘积有十六项，输出恢复将其变为$2\times2$。这不是对每个输出独立使用一维技巧，而是两轴都先形成组合，再让十六个乘积服务于全部四个输出。直接计算的$4\times9=36$次核心乘法降为$16$次\scite{lavin2016fast}多通道时，每个输入通道分别变换，在变换域按通道累积$\sum_c\bm U_{c,o}\odot\bm V_c$，然后对每个输出通道恢复空间块。输入变换可供多个输出通道复用，核变换可供多个空间块与批量样本复用。由于输出变换是线性的，先对通道求和再恢复，与逐通道恢复后相加完全等价，却只需为每个输出通道执行一次恢复。若同时处理许多输入块，在每个变换位置$(\xi,\nu)$上，还可把全部核组合排成$c_{\mathrm{out}}\times c_{\mathrm{in}}$矩阵、输入组合排成$c_{\mathrm{in}}\times n_{\mathrm{tile}}$矩阵，进行一次通道矩阵乘法；$n_{\mathrm{tile}}$是当前输入块数。$F(2\times2,3\times3)$因而可以组织为十六组通道矩阵乘法。这种结构使变换算法也能使用GEMM，与前面的矩阵化路线并不矛盾。
-
-实现时先为每个输入、输出通道对变换核，再将输出切成互不重叠的$2\times2$块。每个输出块读取一个$4\times4$输入块，变换输入、完成通道乘加、恢复四个空间输出，再加偏置。相邻输出块的起点相隔两格，对应输入块重叠两行或两列；边缘不足一块时需填充或单独处理。变换后的核有$16$个系数而非$9$个，活动值工作区也会扩大；可以分块处理以控制内存。更大输出块虽然进一步减少单位输出的核心乘法，却通常增加变换成本和数值敏感性。上述方案直接适用于步长一、无空洞的$3\times3$设置，其他设置需要另行构造算法或选择别的内核。
-
-\begin{figure*}[tb]
-  \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-transform-algorithms/figure.png}
-  \caption{变换类卷积的共同流程与不同目标。Toom--Cook通过多项式求值及插值恢复完整乘积系数；Winograd通过固定小矩阵恢复所需输出块；FFT在补零后的频域相乘并反变换。输入和核可以分别变换，变换结果按输入通道相乘并求和；能复用多少次，决定变换开销能否被摊薄。}
-  \label{fig:cnn-transform-algorithms}
-\end{figure*}
-
-\subsubsection{FFT与分块频域卷积}
-\label{sec:cnn-fft}
-
-若求值和插值自身仍有很高的成本，减少点值乘法就未必能带来收益。\term{快速傅里叶变换}（fast Fourier transform, FFT）利用单位根的对称性，加速从系数到点值、再从点值到系数的转换。Toom--Cook在少数实数点上求值，FFT则选取复平面上等间隔的单位根。若补零后的序列长$N$，记$\zeta_N=\exp(-2\pi\mathrm i/N)$，其中$\mathrm i$为虚数单位。长度$N$的离散傅里叶变换（discrete Fourier transform, DFT）及其逆变换为
-\begin{equation}
-  \begin{aligned}
-    \widehat x_\omega&=\sum_{i=0}^{N-1}x_i\zeta_N^{\omega i},
-       &&\omega=0,\ldots,N-1,\\
-    x_i&=\frac1N\sum_{\omega=0}^{N-1}
-                    \widehat x_\omega\zeta_N^{-\omega i},
-       &&i=0,\ldots,N-1\text{。}
-  \end{aligned}
-  \label{eq:cnn-dft-inverse}
-\end{equation}
-正变换就是在$\zeta_N^\omega$处计算$X(z)$的值，逆变换恢复系数。归一化因子$1/N$不可省略；因为单位根的正交关系使$\sum_\omega\zeta_N^{\omega(i-j)}$在$i=j$时等于$N$，在不同索引时等于零。与一般点值插值相比，单位根的规则结构允许快速求值和快速恢复。
-
-\paragraph{FFT怎样加速求值与恢复}
-
-直接DFT为$N$个频率各求一个长度$N$的和，需要$O(N^2)$工作。以$N$为二的幂为例，把系数分成偶数索引与奇数索引，分别得到长度$N/2$的序列，其DFT记为$E_\omega,O_\omega$。由于$\zeta_N^2=\zeta_{N/2}$，对$0\leq\omega<N/2$有
-\begin{equation}
-  \begin{aligned}
-    \widehat x_\omega&=E_\omega+\zeta_N^\omega O_\omega,\\
-    \widehat x_{\omega+N/2}&=E_\omega-\zeta_N^\omega O_\omega\text{。}
-  \end{aligned}
-  \label{eq:cnn-fft-butterfly}
-\end{equation}
-同一对$E_\omega,O_\omega$同时服务两个频率，第二式的减号来自$\zeta_N^{N/2}=-1$。这一步没有丢掉一半频率，而是用两个较小DFT和线性合并恢复全部频率。递归满足$T(N)=2T(N/2)+O(N)$，共有$\log_2N$层、每层$O(N)$工作；逆变换改变指数符号并除以$N$，可沿用同样的递归。这是Cooley--Tukey分治的一种基二形式，其他合成长度也可按其因子分解，不要求所有FFT的长度都为二的幂\scite{cooley1965fft}
-
-\paragraph{频域乘法为什么等于卷积}
-
-对循环卷积$y_j=\sum_{i=0}^{N-1}x_i k_{(j-i)\bmod N}$，将DFT中的求和按$j=i+a\pmod N$重排，得到
-\begin{equation}
-  \widehat y_\omega
-    =\sum_{i=0}^{N-1}\sum_{a=0}^{N-1}
-        x_i k_a\zeta_N^{\omega(i+a)}
-    =\widehat x_\omega\widehat k_\omega\text{。}
-  \label{eq:cnn-convolution-theorem-derivation}
-\end{equation}
-周期性保证索引回绕不会改变单位根的幂。空间中的加权求和变成每个频率上的一次乘法，求值后只需$N$项乘法，再用$O(N\log N)$成本逆变换回去。这一卷积定理可写为
-\begin{equation}
-  \bm x*_N\bm k=\mathcal F_N^{-1}
-       \!\left(\mathcal F_N(\bm x)\odot\mathcal F_N(\bm k)\right)\text{。}
-  \label{eq:cnn-fft-convolution}
-\end{equation}
-这直接得到循环卷积。若要计算长度$n_x,n_k$的有限序列的线性卷积，应先将两者补零到$N\geq n_x+n_k-1$，避免末端贡献回绕叠加到开头。二维情况沿高、宽分别满足补零要求。
-
-例如$(1,2,3,4)$与$(1,-1)$的完整数学卷积是$(1,1,1,1,-4)$，至少需要长度五的变换。若只取长度四，最后一项回绕，首项变为$1-4=-3$，得到$(-3,1,1,1)$，已是另一个运算。网络中的valid互相关应先按约定翻转核，再选取完整线性卷积中对应的输出位置。例如先把$(1,-1)$翻成$(-1,1)$，完整卷积为$(-1,-1,-1,-1,4)$，保留索引一至三便得到互相关输出$(-1,-1,-1)$。补零、翻转和裁剪不能只靠“FFT后乘一下”省略。
-
-多通道二维卷积先分别变换输入和核，在每个频率上计算$\widehat y_o=\sum_c\widehat x_c\widehat k_{c,o}$，再对每个输出通道反变换。若补零后的网格含$N$个位置，核心频域乘加量为$O(n_{\mathrm b}c_{\mathrm{in}}c_{\mathrm{out}}N)$，另有输入、核及输出的变换成本，其量级分别为
-\[
-  O(n_{\mathrm b}c_{\mathrm{in}}N\log N),\quad
-  O(c_{\mathrm{in}}c_{\mathrm{out}}N\log N),\quad
-  O(n_{\mathrm b}c_{\mathrm{out}}N\log N)\text{。}
-\]
-这里$N$是补零后二维网格的总位置数，频域乘法通常是复数乘法，不能直接与一次实数乘法等价计价。输入频谱可供多个输出核复用，核频谱在参数不变时可跨样本复用；训练中参数更新后需要重算。Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu2014fft}
-
-\paragraph{长输入怎样逐块计算}
-
-FFT算法也可以逐块计算，以限制变换规模。\term{重叠相加}（overlap-add）将输入分块，每块补零后计算完整线性卷积，再将重叠的输出贡献相加；\term{重叠保留}（overlap-save）则让相邻输入块保留核长减一的重叠，只输出每块中没有循环污染的部分。一维核长$k$、变换长度$N$时，每块可保留$N-k+1$个新输出。例如将$(1,2,3,4)$拆为$(1,2)$与$(3,4)$，分别和$(1,-1)$作完整卷积，得到$(1,1,-2)$与$(3,1,-4)$。第二块原本从位置二开始，恢复后也要平移两位；重叠位置的$-2$与$3$相加，便得到整段输出$(1,1,1,1,-4)$，见图~\ref{fig:cnn-fft-blocks}。每块内部仍须补零至至少$2+2-1=3$，分块不能消除线性卷积的补零要求。
-
-重叠保留选择另一种组织方式。取核长二、$N=4$，每个输入块保留前一块最后一个输入值，再接三个新值。首块为$(0,1,2,3)$，其循环卷积为$(-3,1,1,1)$；丢掉受回绕污染的第一项，保留$(1,1,1)$。下一块为$(3,4,0,0)$，保留结果$(1,-4,0)$，按目标长度截取前两项，仍恢复同一个完整输出。重叠相加在输出端相加，重叠保留在输入端重叠并丢弃污染位置，两者不能混用拼接规则。
-
-\begin{figure*}[htb]
-  \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-fft-blocks/figure.pdf}
-  \caption{重叠相加的数值例子。输入在原位置零和二分别开始两个长度二的块，块内补零后计算与$(1,-1)$的完整卷积，恢复到图上的五个全局输出位置。红色区域表示该块可能产生贡献的位置，区域外记为零。虚线框内的两项贡献相加为一，最终结果与不分块的线性卷积相同。}
-  \label{fig:cnn-fft-blocks}
-\end{figure*}
-
-块太小使变换和重叠开销增加，块太大增加内存及延迟。复数数组、变换代价与跨步后被丢弃的输出，都会影响FFT是否适合某一层。
-
-\subsubsection{空间可分离核：利用低秩结构}
-\label{sec:cnn-separable-implementation}
-
-还有一种加速依赖核自身的代数结构。若单通道核可写成$k_{a,b}=u_a v_b$，即$\bm K=\bm u\bm v^\top$，二维滤波就可分解为一个方向的长度$k_h$滤波和另一个方向的长度$k_w$滤波。这一分解直接来自求和顺序：
-\begin{equation}
-  \begin{aligned}
-    t_{i,j}&=\sum_{b=0}^{k_w-1}v_bx_{i,j+b},\\
-    y_{i,j}&=\sum_{a=0}^{k_h-1}u_at_{i+a,j}
-      =\sum_{a=0}^{k_h-1}\sum_{b=0}^{k_w-1}
-          u_av_bx_{i+a,j+b}\text{。}
-  \end{aligned}
-  \label{eq:cnn-spatial-separable-derivation}
-\end{equation}
-水平结果$t_{i,j}$可以被多个垂直窗口复用，因此不必为每个二维窗口重新计算整组水平点积。步长一、无空洞且逐轴边界与裁剪一致时，在足够大的网格上，主要成本由每个输出附近的$k_hk_w$项降为约$k_h+k_w$项，代价是保存或流式处理一维中间结果。
-
-取$\bm u=\bm v=(1,2,1)^\top$，则$\bm K=\left[\begin{smallmatrix}1&2&1\\2&4&2\\1&2&1\end{smallmatrix}\right]$。对原$4\times4$输入，水平滤波先得到$4\times2$的中间矩阵，再垂直滤波得到$2\times2$输出，图~\ref{fig:cnn-spatial-separable}列出全部数值。左上输出为$8+2\times24+40=96$，与直接二维求和一致。
-
-这个小例子也提醒我们区分局部估算与完整成本。不填充时，中间矩阵尺寸是$h\times w'$，所以两阶段共需$hw'k_w+h'w'k_h$次核心乘法，并不严格等于$h'w'(k_h+k_w)$。本例需要$4\times2\times3+2\times2\times3=36$次，与直接计算的$2\times2\times9=36$次相同；对$100\times100$输入，同一核的两阶段成本为$58212$次，直接计算则为$86436$次。图像相对核越大，中间区域的额外边界开销越容易摊薄。
-\begin{figure*}[htb]
-  \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-spatial-separable/figure.pdf}
-  \caption{秩一空间核的两阶段计算。水平核与垂直核均为$(1,2,1)$，组成$3\times3$核$\bm u\bm v^\top$。在步长一、无填充条件下，原$4\times4$输入先变为$4\times2$中间结果，再变为$2\times2$输出。该小例子的两阶段核心乘法量仍为三十六次，图示验证的是结果等价，而非每种输入尺寸都能节省计算。}
-  \label{fig:cnn-spatial-separable}
-\end{figure*}
-
-
-一般核未必秩一。对核作奇异值分解，将第$r$个奇异值吸收到一个向量中，可写成$\bm K=\sum_{r=1}^{\rho}\bm u_r\bm v_r^\top$，其中$\rho$为保留的非零奇异值个数。保留全部非零奇异值时，分解是精确的；计算$\rho$组一维滤波并相加，即可恢复原二维核的输出。在大网格上的每位置主要成本约为$\rho(k_h+k_w)$，只有这比$k_hk_w$足够小，才可能抵消分解与中间读写。只保留较少的奇异值通常会改变输出，属于近似算法，应检查误差或重新训练。这里的空间可分离性也不同于第~\ref{sec:cnn-layer}节的深度可分离卷积，后者改变了通道连接方式，不能作为任意密集卷积的无损替换。
-
-\begin{table*}[htb]
-  \centering
-  \begin{tabularx}{\linewidth}{@{}lXX@{}}
-    \toprule
-    计算路线 & 计算过程的改变 & 适用条件与代价\\
-    \midrule
-    直接计算 & 枚举全部局部乘积并累积 & 适用各种采样设置，乘加量为$c_{\mathrm{out}}qm$\\
-    矩阵化计算 & 将点积集中为矩阵乘法 & 普通GEMM保持乘加量；Strassen可减少块乘法，但增加加减与误差敏感性\\
-    Toom--Cook & 求值、逐点乘法、插值 & 面向多项式乘积，可能计算不需要的输出系数\\
-    Winograd & 固定变换恢复小块滤波输出 & 小核、小步长设置；变换成本及数值条件需核对\\
-    FFT & 频域乘法后反变换 & 线性卷积须补零，变换与复数运算有成本\\
-    空间可分离核 & 低秩分解为一维滤波 & 无损计算要求相应低秩结构；截断分解会改变输出\\
-    \bottomrule
-  \end{tabularx}
-  \caption{按计算过程比较卷积算法。矩阵化本身不减少普通乘加量，但提供了选择矩阵乘法算法的入口。前五条路线在精确算术下计算同一目标映射；空间可分离路线还要求核具有相应结构。表中不把显式展开、隐式取数等存储选择作为新的代数算法。}
-  \label{tab:cnn-algorithms}
-\end{table*}
+\BookSectionRef{sec:signal-analysis-fast-separable}{第一卷中的可分离核计算}按单个空间核的低秩分解减少求和。
+它与第~\ref{sec:cnn-layer}节的深度可分离卷积不同：后者改变通道连接方式，不能作为任意密集卷积的无损替换。
+截断低秩分解会改变本层输出，需要检查误差或重新训练。
 
 \subsubsection{工程实现与优化}
 \label{sec:cnn-engineering}

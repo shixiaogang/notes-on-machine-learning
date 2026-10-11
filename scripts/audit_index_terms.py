@@ -22,7 +22,7 @@ VOLUMES = (
     "06-systems",
 )
 # Baseline after removing repeated mathematics and aligning model terminology.
-EXPECTED_CALLS = 2284
+EXPECTED_CALLS = 2283
 EXPECTED_UNIQUE_TERMS = 1981
 SHARED_TERM_FILES = (Path("tex/styles/environments.tex"),)
 VERBATIM_ENVIRONMENTS = {"verbatim", "Verbatim", "lstlisting", "minted"}

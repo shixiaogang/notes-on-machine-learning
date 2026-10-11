@@ -46,9 +46,9 @@ def check(registry):
         group = str(item['volume'])
         counts.setdefault(group, {'replacement': 0, 'addition': 0})
         counts[group]['addition' if item.get('is_addition') else 'replacement'] += 1
-    expected = {'1': {'replacement': 111, 'addition': 5},
+    expected = {'1': {'replacement': 116, 'addition': 5},
                 '2': {'replacement': 83, 'addition': 7},
-                '3': {'replacement': 216, 'addition': 8}}
+                '3': {'replacement': 211, 'addition': 8}}
     if counts != expected:
         errors.append(f'Integration counts differ: {counts}')
     # The original inventory was exhaustive: all first-three-volume figures

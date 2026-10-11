@@ -8,7 +8,8 @@
 | --- | --- | --- |
 | 全书 | [六卷结构](book-structure.md) | 出版单元、内容边界与部分目录 |
 | 数学准备 | [阅读结构](mathematical-preliminaries-reading-structure.md)、[章目映射](mathematical-preliminaries-chapter-map.md) | 六部分17章，使用现行编号与源文件路径 |
-| 数学与后续研究 | [第17章职责](chapter17-learning-framework-outline.md) | 对象定义、任务表述与按对象组织的方法联系；四节，含独立小结 |
+| 空间与几何 | [空间三章大纲](spaces-and-geometry-outline.md) | 第5至7章，三章共享六个研究维度 |
+| 数学与后续研究 | [第17章职责](chapter17-learning-framework-outline.md) | 共同对象、学习设定、分析关系与数学工具的对应；五节，含独立小结 |
 | 机器学习基础 | [引言](introduction-outline.md)、[模型简介](machine-learning-models-outline.md)、[范式简介](machine-learning-paradigms-outline.md) | 第二卷前三章的现行安排 |
 | 机器学习理论 | [部分大纲](learning-theory-outline.md) | 六章；全集21—26章，第二卷单卷4—9章 |
 | 可信性 | [六卷结构](book-structure.md)中的内容边界 | 八章；具体节次以 `tex/02-foundations/03-trustworthiness/` 为准 |
@@ -20,7 +21,6 @@
 
 | 部分 | 大纲 | 规划章数 |
 | --- | --- | --- |
-| 数学准备第二部分 | [空间三章重构大纲](spaces-and-geometry-outline.md) | 3（重构现有章节） |
 | 强化学习 | [部分大纲](reinforcement-learning-outline.md) | 8 |
 | 知识的获取 | [部分大纲](efficient-knowledge-use-outline.md) | 7 |
 | 知识的演进与迁移 | [部分大纲](knowledge-evolution-and-transfer-outline.md) | 7 |
