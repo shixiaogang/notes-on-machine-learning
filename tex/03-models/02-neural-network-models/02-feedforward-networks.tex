@@ -320,14 +320,18 @@ SiLU因而不是与Swish完全不同的函数，而是其固定参数实例。Si
 
 Maxout适合希望学习分段响应形状的隐藏单元，也曾与Dropout联合研究。相对于一个普通仿射响应，它有$K$套权重与偏置，参数和响应计算量通常约增至$K$倍，而不是无论$K$多大都只增加一倍。它不包含固定的负半轴零梯度区域，但某些分支仍可能长期不是最大者而收不到梯度。它还不再是式\eqref{eq:ffn-hidden-layers}中逐坐标作用于一个仿射响应的激活，反向计算需使用最大值选择对应的规则。
 
-若目的不是选择一个最大数值，而是把$K$个得分转换为互斥事件的概率，可以使用\term{Softmax变换}。对$\bm{z}\in\mathbb{R}^{K}$，其第$k$个输出为
+把$K$个得分转换为互斥事件的概率时，使用卷一的\term{归一化指数映射}（softmax）。
+对$\bm{z}\in\mathbb{R}^{K}$，其第$k$个输出为
 \begin{equation}
   p_k=\operatorname{softmax}(\bm{z})_k
   =\frac{\exp(z_k)}{\sum_{j=1}^{K}\exp(z_j)},
   \qquad \sum_{k=1}^{K}p_k=1\text{。}
   \label{eq:ffn-softmax-activation}
 \end{equation}
-每个概率依赖全部输入坐标，所以不存在脱离其他得分的唯一一元Softmax曲线。其雅可比为$\partial p_k/\partial z_j=p_k(\mathbb{I}\{k=j\}-p_j)$。Softmax适合互斥多分类输出和需要归一化权重的模块；多标签输出则通常分别使用Sigmoid。训练时把Softmax与交叉熵合并，可以得到更直接且数值稳定的梯度，下一小节将展开。
+每个概率依赖全部输入坐标，所以不存在脱离其他得分的唯一一元Softmax曲线。
+Jacobian矩阵沿用\BookEquationRef{eq:analysis-softmax-jacobian}{第一卷“数学准备”的softmax求导公式}。
+Softmax适合互斥多分类输出和需要归一化权重的模块；多标签输出则通常分别使用Sigmoid。
+训练时把Softmax与交叉熵合并，可以得到更直接且数值稳定的梯度，下一小节将展开。
 
 \begin{figure*}[htb]
   \centering
@@ -594,7 +598,11 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
 \subsection{反向传播}
 \label{sec:ffn-backpropagation}
 
-隐藏层没有直接给定的目标值，怎样判断某个隐藏权重应当增大还是减小？一个权重改变了本层输出，本层输出改变了后续表示，后续表示又改变最终损失。链式法则把这些局部影响相乘并汇总。\term{反向传播}（backpropagation）按照与前向依赖相反的顺序组织这项计算，让不同参数重复利用已经算出的中间导数。
+隐藏层没有直接给定的目标值，怎样判断某个隐藏权重应当增大还是减小？
+沿用\BookEquationRef{eq:analysis-vector-chain-rule}{第一卷“数学准备”的向量链式法则}，
+从标量损失按Jacobian转置逐层回传。
+\term{反向传播}（backpropagation）把这项规则用于网络计算图，
+重复利用各层导数；本节展开具体的预激活敏感度、参数梯度与批量汇总。
 
 先固定一个样本，把输出变换与损失合为标量函数$\ell(\bm{a},\bm{y})$。用列向量表示梯度，定义
 \begin{equation}
@@ -606,7 +614,10 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
 \end{equation}
 向量$\bm{\delta}^{(\ell)}\in\mathbb{R}^{d_\ell}$记录损失对本层各预激活坐标的敏感程度。它常被称为反向传播的“误差”，但一般并不是本层输出减去某个隐藏标签；隐藏层并没有这样的标签。
 
-由式\eqref{eq:ffn-output-map}，输出得分对$\bm{h}^{(L)}$的雅可比为$\bm{W}_{L+1}$，所以损失对最后一个隐藏表示的梯度为$\bm{W}_{L+1}^{\top}\bm{\delta}^{(L+1)}$。隐藏激活逐坐标作用，其雅可比是以各坐标导数为对角元素的矩阵。把两步链式法则合起来，便得到逐层递推：
+由式\eqref{eq:ffn-output-map}，输出得分对$\bm{h}^{(L)}$的Jacobian矩阵为$\bm{W}_{L+1}$，
+所以损失对最后一个隐藏表示的梯度为$\bm{W}_{L+1}^{\top}\bm{\delta}^{(L+1)}$。
+隐藏激活逐坐标作用，其Jacobian矩阵以各坐标导数为对角元素。
+把两步链式法则合起来，便得到逐层递推：
 \begin{equation}
   \bm{\delta}^{(\ell)}=
   \left(\bm{W}_{\ell+1}^{\top}\bm{\delta}^{(\ell+1)}\right)
@@ -818,7 +829,7 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
 \subsubsection{两种模式的计算代价}
 \label{sec:ffn-autodiff-cost}
 
-对一般映射$\bm{F}:\mathbb{R}^{p}\to\mathbb{R}^{q}$，记雅可比为$\bm{J}_{\bm{F}}\in\mathbb{R}^{q\times p}$。前向模式在给定输入方向$\bm{v}\in\mathbb{R}^{p}$时计算$\bm{J}_{\bm{F}}\bm{v}$，后向模式在给定输出权重$\bm{u}\in\mathbb{R}^{q}$时计算$\bm{J}_{\bm{F}}^{\top}\bm{u}$。二者都可直接计算乘积，无需存储完整雅可比。用逐坐标方向构造完整雅可比时，前向模式需要$p$个方向，后向模式需要$q$个方向；实际代价还取决于批处理、稀疏结构和基本算子的实现。
+对一般映射$\bm{F}:\mathbb{R}^{p}\to\mathbb{R}^{q}$，沿用卷一的Jacobian矩阵$\bm{J}_{\bm{F}}\in\mathbb{R}^{q\times p}$与列向量梯度约定。前向模式在给定输入方向$\bm{v}\in\mathbb{R}^{p}$时计算$\bm{J}_{\bm{F}}\bm{v}$，后向模式在给定输出权重$\bm{u}\in\mathbb{R}^{q}$时计算$\bm{J}_{\bm{F}}^{\top}\bm{u}$。二者都可直接计算乘积，无需存储完整Jacobian矩阵。用逐坐标方向构造完整Jacobian矩阵时，前向模式需要$p$个方向，后向模式需要$q$个方向；实际代价还取决于批处理、稀疏结构和基本算子的实现。
 
 神经网络训练通常有很多参数，却只有一个标量目标，即$q=1$。后向模式从该目标出发，能够在与前向求值同阶的算术工作中得到完整参数梯度，代价是保存或重新计算反向所需的中间值。前述反向传播就是后向模式在神经网络损失上的具体应用\scite{baydin2018autodiff}
 
@@ -834,25 +845,13 @@ GELU、SiLU和ELU的负区间响应不同，不具有ReLU完全相同的截断�
 
 前章的异或例子是一个精确表示结论：指定输入集合上存在某组参数，输出规则与标签一致。面对一般连续输入，常见问题则是能否让网络与目标函数的误差足够小。\term{表达性}（expressivity）描述网络族能够表示或逼近哪些函数；它的判断对象是整类可选参数形成的函数，而不是某次训练得到的参数。
 
-一个重要存在性结论是\term{通用逼近}（universal approximation）：允许适当增加网络规模时，可以逼近规定函数类中的任意目标。下面把输入限制在紧集内；在有限维实数空间中，这就是闭且有界的集合，例如$[0,1]^d$。我们要求范围内每个输入的绝对误差都小于给定精度，而不只是训练样本的平均误差小，这称为一致误差控制。定理将明确这一误差要求下允许怎样选择网络规模。
-
-\begin{theorem}[单隐藏层的通用逼近]
-  \label{thm:ffn-universal-approximation}
-  设$\bm{X}\subset\mathbb{R}^{d}$为非空紧集，$f:\bm{X}\to\mathbb{R}$连续，激活函数$\sigma:\mathbb{R}\to\mathbb{R}$连续且不是多项式。对于任意$\varepsilon>0$，存在有限宽度$m$及参数$a_j,b_j\in\mathbb{R}$、$\bm{w}_j\in\mathbb{R}^{d}$和$c\in\mathbb{R}$，使
-  \begin{equation}
-    \begin{aligned}
-      g(\bm{x})&=c+\sum_{j=1}^{m}a_j\sigma(\bm{w}_j^{\top}\bm{x}+b_j),\\
-      \sup_{\bm{x}\in\bm{X}}|g(\bm{x})-f(\bm{x})|&<\varepsilon\text{。}
-    \end{aligned}
-    \label{eq:ffn-universal-approximation}
-  \end{equation}
-\end{theorem}
-
-这一定理是Leshno等关于非多项式激活结果在连续情形下的表述，隐藏层具有偏置，输出是隐藏响应的线性组合\scite{leshno1993approximation}Sigmoid、Tanh、ReLU、GELU与SiLU均满足这里的激活条件；ReLU不必处处可微，因为逼近定理并没有要求求导。向量值连续目标可以逐坐标应用该结论，再组合有限个隐藏单元。
-
-定理中的量词顺序是先给定$f$与$\varepsilon$，再选择宽度和参数。它没有给出一个固定宽度对所有目标都够用的结论，也没有限制参数范数、保证梯度下降找到这些参数，或规定需要多少训练样本。误差控制只覆盖$\bm{X}$，不能据此保证域外外推。连续网络也不能在包含跳跃点的区间上，以任意小的一致误差逼近跳跃函数；改用按数据分布加权的误差，讨论对象与条件就会改变。
-
-非线性本身也不是单隐藏层通用逼近的充分条件。例如，若激活为$\sigma(z)=z^2$，不论隐藏层多宽，线性输出都是输入坐标的次数至多为$2$的多项式。固定深度的多项式激活网络也只有有界次数，不能套用上述定理。这一反例针对规定深度和输出形式；若允许深度变化，函数类也会改变。
+逼近能力使用
+\BookTheoremRef{thm:functional-universal-approximation}{第一卷“数学准备”的单隐藏层通用逼近定理}：
+在非空紧输入集上，对连续目标使用连续非多项式激活、隐藏偏置与线性输出，
+给定精度后可选择有限宽度和参数，使一致误差小于该精度。
+本章的Sigmoid、Tanh、ReLU、GELU与SiLU满足这些激活条件。
+这只给出函数表示的存在性；固定层宽、参数范数、训练求解与域外预测仍需分别判断。
+下面关注前馈结构怎样利用宽度与深度组织这些表示。
 
 ReLU网络的一个直接读法是分段仿射变换。在一组隐藏单元的正负状态固定的输入区域内，所有ReLU都等价于保留某坐标或置零，整个网络因而是仿射的。不同激活状态形成不同区域，区域边界随参数改变。它能拼接出复杂形状，但固定有限网络仍只有有限个这样的区域。
 

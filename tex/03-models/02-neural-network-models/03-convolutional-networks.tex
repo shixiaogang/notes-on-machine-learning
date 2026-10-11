@@ -37,87 +37,29 @@
 \section{卷积运算}
 \label{sec:cnn-convolution}
 
-局部规则需要一个明确的计算形式：在每个位置读取哪些输入，每个输入乘什么权重，结果怎样相加。数学卷积提供了这一形式；网络实现则会调整核的方向、边界和采样方式。本节先固定运算含义，再用同一组数值检查这些调整。
+局部规则需要明确读取哪些输入、怎样共享权重。
+\BookSectionRef{sec:signal-analysis-lti-convolution}{第一卷“数学准备”的卷积映射小节}
+已经建立数学卷积及其线性、平移性质；本节把这些结果用于可学习的多通道运算，
+重点检查核方向、边界、步幅与实现方式如何改变网络的输出。
 
-\Needspace{14\baselineskip}
-\subsection{卷积的定义}
+\subsection{从数学卷积到网络运算}
 \label{sec:cnn-convolution-definition}
 
-在一维信号中，一个时刻的结果可以由周围时刻的输入加权形成。\term{连续卷积}（continuous convolution）用积分累积这些贡献，定义时需要指定输入的定义域、核的方向和积分存在的条件。
+数学卷积用相对位置决定权重。对有限支撑的一维核$k$，离散输出为
+\[
+  y_i=\sum_a k_a x_{i-a}.
+\]
+本章的输入与核都是有限数组；补零或周期延拓决定边界外的取值，裁剪再决定保留哪些输出。
+二维核的数学卷积同时反转行、列方向，相当于旋转$180$度。
+网络实现通常省去这一翻转，采用卷一已区分的互相关；
+第~\ref{sec:cnn-matrix-operation}节用同一窗口比较这两种运算。
 
-\begin{definition}[连续卷积]
-  \label{def:cnn-continuous-convolution}
-  设$d\geq1$，$f,g\in L^1(\mathbb R^d)$，即二者在$\mathbb R^d$上绝对可积。它们的卷积$f*g$定义为
-  \begin{equation}
-    (f*g)(\bm t)=\int_{\mathbb R^d}
-      f(\bm\tau)g(\bm t-\bm\tau)\,\mathrm d\bm\tau\text{，}
-    \label{eq:cnn-continuous-convolution}
-  \end{equation}
-  该积分几乎处处存在，且$f*g\in L^1(\mathbb R^d)$。
-\end{definition}
-
-当$d=1$时，式中$\bm t,\bm\tau$改为标量$t,\tau$，积分范围是整条实数轴。$t$是输出位置，$\tau$遍历输入位置，$g(t-\tau)$给出输入$f(\tau)$在该位置的权重。作为$\tau$的函数，$g(t-\tau)$可由$g(\tau)$翻转后再平移得到。积分将重叠位置上的乘积累积成一个数值；移动$t$便得到整条输出信号。绝对可积条件保证这个定义成立，不要求两个函数处处连续。
-
-二维数组中的翻转要同时反转核的行、列顺序，相当于旋转$180$度。省去翻转会怎样改变输出，第~\ref{sec:cnn-matrix-operation}节和图~\ref{fig:cnn-kernel-flip}将用同一输入窗口直接比较。
-
-\term{离散卷积}（discrete convolution）把积分换成网格上的求和。记$\ell^1(\mathbb Z^d)$为满足$\sum_{\bm i\in\mathbb Z^d}|x_{\bm i}|<\infty$的序列空间，整数向量$\bm i$标识网格位置。
-
-\begin{definition}[离散卷积]
-  \label{def:cnn-discrete-convolution}
-  对$x,k\in\ell^1(\mathbb Z^d)$，其离散卷积为
-  \begin{equation}
-    (x*k)_{\bm i}=\sum_{\bm a\in\mathbb Z^d}
-       x_{\bm a}k_{\bm i-\bm a}
-      =\sum_{\bm a\in\mathbb Z^d}k_{\bm a}x_{\bm i-\bm a}\text{。}
-    \label{eq:cnn-discrete-convolution}
-  \end{equation}
-  所有位置的求和绝对收敛，且$x*k\in\ell^1(\mathbb Z^d)$。$k$称为\term{卷积核}（convolution kernel），它规定不同相对位置的加权方式。
-\end{definition}
-
-一维时把向量索引简写为$i,a$，二维时展开为$(i,j),(a,b)$。若核只有有限个非零元素，每个输出仅需有限次乘加，因而也可对不绝对可和的输入逐点定义。取$k_0=k_1=1/2$、其余为零，有$y_i=(x_i+x_{i-1})/2$：输出是当前值与前一时刻值的平均。核的索引方向决定使用过去还是未来的输入。有限长度输入和核可在定义域外补零，此时完整一维卷积的支撑长度至多为$n_x+n_k-1$；裁去两端所得的短输出是完整卷积的一个选段。
-
-有限信号还可以采用周期边界，此时使用\term{循环卷积}（circular convolution），越过末端的位置会按周期返回原序列。
-\begin{definition}[循环卷积]
-  \label{def:cnn-circular-convolution}
-  对长度为$n$的序列$\bm x,\bm k\in\mathbb R^n$，循环卷积为
-  \begin{equation}
-    (\bm x*_n\bm k)_i=\sum_{a=0}^{n-1}
-      x_a k_{(i-a)\bmod n},\qquad i=0,\ldots,n-1\text{。}
-    \label{eq:cnn-circular-convolution}
-  \end{equation}
-  下标按模$n$返回原序列，等价于先作周期延拓，再在一个周期上求和。
-\end{definition}
-循环卷积保留$n$个输出，越过末端的贡献会回到开头。零延拓的线性卷积则让这些贡献留在更长的输出中。这一区别将直接影响FFT实现的补零与裁剪。
-
-卷积对每个输入分别具有线性性。例如，对标量$\alpha,\beta$及序列$x,z$，
-\begin{equation}
-  (\alpha x+\beta z)*k=\alpha(x*k)+\beta(z*k)\text{。}
-  \label{eq:cnn-convolution-linearity}
-\end{equation}
-在上述绝对可和条件下，卷积还满足交换律$x*k=k*x$和结合律$(x*k)*g=x*(k*g)$。交换律可通过把求和变量$a$改为$i-a$得到；结合律依赖双重求和可以交换次序。有限支撑序列天然满足这些条件。这些性质针对完整的数学卷积，插入裁剪、跨步或非线性后，不能直接沿用。
-
-平移性质同样可以由换元看出。记$(T_r x)_i=x_{i-r}$，即将序列平移整数$r$个位置，则
-\begin{equation}
-  (T_r x)*k=T_r(x*k)\text{。}
-  \label{eq:cnn-convolution-equivariance}
-\end{equation}
-这条等式比较的是同一组核权重下的两个输出，解释了参数共享与平移等变性的联系。多个线性卷积可以合并成一个有效卷积核；网络在层间加入激活，才使这种逐层组合超出单次线性滤波。
-
-这一定义还解释了卷积为什么适合表示共享局部规则。设$L$是定义在有限支撑序列上的线性算子，并满足$L(T_r x)=T_r(Lx)$。令$\delta$为仅在零位置取一的单位脉冲，记$k=L\delta$。任意有限支撑输入都可写成$x=\sum_a x_aT_a\delta$，于是
-\begin{equation}
-  Lx=\sum_a x_aT_a(L\delta)=\sum_a x_aT_a k=x*k\text{。}
-  \label{eq:cnn-lsi-convolution}
-\end{equation}
-换言之，线性性与对所有整数平移的等变性共同确定了卷积形式；$k$就是系统对单位脉冲的响应。这里限制输入为有限支撑，避免无穷级数还需额外连续性假设的问题。有限图像的裁剪和跨步不一定满足同样的平移条件。
-
-卷积的物理意义可以从“输入引起响应，响应随时间展开”来理解。设一个理想化的蓄水装置收到一升水后，当日排出$0.5$升，次日排出$0.3$升，再下一日排出$0.2$升。假设排水量与进水量成正比，而且同一升水在不同日期进入，排水规律只随之平移。核$k=(0.5,0.3,0.2)$就是单位输入的响应：$k_a$表示输入发生后第$a$天释放的比例。某日总排水量则是此前各次进水在这一天产生的贡献之和，即$y_i=\sum_a x_a k_{i-a}$。下标$i-a$表示“距离第$a$天进水已经过去多久”，这正是卷积中相对位置的含义。
-
-例如，令第零天进水$10$升、第一天为零、第二天进水$20$升，其余日期也为零。第零天排出$10\times0.5=5$升，第一天为$10\times0.3=3$升；第二天同时收到两次进水的贡献，为$10\times0.2+20\times0.5=12$升。完整结果为
-\begin{equation}
-  (10,0,20)*(0.5,0.3,0.2)=(5,3,12,6,4)\text{。}
-  \label{eq:cnn-physical-convolution-example}
-\end{equation}
-输出之和仍为$30$升，因为这里的核系数非负且和为一，所有进水最终排出。连续时间中，每个瞬间的输入都贡献一条延迟的响应，累积求和相应变为式\eqref{eq:cnn-continuous-convolution}中的积分。这个例子依赖线性叠加和响应规律不随日期改变；实际装置若溢流或流速随水位变化，就不能直接用一个固定核描述。图像模糊也有类似读法：一个亮点扩散成一小片亮斑，整张图像的模糊结果由各亮点的平移响应叠加形成。CNN沿用这种共享局部响应的结构，但核由训练学习，可以含负权重，不必表示守恒的物理过程。
+固定核、完整网格及一致的边界约定下，输入平移会使输出同步平移。
+卷一在线性系统中称这项性质为平移不变性，网络的输入输出映射通常称为平移等变性；
+二者在此对应同一等式$L(T_rx)=T_r(Lx)$，都不表示输出数值保持在原位置。
+有限图像上的边界、裁剪和跨步会限制可用的平移范围。
+CNN进一步学习核权重并在层间加入非线性，因此不必是线性系统，
+核也不必非负或具有和为一的物理守恒含义。
 
 \subsection{实际应用中的卷积}
 \label{sec:cnn-practical-convolution}
@@ -1109,7 +1051,7 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
 \section{支持更深的网络结构}
 \label{sec:cnn-deep-structures}
 
-连续堆叠卷积可以扩大感受野并增加非线性组合，却也使信息和梯度经过更长的变换链。前章已说明，雅可比连乘可能放大或衰减梯度。即使初始化和归一化让训练开始收敛，更深的普通串联网络仍可能出现更高的训练误差。这里的\term{退化问题}（degradation problem）指增加层数后训练效果反而下降，不能仅用训练集外的过拟合来解释。ResNet论文在其图像实验中报告并研究了这一现象\scite{he2016resnet}
+连续堆叠卷积可以扩大感受野并增加非线性组合，却也使信息和梯度经过更长的变换链。前章已说明，Jacobian矩阵连乘可能放大或衰减梯度。即使初始化和归一化让训练开始收敛，更深的普通串联网络仍可能出现更高的训练误差。这里的\term{退化问题}（degradation problem）指增加层数后训练效果反而下降，不能仅用训练集外的过拟合来解释。ResNet论文在其图像实验中报告并研究了这一现象\scite{he2016resnet}
 
 跨层连接允许部分信息绕过某些变换。下面比较三种组织方式：直接相加、用门选择相加，以及保留旧特征再拼接新特征。它们都可以保持前馈计算，但改变了中间表示和梯度路径。
 
@@ -1155,7 +1097,7 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
 \]
 在$z_i\neq0$处，$\bm D_{\mathrm{ReLU}}$的第$i$个对角元素为$\mathbb I\{z_i>0\}$；零点按实现选定导数。恒等路径的贡献也会受这层筛选，不能把相加前后的输出混为一谈。
 
-当阶段间下采样或改变通道时，输入与分支结果不能直接逐元素相加。可用投影$\bm P$调整形状，写为$\bm y=\bm P\bm x+\bm F(\bm x)$；例如用跨步$1\times1$卷积同时改变空间尺寸与通道。此时跨层路径的雅可比是$\bm P$，不再是$\bm I$，相加本身的雅可比相应变为$\bm P+\bm J_F$。选择恒等或投影，取决于两条分支的形状和希望保留的映射。
+当阶段间下采样或改变通道时，输入与分支结果不能直接逐元素相加。可用投影$\bm P$调整形状，写为$\bm y=\bm P\bm x+\bm F(\bm x)$；例如用跨步$1\times1$卷积同时改变空间尺寸与通道。此时跨层路径的Jacobian矩阵是$\bm P$，不再是$\bm I$，合并输出的Jacobian矩阵相应变为$\bm P+\bm J_F$。选择恒等或投影，取决于两条分支的形状和希望保留的映射。
 
 ResNet在多个阶段堆叠残差模块。基本模块常用两个$3\times3$卷积；瓶颈模块用$1\times1$压缩通道、$3\times3$处理空间、再用$1\times1$恢复通道，以控制主体计算。经典版本在相加后使用激活。比较不同版本时，应核对跳跃路径是否保持恒等，以及下采样究竟位于哪一条分支；仅写“使用残差”还不足以确定计算图。
 
@@ -1175,7 +1117,7 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
 \end{equation}
 其中$\bm F$为变换路径，$\bm G$产生与输入同形状的门得分，Sigmoid逐元素把门值限制在$(0,1)$。在卷积模块中，$\bm F$和$\bm G$都可使用共享局部计算。门值接近零时以保留路径为主，接近一时以变换路径为主。原工作采用负的门偏置，使初始门倾向保留输入，帮助很深的网络开始学习\scite{srivastava2015highway}
 
-门也依赖输入，所以求导不能把它当成常数。记$\operatorname{Diag}(\bm v)$为以向量$\bm v$作对角线的矩阵，$\bm J_g$为门的雅可比，则
+门也依赖输入，所以求导不能把它当成常数。记$\operatorname{Diag}(\bm v)$为以向量$\bm v$作对角线的矩阵，$\bm J_g$为门的Jacobian矩阵，则
 \begin{equation}
   \begin{aligned}
     \bm J_y={}&\operatorname{Diag}(\bm g)\bm J_F
