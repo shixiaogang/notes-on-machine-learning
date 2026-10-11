@@ -22,8 +22,8 @@ VOLUMES = (
     "06-systems",
 )
 # Baseline after removing repeated mathematics and aligning model terminology.
-EXPECTED_CALLS = 2283
-EXPECTED_UNIQUE_TERMS = 1981
+EXPECTED_CALLS = 2278
+EXPECTED_UNIQUE_TERMS = 1977
 SHARED_TERM_FILES = (Path("tex/styles/environments.tex"),)
 VERBATIM_ENVIRONMENTS = {"verbatim", "Verbatim", "lstlisting", "minted"}
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")

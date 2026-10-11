@@ -1,0 +1,606 @@
+\chapter{静态无向模型}
+\label{chap:pgm-energy-models}
+
+相邻检测位置可能同时过热，也可能受到同一测量干扰，整排状态因而需要联合考虑。给定各位置的相对偏好以及相邻状态的相容权重，怎样计算整排配置的概率？若温度读数已知、只需预测异常标签，是否还要同时建立这些读数的生成分布？
+
+两项任务都可以组合局部势，区别在于哪些变量参与归一化。联合无向模型比较全部建模变量的配置，条件无向模型则固定输入、只比较输出。局部无向分解规定了变量在给定分隔节点后的独立关系（参见第~\ref{chap:pgm-undirected}章）；本章据此构造具体模型，说明结构怎样影响推断，以及潜变量、高阶势和神经参数化各带来哪些表达能力与计算要求。联合与条件是本章的主要划分；变量是否可见、势是否成对以及参数化方式可以组合。
+
+\section{无向模型的共同形式}
+\label{sec:pgm-energy-models-common}
+
+先为整排状态规定无向图$\mathcal{G}=(V,E)$，令$d=|V|$、$\bm{X}=(X_1,\ldots,X_d)^\top$。局部配置越符合建模偏好，其\term{势函数}（potential function）值越大；这个值表示相对相容程度，无须自身求和为$1$。记因子作用域集合为$\mathcal{C}$，每个$C\in\mathcal{C}$取图中的一个团，允许使用非极大团。将严格正势$\psi_{\bm{\theta},C}$写成局部能量$E_{\bm{\theta},C}=-\log\psi_{\bm{\theta},C}$，乘积权重便转为能量之和：
+\begin{equation}
+  \begin{aligned}
+    E_{\bm{\theta}}(\bm{x})
+      &=\sum_{C\in\mathcal{C}}E_{\bm{\theta},C}(\bm{x}_C),\\
+    p_{\bm{\theta}}(\bm{x})
+      &=\frac{\prod_{C\in\mathcal{C}}
+               \psi_{\bm{\theta},C}(\bm{x}_C)}
+              {Z_{\bm{\theta}}}
+        =\frac{\exp[-E_{\bm{\theta}}(\bm{x})]}{Z_{\bm{\theta}}},\\
+    Z_{\bm{\theta}}
+      &=\int \exp[-E_{\bm{\theta}}(\bm{u})]\,\mathrm{d}\mu(\bm{u}).
+  \end{aligned}
+  \label{eq:pgm-energy-models-joint}
+\end{equation}
+参数向量$\bm{\theta}$包含各局部势的参数。离散状态采用计数测度$\mu$，连续状态采用指定基准测度，通常是Lebesgue测度。\term{能量函数}（energy function）的值越低，配置的未归一化权重越大；\term{配分函数}（partition function）$Z_{\bm{\theta}}$累加或积分全部权重，使其成为概率，故须满足$0<Z_{\bm{\theta}}<\infty$。这里使用无量纲的对数权重，物理模型的逆温度已计入参数。
+
+也可以用负能量$f_{\bm{\theta}}=-E_{\bm{\theta}}$给配置评分，对数概率还需扣除$\log Z_{\bm{\theta}}$。增加与$\bm{x}$无关的能量常数，会等比例缩放全部权重及配分函数，概率保持原值。按正比例缩放能量时，配置间的能量差也同比例变化；比例不为$1$且两个配置的能量不同时，它们的概率比会改变。若只比较固定模型中的两种配置，配分函数可从比值中消去：
+\[
+  \frac{p_{\bm{\theta}}(\bm{x})}{p_{\bm{\theta}}(\bm{x}')}
+  =\exp\{E_{\bm{\theta}}(\bm{x}')-E_{\bm{\theta}}(\bm{x})\}.
+\]
+因此，能量差能够排序配置，绝对概率仍依赖全部权重的总量。改变局部势的状态偏好时，配分函数也可能改变；即使某个配置的未归一化权重不变，其概率仍可能随归一化而改变。
+
+若测量输入$\bm{x}$已经固定、待预测量为$\bm{Y}$，需要比较的候选只有输出配置。相同能量构造此时只在输出空间归一化：
+\begin{equation}
+  \begin{aligned}
+    p_{\bm{\theta}}(\bm{y}\mid\bm{x})
+      &=\frac{\exp[-E_{\bm{\theta}}(\bm{y},\bm{x})]}
+              {Z_{\bm{\theta}}(\bm{x})},\\
+    Z_{\bm{\theta}}(\bm{x})
+      &=\int\exp[-E_{\bm{\theta}}(\bm{v},\bm{x})]
+                  \,\mathrm{d}\mu_Y(\bm{v}).
+  \end{aligned}
+  \label{eq:pgm-energy-models-conditional}
+\end{equation}
+每个使用的输入都须给出$0<Z_{\bm{\theta}}(\bm{x})<\infty$。该式只定义输出的条件概率，没有为输入规定$p(\bm{x})$，也不限制输入之间的依赖。附加只依赖输入的能量$c(\bm{x})$时，它在分子、分母中消去。图~\ref{fig:pgm-energy-models-normalization}据此区分输入的两种职责：它可以改变各势的数值，却不参与输出的求和。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=86.907mm]{figures/03-models/03-probabilistic-graphical-models/tikz/pgm-energy-models-normalization/figure.pdf}
+  \caption{三节点相互作用的两种归一化。上方联合模型对全部状态求和；下方把$\bm{x}$列为给定证据或条件输入，只对标签$\bm{y}$求和。灰底框中的输入通过虚线影响标签势，虚线表示特征依赖，不表示有向生成关系。}
+  \label{fig:pgm-energy-models-normalization}
+\end{figure}
+
+有限离散状态配合有限能量，必然产生正且有限的配分函数。连续能量则需检查尾部：即使$E(x)=-x^2$处处有定义，$\int_{\mathbb{R}}e^{x^2}\,\mathrm{d}x$仍发散。允许势为零时，可以用$+\infty$能量排除配置，但归一化还须有正总权重；离散支持至少保留一个正权配置，连续支持则需有正测度。因子分解仍能给出相应Markov性质，而从Markov性质反推分解的正性定理不能直接用于零势（参见第~\ref{chap:pgm-undirected}章）。
+
+\section{联合能量模型}
+\label{sec:pgm-energy-models-joint-models}
+
+为整组测量状态建立联合分布，可以用于补全状态、计算多变量事件概率或生成配置。以下先取成对作用，再分别引入隐藏状态、改变能量函数或扩大因子作用域。它们共同使用式~\eqref{eq:pgm-energy-models-joint}，推断时能利用的分解与代数形式却各不相同。
+
+\subsection{观测变量成对模型}
+\label{sec:pgm-energy-models-pairwise}
+
+对只有两种状态的检测位置，取$x_i\in\{-1,+1\}$。\term{Ising模型}（Ising model）分别用单点参数表示状态偏好，用边参数表示相邻状态同号或异号的偏好：
+\begin{equation}
+  E_{\bm{\theta}}(\bm{x})
+    =-\sum_{i\in V}b_ix_i
+     -\sum_{\{i,j\}\in E}J_{i,j}x_ix_j.
+  \label{eq:pgm-energy-models-ising}
+\end{equation}
+\term{外场}（external field）$b_i$取正值时偏好$+1$。\term{耦合参数}（coupling parameter）$J_{i,j}$取正值时奖励同号，取负值时奖励异号；每条无向边只计一次，约定$J_{i,j}=J_{j,i}$。这些参数描述统计相容性，不能仅凭它们推断干预一个位置对另一位置的效应。
+
+要计算一个位置的条件概率，固定其余状态，仅保留含$x_i$的得分$x_i(b_i+\sum_{j\in N(i)}J_{i,j}x_j)$，其中$N(i)$为邻居集合。$+1$与$-1$的权重比为$\exp[2(b_i+\sum_jJ_{i,j}x_j)]$，归一化两项后得到
+\begin{equation}
+  \begin{aligned}
+    p_{\bm{\theta}}(X_i=+1\mid\bm{x}_{V\setminus\{i\}})
+      &=\sigma\!\left(2b_i+
+           2\sum_{j\in N(i)}J_{i,j}x_j\right),\\
+    \sigma(u)&=\frac{1}{1+e^{-u}}.
+  \end{aligned}
+  \label{eq:pgm-energy-models-ising-conditional}
+\end{equation}
+这个满条件分布只读取邻居状态。移去这些条件以后，无直接边的两个节点仍可能经其他节点相关。
+
+用三个相邻位置构造数值例子：图取$1-2-3$，不设单点偏好，同号边势为$3$、异号边势为$1$。这些是人为指定的权重，尚未归一化为概率。为计算联合权重，先统计相邻同号对：
+\[
+  N_{=}(\bm{x})
+   =\mathbf{1}\{x_1=x_2\}+\mathbf{1}\{x_2=x_3\}.
+\]
+令$E_0(\bm{x})=-(\log3)N_{=}(\bm{x})$，配置权重就是$3^{N_{=}(\bm{x})}$。首节点可取两个值，每个后继节点的两项权重和为$3+1=4$，故$Z_0=2\times4\times4=32$。由$\mathbf{1}\{x_i=x_j\}=(1+x_ix_j)/2$，这也对应$J_{1,2}=J_{2,3}=(\log3)/2$的Ising分布。两种能量约定相差常数：$E_0$比式~\eqref{eq:pgm-energy-models-ising}的零外场能量少$\log3$，后者的配分函数为$32/3$。概率相同，配分函数数值则随能量常数而变。
+
+在该对称链中，给定一个位置，后继位置同号和异号的条件概率分别为$3/4$、$1/4$。两端同号对应两次保持或两次翻转，因而
+\[
+  p(X_3=X_1\mid X_1)
+    =(3/4)^2+(1/4)^2=\frac58.
+\]
+各节点的边缘都为均匀二值分布，所以$\mathbb{E}[X_1X_3]=2(5/8)-1=1/4$。两端虽无边仍相关，给定$X_2$才独立。将同样参数用于更长的零外场链，每跨一条边，条件均值乘以$1/2$，相隔$r$条边的相关为$(1/2)^r$。这说明相互作用能够沿路径传递，其强度还由参数决定。
+
+类别数增加到$K>2$后，标签编号的乘积无法直接表示相容性。\term{Potts模型}（Potts model）改为比较类别是否相等，对$x_i\in\{1,\ldots,K\}$定义
+\begin{equation}
+  E_{\bm{\theta}}(\bm{x})
+   =-\sum_i b_i(x_i)
+    -\sum_{\{i,j\}\in E}J_{i,j}\mathbf{1}\{x_i=x_j\}.
+  \label{eq:pgm-energy-models-potts}
+\end{equation}
+$b_i(k)$规定位置$i$对类别$k$的偏好。计算节点条件分布时，固定邻居，为每个类别$k$形成权重
+\[
+  w_i(k)=\exp\left\{
+    b_i(k)+\sum_{j\in N(i)}J_{i,j}\mathbf{1}\{k=x_j\}
+  \right\},
+\]
+将权重除以$\sum_{\ell=1}^K w_i(\ell)$即得满条件概率。每条边只用一个参数区分类别相同与不同，限制了它能表达的相容关系；特定异类组合有不同偏好时，需改用$K\times K$边势表。二类Potts可以重新编码为Ising，其中耦合系数需按前述$1/2$因子换算。
+
+完整观测提供单点状态以及边上的乘积或同类指示。固定图、存在有限内点最大似然解时，模型期望与对应经验统计量匹配；例如$J_{i,j}$的似然梯度使用经验$x_ix_j$减去$\mathbb{E}[X_iX_j]$（通用推导及替代准则参见第~\ref{chap:pgm-parameter-learning}章）。Ising的解析满条件还能直接用于Gibbs更新和伪似然拟合。强耦合时，单点变化难以转到另一种整体配置，采样仍可能很慢。
+
+一般稠密边势在树上求配分函数与边缘需$O(dK^2)$运算，特殊边势可能进一步简化。一般图则受消元后的诱导宽度限制，原始因子成对不保证全局计算只有二次成本。二值吸引型模型可以通过图割求最优配置，但这一最大化未计算配分函数（参见第~\ref{chap:pgm-variational}章）。参数也会限制模型适用性：过强的同号偏好可能掩盖局部异常；三角形的每条边都偏好异号时，任一二值配置至少违背一项偏好。
+
+温度等连续状态可以用二次能量描述。\term{高斯Markov随机场}（Gaussian Markov random field, GMRF）通过精度矩阵表示条件依赖；对$\bm{x}\in\mathbb{R}^d$取
+\begin{equation}
+  \begin{aligned}
+    E_{\bm{\theta}}(\bm{x})
+      &=\frac12(\bm{x}-\bm{\mu})^\top
+                    \bm{Q}(\bm{x}-\bm{\mu}),\\
+    Z_{\bm{\theta}}
+      &=(2\pi)^{d/2}|\bm{Q}|^{-1/2},
+      \qquad \bm{Q}=\bm{Q}^\top\succ0.
+  \end{aligned}
+  \label{eq:pgm-energy-models-gaussian}
+\end{equation}
+均值为$\bm{\mu}$，协方差的逆$\bm{Q}$称为\term{精度矩阵}（precision matrix）。正定性使二次能量在所有方向增长，并使高斯积分有限。为补全一个未知位置，给定其余位置后的分布为
+\[
+  \begin{aligned}
+    \widetilde{\mu}_i(\bm{x})
+      &=\mu_i-\frac{1}{Q_{i,i}}
+           \sum_{j\ne i}Q_{i,j}(x_j-\mu_j),\\
+    X_i\mid\bm{x}_{V\setminus\{i\}}
+      &\sim\mathcal{N}\!\left(
+          \widetilde{\mu}_i(\bm{x}),Q_{i,i}^{-1}\right).
+  \end{aligned}
+\]
+$\widetilde{\mu}_i$是给定其余节点后的条件均值。在非退化高斯模型中，$Q_{i,j}=0$恰好对应$X_i\perp X_j\mid\bm{X}_{V\setminus\{i,j\}}$；协方差为零判别的则是边缘独立，两者不可互换（证明参见第~\ref{chap:pgm-undirected}章）。
+
+仍取三个检测位置，用中心化并缩放后的温度构造零均值模型，令
+\[
+  \bm{Q}=
+  \begin{pmatrix}
+    2&-1&0\\ -1&2&-1\\ 0&-1&2
+  \end{pmatrix},
+  \qquad
+  \bm{Q}^{-1}=\frac14
+  \begin{pmatrix}
+    3&2&1\\ 2&4&2\\ 1&2&3
+  \end{pmatrix}.
+\]
+$\bm{Q}$的顺序主子式为$2,3,4$，所以它正定。两端精度为零，协方差却为$1/4$，展示了中点传递的边缘相关。给定$x_1=2,x_3=0$，中点分布为$\mathcal{N}(1,1/2)$；以条件均值补全得到$1$，条件方差则量化补全后仍有的不确定性。
+
+高斯推断主要使用线性求解和矩阵分解。稠密Cholesky分解耗时$O(d^3)$，随后可计算条件均值、所需协方差及对数行列式；链状精度具有固定带宽时，分解可随$d$线性增长。一般稀疏矩阵可能产生消元填充，原始零元素数量因此不足以判定时间成本。学习时，若均值已知为零，取样本二阶矩$\bm{S}=n^{-1}\sum_{r=1}^n\bm{x}_r\bm{x}_r^\top$，要最大化的精度相关对数似然为
+\[
+  \frac n2\{\log|\bm{Q}|-\operatorname{tr}(\bm{S}\bm{Q})\},
+  \qquad \bm{Q}\succ0,
+\]
+缺边对应$Q_{i,j}=0$，这些约束与正定性共同限定候选精度。无图约束且$\bm{S}\succ0$时，最优解是$\bm{S}^{-1}$；有零约束时通常需要约束优化。仅半正定的精度不能在整个$\mathbb{R}^d$上归一化为式~\eqref{eq:pgm-energy-models-gaussian}，单个高斯也无法表达多峰。解析计算的便利伴随这些表示条件，延长优化迭代不能消除它们\scite{pgm-undirected-rue2005}
+
+\subsection{潜变量能量模型}
+\label{sec:pgm-energy-models-latent}
+
+共同异常也可能来自未测状态。可以让一个潜变量连接多个可见位置，先建立联合分布，再将它边缘化。\term{玻尔兹曼机}（Boltzmann machine, BM）采用二值变量的成对能量实现这一构造。以下改用$0/1$编码：可见量为$\bm{x}\in\{0,1\}^{d_{\mathrm{v}}}$，隐藏量为$\bm{z}\in\{0,1\}^m$，共有$d_{\mathrm{v}}+m$个节点：
+\begin{equation}
+  \begin{aligned}
+    E_{\bm{\theta}}(\bm{x},\bm{z})
+      &=-\bm{b}^\top\bm{x}-\bm{c}^\top\bm{z}
+        -\bm{x}^\top\bm{W}\bm{z}\\
+      &\quad-\frac12\bm{x}^\top\bm{U}\bm{x}
+             -\frac12\bm{z}^\top\bm{R}\bm{z},\\
+    p_{\bm{\theta}}(\bm{x},\bm{z})
+      &=\frac{e^{-E_{\bm{\theta}}(\bm{x},\bm{z})}}
+               {Z_{\bm{\theta}}},\\
+    p_{\bm{\theta}}(\bm{x})
+      &=\sum_{\bm{z}}p_{\bm{\theta}}(\bm{x},\bm{z}).
+  \end{aligned}
+  \label{eq:pgm-energy-models-bm}
+\end{equation}
+$\bm{W}\in\mathbb{R}^{d_{\mathrm{v}}\times m}$连接可见与隐藏节点，$\bm{U}$、$\bm{R}$分别连接各组内部，二者对称且对角为零。组内项乘$1/2$以避免重复计边。一般BM即使固定全部可见量，隐藏节点仍有相互作用；训练所需的数据后验期望和无条件模型期望都可能依赖近似推断。
+
+若要直接计算隐藏后验，可以删除两组各自内部的边，令$\bm{U}=\bm{0}$、$\bm{R}=\bm{0}$。这就是\term{受限玻尔兹曼机}（restricted Boltzmann machine, RBM）的二部限制：固定一组以后，另一组的节点没有剩余相互作用。记$u_j(\bm{x})=c_j+\sum_iW_{i,j}x_i$，隐藏条件分布分解为
+\[
+  p_{\bm{\theta}}(\bm{z}\mid\bm{x})
+   =\prod_{j=1}^m\frac{\exp[z_ju_j(\bm{x})]}
+                         {1+\exp[u_j(\bm{x})]}.
+\]
+每个分母都由$z_j=0,1$的两个权重相加得到，条件分布因而按节点独立。交换两组可得相应的可见条件分布：
+\begin{equation}
+  \begin{aligned}
+    p_{\bm{\theta}}(Z_j=1\mid\bm{x})
+      &=\sigma\!\left(c_j+\sum_iW_{i,j}x_i\right),\\
+    p_{\bm{\theta}}(X_i=1\mid\bm{z})
+      &=\sigma\!\left(b_i+\sum_jW_{i,j}z_j\right).
+  \end{aligned}
+  \label{eq:pgm-energy-models-rbm-conditionals}
+\end{equation}
+这些sigmoid表达没有Ising满条件的系数$2$，因为变量已经由$\{-1,+1\}$改为$0/1$编码。
+
+二部限制还简化了隐藏变量的求和。对固定可见配置，\term{自由能}（free energy）取全部隐藏配置权重和的负对数，得到可见分布的有效能量；它汇总隐藏状态，而非只取最优隐藏状态：
+\begin{equation}
+  \begin{aligned}
+    F_{\bm{\theta}}(\bm{x})
+      &:=-\log\sum_{\bm{z}}
+                 e^{-E_{\bm{\theta}}(\bm{x},\bm{z})}\\
+      &=-\bm{b}^\top\bm{x}
+        -\sum_{j=1}^m\log(1+e^{u_j(\bm{x})}),\\
+    p_{\bm{\theta}}(\bm{x})
+      &=\frac{e^{-F_{\bm{\theta}}(\bm{x})}}{Z_{\bm{\theta}}}.
+  \end{aligned}
+  \label{eq:pgm-energy-models-free-energy}
+\end{equation}
+隐藏求和可拆成$\sum_{\bm{z}}\prod_j e^{z_ju_j}=\prod_j(1+e^{u_j})$，这给出了自由能公式。隐藏节点连接多个可见节点时，消元后的一项$\log(1+e^{u_j})$通常同时依赖它们。因此，联合模型中的成对作用可以成为可见边缘中的高阶势（图~\ref{fig:pgm-energy-models-rbm}）。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=99.653mm]{figures/03-models/03-probabilistic-graphical-models/tikz/pgm-energy-models-rbm/figure.pdf}
+  \caption{RBM的条件分解与隐藏消元。左侧仅有跨组边，固定一组时另一组条件独立；右侧把两个隐藏节点消去，两个因子$1+\exp[u_j(\bm{x})]$各涉及三个可见变量。一元可见偏置势在两侧均省略。可见边缘仍可能相关。}
+  \label{fig:pgm-energy-models-rbm}
+\end{figure}
+
+取两个可见节点和一个隐藏节点，偏置均为零，$W_{1,1}=W_{2,1}=\log2$。可见权重为$e^{-F(\bm{x})}=1+2^{x_1+x_2}$，配置$(0,0),(0,1),(1,0),(1,1)$的权重依次为$2,3,3,5$，总和为$13$。给定$(x_1,x_2)=(1,1)$，隐藏状态为$1$的概率是$4/5$。给定$z=0$时，两可见节点独立、取$1$概率各为$1/2$；给定$z=1$时，该概率各为$2/3$。消去隐藏状态后，$p(X_1=X_2=1)=5/13$与$p(X_1=1)p(X_2=1)=(8/13)^2$相差$1/169$，独立性没有保留。
+
+单个可见配置的自由能求值为$O(d_{\mathrm{v}}m)$，其权重总和$Z_{\bm{\theta}}=\sum_{\bm{x}}e^{-F_{\bm{\theta}}(\bm{x})}$通常仍需指数计算。枚举较小的一组、解析消去另一组虽可减少运算，仍含$2^{\min(d_{\mathrm{v}},m)}$规模。RBM使完整可见配置下的隐藏后验可算，没有普遍消除联合归一化成本。部分可见量未测时，$p(\bm{z}\mid\bm{x}_{\mathrm{obs}})$也未必保有上述独立Bernoulli分解。
+
+这两个块条件可以构成\term{交替Gibbs采样}（alternating Gibbs sampling）：固定一组，独立随机抽取另一组，再交换两组。算法~\ref{alg:pgm-energy-models-rbm-gibbs}传递的是抽到的二值状态；若直接传递概率，所得确定性迭代已不再使用这个Gibbs核。
+
+\begin{algorithm}[RBM的一段交替Gibbs链]
+  \label{alg:pgm-energy-models-rbm-gibbs}
+  \begin{algorithmic}[1]
+    \Require 固定的有限参数$\bm{\theta}$，初始状态$\bm{x}^{(0)}$，步数$k\geq1$
+    \Ensure 链状态$\bm{x}^{(1)},\ldots,\bm{x}^{(k)}$
+    \For{$t=0,\ldots,k-1$}
+      \State 按式~\eqref{eq:pgm-energy-models-rbm-conditionals}独立抽取各$Z_j^{(t+1)}$
+      \State 固定$\bm{z}^{(t+1)}$，独立抽取各$X_i^{(t+1)}$
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+固定有限参数下，每个块条件概率都在$0$与$1$之间，可见状态链因而能到达任意配置，并有自转移。交替Gibbs核保持$p_{\bm{\theta}}(\bm{x})$不变，有限不可约、非周期链的分布遂长期收敛到它；这并未给出小$k$充分混合的保证（参见第~\ref{chap:pgm-sampling}章）。完整一次更新为$O(d_{\mathrm{v}}m)$，强权重形成的近确定条件可能使链长期停留在同一模式。
+
+训练一个权重时，需要提高数据配置的概率，同时扣除模型自身的联合统计。对单条数据$\bm{x}$，潜变量似然梯度在RBM中写为（通用推导参见第~\ref{chap:pgm-parameter-learning}章）
+\begin{equation}
+  \frac{\partial\log p_{\bm{\theta}}(\bm{x})}
+       {\partial W_{i,j}}
+    =x_i\,p_{\bm{\theta}}(Z_j=1\mid\bm{x})
+      -\mathbb{E}_{p_{\bm{\theta}}}[X_iZ_j].
+  \label{eq:pgm-energy-models-rbm-gradient}
+\end{equation}
+数据项由隐藏条件概率精确取得，模型项则通常需要采样。多条记录对数据项求平均，偏置的梯度对应一阶统计量。RBM简化的是给定数据的后验计算，模型期望仍然存在。重构误差与似然也有不同含义：慢混合的短链容易留在起始数据附近，却可能没有正确分配不同模式的概率质量\scite{pgm-energy-models-hinton2010}
+
+图~\ref{fig:rbm-alternating-sampling-and-gradient}按这一顺序区分概率、抽样状态与训练统计：先固定参数运行交替链、估计模型统计，再用数据统计减模型统计更新参数。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=141.647mm]{figures/03-models/03-probabilistic-graphical-models/generated/rbm-alternating-sampling-and-gradient/figure.png}
+  \caption{二值RBM中的抽样状态和训练统计。取$b=c=0$、$W_{1,1}=W_{2,1}=\log2$，可见状态$(1,1)$对应隐藏条件概率$4/5$；若抽到$z=1$，可见单元的条件概率各为$2/3$，下一状态可以是$(1,0)$。图中概率与抽样值分别标出。似然梯度以可算的数据统计减去采样估计的模型联合统计，单步重构不能证明混合已完成。}
+  \label{fig:rbm-alternating-sampling-and-gradient}
+\end{figure*}
+
+\subsection{灵活能量模型}
+\label{sec:pgm-energy-models-flexible}
+
+成对二值作用和二次能量限制了相容关系的函数形式。若需要表达更复杂的非线性关系，可以让神经网络为一个配置输出标量能量。\term{神经能量模型}（neural energy-based model）仍按$p_{\bm{\theta}}(\bm{x})\propto e^{-E_{\bm{\theta}}(\bm{x})}$形成分布，改变的是能量函数族。网络的确定性隐藏激活只是计算过程；只有为隐藏量定义了随机分布，才需要把它作为概率潜变量边缘化。
+
+采用$E_{\bm{\theta}}(\bm{x})=\sum_CE_{\bm{\theta},C}(\bm{x}_C)$时，局部网络可以丰富势的形状，同时保留原作用域规定的条件独立性。直接由一个网络读取全部$x_i$而不施加分解，则可能产生全局势；网络内部的计算连线不能代替数据变量的Markov图。函数形式更丰富并不自动降低推断宽度。
+
+连续神经能量能否定义概率，还取决于尾部是否使积分有限。可以在灵活项之外加入二次增长，采用以下充分条件：
+\[
+  E_{\bm{\theta}}(\bm{x})
+    =\frac{\alpha}{2}\lVert\bm{x}\rVert_2^2+r_{\bm{\theta}}(\bm{x}),
+  \qquad \alpha>0,\quad r_{\bm{\theta}}(\bm{x})\geq-C,
+\]
+取有限常数$C$，要求能量可测、在某个正测度集合上有限。上式给出$e^{-E_{\bm{\theta}}(\bm{x})}\leq e^Ce^{-\alpha\lVert\bm{x}\rVert_2^2/2}$，高斯上界保证积分有限，有效支持保证积分为正，合起来得$0<Z_{\bm{\theta}}<\infty$。一般网络不会自动满足这些条件。也可以明确限制到有限体积支持，并保证能量有适当下界。
+
+条件分类得分尚不足以确定输入密度。有限标签上的softmax将$s_k(\bm{x})$转为$p(Y=k\mid\bm{x})$；所有类别得分同时加$c(\bm{x})$，条件概率不变，$\sum_ke^{s_k(\bm{x})}$却改变。因此分类训练不能唯一规定$p(\bm{x})$，单个得分也不能直接解释成$\log p(\bm{x})$。联合能量的支持、归一化对象与训练目标仍需另行给出。
+
+一般神经能量缺少RBM的解析块条件，连续状态可以转用能量对输入的梯度来采样。在无约束$\mathbb{R}^d$上，连续可微能量的一种Langevin离散更新是
+\begin{equation}
+  \begin{aligned}
+    \bm{x}^{(t+1)}
+      &=\bm{x}^{(t)}
+        -\frac{\varepsilon}{2}
+          \nabla_{\bm{x}}E_{\bm{\theta}}(\bm{x}^{(t)})
+        +\sqrt{\varepsilon}\,\bm{\xi}^{(t)},\\
+    \bm{\xi}^{(t)}&\sim\mathcal{N}(\bm{0},\bm{I}),
+       \qquad \varepsilon>0.
+  \end{aligned}
+  \label{eq:pgm-energy-models-langevin}
+\end{equation}
+各步独立的高斯噪声使状态在下降方向之外也能探索邻近区域。固定步长、未经Metropolis校正的离散链一般存在偏差，稳定性还依赖梯度条件；有限步运行另有初始化及混合误差。用于估计模型期望的链状态称为负样本。一次能量梯度求值若耗时$C_E$，一条$k$步链的梯度成本为$O(kC_E)$；计算量应包括每步梯度求值，不能仅按一次网络前向传播估计。Du与Mordatch展示了这类连续神经能量的梯度采样实现，其有限步程序本身不构成任意能量下精确采样的保证\scite{pgm-energy-models-du2019}
+
+对比散度从数据配置启动短链，用终点统计替代模型期望；持久链沿用上轮状态，以跟踪缓慢变化的模型。二者近似了取得模型期望的过程，有限步更新未必等于精确似然梯度。神经能量的形状也会受到这种误差影响：负样本若只覆盖局部区域，其他区域的低能量值可能没有受到训练约束。短链终点随参数变化，忽略其分布导数也是对比散度不一般等于某个固定目标精确梯度的原因（参见第~\ref{chap:pgm-parameter-learning}章）。
+
+若希望避免每轮生成模型链，可以用已知噪声密度$p_{\mathrm{N}}$进行噪声对比估计。其分类对数比为$-E_{\bm{\theta}}(\bm{x})+c-\log[\nu p_{\mathrm{N}}(\bm{x})]$，其中$\nu$是噪声与数据的数量比，$c$作为全局对数归一化参数学习。该目标显式使用噪声密度及采样比例，噪声还须覆盖相关支持，故不等于任意的数据分类训练。高维噪声过易区分时，分类信号可能不足以细化数据附近的密度。
+
+光滑连续密度还可以匹配输入对数密度的梯度。由于$\nabla_{\bm{x}}\log p_{\bm{\theta}}=-\nabla_{\bm{x}}E_{\bm{\theta}}$，分数匹配不需要求$Z$的值。相关导数须可积、分部积分的边界项须为零；满足这些条件时，去掉与参数无关的项后，目标为（推导参见式~\eqref{eq:pgm-parameter-learning-score-matching}）
+\[
+  \mathbb{E}_{p_*}\!\left[
+      \frac12\lVert\nabla_{\bm{x}}E_{\bm{\theta}}(\bm{X})\rVert_2^2
+      -\Delta_{\bm{x}}E_{\bm{\theta}}(\bm{X})\right],
+\]
+这里$p_*$为数据分布，$\Delta_{\bm{x}}$求各坐标二阶偏导之和。省去归一化后，成本转为输入导数，尤其是Hessian迹的计算或估计。标准目标针对连续状态；离散状态或受限支持须另行处理，不能省略相应边界项。训练时无需计算$Z$也不表示训练后已经知道它。加噪数据上的分数学习另见第~\ref{chap:pgm-generative}章。
+
+\subsection{高阶与关系联合模型}
+\label{sec:pgm-energy-models-higher-relational}
+
+一组传感器恰有一个激活，或设备、连接及报警共同满足某项规则，都是整组状态的约束。\term{高阶势}（higher-order potential）用至少三个变量共同决定权重。对二值组，记激活数$k_C=\sum_{i\in C}\mathbf{1}\{x_i=+1\}$，可以以$g(k_C)$评价计数。取$\lambda>0$、$k_0\in\{0,\ldots,|C|\}$时，$\lambda\mathbf{1}\{k_C\ne k_0\}$惩罚不符目标计数，$\lambda\mathbf{1}\{0<k_C<|C|\}$惩罚组内不一致。
+
+较大的作用域也可能只是低阶项的另一种写法：$(k_C-k_0)^2$展开后只含常数、一元及成对项。要识别不可约高阶作用，可取三个$\{-1,+1\}$变量，令$p(\bm{x})\propto\exp(\lambda x_1x_2x_3)$、$\lambda\ne0$。乘积符号决定偏好，且满足
+\[
+  \sum_{\bm{x}\in\{-1,+1\}^3}
+     x_1x_2x_3\log p(\bm{x})=8\lambda.
+\]
+在该求和中，归一化常数对应的项为零，三阶项留下八个$\lambda$。若这个正分布可以仅用原三变量的一元与成对势表示，每项对数势都遗漏至少一个变量，先对遗漏变量求和便得零，左侧因此应为零，与$\lambda\ne0$矛盾。这排除了原变量上的成对改写；增加潜变量后则可能采用另一种表示。
+
+高阶势的内部结构决定局部计算量。任意$r$变量二值稠密因子有$2^r$个表项，对一个变量发送消息通常需遍历另$2^{r-1}$种配置。计数势可以先动态规划汇总其余节点恰有$k$个激活的权重。接收节点未激活时，该权重乘$e^{-g(k)}$；接收节点激活时，组内计数增加一，改乘$e^{-g(k+1)}$。分别对$k$求和便得到两种状态的消息，单个输出消息的卷积为$O(r^2)$。这只简化本地因子，未消除其他因子形成的全局环。学习的统计量相应换为计数指示或整体一致性，梯度仍比较经验统计与模型期望。
+
+同一种规则若要用于许多设备，可以将重复因子写成\term{关系模板}（relational template）：规定哪些实体类型及关系参与作用域、哪些实例共享参数。以具体实体替换占位符称为\term{落地}（grounding），得到的还是普通图模型。共享参数减少了参数数量，落地节点和因子仍可能很多，重叠实例也并不独立。
+
+\term{Markov逻辑网络}（Markov logic network, MLN）以逻辑公式组织模板，用成立的落地次数给配置评分。以下限制实体域$D$及谓词集合均有限，并排除产生无限项的函数符号；公式中的自由实体变量遍历域元素。每个落地原子命题是一个Boolean随机变量，配置$\bm{x}$列出全部真值。给模板$r$权重$w_r$、记其落地集合为$\mathcal{I}_r(D)$，联合模型写为
+\begin{equation}
+  \begin{aligned}
+    n_r(\bm{x})
+      &=\sum_{g\in\mathcal{I}_r(D)}
+           \mathbf{1}\{\text{公式 }r\text{ 在落地 }g\text{ 上为真}\},\\
+    E_{\bm{\theta}}(\bm{x})&=-\sum_rw_rn_r(\bm{x}),\\
+    p_{\bm{\theta}}(\bm{x})
+      &=Z_{\bm{\theta}}^{-1}
+          \exp\!\left[\sum_rw_rn_r(\bm{x})\right].
+  \end{aligned}
+  \label{eq:pgm-energy-models-mln}
+\end{equation}
+逻辑蕴含说明公式何时成立，不是有向概率边。正权重奖励满足公式的配置；权重有限时，违反公式的实例仍可有非零概率，并非硬性规则。
+
+模板$\operatorname{Fault}(a)\Rightarrow\operatorname{Alarm}(a)$涉及同一设备的故障与报警。若要表达跨设备的相互作用，还可以使用
+\[
+  \operatorname{Linked}(a,b)\land\operatorname{Fault}(a)
+       \ \Rightarrow\ \operatorname{Fault}(b)
+\]
+将$(a,b)=(u,v)$代入后，连接及两个故障原子共同进入一个因子；连接未观测时，它构成三阶作用。概率图连线说明命题共同参与某个因子，不能直接解释成实体存在物理连接。将连接设为证据会简化因子，所做的是原联合分布的条件化。
+
+逻辑权重与规则概率也需区分。只给一个设备使用首个模板，取$w=\log4$且无其他势，以$F,A$记故障、报警真值。配置$(0,0),(0,1),(1,0),(1,1)$中，三个满足蕴含的权重为$4$，违反配置$(1,0)$的权重为$1$，所以$Z=13$。公式成立概率为$12/13$，条件报警概率$p(A=1\mid F=1)=4/5$，边缘报警概率$p(A=1)=8/13$。三项查询针对不同事件或条件，不能把权重直接当作其中任何一个概率；重叠模板还会使查询依赖周围证据。
+
+学习$w_r$时，似然梯度累加全部落地实例，比较观测的$n_r$与模型期望。完整观测可以使用伪似然；部分命题未观测时，数据统计也需后验推断。消元、近似消息及采样作用于落地后的模型。域大小$N=|D|$、模板有$q$个实体占位符时，实例数可能达$O(N^q)$，精确推断还受落地图宽度约束。模板简短和参数共享并未消除这些成本，MLN的构造及伪似然学习参见原始工作\scite{pgm-energy-models-richardson2006}
+
+硬规则排除违反配置；相互矛盾时可能没有正权配置，即$Z=0$，可行区域分离时单点采样也可能无法穿越。软规则虽避免这种排除，扩大实体域仍会改变落地次数与模板的相对作用，复用原权重未必保持原边缘概率。关系共享规定重复结构及参数合并，不自动保证不同域规模下的概率一致性。
+
+\section{条件能量模型}
+\label{sec:pgm-energy-models-conditional-models}
+
+若温度、历史摘要和传感器类型已经给定，检测任务可以只预测异常标签。为这些输入另拟联合分布未必是必要步骤。条件能量将输入作为已知量，专门表达标签之间的相容性；标签配置共同竞争概率质量，仍须处理全局输出归一化。
+
+\subsection{条件随机场的定义}
+\label{sec:pgm-energy-models-crf-definition}
+
+固定输入之后，可以用无向图规定标签的条件独立关系。满足这种Markov性质的条件分布称为\term{条件随机场}（conditional random field, CRF），通常通过输入相关的团势构造：
+\begin{equation}
+  \begin{aligned}
+    p_{\bm{\theta}}(\bm{y}\mid\bm{x})
+      &=\frac{1}{Z_{\bm{\theta}}(\bm{x})}
+          \prod_{C\in\mathcal{C}}
+             \psi_{\bm{\theta},C}(\bm{y}_C,\bm{x}),\\
+    E_{\bm{\theta}}(\bm{y},\bm{x})
+      &=-\sum_{C\in\mathcal{C}}
+             \log\psi_{\bm{\theta},C}(\bm{y}_C,\bm{x}).
+  \end{aligned}
+  \label{eq:pgm-energy-models-crf-factors}
+\end{equation}
+该图只以输出变量为节点。固定输入，若$S$分离$A$、$B$，则$\bm{Y}_A\perp\bm{Y}_B\mid(\bm{Y}_S,\bm{x})$。完整输入可以被多个势或序列编码器读取；标签作用域由一个势同时涉及哪些未知标签决定，不能从输入编码器的连线推定。
+
+既有联合Markov模型$p(\bm{x},\bm{y})$条件化后也能给出CRF形式，直接条件拟合则只学习$p(\bm{y}\mid\bm{x})$，不同时约束$p(\bm{x})$。反向组成联合分布时，必须为CRF另选输入分布。输入缺失需要边缘化时，同样缺少其分布，单凭条件标签模型无法完成这项查询。
+
+常用的线性形式为$\log\psi_{\bm{\theta},C}=\bm{\theta}^\top\bm{f}_C(\bm{x},\bm{y}_C)$，各作用域可以共享参数。给定完整标签记录$\{(\bm{x}_r,\bm{y}_r)\}_{r=1}^n$，比较观测特征得分与该输入下全部标签的权重总量，条件对数似然为
+\begin{equation}
+  \ell_{\mathrm{cond}}(\bm{\theta})
+    =\sum_{r=1}^n
+       \left[
+        \sum_C\bm{\theta}^\top
+                    \bm{f}_C(\bm{x}_r,\bm{y}_{r,C})
+        -\log Z_{\bm{\theta}}(\bm{x}_r)
+       \right].
+  \label{eq:pgm-energy-models-crf-likelihood}
+\end{equation}
+不同输入一般给出不同配分函数，梯度要逐条计算条件标签边缘及期望特征，推断因而反复参与训练。固定特征、完整标签的线性参数化使对数似然为凹函数，有限最优解仍取决于可分离性与正则化；可训练神经特征或未观测标签的边缘化则不保留一般凹性结论（梯度推导参见第~\ref{sec:pgm-parameter-learning-conditional}节）。CRF的完整表述见Sutton与McCallum\scite{pgm-energy-models-sutton2012}
+
+\subsection{线性链条件随机场}
+\label{sec:pgm-energy-models-linear-chain}
+
+顺序标签只保留相邻相互作用时，输出图是一条链。\term{线性链条件随机场}（linear-chain CRF）将得分分为单点状态项与相邻转移项；序列长度为$T$、$y_t\in\{1,\ldots,K\}$时，写成
+\begin{equation}
+  \begin{aligned}
+    f_{\bm{\theta}}(\bm{y},\bm{x})
+      &=\sum_{t=1}^T a_t(y_t;\bm{x})
+        +\sum_{t=2}^T b_t(y_{t-1},y_t;\bm{x}),\\
+    p_{\bm{\theta}}(\bm{y}\mid\bm{x})
+      &\propto e^{f_{\bm{\theta}}(\bm{y},\bm{x})}.
+  \end{aligned}
+  \label{eq:pgm-energy-models-chain-score}
+\end{equation}
+$a_t$评价输入与当前标签，$b_t$评价相邻标签组合。记$\phi_t(k)=e^{a_t(k;\bm{x})}$、$\psi_t(j,k)=e^{b_t(j,k;\bm{x})}$，暂略参数下标；首尾偏好可分别计入$a_1$、$a_T$。“转移”在这里是标签相容势，无须满足$\sum_k\psi_t(j,k)=1$，也不规定标签的因果生成顺序。
+
+要汇总所有标签序列，可将具有相同末标签的前缀合并。\term{前向消息}（forward message）$\alpha_t(k)$保存以$y_t=k$结束的长度$t$前缀权重总和。按前一标签分组，再乘入当前状态势和边势，得到
+\begin{equation}
+  \begin{aligned}
+    \alpha_1(k)&=\phi_1(k),\\
+    \alpha_t(k)&=\phi_t(k)
+       \sum_{j=1}^K\alpha_{t-1}(j)\psi_t(j,k),
+       \qquad t=2,\ldots,T,\\
+    Z_{\bm{\theta}}(\bm{x})&=\sum_{k=1}^K\alpha_T(k).
+  \end{aligned}
+  \label{eq:pgm-energy-models-forward}
+\end{equation}
+每个长度$t$前缀只对应一个末标签对$(j,k)$，新增权重是旧前缀权重乘状态势及边势。分组没有遗漏或重复，结合初始消息即可归纳证明$\alpha_t$确为全部相应前缀权重之和。
+
+单点边缘还需要当前位置右侧的证据。以$\beta_t(j)$保存固定$y_t=j$时、$t+1$至$T$的后缀权重和，排除当前位置的状态势，则
+\begin{equation}
+  \begin{aligned}
+    \beta_T(j)&=1,\\
+    \beta_t(j)&=\sum_{k=1}^K
+         \psi_{t+1}(j,k)\phi_{t+1}(k)\beta_{t+1}(k),\\
+    p(Y_t=k\mid\bm{x})
+      &=\frac{\alpha_t(k)\beta_t(k)}{Z_{\bm{\theta}}(\bm{x})}.
+  \end{aligned}
+  \label{eq:pgm-energy-models-backward}
+\end{equation}
+相邻标签固定后，左右部分分别由前向和后向消息汇总，将边势和右端状态势接入可得
+\begin{equation}
+  p(Y_{t-1}=j,Y_t=k\mid\bm{x})
+   =\frac{\alpha_{t-1}(j)\psi_t(j,k)
+                   \phi_t(k)\beta_t(k)}
+          {Z_{\bm{\theta}}(\bm{x})}.
+  \label{eq:pgm-energy-models-edge-marginal}
+\end{equation}
+链得分的特征只涉及单点或相邻标签，因此这两类边缘足以形成全部模型期望。递推利用的是分配律下的求和消元（通用说明参见第~\ref{chap:pgm-elimination}章）。
+
+再次使用三位置例子，这次问固定输入怎样影响标签。取$y_t\in\{-1,+1\}$，同号、异号边势仍为$3$、$1$。输入给三个位置的状态势分别为$(1,2)$、$(1,1)$、$(1,3)$，顺序为$(-1,+1)$，即首尾偏好正类、中点无单点偏好。表~\ref{tab:pgm-energy-models-chain-weights}列出全部配置，可据此核查消息、归一化及解码。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{crr}
+    \toprule
+    状态或标签配置 & 联合权重$w_0$ & 条件权重$w_{\bm{x}}$\\
+    \midrule
+    $(-,-,-)$ & $9$ & $9$\\
+    $(-,-,+)$ & $3$ & $9$\\
+    $(-,+,-)$ & $1$ & $1$\\
+    $(-,+,+)$ & $3$ & $9$\\
+    $(+,-,-)$ & $3$ & $6$\\
+    $(+,-,+)$ & $1$ & $6$\\
+    $(+,+,-)$ & $3$ & $6$\\
+    $(+,+,+)$ & $9$ & $54$\\
+    \midrule
+    总和 & $32$ & $100$\\
+    \bottomrule
+  \end{tabular}
+  \caption{相同边势下的两组权重。$+$、$-$代表$+1$、$-1$；条件列由联合列乘输入指定的三个状态势得到。概率应各自除以列总和，状态势本身尚不是归一化标签概率。}
+  \label{tab:pgm-energy-models-chain-weights}
+\end{table}
+
+按$(-1,+1)$记录消息向量，前向结果为$\bm{\alpha}_1=(1,2)$、$\bm{\alpha}_2=(5,7)$、$\bm{\alpha}_3=(22,78)$，例如$\alpha_2(+1)=1(1\times1+2\times3)=7$。末消息总和给$Z(\bm{x})=100$。后向结果为$\bm{\beta}_3=(1,1)$、$\bm{\beta}_2=(6,10)$、$\bm{\beta}_1=(28,36)$，中点的正类边缘因此为
+\[
+  p(Y_2=+1\mid\bm{x})=\frac{7\times10}{100}=0.7.
+\]
+中点虽无局部类别偏好，仍从两侧势得到正类支持。两条边同号的概率各为$0.78$；若观测标签为$(+,+,+)$，共享参数$\eta=\log3$的该条记录梯度为$2-2\times0.78=0.44$，提高同号配置的相对得分。梯度汇总同一条序列的特征，并非把两条边当作独立样本。
+
+概率边缘累加各配置，完整序列解码则要找得分最大的配置。\term{Viterbi算法}（Viterbi algorithm）将前向求和换为最大化，保存最优前缀的前驱；以对数得分计算，可写为
+\begin{equation}
+  \begin{aligned}
+    \delta_1(k)&=a_1(k;\bm{x}),\\
+    \delta_t(k)&=a_t(k;\bm{x})
+       +\max_j\{\delta_{t-1}(j)+b_t(j,k;\bm{x})\}.
+  \end{aligned}
+  \label{eq:pgm-energy-models-viterbi}
+\end{equation}
+为每个$(t,k)$记录达到最大值的$j$，从$\argmax_k\delta_T(k)$反向回溯，平局按固定标签顺序处理。数值例的$\exp[\delta_t(k)]$向量依次为$(1,2),(3,6),(9,54)$，最优序列是$(+,+,+)$，概率为$0.54$。逐点选择最大边缘标签最小化逐点错误的期望，联合解码则最大化整序列概率；本例两种选择恰好一致，并不构成一般等价。另有潜变量需先求和时，应求标签的边缘MAP，不能直接对全部变量共同取最大。
+
+三种链递推的时间均为$O(TK^2)$。只求配分函数可以用$O(K)$消息空间；保存全部边缘消息或回溯前驱通常需$O(TK)$，全部稠密边势若预存还需$O(TK^2)$。长链要采用对数域log-sum-exp，或逐步缩放并保存尺度，避免下溢破坏归一化。训练的逐记录梯度同样反复执行前向后向，特征提取及编码器成本另计。
+
+远处的输入信息可以进入$a_t$而不改变链递推，远处未知标签若直接耦合则会扩大图作用域。一阶链表达局部标签关系，不能单靠这种结构表示任意长程标签约束。与逐状态局部分类相比，CRF对整序列归一化，让不同标签序列共同竞争；相应代价是训练和概率查询都要处理完整链\scite{pgm-energy-models-sutton2012}
+
+\subsection{半Markov与高阶条件随机场}
+\label{sec:pgm-energy-models-semi-higher}
+
+异常区间的长度与区间内温度形状，适合以片段整体评分，逐个相邻标签对难以直接表达这些特征。\term{半Markov条件随机场}（semi-Markov CRF）把带标签的连续片段作为输出单位，局部得分同时考虑起止位置、输入形状及前后片段标签。边界和标签共同参与所有合法分段的归一化。
+
+记分段$\bm{s}=((a_\ell,b_\ell,k_\ell))_{\ell=1}^M$，要求各片段连续覆盖$1,\ldots,T$且不重叠，即$a_1=1$、$a_{\ell+1}=b_\ell+1$、$b_M=T$；长度限定为$1\leq b_\ell-a_\ell+1\leq L$。标签$k_\ell\in\{1,\ldots,K\}$，片段数$M$可以变化，起始哨兵取$k_0=0$。以$g(a,b,j,k;\bm{x})$评价前标签$j$接当前区间$[a,b]$、标签$k$的组合，分段概率为
+\begin{equation}
+  p_{\bm{\theta}}(\bm{s}\mid\bm{x})
+   =\frac{\exp\!\left[
+        \sum_{\ell=1}^M
+          g(a_\ell,b_\ell,k_{\ell-1},k_\ell;\bm{x})
+                    \right]}
+          {Z_{\bm{\theta}}(\bm{x})}.
+  \label{eq:pgm-energy-models-semi-distribution}
+\end{equation}
+求和候选包括所有合法边界、标签及片段数。此处允许相邻片段同标签；若任务要求将它们合并，就须从候选中排除同标签相邻片段，并在递推中禁止相应转移。
+
+消息现在保留片段边界。令$A_t(k)$汇总覆盖前$t$个位置、末片段标签为$k$的权重，初始化$A_0(0)=1$、$A_0(k)=0$（$k>0$），并取$t>0$时$A_t(0)=0$。按末片段长度和前标签分组得到
+\begin{equation}
+  A_t(k)=
+    \sum_{\ell=1}^{\min(L,t)}\sum_{j=0}^K
+       A_{t-\ell}(j)
+       e^{g(t-\ell+1,t,j,k;\bm{x})}.
+  \label{eq:pgm-energy-models-semi-forward}
+\end{equation}
+$j=0$只用于首片段。每个前缀都有唯一的末片段长度$\ell$及前标签$j$，枚举它们不会重复计数；最终$Z(\bm{x})=\sum_{k=1}^KA_T(k)$。改用最大化并保存长度与前标签，可回溯最优分段。
+
+学习片段特征时还要计算它出现的边缘概率。令$B_b(k)$为边界$b$后、前标签固定为$k$的后缀权重和，取$B_T(k)=1$，按下一片段长度及标签反向汇总。前一片段标签$j$与当前区间$[a,b]$、标签$k$组成的连接，其边缘概率为
+\[
+  \frac{A_{a-1}(j)
+           e^{g(a,b,j,k;\bm{x})}B_b(k)}
+       {Z_{\bm{\theta}}(\bm{x})}.
+\]
+由这些边缘可计算长度、形状和转移特征的期望。完整边界及标签对应式~\eqref{eq:pgm-energy-models-semi-distribution}的直接对数似然；只有粗标签时，相容的未知分段还须在分子中求和。以最优分段替代求和会改成另一训练目标。
+
+取$T=3,K=1,L=2$检验边界的作用：长度$1$、$2$片段权重分别为$1$、$2$，不设其他得分。合法长度序列$(1,1,1),(1,2),(2,1)$的权重是$1,2,2$。递推得$A_1=1,A_2=3,A_3=5$，故$Z=5$，位置$1$后的边界概率为$(1+2)/5=3/5$。逐点标签全都相同，边界却未确定；长度上限只排除长度$3$的单片段，不排除三个同标签位置。
+
+片段得分若已可常数时间读取，前向或后向计算需$O(TLK^2)$，全部边界消息需$O(TK)$空间，预存带转移的全部得分则需$O(TLK^2)$。只求$Z$可滚动保存最近$L$个边界。片段特征若要扫描内部位置，需另外计其成本；限制$L$虽减少计算，也排除了更长片段。动态规划的精确性仅针对已规定的候选集合\scite{pgm-energy-models-sarawagi2004}
+
+也可以保留逐点标签、扩大连续标签的作用域。\term{高阶条件随机场}（higher-order CRF）让$(r+1)$个标签共同评分，写为$E=-\sum_t f_t(y_{t-r},\ldots,y_t;\bm{x})$，序列起点由固定哨兵补齐。消息须保存最近$r$个标签，共$K^r$种历史，各历史可接$K$个新值，故朴素递推耗时$O(TK^{r+1})$、滚动消息空间$O(K^r)$。历史状态只能按共同后缀接续，不必配置任意$K^r\times K^r$稠密转移。
+
+图~\ref{fig:pgm-energy-models-crf-scopes}显示两种不同扩展：片段模型改变输出单位及可选长度，高阶链增加递推保留的标签历史。它们可以组合，也可以由神经网络给局部势评分，成本仍由具体作用域及求值决定。跨任意远未知标签的势不属于上述有限记忆假设，不能直接沿用该递推。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=100.404mm]{figures/03-models/03-probabilistic-graphical-models/tikz/pgm-energy-models-crf-scopes/figure.pdf}
+  \caption{链、有限阶历史与片段的边界信息。一阶链在切分处保留一个标签，二阶链的跨界三元势需保留两个；半Markov模型则在片段边界汇总。图示$[1,2]$、$[3,4]$是一种候选分段，概率推断还要累加其他合法边界。}
+  \label{fig:pgm-energy-models-crf-scopes}
+\end{figure}
+
+\subsection{一般图与关系条件随机场}
+\label{sec:pgm-energy-models-general-relational}
+
+二维位置或相互连接的设备，可能需要保留链之外的标签关系。一般图CRF继续用式~\eqref{eq:pgm-energy-models-crf-factors}，改由输出关系规定作用域；关系CRF将它们写成模板。设备属性、已知连接及图结构属于输入，待预测标签才是未知变量。
+
+例如，每个设备有标签$Y_i$，属性形成一元势，每条已知连接复用同一相邻标签势。若输入$\bm{x}$进一步确定模板$r$的实例集$\mathcal{I}_r(\bm{x})$，各实例的得分相加为
+\begin{equation}
+  E_{\bm{\theta}}(\bm{y},\bm{x})
+   =-\sum_r\sum_{g\in\mathcal{I}_r(\bm{x})}
+        \bm{\theta}_r^\top
+             \bm{f}_r(\bm{x}_g,\bm{y}_g).
+  \label{eq:pgm-energy-models-relational-crf}
+\end{equation}
+实例$g$选定具体实体及关系作用域，$\bm{x}_g$收集已知特征，$\bm{y}_g$包含参与的未知标签。共享参数$\bm{\theta}_r$接收各实例的学习统计；实例可能重叠，不能因此当作独立记录。Taskar等人的关系Markov网络给出了这种条件分布与集体分类的代表构造\scite{pgm-energy-models-taskar2002}
+
+给定关系输入后，标签图仍可能成环，例如设备连接本身形成闭环。团树可以精确汇总它的概率（参见第~\ref{chap:pgm-junction-tree}章），成本取决于消元后的作用域。标签数为$K$、所用消元序诱导宽度为$w$时，主要计算一般含$K^{w+1}$规模。简单环宽度仍小，不必一律近似；密集关系或大型高阶作用域则可能超出可用资源。
+
+宽图难以精确处理时，可近似边缘或最优配置。平均场、环置信传播及采样用于概率与期望，最大化松弛、图割或整数优化针对最优配置（参见第~\ref{chap:pgm-variational}、\ref{chap:pgm-sampling}章）。后一个问题的解不会自动给出前一个问题的概率。环消息可能不收敛，收敛值也未必是精确边缘；据此训练时，须说明使用了近似梯度或配分函数。
+
+关系势错误也会沿集体推断传播。若所有连接都奖励同标签，而实际常连接不同故障类型，多个节点可能共同偏移；高连接度还使一个位置重复参与许多势。需要检查特征与共享方式，延长消息迭代无法修复这种错设。连接仅作为已知输入时，其生成分布仍未定义，标签推断不能自行扩展为未知连接生成。
+
+评价须说明预测发生在同一张关系图还是新图。同图中已标注、未标注节点的划分属于传导任务，与预测全新独立图不同；测试标签不得借邻域特征进入训练。部分训练标签未观测时，条件似然分子也要边缘化它们，训练增加后验推断并通常失去凹性。共享关系模式可以合并信息，相关性、划分泄漏及推断误差仍要分别控制。
+
+\section{模型比较}
+\label{sec:pgm-energy-models-comparison}
+
+模型的区别可以按归一化变量、可见信息及可利用运算逐项比较。表~\ref{tab:pgm-energy-models-comparison}汇总代表设定，所列属性允许组合；例如采用神经高阶势的关系CRF，仍按给定输入的标签空间归一化。这些名称不是互斥类别。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{27mm}p{19mm}p{24mm}p{24mm}X}
+    \toprule
+    代表设定 & 归一化对象 & 变量与潜变量 & 势的作用域 & 可计算性与主要限制\\
+    \midrule
+    Ising／Potts & 全部状态 & 离散；此处全观测 & 一元、成对 & 树上精确；一般图的全局求和与强耦合采样可能昂贵\\
+    高斯MRF & 全部状态 & 连续；此处全观测 & 二次能量 & 正定精度下可解析归一化；矩阵填充与单峰限制\\
+    BM／RBM & 可见与隐藏状态 & 二值；含潜变量 & 联合空间成对 & RBM的块条件与自由能可算，联合配分函数一般仍难\\
+    神经联合能量 & 全部状态 & 可离散或连续；潜变量可选 & 局部或全局 & 网络求值不等于归一化；尾部、采样和学习偏差均需控制\\
+    MLN & 落地命题配置 & Boolean；可有未观测命题 & 模板决定阶数 & 参数共享不消除落地数量及推断宽度的增长\\
+    线性链CRF & 给定输入的标签 & 离散；此处完整标签 & 一元、相邻成对 & $O(TK^2)$精确归一化；不直接表示任意远程标签约束\\
+    半Markov／高阶链CRF & 分段或标签组合 & 离散；边界可未观测 & 片段或连续高阶 & 分别受$L$与$K^r$影响；有限结构下可精确递推\\
+    一般图关系CRF & 给定关系输入的标签 & 此处离散；标签可缺失 & 成对或高阶 & 低宽度可精确；宽图依赖近似推断且须重复用于学习\\
+    \bottomrule
+  \end{tabularx}
+  \caption{本章代表模型的归一化与计算条件。$T$是序列长度，$K$是标签数，$L$是最大片段长度，$r$是消息保留的历史标签数。潜变量、势阶数和参数化允许组合，条件模型也可定义连续输出；表中只列本章展开的设定。}
+  \label{tab:pgm-energy-models-comparison}
+\end{table*}
+
+先按查询选择联合或条件对象。若查询涉及输入的生成或概率补全，还需为输入提供概率模型；始终给定输入而只预测标签时，可以直接学习条件分布。输出依然全局归一化，复杂标签图可能仍难以求和，且不同训练输入各有$Z_{\bm{\theta}}(\bm{x})$。
+
+表达能力要同时看势的函数形式和未知变量作用域。GMRF能借二次结构处理环，却仅表示单峰高斯；RBM的成对联合势可诱导高阶边缘，归一化仍可能昂贵。计数高阶势能用卷积，任意高阶表却需指数存储。局部神经势丰富函数形状并保留原图，全局网络则可能失去稀疏分解，不能只按“成对”或“神经”判断可表达范围与代价。
+
+收敛性分析要区分优化目标与计算该目标的误差。完整离散模型需要模型期望，BM还需数据隐藏后验，RBM只简化后者；神经能量通常依靠负样本或输入导数。线性固定特征CRF有凹似然，链结构又使期望可精确计算，但训练仍需反复推断；神经参数或隐藏标签不保留一般凹性。应检查有限最优解、优化停止与近似误差，短链重构或单个训练损失不足以说明收敛。
+
+泛化性需要在未参与拟合和调参的数据上评价，并固定预测单位。条件模型可比较同一留出集的平均每序列负对数似然，值越小越好；逐点错误率和完整序列错误率则分别评价局部标签与整体解码，不能互换。关系模型还要区分同图传导与新图预测。联合模型若用留出似然评价，须取得可比较的配分函数估计并报告其误差；训练目标下降本身不保证这些预测指标改善。
+
+\section{本章小结}
+\label{sec:pgm-energy-models-summary}
+
+局部相容权重经过共同归一化，才能形成整组状态的概率；能量是权重的负对数写法，添加常数不改分布。三位置例从联合权重总和$32$转到输入相关标签权重总和$100$，展示了输入怎样改变概率：中点自身无偏好，也能经相邻作用得到两侧信息。
+
+联合与条件划分归一化对象，其他属性可在其内部组合。潜变量使简单联合作用产生复杂边缘，RBM的二部限制使隐藏后验与自由能可算，联合配分函数仍是训练难点。高阶势及关系模板表达整体约束，也增加作用域、落地规模和可行性要求；神经能量需另查积分尾部及近似学习误差。
+
+固定输入并不意味着标签独立。链、片段及有限阶历史将全局查询化为有限边界消息，一般标签图则继续受消元宽度限制。回答开篇问题时，先决定是否需要输入的生成分布，再按所需相互作用选择局部结构，最后确认归一化、推断与学习的成本。表达能力、求解保证和未见数据的预测评价要分别核对。
+
+序列也可以采用有向生成模型：先规定潜状态演化，再为测量定义发射分布，链上的求和与最大化仍可复用（参见第~\ref{chap:pgm-dynamic}章）。这样的观测模型为未来测量的概率预测提供依据；本章固定输入的标签CRF则只规定标签条件分布，未给输入读数建立生成机制。
+
+\paragraph{扩展阅读}
+Bishop的PRML和Murphy的教材可继续用于学习能量分布及采样训练。建议分别追踪三个计算对象：配置得分、归一化概率、梯度中的模型期望，并核对何种结构使每项可算；得分容易求值不代表概率和期望也容易求值\scite{bishop2006,pgm-murphy2012}

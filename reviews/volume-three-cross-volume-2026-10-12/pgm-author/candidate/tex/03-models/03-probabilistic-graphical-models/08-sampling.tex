@@ -1,0 +1,763 @@
+\chapter{基于采样的近似推断}
+\label{chap:pgm-sampling}
+
+设备报警后，我们需要估计故障的后验概率。精确消元能够计算这一概率（第~\ref{chap:pgm-elimination}章），但中间因子过大或积分过于复杂时，需要近似推断。上一章在可计算的分布族中优化后验近似，本章改用随机样本：让一组样本代表后验，用其中故障出现的比例估计概率。为此，样本生成、变换和筛选需要与目标后验相匹配。
+
+本章按样本的生成机制展开。直接从目标生成独立样本时，可以分析普通样本均值；从提议分布生成候选时，权重修正候选与目标的差异。从当前状态局部移动时，Markov转移需要保持目标并具备充分的探索能力。观测逐步到来时，样本与权重需要共同递推。每种机制分别讨论估计量的极限条件、有限计算误差，以及相应的诊断。
+
+\section{采样推断的定义}
+\label{sec:pgm-sampling-definition}
+
+设观测为$\bm{x}$，潜变量为$\bm{z}$，固定模型参数并省略其记号。把目标后验写为
+\begin{equation}
+  \begin{aligned}
+    p(\bm{z}\mid\bm{x})&=\frac{\gamma(\bm{z})}{Z_{\bm{x}}},&
+    \gamma(\bm{z})&=p(\bm{x},\bm{z}),\\
+    Z_{\bm{x}}&=\int\gamma(\bm{z})\,\mathrm{d}\bm{z},&
+    I_h&=\mathbb{E}_{p(\bm{z}\mid\bm{x})}[h(\bm{z})].
+  \end{aligned}
+  \label{eq:pgm-sampling-target}
+\end{equation}
+其中$0<Z_{\bm{x}}<\infty$，$h$是待求期望的实值函数。本章的积分也涵盖离散情形，此时改为求和，$p$表示概率质量而非密度。$\gamma$可以计算到一个与$\bm{z}$无关的正比例常数；这足以计算后验期望，却不足以确定原模型的证据$Z_{\bm{x}}$。估计证据时，必须知道$\gamma$的实际尺度。
+
+若能直接从后验获得独立同分布的$\bm{z}_1,\ldots,\bm{z}_n$，就可以用函数值的样本均值估计$I_h$：
+\begin{equation}
+  \widehat I_{h,n}=\frac{1}{n}\sum_{i=1}^{n}h(\bm{z}_i).
+  \label{eq:pgm-sampling-direct-estimator}
+\end{equation}
+选择$h(\bm{z})=\mathbb{I}\{\bm{z}\in B\}$，即事件$B$发生时取$1$、否则取$0$的指示函数，就得到后验事件概率的估计；选择某个分量或分量乘积，则得到均值或二阶矩。同一批样本可以用于多个查询，各查询的误差由相应的函数$h$决定（采样平均的依据参见\BookSectionRef{sec:probability-monte-carlo-variance-reduction}{第一卷“数学准备”的采样平均单个积分误差说明}）。
+
+独立样本的极限理论提供这一估计量的正确性依据。可积$h$使样本均值几乎必然收敛；方差$\sigma_h^2=\operatorname{Var}_p(h)$有限时，估计量还满足下列方差与极限关系（参见\BookSectionRef{sec:rv-aggregate-limits}{第一卷“数学准备”的重复采样下平均序列收敛小节}）：
+\begin{equation}
+  \begin{aligned}
+    \mathbb{E}[\widehat I_{h,n}]&=I_h,&
+    \operatorname{Var}(\widehat I_{h,n})&=\frac{\sigma_h^2}{n},\\
+    \sqrt n(\widehat I_{h,n}-I_h)&\xrightarrow{\mathrm{d}}
+      \mathcal{N}(0,\sigma_h^2).
+  \end{aligned}
+  \label{eq:pgm-sampling-iid-clt}
+\end{equation}
+\term{蒙特卡洛标准误}（Monte Carlo standard error, MCSE）衡量重复运行估计过程时答案的波动；
+独立样本下可用$s_h/\sqrt n$估计，其中$s_h^2$是$h(\bm z_i)$的样本方差。
+后验标准差描述模型中的不确定性，MCSE描述有限采样带来的计算波动。
+
+
+\begin{example}[报警后的故障概率]
+  \label{ex:pgm-sampling-device}
+  沿用人工构造的设备模型$F\to H\to A\leftarrow S$：$F$表示故障，$H$表示过热，$A$表示报警，$S$表示传感器失灵。根节点$F,S$独立，且
+  \[
+    \begin{aligned}
+      p(F=1)&=0.1,&p(S=1)&=0.05,\\
+      p(H=1\mid F=1)&=0.8,&
+      p(H=1\mid F=0)&=0.1.
+    \end{aligned}
+  \]
+  报警条件表仍与前面的精确推断相同：
+  \[
+    \begin{array}{ccccc}
+      (h,s)&(0,0)&(1,0)&(0,1)&(1,1)\\
+      p(A=1\mid h,s)&0.01&0.9&0.7&0.99
+    \end{array}
+  \]
+  边缘化故障得到$p(H=1)=0.17$，从而
+  \[
+    \begin{aligned}
+      p(A=1\mid H=0)&=0.95\times0.01+0.05\times0.7=0.0445,\\
+      p(A=1\mid H=1)&=0.95\times0.9+0.05\times0.99=0.9045,\\
+      p(A=1)&=0.83\times0.0445+0.17\times0.9045=0.1907,\\
+      p(F=1,A=1)&=0.1(0.2\times0.0445+0.8\times0.9045)=0.07325.
+    \end{aligned}
+  \]
+  因此精确答案为$p(F=1\mid A=1)=0.07325/0.1907\approx0.384111$。若能够取得$10000$个独立后验样本，故障比例的理论标准误约为$\sqrt{0.384111(1-0.384111)/10000}=0.004864$。这个小模型的精确答案用于校验采样计算，不是实际设备数据。
+\end{example}
+
+改变样本生成机制后，误差分析也要随之改变。重要性样本由提议生成，估计方差取决于加权函数；一条Markov链上的状态通常相关，样本均值的方差需要计入协方差；重采样粒子还可能共享祖先。后文分别建立这些机制下的正确性条件，再分析相应的计算误差。普通蒙特卡洛误差与方差缩减的系统论述见Owen\scite{pgm-sampling-owen2013}。
+
+\section{独立蒙特卡洛方法}
+\label{sec:pgm-sampling-independent}
+
+独立蒙特卡洛方法每次使用新的独立随机输入生成候选。直接采样让候选服从目标，拒绝采样通过筛选改变其分布，重要性采样则调整每个候选对估计的贡献。候选生成彼此独立，但自归一化权重共用一个随机分母，估计量的分析还需考虑这一比值结构。
+
+\subsection{直接采样、祖先采样与拒绝采样}
+\label{sec:pgm-sampling-direct-rejection}
+
+目标分布具有可操作的生成规则时，可以通过条件分布逐步抽样，或将易生成的随机变量变换为所需变量。每次生成完整记录时使用新的独立随机输入，得到的记录之间才具有独立性（参见\BookSectionRef{sec:rv-random-generation}{第一卷“数学准备”的条件规律下随机生成小节}与\BookSectionRef{sec:rv-transformations}{第一卷“数学准备”的随机对象变换与生成小节}）。
+
+在有向无环图上，\term{祖先采样}（ancestral sampling）按拓扑顺序逐个生成节点，使每个节点采样时都已知道其父节点的取值。若一次生成$\bm{x}$时，第$i$个节点使用$p(x_i\mid\bm{x}_{\operatorname{pa}(i)})$，则整次生成的概率恰为这些条件概率之积，也就是图模型的联合分布。样本内部的各节点通常不独立，独立的是从头运行得到的不同完整样本。一次生成的成本包括拓扑遍历和所有局部条件分布的采样成本；后者取决于各条件分布的实现。
+
+祖先采样的目标是联合分布，给定证据的后验还需引入条件化。对设备模型，按先验生成$F,S,H$后直接将$A$设为$1$，保留的故障比例仍为$0.1$。若连同$A$一起生成，再仅保留$A=1$的样本，所保留记录才服从后验，故障概率为$0.384111$。这种按证据筛选是\term{拒绝采样}（rejection sampling）的特例：候选先从易采样分布生成，再根据其位置决定是否接受。
+
+一般地，设$q(\bm{z})$为提议密度，已知常数$c<\infty$使$\gamma(\bm{z})\leq c q(\bm{z})$在整个目标支撑集上成立。独立生成$\bm{z}\sim q$和$u\sim\operatorname{Uniform}(0,1)$，当$u\leq\gamma(\bm{z})/[c q(\bm{z})]$时接受。对任意可测集合$B$，
+\begin{equation}
+  \begin{aligned}
+    \mathbb{P}(\bm{z}\in B,\text{接受})
+      &=\int_B q(\bm{z})\frac{\gamma(\bm{z})}{c q(\bm{z})}
+        \,\mathrm{d}\bm{z}
+        =\frac{1}{c}\int_B\gamma(\bm{z})\,\mathrm{d}\bm{z},\\
+    \mathbb{P}(\text{接受})&=\frac{Z_{\bm{x}}}{c}.
+  \end{aligned}
+  \label{eq:pgm-sampling-rejection}
+\end{equation}
+相除便得到$\mathbb{P}(\bm{z}\in B\mid\text{接受})=\int_B p(\bm{z}\mid\bm{x})\,\mathrm{d}\bm{z}$。因此按固定规则独立重复试验，直到得到指定数量的接受样本，会产生独立同分布的目标样本。每个接受样本平均需要$c/Z_{\bm{x}}$次提议。这一结论依赖全局包络条件。只检查已生成的位置，无法保证未访问区域也满足相同的接受规则。
+
+在报警例子中，匹配证据的接受率为$0.1907$，平均约$5.244$次联合采样得到一个后验样本。若有多个稀有离散证据，联合匹配概率可能很小；连续证据的精确等值事件通常概率为零，需要使用密度条件化等其他采样构造。高维包络也容易变松：若归一化目标和提议分别按坐标分解，每维包络常数为$m>1$，乘积包络的接受率便是$m^{-d}$。后验越集中而提议越分散，越多计算会用在最终丢弃的候选上。
+
+\subsection{重要性采样}
+\label{sec:pgm-sampling-importance}
+
+拒绝采样将候选筛选为保留或丢弃。另一种选择是保留候选，用连续权重调整它们对估计的贡献，从而避免寻找全局包络。\term{重要性采样}（importance sampling, IS）从易采样的$q$生成候选，并以目标与提议的密度比修正抽样频率。这要求$p\ll q$，即$q$覆盖目标的正概率区域；连续情形按测度理解，零测集上的密度取值不影响结论。
+
+如果目标密度已归一化，令$r(\bm{z})=p(\bm{z}\mid\bm{x})/q(\bm{z})$，便有
+\begin{equation}
+  \begin{aligned}
+    I_h&=\int h(\bm{z})r(\bm{z})q(\bm{z})\,\mathrm{d}\bm{z},\\
+    \widehat I_{h,n}^{\mathrm{IS}}
+      &=\frac{1}{n}\sum_{i=1}^{n}r(\bm{z}_i)h(\bm{z}_i).
+  \end{aligned}
+  \label{eq:pgm-sampling-is}
+\end{equation}
+只要$\mathbb{E}_p|h|<\infty$，这个估计无偏且一致；有限方差还要求$\mathbb{E}_q[r^2h^2]<\infty$。目标区域若只被$q$赋予很小概率，偶尔出现的巨大权重会主导结果。支持覆盖保证目标区域有机会被提议访问，加权矩条件进一步控制罕见访问带来的波动。
+
+图模型往往只提供$\gamma$。令$w_i=\gamma(\bm{z}_i)/q(\bm{z}_i)$，同时估计分子积分和归一化常数，得到\term{自归一化重要性采样}（self-normalized importance sampling, SNIS）：
+\begin{equation}
+  \begin{aligned}
+    \widehat Z_{\bm{x}}&=\frac{1}{n}\sum_{i=1}^{n}w_i,&
+    \bar w_i&=\frac{w_i}{\sum_{j=1}^{n}w_j},\\
+    \widehat I_{h,n}^{\mathrm{SNIS}}
+      &=\frac{\frac{1}{n}\sum_i w_i h(\bm{z}_i)}
+              {\frac{1}{n}\sum_i w_i}
+       =\sum_i\bar w_i h(\bm{z}_i).
+  \end{aligned}
+  \label{eq:pgm-sampling-snis}
+\end{equation}
+要求本次权重和非零。$\widehat Z_{\bm{x}}$无偏，但两个无偏估计的比值通常有偏，因为随机分母不能移到期望之外。在支撑集覆盖、$0<\mathbb{E}_q w=Z_{\bm{x}}<\infty$和$\mathbb{E}_q|wh|<\infty$时，分子、分母分别由大数定律收敛，故比值仍然一致。因此，比值的有限样本偏差与样本数增长后的渐近一致性可以同时成立。
+
+设备例子可以令$q(f,h,s)=p(f)p(s)p(h\mid f)$，不抽取已知的$A$，而令$w(f,h,s)=p(A=1\mid h,s)$。这称为\term{似然加权}（likelihood weighting）：证据通过似然而非硬性筛选影响候选。图~\ref{fig:pgm-sampling-importance}比较先验与报警后的$(H,S)$分布。先验最常生成“既不过热也未失灵”，但这一状态很难解释报警；乘上似然以后，它只占约$4.13\%$的后验质量。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=105.412mm]{figures/03-models/03-probabilistic-graphical-models/matplotlib/pgm-sampling-importance/figure.pdf}
+  \caption{人工设备模型中$(H,S)$的先验与给定$A=1$后的后验。横轴每组的两位数依次为$h,s$；淡蓝柱表示先验，淡黄色柱表示后验。权重改变已有候选的贡献；未被抽到的类别仍需依靠后续生成访问。}
+  \label{fig:pgm-sampling-importance}
+\end{figure}
+
+表~\ref{tab:pgm-sampling-weight-example}用四个可能的独立先验样本展示似然加权。直接计数的故障比例为$1/4$，加权比例为$0.9/(0.01+0.9+0.9+0.7)\approx0.358566$。权重按目标修正了候选贡献，但四次抽样仍有明显的有限样本波动，所得比例与精确后验不同。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{ccccc}
+    \toprule
+    样本$i$ & $(f_i,h_i,s_i)$ & $w_i$ & $\mathbb{I}\{f_i=1\}$ & $w_i\mathbb{I}\{f_i=1\}$\\
+    \midrule
+    1 & $(0,0,0)$ & $0.01$ & $0$ & $0$\\
+    2 & $(1,1,0)$ & $0.90$ & $1$ & $0.90$\\
+    3 & $(0,1,0)$ & $0.90$ & $0$ & $0$\\
+    4 & $(0,0,1)$ & $0.70$ & $0$ & $0$\\
+    \bottomrule
+  \end{tabular}
+  \caption{似然加权的四样本教学计算。分母是全部权重之和，分子仅累加故障样本的权重。}
+  \label{tab:pgm-sampling-weight-example}
+\end{table}
+
+提议的尾部决定极端权重出现的频率。即使提议很好地匹配后验峰附近，尾部事件估计仍需要足够的尾部覆盖。以一维标准正态目标$p=\mathcal{N}(0,1)$和$q=\mathcal{N}(0,s^2)$为例，二者的支撑集相同，但
+\[
+  \frac{p(z)^2}{q(z)}
+    \ \propto\ \exp\left[\left(-1+\frac{1}{2s^2}\right)z^2\right].
+\]
+因此$\mathbb{E}_q r^2$只有在$s^2>1/2$时才有限。提议过窄时，算法可以满足一致性的条件，却没有通常所需的有限权重二阶矩；重复运行中偶发的大权重会破坏熟悉的误差估计。如何构造尾部足够宽、同时不过度浪费样本的提议，是重要性采样的主要计算问题；相关分析可参见Owen教材的第9章\scite{pgm-sampling-owen2013}
+
+\subsection{方差缩减}
+\label{sec:pgm-sampling-variance-reduction}
+
+降低MCSE还可以减少每次抽样的方差。控制变量利用已知期望修正样本函数，Rao--Blackwell化则将部分抽样替换为条件积分。在图模型中，局部消元可以解析消去部分节点，仅对保留变量采样。相容条件期望保持原均值，并在独立抽样下使单样本方差不增（参见\BookSectionRef{sec:probability-monte-carlo-variance-reduction}{第一卷“数学准备”的采样平均误差与方差缩减说明}及\BookEquationRef{eq:probability-rao-blackwell-variance}{第一卷“数学准备”的Rao--Blackwell方差分解式}）。
+
+若目标是设备的先验报警概率，可以抽取完整$(F,H,S,A)$并平均$\mathbb{I}\{A=1\}$，也可以只抽取$F$，把其余节点解析消去。后者每次贡献$p(A=1\mid F)$：当$F=0$时为$0.1305$，当$F=1$时为$0.7325$。两者均值都是$0.1907$，但前者单样本方差为$0.1907(1-0.1907)=0.15433351$，后者为$0.1\times0.9(0.7325-0.1305)^2=0.03261636$。解析计算减少了相同独立抽样次数下的方差；是否节约总时间，还要比较条件积分的成本。
+
+方差缩减需要作用于完整估计量。SNIS的分子贡献为$wh$，分母贡献为$w$，因此要按提议的条件分布同时积分这两个量，保持权重与函数的相容关系。MCMC均值的渐近方差还包括时间相关性，单次函数方差减小后，需要继续检查自相关如何变化。
+
+\section{Markov链蒙特卡洛}
+\label{sec:pgm-sampling-mcmc}
+
+在高维后验中，构造覆盖充分的独立提议可能与直接求后验同样困难。如果只要求从当前位置产生下一位置，便可以利用局部条件分布、局部密度比或梯度。\term{Markov链蒙特卡洛}（Markov chain Monte Carlo, MCMC）通过这样的局部转移形成相关样本序列，再用长期平均近似目标期望。其正确性依赖转移保持目标，以及长期运行能够充分访问目标的条件。
+
+\subsection{Markov转移与目标分布}
+\label{sec:pgm-sampling-markov-kernel}
+
+令$\bm z^{(k)}$为第$k$次迭代状态，$K(\bm z,B)$表示从当前状态转移到集合$B$的概率。设计采样更新的第一步，是使目标后验保持不变：
+\begin{equation}
+  \int p(\bm{z}\mid\bm{x})K(\bm{z},B)\,\mathrm{d}\bm{z}
+    =\int_B p(\bm{z}'\mid\bm{x})\,\mathrm{d}\bm{z}'.
+  \label{eq:pgm-sampling-invariance}
+\end{equation}
+满足此式时，$p$称为\term{平稳分布}（stationary distribution）：若当前状态已服从$p$，再转移一步仍服从$p$。该条件描述状态分布，单条轨迹仍可移动。从指定初值到达目标还需可达性等条件（参见\BookSectionRef{sec:rv-markov}{第一卷“数学准备”的历史条件下状态依赖小节}）。
+
+使往返概率流相等的细致平衡，是上述不变性的一个充分条件。在当前后验与转移核上，它写为
+\begin{equation}
+  p(\mathrm{d}\bm{z}\mid\bm{x})K(\bm{z},\mathrm{d}\bm{z}')
+    =p(\mathrm{d}\bm{z}'\mid\bm{x})K(\bm{z}',\mathrm{d}\bm{z}).
+  \label{eq:pgm-sampling-detailed-balance}
+\end{equation}
+测度记号包含拒绝后原地停留的点质量。对一端积分即可得到不变性。
+顺次组合多个保持$p$的核仍保持$p$，但组合后的核未必可逆。
+
+不变性之外，时间平均还需要链能够访问并返回目标的相关区域。有限不可约链的时间平均可收敛，逐步状态分布收敛还需要非周期性；一般状态空间则使用正Harris常返性及查询函数可积性等条件（参见\BookSectionRef{sec:stoch-markov-long-run-average}{第一卷“数学准备”的状态转移下时间平均序列收敛小节}）。后文在这些条件下构造后验更新，再检查有限预算中的探索。
+
+采样核的设计先检验不变性、可达性与返回条件，再分析探索速度。\term{混合}（mixing）描述链摆脱初值并访问目标分布的快慢。两个高概率区域之间存在低概率通道时，局部移动可能很难跨过它，即使渐近平均正确，有限预算中的估计仍可能偏向已访问的区域。
+
+\subsection{Metropolis--Hastings方法}
+\label{sec:pgm-sampling-mh}
+
+给定当前位置$\bm{z}$，设易采样提议为$q(\bm{z}'\mid\bm{z})$。若直接接受，往返概率流一般不相等。\term{Metropolis--Hastings方法}（Metropolis--Hastings, MH）通过位置相关的接受率，让实际往返流量都等于提议流量中较小的一方：
+\begin{equation}
+  \alpha(\bm{z},\bm{z}')
+    =\min\left\{1,\,
+      \frac{\gamma(\bm{z}')q(\bm{z}\mid\bm{z}')}
+           {\gamma(\bm{z})q(\bm{z}'\mid\bm{z})}\right\}.
+  \label{eq:pgm-sampling-mh-acceptance}
+\end{equation}
+从$\gamma(\bm{z})>0$的有效状态开始，提议到目标质量为零或无法反向提议的状态时拒绝；未实际提议到的零分母情形不参与该比值的计算。对两个不同状态，接受后的概率流为
+\[
+  \begin{aligned}
+    &p(\bm{z}\mid\bm{x})q(\bm{z}'\mid\bm{z})\alpha(\bm{z},\bm{z}')\\
+    &\qquad=\frac{\min\{\gamma(\bm{z})q(\bm{z}'\mid\bm{z}),
+                    \gamma(\bm{z}')q(\bm{z}\mid\bm{z}')\}}
+         {Z_{\bm{x}}}.
+  \end{aligned}
+\]
+右侧交换$\bm{z},\bm{z}'$后不变；拒绝产生的原地停留也满足细致平衡。因此MH保持目标分布，并且不需要知道$Z_{\bm{x}}$。
+
+MH每次先抽取提议，再用独立均匀数决定接受。接受时记录$\bm{z}'$，拒绝时继续记录$\bm{z}$。重复记录保留链在各状态停留的时间，删除这些记录会改变访问比例。独立拒绝采样以筛选得到目标独立样本，MH则以包含停留的相关轨迹保持目标。
+
+随机游走提议常写作$\bm{z}'=\bm{z}+\epsilon\bm{\eta}$，其中$\bm{\eta}\sim\mathcal{N}(\bm{0},\bm{C})$，$\epsilon$为尺度，$\bm{C}$为给定正定矩阵。提议对称时，接受率只剩目标密度比。对标准正态目标，从$z=0$提议到$z'=2$的接受率是$\exp(-2)\approx0.1353$，反向提议则总被接受。尺度过小时，接受率虽高，每步位移却很小；尺度过大时，候选常落入低密度区域，链又因拒绝而停留。
+
+维度会加重这一矛盾。对$p(\bm{z})\propto\exp(-\lVert\bm{z}\rVert_2^2/2)$和各向同性提议，势能变化为
+\[
+  \frac{\lVert\bm{z}+\epsilon\bm{\eta}\rVert_2^2
+             -\lVert\bm{z}\rVert_2^2}{2}
+    =\epsilon\bm{z}^{\top}\bm{\eta}
+       +\frac{\epsilon^2}{2}\lVert\bm{\eta}\rVert_2^2.
+\]
+典型情况下$\lVert\bm{\eta}\rVert_2^2$随维度$d$增长，固定尺度会让接受困难；缩小尺度又减缓每个坐标的探索。这个计算展示了各向同性高斯例中的尺度与维度关系。一般后验的合适尺度还取决于其几何结构。
+
+\term{独立提议}（independence proposal）取$q(\bm{z}'\mid\bm{z})=q(\bm{z}')$。候选不依赖当前位置，但接受后的链仍然相关。它能一次跨越很远的区域，接受率却变成$\min\{1,w(\bm{z}')/w(\bm{z})\}$，其中$w=\gamma/q$；一旦链进入$q$严重低估的区域，就容易长时间停留。独立提议依赖全局覆盖，随机游走依赖局部尺度。比较两者需要同时检查移动距离、停留和所需查询的估计误差。
+
+\subsection{Gibbs采样}
+\label{sec:pgm-sampling-gibbs}
+
+图模型常允许直接计算一个变量在其余变量给定时的条件分布。\term{Gibbs采样}（Gibbs sampling）固定其余坐标，仅从待更新坐标的\term{满条件分布}（full conditional distribution）重新抽样；“满”表示已经给定其他全部未知变量及证据。记$\bm{z}_{-j}$为去掉第$j$个坐标后的向量，则单坐标更新使用$p(z_j\mid\bm{z}_{-j},\bm{x})$。顺序扫描时，一轮中已更新的坐标使用新值，尚未更新的坐标使用旧值。
+
+满条件抽样可以看成接受率为一的MH更新。把固定$\bm{z}_{-j}$时的提议写成$q(z'_j\mid z_j,\bm{z}_{-j})=p(z'_j\mid\bm{z}_{-j},\bm{x})$，MH比值为
+\begin{equation}
+  \frac{p(z'_j,\bm{z}_{-j}\mid\bm{x})p(z_j\mid\bm{z}_{-j},\bm{x})}
+       {p(z_j,\bm{z}_{-j}\mid\bm{x})p(z'_j\mid\bm{z}_{-j},\bm{x})}
+    =1.
+  \label{eq:pgm-sampling-gibbs-acceptance}
+\end{equation}
+等式来自联合分布的条件分解，并要求涉及的条件分布定义良好。每个更新核都保持后验，故依次组合一整轮也保持后验。若用近似满条件作提议，就不再有这个抵消；必须加入相应MH校正，或另行证明近似更新的偏差与收敛性质。随机扫描各选一个坐标与确定性顺序扫描都可构造正确核，但整轮顺序扫描一般不满足细致平衡。
+
+满条件虽然写成“给定所有其他变量”，实际计算通常只涉及邻近因子。有向图中，一个节点的\term{Markov毯}（Markov blanket）由父节点、子节点以及子节点的其他父节点组成；给定这些变量以后，其余节点不再改变该节点的条件分布。用$\operatorname{ch}(j)$记子节点集合，含有$z_j$的局部因子给出
+\[
+  p(z_j\mid\bm{z}_{-j},\bm{x})
+    \ \propto\ p(z_j\mid\text{父节点})
+       \prod_{\ell\in\operatorname{ch}(j)}
+          p(v_\ell\mid\text{其父节点}),
+\]
+其中$v_\ell$表示子节点的当前取值，证据节点使用已观测值。无向图只需相乘所有包含该节点的势函数，再对候选$z_j$归一化。局部因子减少了单步计算范围，样本的跨迭代相关性仍取决于整个更新过程。
+
+在设备后验$p(f,h,s\mid A=1)$上，更新$F$时只需$H$；若$H=1$，
+\[
+  p(F=1\mid H=1,A=1,S)
+    =\frac{0.1\times0.8}{0.1\times0.8+0.9\times0.1}
+    =\frac{8}{17}.
+\]
+更新$H$时则需$F,S,A$；若$F=1,S=0,A=1$，取$H=1$和$H=0$的未归一化概率分别为$0.8\times0.9=0.72$和$0.2\times0.01=0.002$，故前者的满条件概率是$0.72/0.722\approx0.997230$。更新$S$时，若$H=0,A=1$，则
+\[
+  p(S=1\mid H=0,A=1,F)
+    =\frac{0.05\times0.7}{0.05\times0.7+0.95\times0.01}
+    \approx0.786517.
+\]
+这三步展示了证据如何通过局部更新传播，而无须每次重新消去整张图。对有$K$个取值的节点，一次朴素更新需评估$K$组相关因子；块越大，联合条件分布的构造和抽样成本通常越高。
+
+满条件更新的接受率为一，但强相关仍会限制每步移动。以零均值、相关系数$\rho\in(-1,1)$、边缘方差为$1$的二维高斯为例，满条件方差均为$1-\rho^2$。当$\rho$接近$1$时，给定一个坐标后另一个只能小幅移动。顺序更新满足
+\[
+  \begin{aligned}
+    z_1^{(k+1)}&=\rho z_2^{(k)}+\sqrt{1-\rho^2}\epsilon_1,\\
+    z_2^{(k+1)}&=\rho z_1^{(k+1)}+\sqrt{1-\rho^2}\epsilon_2,
+  \end{aligned}
+\]
+其中每轮使用两个新的独立标准正态噪声$\epsilon_1,\epsilon_2$。代入可见$z_2$跨一轮的自回归系数为$\rho^2$；即使每次都接受，$\rho=0.99$时仍有$0.9801$的一步相关。
+
+\term{分块Gibbs采样}（blocked Gibbs sampling）联合更新强相关坐标，使抽样沿联合条件中的相关方向移动。\term{折叠Gibbs采样}（collapsed Gibbs sampling）先解析消去部分变量，再对剩余变量构造满条件；完整样本可通过被消去变量的条件分布补抽。折叠减少采样维度，也可能形成稠密因子并提高单步成本，所有更新应与折叠后的同一目标相容。确定性约束可能使单坐标链无法离开当前配置，此时需要改变分块或参数化以恢复可达性。Koller与Friedman的第12章讨论了这些构造及其限制\scite{pgm-koller2009}。
+
+\subsection{Hamiltonian Monte Carlo}
+\label{sec:pgm-sampling-hmc}
+
+对连续、可微且强相关的后验，随机游走常把计算耗在短距离探索上。\term{哈密顿蒙特卡洛}（Hamiltonian Monte Carlo, HMC）引入辅助动量，让当前位置沿由梯度决定的轨迹移动，再把轨迹末端作为一次整体提议。梯度在这里决定扩展状态的动力学轨迹，后文将说明这一轨迹如何构成保持目标的采样更新。
+
+以下讨论$\mathbb{R}^{d}$上$\gamma>0$且足够光滑的情形，使用固定正定\term{质量矩阵}（mass matrix）$\bm{M}$控制不同方向的运动尺度。令辅助动量$\bm{r}\in\mathbb{R}^{d}$服从$\mathcal{N}(\bm{0},\bm{M})$，定义势能$U(\bm{z})=-\log\gamma(\bm{z})$和总能量
+\begin{equation}
+  \begin{aligned}
+    H(\bm{z},\bm{r})&=U(\bm{z})+\frac12\bm{r}^{\top}\bm{M}^{-1}\bm{r},\\
+    \widetilde p(\bm{z},\bm{r})
+      &=p(\bm{z}\mid\bm{x})\mathcal{N}(\bm{r};\bm{0},\bm{M})
+        \ \propto\ \exp[-H(\bm{z},\bm{r})].
+  \end{aligned}
+  \label{eq:pgm-sampling-hamiltonian}
+\end{equation}
+把动量积分掉，仍得到原目标后验。动量只是计算辅助变量；其分布与$\bm{z}$独立，因而每轮在保持$\bm{z}$不变时重新抽取$\bm{r}$，就是扩展分布上的一次精确条件更新。这一\term{动量刷新}（momentum refreshment）保持$\widetilde p$，并使相邻轨迹能具有不同能量和方向。若只做确定性能量守恒运动而不刷新，轨迹会局限在某个能量面，通常无法遍历扩展分布。
+
+用$s$表示轨迹内部的人工连续时间，避免与观测时间混淆。Hamilton方程为
+\begin{equation}
+  \frac{\mathrm{d}\bm{z}}{\mathrm{d}s}=\bm{M}^{-1}\bm{r},
+  \qquad
+  \frac{\mathrm{d}\bm{r}}{\mathrm{d}s}=-\nabla U(\bm{z}).
+  \label{eq:pgm-sampling-hamilton-equations}
+\end{equation}
+在流存在且光滑的区间内，精确Hamilton轨迹同时守恒能量、保持体积，因此保持扩展密度$\widetilde p$。能量控制密度值，体积控制概率质量随坐标映射的变化，两项性质共同起作用（参见\BookSectionRef{sec:dynamical-hamiltonian-geometric-integration}{第一卷“数学准备”的几何离散与保守轨迹求解小节}）。
+
+实际计算用离散轨迹代替精确流。蛙跳积分将动量半步、位置整步和动量半步对称排列。对后验势能$U$，一步更新为
+\begin{equation}
+  \begin{aligned}
+    \bm{r}_{1/2}&=\bm{r}-\frac{\epsilon}{2}\nabla U(\bm{z}),\\
+    \bm{z}'&=\bm{z}+\epsilon\bm{M}^{-1}\bm{r}_{1/2},\\
+    \bm{r}'&=\bm{r}_{1/2}-\frac{\epsilon}{2}\nabla U(\bm{z}').
+  \end{aligned}
+  \label{eq:pgm-sampling-leapfrog}
+\end{equation}
+下标$1/2$只是一步内部的半步标记。蛙跳通常有能量误差，但在精确算术下保留体积和可逆性，便于下一步作概率校正（参见\BookSectionRef{sec:dynamical-hamiltonian-geometric-integration}{第一卷“数学准备”的几何离散与保守轨迹求解小节}）。
+
+保体积可以逐步验证。动量更新的Jacobian是对角块均为单位矩阵的下三角块矩阵，位置更新则是相应的上三角块矩阵；二者行列式均为$1$。三步复合以及重复$L$步后的映射$\Phi_{\epsilon}^{L}$仍保体积。可逆性来自对称的半步排列：把末端动量变号，按相同步长和步数再运行，再次变号，就回到起点。令$R(\bm{z},\bm{r})=(\bm{z},-\bm{r})$，则
+\begin{equation}
+  R\Phi_{\epsilon}^{L}R=(\Phi_{\epsilon}^{L})^{-1},
+  \qquad
+  T=R\Phi_{\epsilon}^{L},\qquad T^2=\operatorname{id}.
+  \label{eq:pgm-sampling-hmc-reversibility}
+\end{equation}
+因此“积分后翻转动量”的提议$T$是一个自身为逆的保体积映射。翻转不改变动能，其作用是让提议明确具有可对应的反向路径。
+
+设$\bm{y}=(\bm{z},\bm{r})$、$\bm{y}'=T\bm{y}$，末端\term{Metropolis校正}（Metropolis correction）的接受率为
+\begin{equation}
+  \alpha_H(\bm{y},\bm{y}')
+    =\min\{1,\exp[-H(\bm{y}')+H(\bm{y})]\}.
+  \label{eq:pgm-sampling-hmc-acceptance}
+\end{equation}
+这一接受率利用了$T$的两项性质：自身为逆使正反提议配对，保体积使Jacobian修正为$1$。两方向的接受流量都正比于
+\[
+  \min\bigl\{\exp[-H(\bm{y})],\exp[-H(\bm{y}')]\bigr\},
+\]
+因而满足扩展空间的细致平衡。刷新动量与该接受／拒绝更新各自保持$\widetilde p$，两者复合也保持它；只保留位置就得到保持原后验的转移核。因此，可逆性建立反向路径，体积保持控制坐标变换，末端接受率修正能量误差，三者共同形成保持目标的更新\scite{pgm-sampling-neal2011}。
+
+\begin{algorithm}[固定步长与轨迹长度的HMC]
+  \label{alg:pgm-sampling-hmc}
+  \begin{algorithmic}[1]
+    \Require 初始位置$\bm{z}^{(0)}$，$U,\nabla U$，固定$\bm{M},\epsilon,L$，迭代数$n$
+    \Ensure 含拒绝后重复位置的$n$个MCMC样本
+    \For{$k=0,\ldots,n-1$}
+      \State 抽取$\bm{r}\sim\mathcal{N}(\bm{0},\bm{M})$，记$\bm{y}=(\bm{z}^{(k)},\bm{r})$
+      \State 从$\bm{y}$按式~\eqref{eq:pgm-sampling-leapfrog}积分$L$步
+      \State 翻转末端动量，得到$\bm{y}'=(\bm{z}',-\bm{r}')$
+      \State 抽取$u\sim\operatorname{Uniform}(0,1)$
+      \If{$u\leq\alpha_H(\bm{y},\bm{y}')$}
+        \State $\bm{z}^{(k+1)}\gets\bm{z}'$
+      \Else
+        \State $\bm{z}^{(k+1)}\gets\bm{z}^{(k)}$
+      \EndIf
+      \State 记录$\bm{z}^{(k+1)}$；本轮动量随后丢弃
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+对$p(z)=\mathcal{N}(0,1)$、$M=1$，有$U(z)=z^2/2$。从$(z,r)=(0,1)$以$\epsilon=0.5$走一步，得到$r_{1/2}=1$、$z'=0.5$和$r'=0.875$。起点能量为$0.5$，末端为$(0.5^2+0.875^2)/2=0.5078125$，所以接受率为$\exp(-0.0078125)\approx0.992218$。图~\ref{fig:pgm-sampling-hmc}把这个离散步与精确能量圆并列，展示离散化造成的能量偏移。Metropolis步骤按这一偏移校正接受率；有限链长与慢混合仍需通过运行和诊断处理。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=169.000mm]{figures/03-models/03-probabilistic-graphical-models/generated/pgm-sampling-hmc/figure.png}
+  \par\medskip
+  \includegraphics[width=142.118mm]{figures/03-models/03-probabilistic-graphical-models/matplotlib/pgm-sampling-hmc/figure.pdf}
+  \caption{HMC的更新流程与标准正态目标的一步数值计算。上方依次刷新动量、执行蛙跳、接受或拒绝提议、记录位置；$H$表示扩展状态的哈密顿量。下方的数值图由解析式生成：虚线圆弧属于$H=1/2$的精确轨迹，折线表示$\epsilon=0.5$的蛙跳整步与末端动量半步；初始动量半步因$z=0$不移动。动量翻转未画在相图上，接受率约为0.992218。}
+  \label{fig:pgm-sampling-hmc}
+\end{figure*}
+
+步长$\epsilon$决定局部积分精度，轨迹长度$\tau=L\epsilon$决定一次提议运动多久。在足够光滑、数值稳定且$\tau$固定的条件下，蛙跳的全局状态误差为$O(\epsilon^2)$；在相应有界区域内，能量误差也可控制在这一阶。误差常数依赖曲率、维度和轨迹，采样误差还取决于链的探索。过大步长可能造成能量误差突然增大、非有限数值或拒绝；此类积分失败应拒绝并记录。过短轨迹探索不足，过长轨迹可能绕回原处，增加梯度计算却没有相应收益。
+
+质量矩阵改变的是运动几何。在高斯目标$\mathcal{N}(\bm{0},\bm{\Sigma})$下，
+\[
+  \frac{\mathrm{d}^2\bm{z}}{\mathrm{d}s^2}
+     =-\bm{M}^{-1}\bm{\Sigma}^{-1}\bm{z}.
+\]
+按本章动量协方差等于$\bm{M}$的约定，取$\bm{M}=\bm{\Sigma}^{-1}$会把所有方向的频率变为$1$。软件中的“度量”和“逆质量”可能采用相反矩阵约定，使用时应先核对动量协方差与动能公式。固定矩阵补偿的是全局线性尺度；随位置变化的狭窄区域和多峰障碍需要其他几何或采样处理。通常在预热阶段调整尺度，正式保留样本时固定参数；任意依赖历史的持续调整不能直接套用上述齐次链证明。
+
+若一次梯度求值成本为$C_{\nabla U}$，一轮HMC约需$O(L C_{\nabla U})$，另加动量生成和质量矩阵运算。对角矩阵的线性代数成本为$O(d)$每步，稠密矩阵通常为$O(d^2)$每步，并需预先分解。标准HMC不能直接更新离散变量；受约束连续变量常需先变换到无约束空间，并把变换的Jacobian加入密度。某些固定轨迹长度在精确积分下仍会产生共振并妨碍遍历，因此需要另外检查链的探索能力。
+
+\section{序贯蒙特卡洛}
+\label{sec:pgm-sampling-smc}
+
+观测逐步到达时，目标后验也随之变化。例如，持续到来的传感器读数要求我们反复估计设备的当前状态。\term{序贯蒙特卡洛}（sequential Monte Carlo, SMC）复用上一阶段的样本及权重，逐步追踪一列目标分布。带权样本称为\term{粒子}（particle），每个粒子表示一个可能的潜在状态或状态历史。
+
+为建立最小动态设定，令潜在状态为$\bm{z}_t$、观测为$\bm{x}_t$，真实时间$t=1,\ldots,T$写作下标。初始分布为$p(\bm{z}_1)$，转移分布为$p(\bm{z}_t\mid\bm{z}_{t-1})$，观测分布为$p(\bm{x}_t\mid\bm{z}_t)$。其联合分布分解为
+\begin{equation}
+  \begin{aligned}
+    &p(\bm{z}_{1:T},\bm{x}_{1:T})\\
+    &\qquad=p(\bm{z}_1)p(\bm{x}_1\mid\bm{z}_1)
+       \prod_{t=2}^{T}
+         p(\bm{z}_t\mid\bm{z}_{t-1})p(\bm{x}_t\mid\bm{z}_t).
+  \end{aligned}
+  \label{eq:pgm-sampling-state-space}
+\end{equation}
+这里假设给定上一潜状态后，更早状态不再影响当前状态；给定当前潜状态后，当前观测不再依赖其余变量。\term{滤波}（filtering）的目标是$p(\bm{z}_t\mid\bm{x}_{1:t})$，只利用截至当前的观测估计当前状态。若利用未来观测估计过去状态，则是平滑问题。本节只建立粒子计算所需的模型；第~\ref{sec:pgm-dynamic-common}节将从动态有向分解系统建立这些查询，第~\ref{sec:pgm-dynamic-continuous}节再比较何时可以用解析滤波代替粒子近似。
+
+SMC不只适用于物理时间。一列$\gamma_\ell(\bm{z})=p(\bm{z})p(\bm{x}\mid\bm{z})^{\beta_\ell}$，其中$0=\beta_0<\cdots<\beta_L=1$，也可让粒子逐步从先验迁移到后验，并在相邻目标间更新权重、重采样和进行MCMC移动。这里的$\ell$标记温度递增的算法阶段，与观测时间不同。本节以\term{粒子滤波}（particle filtering）为主，即用SMC近似式~\eqref{eq:pgm-sampling-state-space}的滤波分布。
+
+\subsection{序贯重要性采样}
+\label{sec:pgm-sampling-sis}
+
+路径后验涉及截至当前的全部潜状态，路径中的潜状态数量随时间增长。利用Markov分解，可以保留旧路径，只生成当前状态并更新权重。\term{序贯重要性采样}（sequential importance sampling, SIS）把路径提议写成
+\[
+  q_{1:t}(\bm{z}_{1:t}\mid\bm{x}_{1:t})
+    =q_1(\bm{z}_1\mid\bm{x}_1)
+      \prod_{s=2}^{t}
+        q_s(\bm{z}_s\mid\bm{z}_{1:s-1},\bm{x}_{1:s}),
+\]
+其中每个$q_s$保持该阶段生成路径时所用的规则，使旧路径的提议密度仍由同一公共前缀表示。选择未归一化路径目标$\gamma_t=p(\bm{z}_{1:t},\bm{x}_{1:t})$，将目标分解除以提议分解，公共前缀相消，得到
+\begin{equation}
+  \begin{aligned}
+    w_{1,i}&=
+      \frac{p(\bm{z}_{1,i})p(\bm{x}_1\mid\bm{z}_{1,i})}
+           {q_1(\bm{z}_{1,i}\mid\bm{x}_1)},\\
+    w_{t,i}&=w_{t-1,i}
+      \frac{p(\bm{z}_{t,i}\mid\bm{z}_{t-1,i})
+            p(\bm{x}_t\mid\bm{z}_{t,i})}
+           {q_t(\bm{z}_{t,i}\mid\bm{z}_{1:t-1,i},\bm{x}_{1:t})}.
+  \end{aligned}
+  \label{eq:pgm-sampling-sis-weight}
+\end{equation}
+下标$i=1,\ldots,n$标记粒子，$\bm{z}_{1:t,i}$是第$i$条路径。提议必须覆盖其对应的目标条件支撑集。权重的绝对尺度对归一化均值无影响，因此递推时可用上一时刻的归一化权重，再统一归一化当前权重。
+
+只保留路径末端，就得到滤波分布的经验近似
+\begin{equation}
+  \begin{aligned}
+    \widehat p_t(\mathrm{d}\bm{z})
+      &=\sum_{i=1}^{n}\bar w_{t,i}\delta_{\bm{z}_{t,i}}(\mathrm{d}\bm{z}),\\
+    \widehat I_{t,h}&=\sum_{i=1}^{n}\bar w_{t,i}h(\bm{z}_{t,i}).
+  \end{aligned}
+  \label{eq:pgm-sampling-particle-measure}
+\end{equation}
+其中$\delta_{\bm{z}_{t,i}}$是把全部概率质量放在该粒子位置的点质量分布，不是连续密度曲线。对连续状态，有限粒子近似与连续目标不可能在总变差距离下趋近；通常讨论的是适当测试函数$h$的积分是否收敛。
+
+最简单的提议是模型转移$q_t=p(\bm{z}_t\mid\bm{z}_{t-1})$，此时新权重只是旧权重乘以当前观测似然。传播时尚未利用$\bm{x}_t$，所以新观测极具信息时，可能生成许多观测似然很低的候选。对预测似然有限且为正的父粒子，更有针对性的提议是
+\begin{equation}
+  \begin{aligned}
+    q_t^\star(\bm{z}_t\mid\bm{z}_{t-1},\bm{x}_t)
+      &=\frac{p(\bm{z}_t\mid\bm{z}_{t-1})
+                p(\bm{x}_t\mid\bm{z}_t)}
+              {p(\bm{x}_t\mid\bm{z}_{t-1})},\\
+    p(\bm{x}_t\mid\bm{z}_{t-1})
+      &=\int p(\bm{x}_t\mid\bm{z}_t)
+             p(\bm{z}_t\mid\bm{z}_{t-1})\,\mathrm{d}\bm{z}_t.
+  \end{aligned}
+  \label{eq:pgm-sampling-optimal-proposal}
+\end{equation}
+它使式~\eqref{eq:pgm-sampling-sis-weight}中的增量变成只依赖父粒子的$p(\bm{x}_t\mid\bm{z}_{t-1,i})$，因而在给定父粒子的条件下，增量权重方差为零。这个“最优”只针对一步条件方差：不同父粒子的预测似然和旧权重仍可能不同，且$q_t^\star$本身可能难以计算或抽样。预测似然为零的父粒子对当前未归一化目标没有贡献，此时式中的条件提议无定义。
+
+不重采样的SIS会把许多个增量相乘。若少数路径持续更符合观测，其权重会逐步占据总和的大部分，其他粒子虽仍占用计算，却几乎不影响答案。这称为\term{权重退化}（weight degeneracy）。在对数尺度上累加权重，并减去最大对数权重后再指数化，可以防止数值下溢，却不能消除这种真实的统计退化。
+
+\subsection{粒子滤波与重采样}
+\label{sec:pgm-sampling-particle-filter}
+
+一个自然的补救是把下一轮计算资源更多地分给高权重粒子。\term{重采样}（resampling）按当前权重随机复制或淘汰粒子，把带权经验分布转成等权样本集合。若$N_i$为第$i$个原粒子的后代数，基本要求是
+\begin{equation}
+  \sum_i N_i=n,\qquad
+  \mathbb{E}[N_i\mid\mathcal{F}_t]=n\bar w_{t,i},
+  \label{eq:pgm-sampling-offspring}
+\end{equation}
+其中$\mathcal{F}_t$表示重采样前已有的全部粒子信息。由此，
+\[
+  \mathbb{E}\left[
+     \left.\frac1n\sum_i N_i h(\bm{z}_{t,i})\right|\mathcal{F}_t
+  \right]
+    =\sum_i\bar w_{t,i}h(\bm{z}_{t,i}).
+\]
+重采样保持当前经验估计的条件期望。单次复制后的估计仍有随机波动，得到的后代也共享原粒子及路径信息。
+
+三种常见方法都可以通过累积权重$C_j=\sum_{i=1}^{j}\bar w_{t,i}$实现。给定$u\in(0,1)$，取最小的$j$使$C_j\geq u$，便选中原粒子$j$。差异只在如何选择$n$个$u$，见表~\ref{tab:pgm-sampling-resampling}。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    方法 & 均匀数的构造 & 主要性质\\
+    \midrule
+    多项式 & $n$个独立的$u_i\sim\operatorname{Uniform}(0,1)$ & 后代数服从多项式分布，条件方差易分析\\
+    分层 & 各区间$((i-1)/n,i/n)$独立抽一个$u_i$ & 每层均被使用，估计的条件方差不高于多项式法\\
+    系统 & 抽一个$u\sim\operatorname{Uniform}(0,1/n)$，令$u_i=u+(i-1)/n$ & 只需一个随机偏移，结果受粒子排列影响\\
+    \bottomrule
+  \end{tabularx}
+  \caption{固定粒子数的三种重采样。分层法的方差比较针对相同加权粒子集合和相同测试函数；系统法的方差还取决于排列与函数，需分别比较。}
+  \label{tab:pgm-sampling-resampling}
+\end{table}
+
+\term{多项式重采样}（multinomial resampling）在给定$\mathcal{F}_t$后独立选取$n$个祖先，其均值估计的条件方差是
+\begin{equation}
+  \frac1n\left[
+    \sum_i\bar w_{t,i}h(\bm{z}_{t,i})^2
+      -\left(\sum_i\bar w_{t,i}h(\bm{z}_{t,i})\right)^2
+  \right].
+  \label{eq:pgm-sampling-resampling-variance}
+\end{equation}
+\term{分层重采样}（stratified resampling）用独立分层均匀数消除层间抽样次数的随机波动；全方差公式表明，这会使条件方差不高于多项式法。\term{系统重采样}（systematic resampling）则共用一个随机偏移，容易实现。选中位置因共享偏移而相关，其方差比较需要考虑粒子排列和测试函数。两者的比较和系统法反例见Douc等人的分析\scite{pgm-sampling-douc2005}
+
+\term{自举粒子滤波}（bootstrap particle filter）将提议选为模型状态转移。下面依次传播粒子、按观测加权、输出本时刻估计，并在权重集中时重采样。也可以先重采样再传播，此时祖先提议及权重递推应与该顺序匹配。
+
+\begin{algorithm}[带阈值重采样的自举粒子滤波]
+  \label{alg:pgm-sampling-bootstrap}
+  \begin{algorithmic}[1]
+    \Require 状态空间模型、观测$\bm{x}_{1:T}$、粒子数$n$、阈值$\eta\in(0,1]$
+    \Ensure 各时刻的滤波期望估计$\widehat I_{t,h}$
+    \For{$t=1,\ldots,T$}
+      \For{$i=1,\ldots,n$}
+        \If{$t=1$}
+          \State 抽取$\bm{z}_{1,i}\sim p(\bm{z}_1)$，置$v_i=1/n$
+        \Else
+          \State 抽取$\bm{z}_{t,i}\sim p(\bm{z}_t\mid\bm{z}_{t-1,i})$
+          \State 置$v_i=\bar w_{t-1,i}$
+        \EndIf
+        \State $w_{t,i}\gets v_i p(\bm{x}_t\mid\bm{z}_{t,i})$
+      \EndFor
+      \State 若权重全零，报告本轮退化并停止；否则归一化为$\bar w_{t,i}$
+      \State 输出$\widehat I_{t,h}=\sum_i\bar w_{t,i}h(\bm{z}_{t,i})$
+      \If{$1/\sum_i\bar w_{t,i}^2<\eta n$且$t<T$}
+        \State 按$\bar w_{t,1:n}$抽取祖先索引$a_{t,1:n}$
+        \State 同时复制旧$\bm{z}_{t,a_{t,i}}$为新$\bm{z}_{t,i}$，置$\bar w_{t,i}=1/n$
+      \EndIf
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+阈值中的$1/\sum_i\bar w_{t,i}^2$衡量当前权重的集中程度，其含义和局限将在第~\ref{sec:pgm-sampling-diagnostics}节说明。重采样增加当前估计的随机性，多项式法的条件方差由式~\eqref{eq:pgm-sampling-resampling-variance}给出，所以算法先输出当前加权估计，再为后续传播重新分配粒子。权重全零时，归一化的粒子估计尚未定义，应检查提议覆盖、观测模型及粒子数，记录本轮退化。
+
+\begin{example}[二状态设备的粒子滤波]
+  \label{ex:pgm-sampling-filter}
+  为单独观察时间递推，另设一个二状态教学模型。$Z_t\in\{0,1\}$表示当前故障状态，$X_t\in\{0,1\}$表示传感器读数。设
+  \[
+    \begin{aligned}
+      p(Z_1=1)&=0.1,\\
+      p(Z_t=1\mid Z_{t-1}=1)&=0.8,&
+      p(Z_t=1\mid Z_{t-1}=0)&=0.1,\\
+      p(X_t=1\mid Z_t=1)&=0.8,&
+      p(X_t=1\mid Z_t=0)&=0.2.
+    \end{aligned}
+  \]
+  收到$x_1=x_2=1$。精确滤波给出
+  \[
+    \begin{aligned}
+      p(Z_1=1\mid x_1=1)&=\frac{0.1\times0.8}{0.1\times0.8+0.9\times0.2}
+        =\frac4{13},\\
+      p(Z_2=1\mid x_1=1)&=0.8\frac4{13}+0.1\frac9{13}
+        =\frac{41}{130},\\
+      p(Z_2=1\mid x_1=x_2=1)&=\frac{0.8\times41}{0.8\times41+0.2\times89}
+        =\frac{164}{253}\approx0.648221.
+    \end{aligned}
+  \]
+  假设上一轮已经得到等权粒子，传播到$t=2$的四个候选恰为$(0,1,1,0)$。其似然为$(0.2,0.8,0.8,0.2)$，归一化权重为$(0.1,0.4,0.4,0.1)$，故重采样前故障概率估计为$0.8$。
+
+  用系统重采样，取偏移$u=0.05$，四个定位点为$0.05,0.30,0.55,0.80$；累积权重为$0.1,0.5,0.9,1$，因而祖先索引为$(1,2,3,3)$，新粒子为$(0,1,1,1)$。这次等权估计为$0.75$，不同于重采样前的$0.8$和精确答案。式~\eqref{eq:pgm-sampling-offspring}只保证对随机偏移再取期望后保持重采样前估计。
+\end{example}
+
+图~\ref{fig:pgm-sampling-resampling}展示第$3$个粒子被复制两次的过程。两个后代在复制瞬间相同，也共享过去的路径；后续随机转移可以分散当前位置，复制本身则无法恢复已经丢失的历史。\term{样本贫化}（sample impoverishment）指不同状态或祖先数量减少，它与权重集中对应不同的损失。状态噪声较小时，频繁重采样可能加重贫化；高维观测还可能使许多粒子的似然同时接近零。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=94.650mm]{figures/03-models/03-probabilistic-graphical-models/tikz/pgm-sampling-resampling/figure.pdf}
+  \caption{二状态例子的系统重采样。左侧为四个带权候选，右侧为等权后代；连线标明复制来源。候选$4$没有后代，候选$3$被复制两次。后代等权，但状态及祖先多样性仍由复制来源决定。}
+  \label{fig:pgm-sampling-resampling}
+\end{figure}
+
+若一次传播及似然计算成本分别为$C_{\mathrm{tr}},C_{\mathrm{obs}}$，一轮基础滤波成本约为$O(n(C_{\mathrm{tr}}+C_{\mathrm{obs}}))$，再加重采样成本。分层和系统法可沿累积权重单次扫描，在$O(n)$时间内完成；多项式法可用累积分布二分查找得到$O(n\log n)$实现，也有预处理后线性总成本的实现。只保存当前$d$维状态需$O(nd)$空间，保存所有粒子历史则随$T$增长。增加粒子数可改善固定时刻近似，长期平滑和高维滤波的效率还取决于路径与权重退化。
+
+\subsection{Rao--Blackwell化粒子滤波}
+\label{sec:pgm-sampling-rbpf}
+
+潜状态具有可解析的条件结构时，可以把随机计算集中到其余部分。\term{Rao--Blackwell化粒子滤波}（Rao--Blackwellized particle filtering, RBPF）只采样难以积分的状态部分，同时为每条粒子路径维护其余状态的条件分布。设$\bm{z}_t=(\bm{b}_t,\bm{u}_t)$，有
+\begin{equation}
+  \begin{aligned}
+    &p(\bm{b}_{1:t},\bm{u}_t\mid\bm{x}_{1:t})\\
+    &\qquad=p(\bm{b}_{1:t}\mid\bm{x}_{1:t})
+        p(\bm{u}_t\mid\bm{b}_{1:t},\bm{x}_{1:t}).
+  \end{aligned}
+  \label{eq:pgm-sampling-rbpf-factor}
+\end{equation}
+若第二项可用有限维参数精确递推，则粒子只表示$\bm{b}_{1:t}$，每个粒子附带一份描述$\bm{u}_t$的解析状态。估计$h(\bm{b}_t,\bm{u}_t)$时，使用其条件期望
+\[
+  \widehat I_{t,h}^{\mathrm{RB}}
+    =\sum_i\bar w_{t,i}
+      \int h(\bm{b}_{t,i},\bm{u})
+       p(\bm{u}\mid\bm{b}_{1:t,i},\bm{x}_{1:t})\,\mathrm{d}\bm{u}.
+\]
+同一条件积分还应进入粒子权重：将观测似然对$\bm{u}_t$的条件预测分布积分，得到采样路径的预测似然。
+
+典型例子是给定离散模式$b_t$后，连续状态服从线性高斯模型。每条模式路径维护高斯均值与协方差，通过Kalman递推完成条件滤波；模式仍用粒子表示。用标量的一步更新说明这一计算：给定某条模式路径，连续状态预测分布为$U_t\sim\mathcal{N}(m^-,v^-)$，观测满足$X_t=U_t+\varepsilon_t$，$\varepsilon_t\sim\mathcal{N}(0,\sigma_x^2)$且独立。将两个高斯相乘并配方，可得
+\begin{equation}
+  \begin{aligned}
+    &p(x_t\mid b_{1:t},x_{1:t-1})
+       =\mathcal{N}(x_t;m^-,v^-+\sigma_x^2),\\
+    &k_t=\frac{v^-}{v^-+\sigma_x^2},\\
+    &m_t=m^-+k_t(x_t-m^-),\qquad v_t=(1-k_t)v^-.
+  \end{aligned}
+  \label{eq:pgm-sampling-rbpf-gaussian}
+\end{equation}
+第一行用于粒子权重，后两行更新该粒子携带的连续状态条件分布。$k_t$是标量Kalman增益，控制当前观测对条件均值的修正幅度。
+
+假设两个等先验模式分别给出$U_t\sim\mathcal{N}(0,1)$和$\mathcal{N}(0,4)$，共同观测噪声方差$\sigma_x^2=1$，观测$x_t=1$。两模式的预测似然分别为$\mathcal{N}(1;0,2)\approx0.219696$和$\mathcal{N}(1;0,5)\approx0.161434$，归一化模式权重约为$0.576433,0.423567$。更新后的连续状态分别服从$\mathcal{N}(0.5,0.5)$和$\mathcal{N}(0.8,0.8)$，故混合均值约为$0.627070$。连续状态通过两个条件高斯表示，均值可直接积分，同时保留条件不确定性。从这些高斯额外抽样再估计均值，会引入额外的条件抽样波动。
+
+RBPF利用可精确递推的条件分布减少随机性，但每个粒子需要存储协方差并进行矩阵运算，模式路径也可能退化。若用扩展Kalman等近似替代精确条件积分，结果中还包含条件滤波的近似误差。全方差公式解释相容条件化下的方差缩减；相同运行时间下的整体收益，则需比较粒子数、重采样和解析运算成本。Doucet等人的工作详细讨论了这一构造\scite{pgm-sampling-doucet2000}。
+
+\section{算法分析}
+\label{sec:pgm-sampling-analysis}
+
+采样分析需要同时说明目标、渐近规模和有限计算误差。保持正确目标的核可能因探索缓慢而产生不可靠的有限估计；有有限样本偏差的比值估计也可能随样本数增长而一致。后文先逐一建立独立样本、加权样本、链与粒子的极限条件，再讨论能够从有限输出中检查哪些问题。
+
+\subsection{一致性、偏差与方差}
+\label{sec:pgm-sampling-consistency}
+
+独立直接采样的条件最清楚。对固定查询$h$，独立同分布与$\mathbb{E}_p|h|<\infty$给出强一致性；$\mathbb{E}_p h^2<\infty$进一步给出式~\eqref{eq:pgm-sampling-iid-clt}的方差与中心极限定理。对于有界指示函数，这些矩条件自动成立。对于Cauchy等重尾分布，某些均值不存在，此时需要选择有定义的查询量。$n^{-1/2}$误差尺度也只描述随机计算误差，不包括模型失配。
+
+重要性采样把这些矩条件移到了$q$下的加权函数。归一化目标的普通IS需要$r h$可积；有限方差与普通中心极限定理需要$\mathbb{E}_q(rh)^2<\infty$。SNIS的一致性条件见式~\eqref{eq:pgm-sampling-snis}之后。为了得到一个方便使用的SNIS中心极限定理，可以进一步要求$\mathbb{E}_q w^2<\infty$和$\mathbb{E}_q(wh)^2<\infty$。对两个样本均值使用联合中心极限定理，再对比值作一阶展开，得到
+\begin{equation}
+  \begin{aligned}
+    \sqrt n(\widehat I_{h,n}^{\mathrm{SNIS}}-I_h)
+       &\xrightarrow{\mathrm{d}}\mathcal{N}(0,v_h^{\mathrm{IS}}),\\
+    v_h^{\mathrm{IS}}
+       &=\frac{\mathbb{E}_q[w^2(h-I_h)^2]}{Z_{\bm{x}}^2}.
+  \end{aligned}
+  \label{eq:pgm-sampling-snis-clt}
+\end{equation}
+关键的一阶随机量是$w(h-I_h)$，不是单独的$w$。这解释了为什么同一组权重对于不同查询可能具有不同精度。
+
+SNIS的偏差也可由同一个比值展开看清。令$Y=wh$、$\mu_Y=\mathbb{E}_qY=Z_{\bm{x}}I_h$，把$f(a,b)=a/b$在$(\mu_Y,Z_{\bm{x}})$处展开到二阶。在足够高阶矩和分母尾部控制使期望余项为$o(n^{-1})$的条件下，
+\begin{equation}
+  \mathbb{E}[\widehat I_{h,n}^{\mathrm{SNIS}}]-I_h
+    =\frac{I_h\operatorname{Var}_q(w)-\operatorname{Cov}_q(wh,w)}
+            {n Z_{\bm{x}}^2}+o(n^{-1}).
+  \label{eq:pgm-sampling-snis-bias}
+\end{equation}
+例如$w\geq a>0$且$\mathbb{E}_q[w^4+|wh|^4]<\infty$，是控制分母和展开余项的一组较强充分条件。这个展开说明常见的$O(n^{-1})$偏差从何而来；这一阶数依赖展开余项和分母尾部的控制，条件比一致性所需的可积性与支持覆盖更强。
+
+MCMC考察运行长度增长时的时间平均，其中样本通常相关。若核保持$p$并且正Harris常返，对$p$可积的$h$，从允许起点出发的时间平均收敛到$I_h$。非周期性另用于保证每一步的分布收敛；它并不是上述时间平均结论在所有情形下都必需的条件。若链从平稳分布启动，有限样本均值在期望存在时仍无偏，只是有相关性；从指定点启动时，有限预热用于减轻初值影响，剩余的初始化偏差还取决于核的混合速度。
+
+MCMC中心极限定理还需额外条件。一组常用充分条件是\term{几何遍历性}（geometric ergodicity），即到平稳分布的距离按几何速率衰减且允许系数依赖起点，再加$\mathbb{E}_p|h|^{2+\delta}<\infty$，其中某个$\delta>0$。更具体地，可要求$\lVert K^k(\bm{z},\cdot)-p\rVert_{\mathrm{TV}}\leq C(\bm{z})a^k$，$0<a<1$，并配合适当的Harris与初始状态条件。满足这些条件时，
+\[
+  \sqrt n(\widehat I_{h,n}-I_h)
+     \xrightarrow{\mathrm{d}}\mathcal{N}(0,v_h^{\mathrm{MC}}).
+\]
+长期依赖的控制是推导正态误差分布所需的环节，可通过再生结构或Poisson方程完成。其他条件组合也可能建立中心极限定理，本章不展开一般状态空间的证明\scite{pgm-sampling-roberts2004}
+
+SMC的样本数极限又不同：通常先固定一个有限时刻$t$，再令粒子数$n\to\infty$。为看清这一区别，可以考察一组较强而易检查的充分条件：初始粒子独立来自模型初始分布，传播使用正确的Markov转移；每个固定时刻的观测似然作为状态函数有正下界和有限上界；测试函数$h$有界；采用固定日程的多项式重采样。此时滤波积分估计一致，并满足适当的$\sqrt n$中心极限定理。一般提议需要相应的重要性权重矩条件，其他重采样方案和自适应日程还需要各自的方差与依赖条件，后代数条件无偏只是其中一项要求。
+
+固定时刻一致性的证明思路是归纳。给定旧粒子后，新传播条件独立，因此对有界函数，传播抽样相对于其条件均值的方差为$O(1/n)$。条件均值是旧经验分布对转移后函数的积分，由归纳假设收敛。乘有界似然并除以远离零的归一化常数，仍保持收敛；多项式重采样再增加一个由式~\eqref{eq:pgm-sampling-resampling-variance}控制的$O(1/n)$条件方差。固定步数下反复使用这三个步骤便得到一致性。这是证明纲要，中心极限定理还需追踪每一代随机扰动如何传播，渐近方差包含历史各代贡献，而不只是当前粒子的样本方差\scite{pgm-sampling-chopin2004}
+
+上述证明中的误差常数可以随$t$迅速增大。固定$n$让时间无限延长，与固定$t$让$n$趋向无穷，是不同的极限；要获得时间一致误差界，通常还需状态转移的遗忘或混合性质，以及适当的似然控制。归一化粒子滤波均值一般有有限$n$偏差。标准自举滤波在正确权重、每轮多项式重采样等条件下，其逐时预测似然估计的乘积可无偏估计边缘似然，归一化滤波均值包含随机分母，其偏差需要按这一比值结构单独判断。
+
+\subsection{有效样本量与收敛诊断}
+\label{sec:pgm-sampling-diagnostics}
+
+估计精度既取决于样本数量，也取决于样本如何贡献以及如何相关。\term{有效样本量}（effective sample size, ESS）借独立样本的尺度描述这些影响。权重ESS衡量贡献集中，自相关ESS匹配具体查询的长期方差，两者需要分别解释。
+
+对归一化非负权重，常用\term{权重有效样本量}（weight-based ESS）
+\begin{equation}
+  n_{\mathrm{eff}}^{w}
+    =\frac{1}{\sum_i\bar w_i^2}
+    =\frac{(\sum_i w_i)^2}{\sum_i w_i^2},
+  \qquad 1\leq n_{\mathrm{eff}}^{w}\leq n.
+  \label{eq:pgm-sampling-weight-ess}
+\end{equation}
+上下界来自非负性和Cauchy--Schwarz不等式：等权时等于$n$，一个权重占满总和时等于$1$。若候选确实独立来自固定$q$且$\mathbb{E}_q w^2<\infty$，大数定律还给出
+\[
+  \frac{n_{\mathrm{eff}}^{w}}{n}
+    \longrightarrow
+    \frac{(\mathbb{E}_q w)^2}{\mathbb{E}_q w^2}
+    =\frac{1}{1+\operatorname{CV}_q(w)^2},
+\]
+其中$\operatorname{CV}_q(w)$为权重的标准差与均值之比。因此，权重ESS描述已抽到的贡献集中程度；对具体$h$的方差等价样本数，还需考虑函数值与权重的关系。真正的IS渐近方差还含有式~\eqref{eq:pgm-sampling-snis-clt}中的$(h-I_h)^2$。
+
+表~\ref{tab:pgm-sampling-weight-example}中，$n_{\mathrm{eff}}^w=2.51^2/(0.01^2+0.9^2+0.9^2+0.7^2)\approx2.986$。这一数值只反映已抽到的权重，未访问的罕见状态仍需其他检查。粒子滤波例子重采样前的权重ESS为$1/(0.1^2+0.4^2+0.4^2+0.1^2)\approx2.941$，重采样后立即变成$4$；但图~\ref{fig:pgm-sampling-resampling}已经显示祖先反而减少。在SMC中，权重ESS主要帮助选择重采样时刻，滤波误差还需要考虑状态和祖先多样性。
+
+MCMC常常所有样本等权，权重ESS因而为$n$。重复停留和缓慢移动带来的时间相关，需要通过样本均值的协方差分析。设链已平稳，$0<\sigma_h^2=\operatorname{Var}_p(h)<\infty$，令$\rho_h(\ell)$为$h(\bm{z}^{(k)})$与$h(\bm{z}^{(k+\ell)})$的相关系数。展开样本均值的协方差和，有
+\begin{equation}
+  \operatorname{Var}(\widehat I_{h,n})
+    =\frac{\sigma_h^2}{n}
+      \left[1+2\sum_{\ell=1}^{n-1}
+          \left(1-\frac{\ell}{n}\right)\rho_h(\ell)\right].
+  \label{eq:pgm-sampling-autocorrelation-variance}
+\end{equation}
+滞后$\ell$的样本对恰有$n-\ell$个，因而出现括号中的系数。若自相关绝对可和，定义\term{积分自相关时间}（integrated autocorrelation time）
+\begin{equation}
+  \tau_h=1+2\sum_{\ell=1}^{\infty}\rho_h(\ell),\qquad
+  v_h^{\mathrm{MC}}=\sigma_h^2\tau_h,\qquad
+  n_{\mathrm{eff},h}^{\mathrm{MC}}=\frac{n}{\tau_h}.
+  \label{eq:pgm-sampling-mcmc-ess}
+\end{equation}
+这里假定$0<\tau_h<\infty$；还需前述中心极限定理条件，才能据此使用正态近似误差区间。$\tau_h$依赖函数$h$，故均值、尾概率和不同坐标通常有不同ESS；负相关还可能使$\tau_h<1$，此时ESS大于$n$，并不矛盾，因为它匹配的是估计方差而非独立点的实际数量。
+
+例如平稳自回归序列的$\rho_h(\ell)=0.9^\ell$，则$\tau_h=1+2(0.9/0.1)=19$，$10000$次迭代对该查询只有约$526$个独立样本的渐近精度。对前述强相关高斯的Gibbs坐标，$\rho=0.99$给出的每轮相关系数为$0.9801$，对应$\tau_h=(1+0.9801)/(1-0.9801)\approx99.50$。两个例子将运行长度与该查询的渐近精度联系起来，高接受率仍可能伴随低有效样本量。简单地每隔若干步保留一个点虽然降低保留序列的相关性，也丢弃了已付费的计算；除非有存储或后续处理约束，稀疏保留不是改善采样效率的通用办法。
+
+样本相关系数的高滞后估计噪声较大，估计自相关和时可使用截断规则、批均值或谱方差方法。用$\sqrt{\widehat v_h^{\mathrm{MC}}/n}$报告具体查询的MCSE，比只报告全局ESS更有意义。独立SNIS在相应矩条件下可用$\bigl[\sum_i\bar w_i^2(h_i-\widehat I_h)^2\bigr]^{1/2}$估计标准误，其中$h_i=h(\bm{z}_i)$；共享祖先的粒子系统还包含额外依赖，需相应的粒子方差估计。SMC可通过多次独立运行整个粒子滤波比较估计波动，或采用专门的粒子方差估计。
+
+单条链可能在一个局部区域内看起来很稳定。多链诊断从分散的有效初值运行若干条独立链，比较链内与链间变化。\term{$\widehat R$诊断}（R-hat diagnostic）用两种变化尺度之比发现不同链尚未探索相同分布的迹象。设共有$m$条链，每条保留$n$个函数值，链均值为$\bar h_j$，链内样本方差为$s_j^2$，总体均值为$\bar h$。经典形式为
+\begin{equation}
+  \begin{aligned}
+    W&=\frac1m\sum_{j=1}^{m}s_j^2,&
+    B&=\frac{n}{m-1}\sum_{j=1}^{m}(\bar h_j-\bar h)^2,\\
+    \widehat V&=\frac{n-1}{n}W+\frac{B}{n},&
+    \widehat R&=\sqrt{\widehat V/W}.
+  \end{aligned}
+  \label{eq:pgm-sampling-rhat}
+\end{equation}
+当链间差异远大于链内波动时，$\widehat R$会偏大。所有链完全不动而使$W=0$时，该比值无定义或缺少通常的尺度比较含义，应先检查链的移动。
+
+秩归一化的分裂诊断先把每条链分成前后两半，再将合并样本的秩映射为正态分位数，计算相应的$\widehat R$；还对“样本到合并中位数的绝对偏差”重复同样计算，并取两者的较大值。分裂有助于发现链内漂移，秩变换缓解重尾矩不稳定，折叠后的绝对偏差有助于发现不同链的尺度差异。相应地，主体ESS根据秩变换后的序列衡量中心区域的探索，尾部ESS考察分位点附近的指示函数；原始均值和其他非线性查询的MCSE，仍需按相应函数单独估计。常用的$\widehat R<1.01$作为经验筛查标准，判断有限输出是否暴露出明显的多链差异\scite{pgm-sampling-vehtari2021}
+
+有限输出的诊断可以共同检查多链轨迹、秩分布、查询函数的MCSE、主体和尾部ESS；HMC还需检查能量误差、积分失败与长时间拒绝。若所有链都局限于同一个模态，这些量仍可能正常。使用分散的有效初值，增加预算，检查模型几何，并与可解析特例或独立算法比较，有助于发现部分遗漏。诊断提供有限探索的证据，其范围仍受已访问区域限制。
+
+\subsection{方法选择与计算边界}
+\label{sec:pgm-sampling-choice}
+
+选择方法应从能计算什么出发。若已有准确且廉价的直接采样器，独立平均通常最容易分析和并行；只有联合采样器而证据并不稀有时，拒绝采样能得到独立后验样本。若能够构造充分覆盖目标的提议，重要性采样便于并行且可估计归一化常数，但应优先检查权重尾部，而非仅拟合后验峰附近。
+
+若只有未归一化密度及局部条件，MCMC可以避免全局提议的要求。满条件易抽样且相关适中时，Gibbs利用图结构获得低成本更新；强相关变量应考虑分块、折叠或重新参数化。连续密度可微时，HMC能用较贵的一次轨迹换取更远移动，但高维离散结构、多峰分离或复杂约束可能需要其他构造。若目标随新观测递推，粒子滤波直接复用过去计算；存在条件线性高斯部分时，RBPF可以把预算集中到真正需要采样的状态。
+
+实际比较应固定查询与计算预算。一个每步便宜但高度相关的链，可能比一个每步较贵的链花更多时间才能达到同样MCSE；独立提议也可能因极端权重而在单位时间内信息很少。因此应比较具体查询的MCSE随时间变化，或该查询的ESS每秒，并把预热、提议构造、梯度和解析积分计入成本。模型中的条件独立性帮助局部计算，却不保证后验中的统计相关很弱。
+
+变分推断在可优化分布族中选择后验近似（第~\ref{chap:pgm-variational}章），采样则用随机经验表示估计后验积分。两者分别具有表达、求解和有限计算误差，表~\ref{tab:pgm-sampling-vi-comparison}在同一后验任务下比较这些因素。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    方面 & 采样近似 & 变分近似\\
+    \midrule
+    渐近目标 & 在相应覆盖、矩与遍历条件下，可逼近原后验积分 & 受分布族与目标函数限制，充分优化后仍可能有近似误差\\
+    有限预算 & 有抽样波动，SNIS与非平稳MCMC等还可能有偏差 & 有分布族误差、优化误差，随机优化也有波动\\
+    后验覆盖 & 漏模态、权重退化或慢混合会破坏有限样本覆盖 & 某些族与散度倾向集中于局部区域；覆盖行为取决于具体族与目标\\
+    并行与规模 & 独立候选、多链和粒子可并行；单链有顺序依赖，重采样需同步 & 易利用小批量和摊销网络，但依赖相应模型与优化结构\\
+    精度判断 & 查询相关的标准误与多种诊断并用 & 目标函数改善不等于所有后验查询都已准确\\
+    \bottomrule
+  \end{tabularx}
+  \caption{在同一后验推断任务上比较采样与变分。渐近保证都有适用条件，有限预算下均需检查遗漏的后验结构。}
+  \label{tab:pgm-sampling-vi-comparison}
+\end{table}
+
+两类方法还可以结合。拟合的变分分布可作为重要性采样或独立MH的提议，其支持覆盖与权重尾部决定后续校正和探索的效果。小规模、可高精度采样的问题则可提供变分误差的参照。具体方案需要在相同查询、计算预算和误差要求下比较。
+
+\section{本章小结}
+\label{sec:pgm-sampling-summary}
+
+采样推断用样本统计量估计后验概率和期望。独立候选通过目标生成、接受规则或权重匹配后验；Markov链通过保持目标的转移及充分探索计算时间平均；粒子系统通过传播、加权和后代分配追踪变化的目标。设备报警例说明，先验候选与后验候选回答不同的概率查询，相应的条件化或权重是得到所需答案的环节。
+
+HMC以动量刷新、可逆保体积积分和Metropolis校正形成完整的后验更新。刷新改变轨迹方向和能量，可逆积分构造可配对的提议，末端校正处理离散能量误差。粒子滤波则以重采样把后续计算集中于高权重路径，但复制可能减少状态和祖先的多样性。两种方法均需将保持目标的构造与实际探索的效率分别检查。
+
+误差分析与查询量和渐近条件对应。独立样本使用可积性与有限矩，重要性采样检查支持覆盖和加权矩，MCMC检查遍历及长期依赖，SMC通常先固定时间再增加粒子。权重ESS描述本批贡献集中，自相关ESS匹配具体函数的长期方差，多链诊断检查探索是否一致。可解析特例、查询相关的标准误和针对失效方式的诊断，为有限计算结果提供互补证据。
+
+到这里，精确消元、变分优化和随机采样都在给定模型下回答查询。若局部概率本身还未知，后验期望便会进入参数更新，推断误差也可能影响学习结果。第~\ref{chap:pgm-parameter-learning}章接着说明这种依赖何时出现，以及观测完整且不含潜变量时为什么有些模型能免去内层推断。
+
+\paragraph{扩展阅读}
+Murphy的教材可用于扩展重要性采样和Markov链方法。进一步阅读时，可分别考察目标不变性、遍历条件、有限步混合以及查询相关的估计方差，理解接受率和轨迹形状为何只反映其中一部分性质\scite{pgm-murphy2012}。
