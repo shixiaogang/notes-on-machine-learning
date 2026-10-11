@@ -8,7 +8,7 @@ import argparse
 import hashlib
 import json
 import subprocess
-import fitz
+import pymupdf as fitz
 
 ROOT = next(p for p in Path(__file__).resolve().parents if (p / "build.sh").exists())
 PREAMBLE = (ROOT / "figures/00-shared/academic-drawing/preamble.tex").read_text() + "\n\\begin{document}\n"
@@ -22,7 +22,7 @@ def render(source, output_dir=None):
     driver.write_text(PREAMBLE + r"\input{" + str(relative) + "}\n\\end{document}\n")
     with (work / "compile.log").open("w") as log:
         subprocess.run(["xelatex", "-no-pdf", "-interaction=nonstopmode", "-halt-on-error",
-                        "-output-directory="+str(work), str(driver)], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
+                        "-output-directory="+str(work), str(driver.relative_to(ROOT))], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
         subprocess.run(["xdvipdfmx", "-o", str(work/"figure.pdf"),
                         str(work/"figure.xdv")], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, check=True)
     logtext=(work/"compile.log").read_text()
