@@ -3,7 +3,7 @@ from pathlib import Path
 import sys,json,math
 import numpy as np
 import matplotlib.pyplot as plt
-import fitz
+import pymupdf as fitz
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 OUT=Path(__file__).resolve().parent
 REGISTRY=json.loads((OUT/'registry.json').read_text())
@@ -12,6 +12,7 @@ def figure_dir(key):
  return Path(__import__('os').environ['ACADEMIC_PROOF_DIR'])/p.relative_to('figures') if __import__('os').environ.get('ACADEMIC_PROOF_DIR') else ROOT/p
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
 from plot_style import configure,prepare_figure,style_record,BLUE,RED,GREEN,MUTED,note
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
 sys.path.insert(0,str(OUT));import instrument_export
 
@@ -24,7 +25,7 @@ def export(fig,key,name='figure'):
 def paths():
  t=np.arange(0,100,10);values=np.array([[14,16,12,23,20,26,23,31,27,34],[14,10,15,10,14,8,11,7,13,9],[14,20,24,19,27,32,30,24,34,37]])
  fig,ax=plt.subplots(figsize=(112/25.4,69/25.4),layout='constrained')
- for i,(y,c,m) in enumerate(zip(values,[BLUE,RED,GREEN],['o','s','^']),1):ax.plot(t,y,color=c,marker=m,ms=3,ls=['-','--',':'][i-1],label=rf'$\omega_{i}$')
+ for i,(y,c,m) in enumerate(zip(values,[BLUE,GREEN,PURPLE],['o','s','^']),1):ax.plot(t,y,color=c,marker=m,ms=3,ls=['-','--',':'][i-1],label=rf'$\omega_{i}$')
  ax.axvline(50,color=MUTED,ls=':',lw=.65)
  ax.set(xlabel=r'时间 $t$',ylabel=r'过程取值 $X_t(\omega)$',xlim=(-2,92),ylim=(0,41),xticks=[0,25,50,75,90],yticks=[0,10,20,30,40])
  ax.legend(loc='upper left',ncols=3)
