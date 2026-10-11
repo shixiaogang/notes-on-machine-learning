@@ -7,9 +7,13 @@ from matplotlib.text import Text
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 from production_paths import ITEMS,destination
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
-from plot_style import prepare_figure,style_record,note
+from volume3_style import prepare_figure,style_record,note
 
-BYNAME={Path(x['sources'][0]).stem:x for x in ITEMS if x['category']!='simple'}
+BYNAME={x['key']:x for x in ITEMS if x['category']!='simple'}
+ALIASES={'regression-ols':'regression-ols-residuals','feedforward-activations':'ffn-activations','feedforward-depth-composition':'ffn-depth-composition','pgm-dynamic-gaussian-update':'pgm-dynamic-gaussian'}
+ALIASES.update({'feedforward-activation-'+x:'ffn-activation-'+x for x in ['basics','rectifiers','exponential','swish','smooth','vector']})
+for name,key in ALIASES.items():
+ if key in BYNAME:BYNAME[name]=BYNAME[key]
 def convert(o):
  if isinstance(o,np.ndarray):return convert(o.tolist())
  if isinstance(o,(list,tuple)):return [convert(x) for x in o]

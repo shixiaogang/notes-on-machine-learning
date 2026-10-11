@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
-from plot_style import configure,prepare_figure,style_record,BLUE,RED,YELLOW,MUTED,STROKE,BLUE_FILL,YELLOW_FILL,RED_FILL
+from volume3_style import configure,prepare_figure,style_record,BLUE,RED,YELLOW,MUTED,STROKE,BLUE_FILL,YELLOW_FILL,RED_FILL
 configure()
-from plot_style import GREEN
+from volume3_style import GREEN
 YELLOW=GREEN # Readability adjustment for lines/points only.
 OUT=Path(__file__).parent;records={}
 def chart(size=(112,72)):
@@ -34,6 +34,6 @@ f,a=chart((169,112));f.subplots_adjust(left=.08,right=.98,bottom=.13,top=.93)
 for arr,c,ls,m,label in [(truth,STROKE,'--','o','真值'),(obs,MUTED,'-','x','观测'),(pred,BLUE,'-','o','一步预测'),(filt,RED,'-','s','滤波'),(smooth,YELLOW,'-','^','RTS 平滑')]:a.plot(arr[:,0],arr[:,1],color=c,ls=ls,marker=m,ms=4.6 if label=='一步预测' else 3,markerfacecolor='white' if label=='一步预测' else c,lw=1 if label!='滤波' else 1.3,label=label)
 for center,r in [((1.427,1.079),(.566,.459)),((4.848,2.201),(.567,.459)),((7.546,4.363),(.567,.459))]:a.add_patch(Ellipse(center,2*r[0],2*r[1],facecolor=RED_FILL,edgecolor=RED,lw=.8,zorder=0))
 a.annotate(r'$1\sigma$ 滤波椭圆',(4.848,2.66),xytext=(-22,8),textcoords='offset points',ha='right')
-for t in [0,4,8]:a.annotate('$t='+str(t)+'$',filt[t],xytext=(4,5),textcoords='offset points')
+for t in [0,4,8]:a.annotate('$t='+str(t)+'$',filt[t],xytext=(4,5),textcoords='offset points',bbox=dict(facecolor='white',edgecolor='none',pad=.6))
 a.set(xlim=(-.45,8.45),ylim=(-.65,5.25),xticks=[0,2,4,6,8],yticks=[0,1,2,3,4,5],xlabel='横向位置',ylabel='纵向位置',aspect='equal');a.grid();a.legend(loc='upper left');save(f,'pgm-dynamic-kalman-trajectory',{'type':'chapter reproducible teaching trajectory; preserve original three-decimal values','truth':truth.tolist(),'observations':obs.tolist(),'prediction':pred.tolist(),'filter':filt.tolist(),'smooth':smooth.tolist(),'model':{'Q_diagonal':[.8,.5],'R_diagonal':[.45,.3],'initial_covariance_diagonal':[.4,.4]},'one_sigma_ellipses':[[1.427,1.079,.566,.459],[4.848,2.201,.567,.459],[7.546,4.363,.567,.459]]})
 x=np.linspace(-3,5,121);f,a=chart();a.plot(x,normal(x,.5,1.5),color=BLUE,label='预测');a.plot(x,normal(x,2,1),color=MUTED,ls='--',label='似然');a.plot(x,normal(x,1.4,.6),color=RED,lw=1.7,label='后验');a.annotate('后验 posterior',xy=(1.52,.51),xytext=(2.45,.52),ha='left',arrowprops={'arrowstyle':'->','color':RED,'lw':1});a.set(xlim=(-3,5),ylim=(0,.56),xticks=[-2,0,2,4],yticks=[0,.2,.4],xlabel=r'温度偏移 $z_2$（$^\circ\mathrm{C}$）',ylabel=r'密度（$^\circ\mathrm{C}^{-1}$）');a.legend(loc='upper left');save(f,'pgm-dynamic-gaussian-update',{'x':x.tolist(),'prediction':[.5,1.5],'likelihood':[2,1],'posterior':[1.4,.6]})

@@ -63,6 +63,12 @@ def check(registry):
             dependency = ROOT / path
             if not dependency.is_file() or hashlib.sha256(dependency.read_bytes()).hexdigest() != expected_digest:
                 errors.append(f'Changed source since current review binding: {path}')
+        for companion in item.get('companion_assets', []):
+            path = ROOT / companion['asset']
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != companion['sha256']:
+                errors.append(f'Changed or missing companion asset: {companion["asset"]}')
+            elif len(matches) == 1 and companion['asset'] not in matches[0][1]:
+                errors.append(f'Figure does not use companion asset: {label}')
         if item.get('is_addition') and not re.search(r'\\(?:ref|autoref|cref)\{' + re.escape(label) + r'\}', text):
             errors.append(f'Addition has no introduction reference: {label}')
         group = str(item['volume'])

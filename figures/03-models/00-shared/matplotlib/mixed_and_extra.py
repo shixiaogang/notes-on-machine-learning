@@ -10,13 +10,13 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import fitz
 from numeric_relations import ROOT,fig,axes,C,N
-from plot_style import configure,prepare_figure,note,BLUE,GREEN,RED,MUTED,INK,GRID,BLUE_FILL,GREEN as MODEL,RED_FILL
+from volume3_style import configure,prepare_figure,note,BLUE,GREEN,RED,MUTED,INK,GRID,BLUE_FILL,GREEN as MODEL,RED_FILL
 from export_common import save
 from production_paths import ITEMS,destination
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'));from render_tikz import render
 
 def panel_export(f,key):
- save(f,Path(next(x['sources'][0] for x in ITEMS if x['key']==key)).stem,data=DATA,params=PARAMS,inputs=INPUTS)
+ save(f,key,data=DATA,params=PARAMS,inputs=INPUTS)
  dest=destination(key)
  for ext in ['pdf','svg','png']:shutil.move(dest/('figure.'+ext),dest/('chart.'+ext))
  shutil.move(dest/'generation.json',dest/'chart-generation.json')

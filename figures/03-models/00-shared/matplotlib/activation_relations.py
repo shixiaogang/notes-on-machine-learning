@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 ROOT = next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 OUT = Path(__file__).resolve().parent
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
-from plot_style import configure, prepare_figure, style_record, BLUE, RED, MUTED, GREEN, ORANGE, GRID
+from volume3_style import configure, prepare_figure, style_record, BLUE, RED, MUTED, GREEN, ORANGE, GRID
 configure()
 DATA = ROOT/'figures/03-models/02-neural-network-models/tikz/feedforward-activation-curves.dat'
 values = np.genfromtxt(DATA, names=True)

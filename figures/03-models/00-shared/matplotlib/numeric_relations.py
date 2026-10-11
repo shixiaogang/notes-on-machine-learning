@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle,Polygon
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
-from plot_style import configure,prepare_figure,style_record,BLUE,RED,YELLOW,INK,MUTED,GRID,BLUE_FILL,YELLOW_FILL,note
+from volume3_style import configure,prepare_figure,style_record,BLUE,RED,YELLOW,INK,MUTED,GRID,BLUE_FILL,YELLOW_FILL,note
 configure()
-from plot_style import GREEN
+from volume3_style import GREEN
 YELLOW=GREEN # Fine quantitative marks need contrast; pale yellow regions retained.
 C=ROOT/'figures/03-models/01-classic-models/tikz'
 N=ROOT/'figures/03-models/02-neural-network-models/tikz'

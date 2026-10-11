@@ -1,6 +1,6 @@
 """Replay only actual-font overlays on archived no-text canvases."""
 from pathlib import Path
-import json,hashlib,argparse
+import json,hashlib,argparse,importlib.util
 from PIL import Image
 from typeset_common import Typeset
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
@@ -8,7 +8,23 @@ def replay_figure(folder,out=None):
     folder=Path(folder);config=json.loads((folder/'replay-config.json').read_text())
     out=Path(out) if out else folder
     labels=json.loads((folder/config['labels']).read_text())
-    t=Typeset(folder/config['background'],out,ROOT/'fonts')
+    background=folder/config['background']
+    composition=config.get('canvas_composition')
+    if composition:
+        out.mkdir(parents=True,exist_ok=True)
+        module_path=folder/composition['panel_renderer']
+        spec=importlib.util.spec_from_file_location('analytic_panels',module_path)
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        panel_out=out/'analytic-replay';panel_out.mkdir(parents=True,exist_ok=True)
+        panels=module.make_panels(panel_out,ROOT/'fonts')
+        canvas=Image.open(folder/composition['background']).convert('RGBA')
+        canvas=Image.alpha_composite(Image.new('RGBA',canvas.size,'white'),canvas)
+        for panel,position in zip(panels,composition['positions']):
+            patch=Image.open(panel).convert('RGBA');x,y=position
+            assert 0<=x and 0<=y and x+patch.width<=canvas.width and y+patch.height<=canvas.height
+            canvas.alpha_composite(patch,(x,y))
+        background=out/'replay-composite-canvas.png';canvas.convert('RGB').save(background,dpi=(300,300))
+    t=Typeset(background,out,ROOT/'fonts')
     for x in labels:t.text(x['center_x'],x['baseline_y'],x['segments'],x['color'])
     t.save()
     actual=hashlib.sha256(Image.open(out/'figure.png').convert('RGB').tobytes()).hexdigest()

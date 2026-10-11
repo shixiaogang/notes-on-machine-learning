@@ -1,0 +1,70 @@
+187: 一种有针对性的限制是删除同组内部的所有边，即令$\bm{U}=\bm{0}$、$\bm{R}=\bm{0}$。\term{受限玻尔兹曼机}（restricted Boltzmann machine, RBM）的“受限”指这种二部结构：给定一组变量，另一组的节点之间没有剩余相互作用。令$u_j(\bm{x})=c_j+\sum_iW_{i,j}x_i$，固定$\bm{x}$后，
+188: \[
+189:   p_{\bm{\theta}}(\bm{z}\mid\bm{x})
+190:    =\prod_{j=1}^m\frac{\exp[z_ju_j(\bm{x})]}
+191:                          {1+\exp[u_j(\bm{x})]}.
+192: \]
+193: 每个分母来自对$z_j=0,1$的两项求和，乘积形式直接给出条件独立性。因此
+194: \begin{equation}
+195:   \begin{aligned}
+196:     p_{\bm{\theta}}(Z_j=1\mid\bm{x})
+197:       &=\sigma\!\left(c_j+\sum_iW_{i,j}x_i\right),\\
+198:     p_{\bm{\theta}}(X_i=1\mid\bm{z})
+199:       &=\sigma\!\left(b_i+\sum_jW_{i,j}z_j\right).
+200:   \end{aligned}
+201:   \label{eq:pgm-energy-models-rbm-conditionals}
+202: \end{equation}
+203: 这里没有Ising满条件中的系数$2$，原因是当前使用$0/1$编码，而不是$\{-1,+1\}$。
+204: 
+205: 这项限制还允许一次性消去所有隐藏变量。定义\term{自由能}（free energy）为所有隐藏配置的权重之和的负对数，它是可见配置的有效能量，而非最优隐藏配置的能量：
+206: \begin{equation}
+207:   \begin{aligned}
+208:     F_{\bm{\theta}}(\bm{x})
+209:       &:=-\log\sum_{\bm{z}}
+210:                  e^{-E_{\bm{\theta}}(\bm{x},\bm{z})}\\
+211:       &=-\bm{b}^\top\bm{x}
+212:         -\sum_{j=1}^m\log(1+e^{u_j(\bm{x})}),\\
+213:     p_{\bm{\theta}}(\bm{x})
+214:       &=\frac{e^{-F_{\bm{\theta}}(\bm{x})}}{Z_{\bm{\theta}}}.
+215:   \end{aligned}
+216:   \label{eq:pgm-energy-models-free-energy}
+217: \end{equation}
+218: 推导使用了$\sum_{\bm{z}}\prod_j e^{z_ju_j}=\prod_j(1+e^{u_j})$。一个隐藏节点连接多个可见节点时，相应的$\log(1+e^{u_j})$通常同时耦合这些可见节点。图~\ref{fig:pgm-energy-models-rbm}说明，联合空间里的成对模型，边缘化之后可以产生高阶有效势。
+219: 
+220: \begin{figure}[htbp]
+221:   \centering
+222:   \input{figures/03-models/03-probabilistic-graphical-models/tikz/pgm-energy-models-rbm.tex}
+223:   \caption{左侧RBM只有可见组与隐藏组之间的边；固定任一组，另一组条件独立。右侧消去两个隐藏节点，每个方形因子代表$1+\exp[u_j(\bm{x})]$，均作用于三个可见变量。两侧均省略可见偏置对应的一元势。二部条件独立不等于可见变量边缘独立。}
+224:   \label{fig:pgm-energy-models-rbm}
+225: \end{figure}
+226: 
+227: 考虑两个可见节点、一个隐藏节点，偏置全为零，$W_{1,1}=W_{2,1}=\log2$。则$e^{-F(\bm{x})}=1+2^{x_1+x_2}$，按$(0,0),(0,1),(1,0),(1,1)$排列的权重为$2,3,3,5$，配分函数为$13$。给定$(x_1,x_2)=(1,1)$，隐藏节点为$1$的概率是$4/5$；给定$z=0$，两个可见节点独立且各以$1/2$的概率为$1$，给定$z=1$则各以$2/3$的概率为$1$。边缘上却有$p(X_1=X_2=1)=5/13$，而$p(X_1=1)p(X_2=1)=(8/13)^2$，二者相差$1/169$。
+228: 
+229: 计算一个自由能只需$O(d_{\mathrm{v}}m)$运算，但$Z_{\bm{\theta}}=\sum_{\bm{x}}e^{-F_{\bm{\theta}}(\bm{x})}$一般仍需指数级求和。利用两侧的条件分解，可枚举较小的一组并解析消去另一组，但代价仍含$2^{\min(d_{\mathrm{v}},m)}$。因此，RBM解决了给定完整可见向量的隐藏后验计算，没有一般地解决联合归一化；若部分可见变量缺失，求$p(\bm{z}\mid\bm{x}_{\mathrm{obs}})$也不再直接是上述独立Bernoulli乘积。
+230: 
+231: 二部结构适合\term{交替Gibbs采样}（alternating Gibbs sampling）：轮流固定一组，独立抽取另一组。算法~\ref{alg:pgm-energy-models-rbm-gibbs}中的抽取必须使用随机二值状态；把概率直接作为下一层的输入会变成另一种迭代，不再是这个Gibbs核。
+232: 
+233: \begin{algorithm}[RBM的一段交替Gibbs链]
+234:   \label{alg:pgm-energy-models-rbm-gibbs}
+235:   \begin{algorithmic}[1]
+236:     \Require 固定的有限参数$\bm{\theta}$，初始状态$\bm{x}^{(0)}$，步数$k\geq1$
+237:     \Ensure 链状态$\bm{x}^{(1)},\ldots,\bm{x}^{(k)}$
+238:     \For{$t=0,\ldots,k-1$}
+239:       \State 按式~\eqref{eq:pgm-energy-models-rbm-conditionals}独立抽取各$Z_j^{(t+1)}$
+240:       \State 固定$\bm{z}^{(t+1)}$，独立抽取各$X_i^{(t+1)}$
+241:     \EndFor
+242:   \end{algorithmic}
+243: \end{algorithm}
+244: 
+245: 固定有限参数时，所有条件概率都严格介于$0$与$1$，该有限状态链能够到达任意可见配置且存在自转移，并保持$p_{\bm{\theta}}(\bm{x})$不变。由第~\ref{chap:pgm-sampling}章的有限链理论可得长期收敛，但不能据此保证小$k$已充分混合。一次完整更新为$O(d_{\mathrm{v}}m)$；强权重造成的近确定条件分布会使链长时间停留在少数模式。
+246: 
+247: 将第~\ref{chap:pgm-parameter-learning}章的潜变量似然梯度实例化到一个权重，单条数据$\bm{x}$给出
+248: \begin{equation}
+249:   \frac{\partial\log p_{\bm{\theta}}(\bm{x})}
+250:        {\partial W_{i,j}}
+251:     =x_i\,p_{\bm{\theta}}(Z_j=1\mid\bm{x})
+252:       -\mathbb{E}_{p_{\bm{\theta}}}[X_iZ_j].
+253:   \label{eq:pgm-energy-models-rbm-gradient}
+254: \end{equation}
+255: 第一项可以精确计算，第二项通常由采样估计。多条记录对第一项取样本平均，偏置更新则使用相应的一阶统计量。RBM的训练收益来自前一项的简化，不来自后一项的消失。短链重构误差小也不是模型似然高的证据：混合很慢的链可能总能留在起始数据附近，却没有正确表达不同模式之间的概率质量\scite{pgm-energy-models-hinton2010}
+256: 

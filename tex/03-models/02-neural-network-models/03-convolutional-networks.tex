@@ -1,34 +1,33 @@
 \chapter{卷积神经网络}
 \label{chap:convolutional-networks}
 
-第~\ref{chap:feedforward-networks}章建立了用多层非线性变换学习表示的方法。若输入是一张图像，直接把像素排成向量送入全连接层，这种方法依然能够计算，但图像中相邻像素的关系不会自动体现在连接中。更具体地说，左上角与右下角出现的同一种边缘，需要由不同权重分别识别。怎样让网络利用图像的空间结构，并把在一个位置学到的规则用于其他位置？
+一张图像中，同一种边缘可能出现在左上角，也可能出现在右下角。把像素展平后交给全连接层，各位置分别使用自己的权重；学会识别一处边缘，并未在结构上规定如何处理另一处边缘。图像的相邻关系与局部图案的重复出现，因而提出了一个问题：怎样让网络保留空间结构，并在多个位置复用同一种识别规则？第~\ref{chap:feedforward-networks}章的多层非线性表示为此提供了基础。
 
-本章围绕这个问题考察卷积神经网络。卷积运算规定局部信息如何组合，层与模块的组织决定这些局部结果如何形成整体预测，参数学习则让同一组权重汇集各个位置的训练信号。增加深度后，还需要解释信息与梯度怎样跨层传播，以及结构假设在什么数据条件下有助于泛化。分割与着色两个例子将把这些问题接回具有空间结构的输出。所需的激活函数、损失和链式法则沿用前章，统计分析承接
-\BookChapterRef{chap:deep-learning-theory}{第二卷“基础、理论和可信性”的“深度学习的可学习性”章}。
+卷积神经网络用共享权重处理各个局部窗口，再由非线性和层次组合形成预测。同一权重在前向计算中反复使用，学习时就要汇集这些位置传回的梯度；增加深度又改变了信息与梯度经过的路径。本章先确定局部运算及其边界约定，再说明层和跨层模块的组织、参数学习，以及这种结构在什么条件下适合目标任务。分割与着色进一步要求输出保留位置对应关系。激活函数、损失和链式法则沿用前章；统计分析把结构约束与样本风险相联系（参考\BookChapterRef{chap:deep-learning-theory}{第二卷“基础、理论和可信性”的“深度学习的可学习性”章}）。
 
 \section{卷积神经网络概述}
 \label{sec:cnn-overview}
 
-设一张彩色图像有$224\times224$个像素，每个像素包含三个颜色数值。展平后，输入维度为$150528$；连接到$1024$个隐藏单元的全连接层，仅权重就有$154140672$个。这个教学计算说明，高维输入会迅速增大连接规模。但连接数只是一个方面：全连接层允许任意两个坐标交互，却没有预先区分相邻像素和相隔很远的像素，也没有要求不同位置用相同方式处理局部图案。
+设一张彩色图像有$224\times224$个像素，每个像素包含三个颜色数值。展平后，输入维度为$150528$；连接到$1024$个隐藏单元的全连接层，仅权重就有$154140672$个。这些权重连接每个输入坐标与每个隐藏单元，规模随输入维度成比例增加。同时，连接的定义把相邻和远隔的像素同样处理，各位置也可以学习不同的局部规则。卷积改变的正是连接范围与权重复用方式。
 
-图像中的边缘可以由邻近像素的变化来辨认，而且同一种变化可能出现在许多位置。这使两项约束具有解释价值。\term{局部感受野}（local receptive field）让一个单元只读取输入中的一个邻域，即把一次计算限定在附近的若干位置。\term{参数共享}（parameter sharing）让不同位置使用同一组权重，即将同一种局部识别规则重复应用到整张图像。只使用局部连接而不共享参数，仍然需要为不同位置学习不同规则；两项设计承担不同职责。
+图像中的边缘可以由邻近像素的变化来辨认，而且同一种变化可能出现在许多位置。针对这两个特点，可以分别约束读取范围和权重复用。\term{局部感受野}（local receptive field）让一个单元只读取输入中的一个邻域，即把一次计算限定在附近的若干位置。\term{参数共享}（parameter sharing）让不同位置使用同一组权重，即将同一种局部识别规则重复应用到整张图像。局部连接确定一次计算读取哪里，参数共享确定不同位置是否使用同一规则；只限制读取范围时，各位置仍有各自的权重。
 
 \term{卷积神经网络}（convolutional neural network, CNN）把这种共享的局部计算与非线性变换逐层组合，从数据中学习局部特征及其组合。每个位置并列保存的不同特征称为\term{通道}（channel）；彩色图像的红、绿、蓝三个分量就是三个输入通道。一个输出通道是一种局部响应在所有输出位置组成的数值平面。普通密集卷积中，每种响应使用一组覆盖全部输入通道的权重，因此$64$个输出通道需要$64$组权重，而不是指$64$个空间位置。
 
-对三个输入通道、$64$个输出通道的$3\times3$卷积层，每组权重在三个输入平面上各覆盖一个$3\times3$窗口，权重总数为$3\times3\times3\times64=1728$，再加每个输出通道一个偏置，共$64$个。这个层与前述全连接层的输出组织不同，不能仅按参数量判断谁更有表达能力；它说明的是，卷积参数量可以不随输入图像的高和宽增加，而同一组参数会在更多位置被使用。
+对三个输入通道、$64$个输出通道的$3\times3$卷积层，每组权重在三个输入平面上各覆盖一个$3\times3$窗口，权重总数为$3\times3\times3\times64=1728$，再加每个输出通道一个偏置，共$64$个。这组权重的数量由核尺寸和通道数确定。图像变大后，核在更多位置使用，参数数仍保持不变。前述全连接层输出一个隐藏向量，这里输出多张空间特征图；两个计算说明了不同的参数组织，表达能力还取决于各自保留的信息和后续组合。
 
-共享局部规则带来一种与位置变化有关的性质。\term{平移等变性}（translation equivariance）表示输入移到哪里，输出中的对应响应也移到哪里。\term{平移不变性}（translation invariance）则表示输入平移后，输出本身保持相同。图像分类可能希望物体移动后类别不变，分割却需要轮廓随物体移动，因而需要保留位置对应关系。步长为一的卷积在无限网格上与平移可交换；有限图像的边界、下采样和最终读出会改变这一性质。全局汇聚可以在适当条件下得到不变输出，但卷积层本身并不自动完成这一转换。
+共享局部规则带来一种与位置变化有关的性质。\term{平移等变性}（translation equivariance）表示输入移到哪里，输出中的对应响应也移到哪里。\term{平移不变性}（translation invariance）则表示输入平移后，输出本身保持相同。图像分类可能希望物体移动后类别不变，分割却需要轮廓随物体移动，因而需要保留位置对应关系。步长为一的卷积在无限网格上与平移可交换；有限图像的边界、下采样和最终读出会改变这一性质。从随位置移动的特征得到类别不变的输出，还需要合适的汇聚与读出；这一转换的条件见后文池化分析。
 
 这些设计适合具有规则网格、局部相关性和重复模式的数据。图像使用二维邻域，音频波形和时间序列可以使用一维邻域，体数据可以使用三维邻域。时间预测还需限制可读取的位置，避免使用尚未发生的输入。若各坐标只是含义不同的表格字段，交换相邻字段通常会改变含义，同一个局部规则也未必能沿字段排列重复使用。卷积的适用性取决于这些结构是否与任务相符。
 
 局部处理与逐层汇聚的思想早于今天的大规模深度学习。Fukushima于1980年提出的Neocognitron交替组织局部模式检测与汇聚，使高层能够组合低层响应，并容忍一定的位置变化。它借鉴视觉系统的分层处理，但采用的学习机制与今天端到端反向传播的CNN不同；第~\ref{sec:neural-biological-system}节已介绍这条视觉启发线索\scite{fukushima1980}
-到20世纪90年代，LeCun等将可学习卷积、降采样和梯度学习结合，用于手写字符和文档识别。1998年的LeNet-5展示了从像素到类别联合学习的完整系统：局部特征由任务损失训练，而不是先由人工固定。这一时期已经出现多层卷积网络，却还不能据此认为大规模视觉任务的训练条件已经成熟\scite{lecun1998}
+到20世纪90年代，LeCun等将可学习卷积、降采样和梯度学习结合，用于手写字符和文档识别。1998年的LeNet-5展示了从像素到类别联合学习的完整系统：任务损失同时决定局部特征与后续分类。多层结构已进入实际识别系统，大规模视觉训练所需的数据和计算条件仍在发展\scite{lecun1998}
 
 卷积结构解决了连接组织问题，深层网络能否有效训练仍是另一道关口。2006年，Hinton、Osindero和Teh提出深度信念网络的逐层学习方法：先学习一层隐表示，再把该表示作为下一层的训练数据，并对整个生成模型作后续微调。\term{逐层预训练}就是先分别为各层寻找有用的初始表示，减少从随机参数同时训练全部层的困难。这项工作为研究深层表示提供了可操作的训练途径，是理解随后深度学习兴起的一项重要进展。它研究的是生成式深层模型，原文的微调采用对比形式的wake--sleep算法，与后来判别式CNN的直接监督训练具有不同的目标和步骤\scite{hinton2006deepbelief}
 
 \Needspace{14\baselineskip}
-另一条路线继续探索直接用监督信号训练卷积网络。GPU能够并行执行大量规则乘加，使更宽、更深的模型获得实际可用的训练速度。Cireșan等在2011年报告了GPU上的可配置卷积网络，并在多个图像识别数据集上研究直接反向传播训练。这说明2012年的突破有此前的计算与训练积累，GPU卷积并非在AlexNet中才首次出现\scite{ciresan2011cnn}
-更大的有标签数据集又让网络可以学习更丰富的视觉变化；模型结构、训练方法、数据规模和计算资源需要同时匹配，单独增加层数并不足以重现这种进展。
+另一条路线继续探索直接用监督信号训练卷积网络。GPU能够并行执行大量规则乘加，使更宽、更深的模型获得实际可用的训练速度。Cireșan等在2011年报告了GPU上的可配置卷积网络，并在多个图像识别数据集上研究直接反向传播训练。这项工作把卷积训练的规则乘加交给GPU执行，为随后扩大模型和数据规模积累了实现经验\scite{ciresan2011cnn}
+有标签数据集的扩大提供了更多视觉变化，GPU实现则让这些样本能够用于更大模型的迭代训练。结构、学习方法、数据与计算因而共同决定了当时可以实际训练的系统。
 
 2012年，AlexNet在ImageNet大规模图像分类中将五个卷积层、ReLU、GPU训练、数据增强和全连接层中的Dropout组合起来，以监督学习从像素学习类别判别。论文报告的ILSVRC-2012参赛系统取得$15.3\%$的top-5测试错误率，第二名为$26.2\%$；这里的top-5错误指正确类别未进入前五个预测。$15.3\%$对应多个网络的组合，并包含额外ImageNet数据预训练；它衡量的是这套参赛系统，单个网络的误差另有报告。这个结果清楚展示了大规模学习特征相对于当时参赛方案的优势，推动卷积网络成为视觉研究的重要路线。这里的预训练是在更大标签集上的监督训练，与2006年的逐层生成式预训练不同\scite{krizhevsky2012}
 
@@ -37,10 +36,7 @@
 \section{卷积运算}
 \label{sec:cnn-convolution}
 
-局部规则需要明确读取哪些输入、怎样共享权重。
-\BookSectionRef{sec:signal-analysis-lti-convolution}{第一卷“数学准备”的卷积映射小节}
-已经建立数学卷积及其线性、平移性质；本节把这些结果用于可学习的多通道运算，
-重点检查核方向、边界、步幅与实现方式如何改变网络的输出。
+一个局部输出由输入窗口与核权重的乘积和确定。核的方向决定权重对应哪个位置，边界规则决定窗口越过图像后读取什么，步幅决定下一个窗口从哪里开始。本节先固定这些约定，再把运算扩展到多通道及不同实现。数学卷积按固定核线性组合输入，并在相应边界下与平移交换（参考\BookSectionRef{sec:signal-analysis-lti-convolution}{第一卷“数学准备”的“线性时不变条件下的卷积映射”小节}）。
 
 \subsection{从数学卷积到网络运算}
 \label{sec:cnn-convolution-definition}
@@ -51,15 +47,14 @@
 \]
 本章的输入与核都是有限数组；补零或周期延拓决定边界外的取值，裁剪再决定保留哪些输出。
 二维核的数学卷积同时反转行、列方向，相当于旋转$180$度。
-网络实现通常省去这一翻转，采用卷一已区分的互相关；
+网络实现通常保留核的存储方向，采用互相关；
 第~\ref{sec:cnn-matrix-operation}节用同一窗口比较这两种运算。
 
 固定核、完整网格及一致的边界约定下，输入平移会使输出同步平移。
-卷一在线性系统中称这项性质为平移不变性，网络的输入输出映射通常称为平移等变性；
-二者在此对应同一等式$L(T_rx)=T_r(Lx)$，都不表示输出数值保持在原位置。
+在线性系统分析中，这项性质称为平移不变性；描述网络的输入输出对应时，通常称为平移等变性。
+二者在此对应同一等式$L(T_rx)=T_r(Lx)$，其含义是输出随输入一起移动。
 有限图像上的边界、裁剪和跨步会限制可用的平移范围。
-CNN进一步学习核权重并在层间加入非线性，因此不必是线性系统，
-核也不必非负或具有和为一的物理守恒含义。
+CNN还学习核权重，并在层间组合非线性变换。局部核可以含正、负权重，尺度由学习目标和参数约束决定；整个网络的输入输出关系随之超出线性卷积。
 
 \subsection{实际应用中的卷积}
 \label{sec:cnn-practical-convolution}
@@ -88,7 +83,7 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-kernel-flip/figure.pdf}
+  \includegraphics[width=165.767mm]{figures/03-models/02-neural-network-models/tikz/cnn-kernel-flip/figure.pdf}
   \caption{核的方向改变输出。输入窗口固定为$\left[\begin{smallmatrix}1&2\\5&6\end{smallmatrix}\right]$，核固定为$\left[\begin{smallmatrix}1&0\\0&-1\end{smallmatrix}\right]$。左侧直接逐元素相乘后求和，得到互相关输出$-5$；右侧先把核旋转$180$度，再求和，得到数学卷积输出$5$。$\odot$表示逐元素乘法，$\sum$表示把四个乘积相加。}
   \label{fig:cnn-kernel-flip}
 \end{figure*}
@@ -105,15 +100,15 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-sliding-window/figure.pdf}
-  \caption{共享核在二维矩阵上滑动的教学例子。蓝色实线和虚线分别框出相邻的两个$2\times2$输入窗口，矩阵为不翻转的核，矩阵为互相关输出。每个输出计算窗口左上数值减去右下数值，因此均为$-5$；两个位置使用同一组权重。}
+  \includegraphics[width=140.723mm]{figures/03-models/02-neural-network-models/tikz/cnn-sliding-window/figure.pdf}
+  \caption{共享核在二维矩阵上滑动的教学例子。蓝色实线和虚线分别框出相邻的两个$2\times2$输入窗口，中间矩阵给出保持原方向的核，右侧矩阵给出互相关输出。每个输出计算窗口左上数值减去右下数值，因此均为$-5$；两个位置使用同一组权重。}
   \label{fig:cnn-sliding-window}
 \end{figure*}
 
 \subsubsection{数据填充：确定边界假设}
 \label{sec:cnn-padding-operation}
 
-不填充时，边缘像素参与的窗口较少，输出尺寸也会缩小。\term{数据填充}（padding）在矩阵外补充数值，使核可以覆盖边缘附近的位置。零填充把外部值设为零；复制填充延续最近的边缘值；反射填充按边界镜像取值；循环填充把另一侧的数据接过来。这些方式改变边界假设，不能恢复未观测的图像内容。
+不填充时，边缘像素参与的窗口较少，输出尺寸也会缩小。\term{数据填充}（padding）在矩阵外补充数值，使核可以覆盖边缘附近的位置。零填充把外部值设为零；复制填充延续最近的边缘值；反射填充按边界镜像取值；循环填充把另一侧的数据接过来。这些外部值是由边界假设构造的，决定边缘窗口如何计算。
 
 对式\eqref{eq:cnn-matrix-example}只在右侧和下侧各补一列、一行零，输出就有$4\times4$个位置：
 \begin{equation}
@@ -127,7 +122,7 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-padding/figure.pdf}
+  \includegraphics[width=148.791mm]{figures/03-models/02-neural-network-models/tikz/cnn-padding/figure.pdf}
   \caption{不对称零填充与边界输出。蓝色框内是原$4\times4$输入，浅红色区域是右侧、下侧各新增的一列、一行零。红色实线窗口产生右上输出$4$，虚线窗口产生右下输出$16$，输出矩阵中用相同线型标记对应位置。核为$(1,0;0,-1)$，步长一、空洞率一，计算采用互相关。}
   \label{fig:cnn-padding}
 \end{figure*}
@@ -139,7 +134,7 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-stride/figure.pdf}
+  \includegraphics[width=161.766mm]{figures/03-models/02-neural-network-models/tikz/cnn-stride/figure.pdf}
   \caption{跨步改变输出位置的密度。输入、$2\times2$核和无填充设置保持不变，只将高、宽步长从一改为二。每个蓝色圆点标记一个窗口的左上起点，起点分别形成$3\times3$和$2\times2$的网格；实线框只画出第一个窗口。该教学矩阵的所有窗口都得到$-5$，输出值相同不表示读取的位置相同。}
   \label{fig:cnn-stride}
 \end{figure*}
@@ -151,8 +146,8 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-dilation/figure.pdf}
-  \caption{空洞率二时的实际采样位置。左图彩色小框标出左上输出读取的四格，蓝色外框标出其$3\times3$覆盖区域；中图把原$2\times2$核权重按采样间隔排开，点号表示跳过的位置。零权重仍是核参数，点号不是新增权重。步长一、无填充时，左上输出为$1-11=-10$，全部输出构成$2\times2$矩阵。}
+  \includegraphics[width=144.766mm]{figures/03-models/02-neural-network-models/tikz/cnn-dilation/figure.pdf}
+  \caption{空洞率二时的实际采样位置。左图彩色小框标出左上输出读取的四格，蓝色外框标出其$3\times3$覆盖区域；中图把原$2\times2$核权重按采样间隔排开，点号表示跳过的位置。数值零占据一个已有核位置，点号处则没有核参数。步长一、无填充时，左上输出为$1-11=-10$，全部输出构成$2\times2$矩阵。}
   \label{fig:cnn-dilation}
 \end{figure*}
 \subsubsection{统一表达与输出尺寸}
@@ -177,7 +172,7 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-sampling/figure.pdf}
+  \includegraphics[width=141.792mm]{figures/03-models/02-neural-network-models/tikz/cnn-sampling/figure.pdf}
   \caption{同一个$2\times2$核的三种采样设置。实线框给出一个输出所覆盖的区域，紫点是该窗口实际读取的位置，虚线框表示下一个水平窗口。普通设置与跨步设置的核内邻距均为一，后者将窗口起点移远；空洞设置将核内邻距增为二，窗口起点仍只移动一格。}
   \label{fig:cnn-sampling}
 \end{figure*}
@@ -196,12 +191,12 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
     =\begin{bmatrix}1\\0\\0\\-1\end{bmatrix}\text{。}
   \label{eq:cnn-transpose-example}
 \end{equation}
-图~\ref{fig:cnn-transpose-scatter}将每个输入产生的贡献分开画出。中间两个位置的贡献相消，表明转置运算需要累加，不能只把数值放大或复制。$\bm C$把四维输入变成三维输出，已丢失某些信息；$\bm C^\top\bm C$也不等于单位矩阵。转置卷积因此不是逆卷积，不能保证还原原输入。作为可学习层时，它可以使用自己的核参数，并不要求与编码器的核绑定。
+图~\ref{fig:cnn-transpose-scatter}逐项展开分配过程。中间两个位置各收到正、负贡献，累加后成为零；转置映射的结果由这些贡献共同确定。$\bm C$把四维输入变成三维输出，已丢失某些信息；$\bm C^\top\bm C$也不等于单位矩阵。这个例子的转置映射执行了重新分配，而前向已丢失的信息仍未恢复。作为可学习层时，转置卷积也可以独立学习核参数。
 
 
 \begin{figure}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-transpose-scatter/figure.pdf}
+  \includegraphics[width=112.000mm]{figures/03-models/02-neural-network-models/tikz/cnn-transpose-scatter/figure.pdf}
   \caption{转置卷积的分配与累加。输入为$\bm v=(1,1,1)^\top$，核为$(1,-1)$，步长一、无填充。每行分别表示一个输入值对四个输出位置的贡献，紫框圈出两个可能非零的位置；没有贡献的格子记为零。逐列相加得到$(1,0,0,-1)^\top$，中间两格均包含来自不同输入的重叠贡献。}
   \label{fig:cnn-transpose-scatter}
 \end{figure}
@@ -211,15 +206,12 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
   \qquad 0\leq o<s\text{。}
   \label{eq:cnn-transposed-size}
 \end{equation}
-这里$o$是用于选择目标形状的输出填充量：普通卷积取整后，同一个$n'$可能对应$s$种原输入长度。选择其中一种长度才能确定被转置的完整矩阵。$o$是尺寸约定，不表示把$o$个零作为最终输出值附在末尾。二维情况分别对高、宽应用该式；若使用不对称填充或额外裁剪，应按对应线性映射重新核对。跨步转置卷积可理解为先在输入位置之间插零，再进行适当的滤波与裁剪；不同位置的覆盖次数可能不均匀，需要检查输出中的周期性纹理。卷积尺寸与转置关系的系统说明见Dumoulin和Visin的算术指南\scite{dumoulin2016arithmetic}
+这里$o$是用于选择目标形状的输出填充量：普通卷积取整后，同一个$n'$可能对应$s$种原输入长度。选定目标长度后，前向矩阵的列数及其转置的输出形状才随之确定。$o$是尺寸约定，不表示把$o$个零作为最终输出值附在末尾。二维情形沿高、宽分别使用该式。不对称填充或额外裁剪会改变矩阵的边界行、列，输出形状也要随对应映射确定。跨步转置卷积可理解为先在输入位置之间插零，再进行适当的滤波与裁剪；不同位置的覆盖次数可能不均匀，需要检查输出中的周期性纹理。卷积尺寸与转置关系的系统说明见Dumoulin和Visin的算术指南\scite{dumoulin2016arithmetic}
 
 \subsection{卷积的实现}
 \label{sec:cnn-implementation}
 
-同一个卷积层可以用不同算法得到相同的预激活值。
-\BookSectionRef{sec:signal-analysis-fast-transforms}{第一卷“卷积映射的快速计算”}
-已经建立矩阵化、Toom--Cook、Winograd、FFT及空间可分离核的代数算法、数值例子与误差边界。
-这里固定本层的批量、通道和采样设置，说明直接计算的成本，以及这些算法怎样复用输入与可学习核，再讨论数据如何存储和读取。
+固定边界与采样设置，在精确算术下，直接求和、矩阵化和满足适用条件的变换算法可以得到相同的预激活值。矩阵化汇集原有局部点积，Toom--Cook、Winograd与FFT通过变换输入和核来重组乘积，空间可分离路线则利用核的低秩结构（代数算法、数值例子及误差条件参考\BookSectionRef{sec:signal-analysis-fast-transforms}{第一卷“数学准备”的“卷积映射的快速计算”节}）。这里固定本层的批量、通道和采样设置，比较直接计算的成本与变换结果的复用，再说明数据如何存储和读取。
 
 此前的单矩阵例子只保留一个数值平面，现在将第~\ref{sec:cnn-overview}节的多通道组织写成张量。一个通道在全部空间位置上的响应构成一张\term{特征图}（feature map）。单个输入的形状为$\bm X\in\mathbb R^{h\times w\times c_{\mathrm{in}}}$，普通密集卷积的核张量为$\bm W\in\mathbb R^{k_h\times k_w\times c_{\mathrm{in}}\times c_{\mathrm{out}}}$。固定一个输出通道，其核覆盖全部输入通道：对空间窗口和输入通道共同求和，产生一个输出值；换用另一组核权重便产生另一个输出通道。因此输入通道轴参与求和，输出通道轴保留在结果中，图~\ref{fig:cnn-channels}给出了对应示意。
 
@@ -227,14 +219,14 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
 \[
   q=k_hk_wc_{\mathrm{in}},\qquad m=n_{\mathrm b}h'w'\text{，}
 \]
-即一个窗口的元素数与全部输出位置数。普通密集卷积需要$c_{\mathrm{out}}qm$次乘加；比较额外存储时，输入、核和最终输出不计入工作区。这里把输入数值与核权重相乘称为\emph{核心乘法}，另行计算固定变换中的加减与常数乘法。减少核心乘法并不自动减少总耗时，后文会同时交代新增的计算与存储。
+即一个窗口的元素数与全部输出位置数。普通密集卷积需要$c_{\mathrm{out}}qm$次乘加；比较额外存储时，输入、核和最终输出不计入工作区。这里把输入数值与核权重相乘称为\emph{核心乘法}；在变换路线中，相应计数的是变换后输入与核的乘积。固定变换中的加减与常数乘法另外计算。总耗时还包含变换、数据读写与调度，后文据此同时计算新增的工作和存储。
 
 矩阵化把本层的每个窗口作为一列，每个核作为一行。按一致顺序展平后，窗口矩阵为$\bm P\in\mathbb R^{q\times m}$，核矩阵为$\bm W_{\mathrm{loc}}\in\mathbb R^{c_{\mathrm{out}}\times q}$；加入偏置$\bm b\in\mathbb R^{c_{\mathrm{out}}}$后，预激活为
 \begin{equation}
  \bm Z_{\mathrm{col}}=\bm W_{\mathrm{loc}}\bm P+\bm b\bm1_m^\top.
  \label{eq:cnn-im2col}
 \end{equation}
-其中$\bm1_m$是$m$维全一向量。这个矩阵等式恢复同一个局部点积，并未自动减少普通算法的乘加量。
+其中$\bm1_m$是$m$维全一向量。这个矩阵等式把同一组局部点积汇集为\term{通用矩阵乘法}（general matrix multiplication, GEMM）；按普通矩阵乘法逐项求和时，乘加量仍与直接计算相同。
 
 \subsubsection{直接计算：逐项求和}
 \label{sec:cnn-direct-implementation}
@@ -263,24 +255,23 @@ CNN进一步学习核权重并在层间加入非线性，因此不必是线性�
   O\!\left(n_{\mathrm b}h'w'c_{\mathrm{in}}c_{\mathrm{out}}k_hk_w\right)\text{。}
   \label{eq:cnn-direct-cost}
 \end{equation}
-直接算法逐项保留局部求和结构，额外工作区可以只包含若干累积器，但算术量随核面积、通道数与输出位置数相乘。相邻窗口包含重复输入，并不意味着必须重复从主内存读取；这种复用属于第~\ref{sec:cnn-engineering}节的数据调度问题。判断一种计算算法时，应先固定数学运算及其乘加量，再考察它在具体存储层次中的执行方式。
+直接算法逐项保留局部求和结构，额外工作区可以只包含若干累积器，但算术量随核面积、通道数与输出位置数相乘。相邻窗口存在重叠时，共用输入可以在较近的存储中复用；这种复用属于第~\ref{sec:cnn-engineering}节的数据调度问题。判断一种计算算法时，应先固定数学运算及其乘加量，再考察它在具体存储层次中的执行方式。
 
 \subsubsection{多通道卷积的变换复用}
 \label{sec:cnn-transform-reuse}
 
-本层的多个输出通道读取相同的窗口，同一个核又作用于多个位置。这两种共享关系决定了变换能被复用多少次。
-以步长一、无空洞的$3\times3$核为例，\BookSectionRef{sec:signal-analysis-fast-winograd}{第一卷中的Winograd滤波计算}
-已用固定矩阵$\bm B^\top,\bm G,\bm A^\top$将一个$4\times4$输入块变为$2\times2$输出。
+本层的多个输出通道读取相同的窗口，同一个核又作用于多个位置。这两种共享关系使输入变换能跨输出通道复用，核变换能跨位置复用。
+以步长一、无空洞的$3\times3$核为例，Winograd方案用固定矩阵$\bm B^\top,\bm G,\bm A^\top$分别变换输入、变换核并恢复输出，将一个$4\times4$输入块变为$2\times2$输出。其中输入变换矩阵为四行四列，核变换矩阵为四行三列，输出恢复矩阵为两行四列（变换矩阵及恢复等式参考\BookSectionRef{sec:signal-analysis-fast-winograd}{第一卷“数学准备”的“基于余数分解的卷积计算”小节}）。
 固定一个样本的输入块，对输入通道$c$和输出通道$o$，分别形成核变换$\bm U_{c,o}=\bm G\bm W_{c,o}\bm G^\top$与输入变换$\bm V_c=\bm B^\top\bm X_c\bm B$。其中$\bm W_{c,o}\in\mathbb R^{3\times3}$是核在通道$(c,o)$上的空间切片，$\bm X_c\in\mathbb R^{4\times4}$是该输入块在通道$c$上的空间切片。
 通道累积与输出恢复写成
 \begin{equation}
  \bm Y_o=\bm A^\top\left(\sum_c\bm U_{c,o}\odot\bm V_c\right)\bm A.
  \label{eq:cnn-winograd-channel-reuse}
 \end{equation}
-输入变换可供多个输出通道复用，核变换可供多个空间块与批量样本复用。
+式中的乘积按对应位置逐元素相乘，再对全部输入通道求和。输入变换可供多个输出通道复用，核变换可供多个空间块与批量样本复用。
 由于输出变换是线性的，先对通道求和再恢复，与逐通道恢复后相加等价，却只需为每个输出通道执行一次恢复。
 若同时处理$n_{\mathrm{tile}}$个输入块，在每个变换位置上还可把核组合排成$c_{\mathrm{out}}\times c_{\mathrm{in}}$矩阵，输入组合排成$c_{\mathrm{in}}\times n_{\mathrm{tile}}$矩阵。
-$F(2\times2,3\times3)$由此可以组织为十六组通道矩阵乘法，变换算法与GEMM能够组合使用。
+这一$F(2\times2,3\times3)$方案的记号依次表示输出块和核的空间尺寸。其变换结果可以组织为十六组通道矩阵乘法，与GEMM组合使用。
 
 实现时将输出切为不重叠的$2\times2$块，各自读取$4\times4$输入块，再恢复四个空间输出并加偏置。
 相邻输出块起点相隔两格，输入块重叠两行或两列；边缘不足一块时需要填充或单独处理。
@@ -298,9 +289,7 @@ $F(2\times2,3\times3)$由此可以组织为十六组通道矩阵乘法，变换�
 输入频谱可供多个输出核复用，核频谱在参数不变时可跨样本复用；训练更新参数后需要重算。
 Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu2014fft}
 
-\BookSectionRef{sec:signal-analysis-fast-separable}{第一卷中的可分离核计算}按单个空间核的低秩分解减少求和。
-它与第~\ref{sec:cnn-layer}节的深度可分离卷积不同：后者改变通道连接方式，不能作为任意密集卷积的无损替换。
-截断低秩分解会改变本层输出，需要检查误差或重新训练。
+将单个空间核分解为若干秩一核，可把二维滤波组织为若干组一维滤波，再将结果求和（分解与计算成本参考\BookSectionRef{sec:signal-analysis-fast-separable}{第一卷“数学准备”的“基于核分离的卷积计算”小节}）。保留全部非零秩一项时，在相同边界和采样约定下恢复原来的空间核；计算能否减少，还取决于核的秩、输入尺寸与边界处理成本。截断分解会改变本层输出，需要检查近似误差或重新训练。第~\ref{sec:cnn-layer}节的深度可分离卷积则改变通道连接方式，以逐通道空间滤波和逐点通道混合两步构造新的参数结构。
 
 \subsubsection{工程实现与优化}
 \label{sec:cnn-engineering}
@@ -309,9 +298,9 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
 
 矩阵化卷积需要决定如何提供式\eqref{eq:cnn-im2col}中的窗口矩阵。\term{数据展开}（im2col）把窗口复制为连续的列，再调用GEMM；显式保存整个矩阵需要$qm$个元素，还会产生展开读写。\term{隐式GEMM}（implicit GEMM）则从原张量按需形成当前计算块所需的片段，省去完整展开矩阵，代价是加载时的地址计算与边界判断。CUTLASS给出了这种实现方式\scite{nvidiaCutlassConvolution}
 
-另一种选择是\term{间接卷积}（indirect convolution）：保存指向原输入通道向量的地址，由专用内核沿地址取数，避免复制全部窗口数值。它与隐式GEMM的区别在于显式记录取数位置，也需要承担地址表和间接访存的成本；地址表不能直接交给只接收数值矩阵的普通GEMM接口\scite{dukhan2019indirect}
+另一种选择是\term{间接卷积}（indirect convolution）：保存指向原输入通道向量的地址，由专用内核沿地址取数，避免复制全部窗口数值。它与隐式GEMM的区别在于显式记录取数位置，也需要承担地址表和间接访存的成本；沿地址取数需要专门的执行内核，普通GEMM接收的则是数值矩阵\scite{dukhan2019indirect}
 
-卷积之后的偏置和逐元素激活还可在写出前完成，这种\term{算子融合}（operator fusion）减少中间结果的读写与调用次数。分块、布局和融合可用于不同算法，但收益取决于层形状、精度、硬件及训练或推理条件。选型应测量完整算子的时间、工作区与误差，不能只比较乘法次数。存储层次、并行调度与融合的具体实现留到
+卷积之后的偏置和逐元素激活还可在写出前完成，这种\term{算子融合}（operator fusion）减少中间结果的读写与调用次数。分块、布局和融合可用于不同算法，但收益取决于层形状、精度、硬件及训练或推理条件。完整算子的时间、工作区与数值误差，反映了乘法节省与新增成本的合计结果。存储层次、并行调度与融合的具体实现留到
 \BookVolumeRef{vol:systems}{第六卷}“系统”展开。
 
 \FloatBarrier
@@ -319,7 +308,7 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
 \section{网络结构}
 \label{sec:cnn-structure}
 
-一次局部求和只能产生一组线性响应。完整网络还需要用多个核形成不同特征，用非线性组合这些特征，按任务保留或汇聚位置，并把最终结果转换为可比较的预测。本节区分各层承担的作用，再考察它们怎样组成网络。
+一次局部求和只能产生一组线性响应。完整网络还需要用多个核形成不同特征，用非线性组合这些特征，按任务保留或汇聚位置，并把最终结果转换为可比较的预测。以下分别说明这些层的读取、汇聚和输出作用，再组合成完整架构。
 
 \subsection{卷积层}
 \label{sec:cnn-layer}
@@ -339,7 +328,7 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-channels/figure.png}
+  \includegraphics[width=150.199mm]{figures/03-models/02-neural-network-models/generated/cnn-channels/figure.png}
   \caption{三输入、两输出通道的卷积。每行展示同一输入张量$\bm X$的三个通道；一组输出核包含三个通道切片，各自读取对应输入通道中高亮的局部窗口。各切片完成局部乘加后，三项贡献与偏置一起求和，分别写入右侧输出张量$\bm Z$的两个通道；两个输出平面分别由核1、核2产生。网格只示意通道与局部窗口的关系，不声明实际空间尺寸、步长或填充；核在空间位置间共享，输出尺寸由正文公式确定。}
   \label{fig:cnn-channels}
 \end{figure*}
@@ -350,15 +339,15 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
                     +c_{\mathrm{out}}\text{。}
   \label{eq:cnn-layer-parameters}
 \end{equation}
-空间尺寸没有出现在该式中，却仍出现在式\eqref{eq:cnn-direct-cost}的计算量和活动值存储量中。较大图像可以使用相同参数，但要生成更多响应。参数量、计算量和中间特征的内存应分别判断。
+空间尺寸没有出现在该式中，却仍出现在式\eqref{eq:cnn-direct-cost}的计算量和活动值存储量中。较大图像可以使用相同参数，但要生成更多响应。因此参数量由核形状决定，计算量和活动值内存还随空间网格扩大。
 
 核为$1\times1$时，每个输出只读取同一空间位置的通道向量。\term{逐点卷积}（pointwise convolution）因此是所有位置共享的通道变换，可以增加、压缩或混合通道，却不直接扩展空间感受野。\term{分组卷积}（grouped convolution）把输入、输出通道分成$g$组，各组只在内部连接；若两类通道数都能被$g$整除，权重数变为$k_hk_wc_{\mathrm{in}}c_{\mathrm{out}}/g$。若每个输入通道单独使用一个空间核，再接逐点卷积混合通道，就得到一种\term{深度可分离卷积}（depthwise separable convolution）：将空间处理与通道混合分成两步。在每个输入通道产生一张中间图的设置下，权重数为$k_hk_wc_{\mathrm{in}}+c_{\mathrm{in}}c_{\mathrm{out}}$，但两步施加的结构约束也与普通卷积不同。
 
-图~\ref{fig:cnn-channel-connectivity-comparison}固定四个输入与四个输出通道，比较通道连接的改变。空间核相同并不意味着通道交互也相同；深度可分离卷积还需要后续的逐点变换。
+图~\ref{fig:cnn-channel-connectivity-comparison}固定四个输入与四个输出通道，比较通道连接的改变。三个配置采用相同空间核，但读取的通道集合不同；深度可分离配置还通过后续逐点变换建立跨通道交互。
 
 \begin{figure*}[htbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-channel-connectivity-comparison/figure.png}
+  \includegraphics[width=142.240mm]{figures/03-models/02-neural-network-models/generated/cnn-channel-connectivity-comparison/figure.png}
   \caption{四输入、四输出通道上的三种连接。密集卷积读取所有输入通道；两组卷积仅在各组内部连接；深度可分离卷积先逐通道完成空间处理，再用$1\times1$卷积混合通道。权重数忽略偏置，分组数为二，深度乘子为一。}
   \label{fig:cnn-channel-connectivity-comparison}
 \end{figure*}
@@ -381,7 +370,7 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
 
 若只把第一层的步长改为二，仍有$r_1=3$，但$j_1=2\times1=2$，第二层于是得到$r_2=3+(3-1)\times2=7$、$j_2=1\times2=2$。这里第二层窗口内的相邻响应在原输入上相隔两个位置，故覆盖$7\times7$。一般地，$j_{\ell-1}=\prod_{a=1}^{\ell-1}s_a$是此前各层步长的乘积，空乘积取一；它把当前层的间隔换算回原输入尺度。
 
-这是忽略跨空间统计等非局部操作后的几何感受野；实际梯度和学到的权重可能集中在其中一部分，空洞采样也可能使范围内存在未读取的位置。含归一化的网络还需计入统计量带来的额外依赖，见第~\ref{sec:cnn-activation-normalization}节。填充还会改变感受野中心与边界的对应，不能只检查跨度。
+这是忽略跨空间统计等非局部操作后的几何感受野；实际梯度和学到的权重可能集中在其中一部分，空洞采样也可能使范围内存在未读取的位置。含归一化的网络还需计入统计量带来的额外依赖，见第~\ref{sec:cnn-activation-normalization}节。填充决定响应中心对应哪个输入位置，边界响应的实际读取范围还会被原图尺寸截断。
 
 \FloatBarrier
 
@@ -407,19 +396,19 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
 \end{equation}
 最大池化侧重最强响应，平均池化反映整体水平。两者都丢失窗口内的部分信息：仅凭$6$不能知道该窗口的其他三个值，仅凭$3.5$也不能知道四个值的排列。
 
-采用相同窗口与完整窗口取整规则时，池化的输出尺寸可由式\eqref{eq:cnn-output-size}计算。边界规则却要单独核对：最大池化常将无效位置排除，等价于用负无穷填充，而补零会改变全负窗口的最大值；平均池化若把补零位置计入分母，边缘均值会与只除以有效元素数不同。某些接口使用向上取整，并另行处理末尾窗口，不能把这种输出形状与本章的向下取整约定混用。
+采用相同窗口与完整窗口取整规则时，池化的输出尺寸可由式\eqref{eq:cnn-output-size}计算。边界规则却要单独核对：最大池化常将无效位置排除，等价于用负无穷填充，而补零会改变全负窗口的最大值；平均池化若把补零位置计入分母，边缘均值会与只除以有效元素数不同。使用向上取整的接口还会保留末尾窗口，并对其边界另作处理；这会给出与本章向下取整约定不同的形状。
 
 \term{全局平均池化}（global average pooling）把每张特征图汇成一个数，得到通道向量$\bm r\in\mathbb R^{c_{\mathrm{in}}}$：
 \begin{equation}
   r_c=\frac1{hw}\sum_{i=0}^{h-1}\sum_{j=0}^{w-1}x_{i,j,c}\text{。}
   \label{eq:cnn-global-average-pooling}
 \end{equation}
-全局最大池化则保留每个通道在全部位置上的最大值。若平移仅对特征图作位置置换，例如循环边界上的整数平移，这两种汇聚都保持结果不变。但实际网络中的填充、裁剪和跨步可能使平移后的特征图不再只是原图的置换，因此不能由“使用了全局池化”推出对任意图像平移严格不变。局部池化也只能在特定变化下保留局部响应，不能保证一般平移不变。
+全局最大池化则保留每个通道在全部位置上的最大值。若平移仅对特征图作位置置换，例如循环边界上的整数平移，这两种汇聚都保持结果不变。实际网络中的填充、裁剪和跨步可能改变平移后的特征值和采样位置，此时上述置换条件不再成立。局部池化保留的是窗口中的最大值或平均值，其平移性质也由窗口如何移动决定。
 
 \subsection{激活与归一化}
 \label{sec:cnn-activation-normalization}
 
-卷积层仍然是仿射映射，单独堆叠不足以学习复杂的非线性关系。ReLU、GELU或SiLU可逐元素作用于特征图，保留空间和通道形状，同时改变局部响应。它们的定义、梯度和初始化配合见第~\ref{sec:ffn-activations}节。卷积网络中常用ReLU，并不意味着其他激活不适用；应区分隐藏特征的非线性与输出的概率或取值约束。
+卷积层仍然是仿射映射，单独堆叠不足以学习复杂的非线性关系。ReLU、GELU或SiLU可逐元素作用于特征图，保留空间和通道形状，同时改变局部响应。它们的定义、梯度和初始化配合见第~\ref{sec:ffn-activations}节。这些隐藏层激活决定局部特征如何组合；末端的概率或取值范围，则由输出任务另行规定。
 
 深层组合还会改变活动值的尺度。\term{批归一化}（batch normalization, BN）用当前小批量的统计量调整特征，再学习一个缩放与平移。对卷积特征，通常按通道在批量轴和两个空间轴上统计；设小批量预激活为$z_{t,i,j,c}$、样本索引$t=1,\ldots,n_{\mathrm b}$，统计元素数为$m=n_{\mathrm b}h'w'$，则
 \begin{equation}
@@ -435,13 +424,13 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
 
 全连接前馈网络的BN使用相同原则，但没有空间轴。将一个小批量的特征按行排成$\bm Z_{\mathrm{FFN}}\in\mathbb R^{n_{\mathrm b}\times d}$，固定特征坐标$q$，就只在$\{z_{t,q}:t=1,\ldots,n_{\mathrm b}\}$上统计均值与方差，$\gamma_q,\beta_q$在样本间共享。因此，FFN的“特征级”BN固定一列、跨样本统计，CNN的“通道级”BN固定一个通道、跨样本和空间位置统计。若把卷积特征展平成$n_{\mathrm b}\times(h'w'c_{\mathrm{out}})$后逐列做BN，每个空间位置会分别统计并拥有各自的仿射参数，这与卷积BN不同。其他归一化方法的统计轴对照见图~\ref{fig:training-normalization-axes}。
 
-训练时，共用均值与方差使这些数值的计算相互耦合：一个值改变，可能影响同组其他值的归一化结果。CNN的这种依赖既跨样本，也跨同一通道的空间位置。推理时通常使用训练中累计的均值与方差，使单样本计算固定。累计方差的具体估计约定应与实现一致。常见组合是“卷积—BN—ReLU”，紧接BN的卷积偏置常可省略，因为通道中心化会消除它，BN另有平移参数\scite{ioffe2015batchnorm}
+训练时，共用均值与方差使这些数值的计算相互耦合：一个值改变，可能影响同组其他值的归一化结果。CNN的这种依赖既跨样本，也跨同一通道的空间位置。推理时通常使用训练中累计的均值与方差，使单样本计算固定。累计统计量按实现选定的估计规则更新。常见组合是“卷积—BN—ReLU”，紧接BN的卷积偏置常可省略，因为通道中心化会消除它，BN另有平移参数\scite{ioffe2015batchnorm}
 
-当批量较小或批内组成变化较大时，可以改变统计范围。\term{组归一化}（group normalization, GN）把通道分成若干组，对每个样本分别在一组通道及其空间位置上统计均值和方差，然后仍按通道学习缩放与平移。它不需要其他样本提供统计量，训练和推理使用相同的统计范围，但会让同组通道发生统计耦合。组数是结构设置，通道数需要能够均分。GN与BN改变的是统计对象，不能仅凭名称断言哪一种在所有任务上更好\scite{wu2018groupnorm}
+当批量较小或批内组成变化较大时，可以改变统计范围。\term{组归一化}（group normalization, GN）把通道分成若干组，对每个样本分别在一组通道及其空间位置上统计均值和方差，然后仍按通道学习缩放与平移。它不需要其他样本提供统计量，训练和推理使用相同的统计范围，但会让同组通道发生统计耦合。组数是结构设置，通道数需要能够均分。GN与BN的区别首先在统计对象：前者独立处理样本，后者使用批内信息。实际训练效果还随任务和批量设置变化\scite{wu2018groupnorm}
 
 这些统计量也改变数据依赖范围。训练态BN通过通道均值与方差连接同批样本的不同空间位置，GN则在训练和推理时都连接同一样本组内的各空间位置；式\eqref{eq:cnn-receptive-field}没有计入这些路径。推理态BN若使用固定的运行统计量，就只是逐点仿射变换，不会额外扩大依赖范围。
 
-归一化、激活和池化的顺序影响计算含义。对平均池化，通常有$\sigma(\operatorname{Avg}(\bm X))\neq\operatorname{Avg}(\sigma(\bm X))$；例如两个响应为$-2$和$1$时，先平均再ReLU得到$0$，先ReLU再平均得到$1/2$。单调逐点激活与不含额外填充值的最大池化可以交换，但加入归一化后不能据此随意调换整个模块。各架构的模块顺序应按定义读取；跨架构的训练机制由后续《神经网络的训练》章展开。
+归一化、激活和池化的顺序影响计算含义。对平均池化，通常有$\sigma(\operatorname{Avg}(\bm X))\neq\operatorname{Avg}(\sigma(\bm X))$；例如两个响应为$-2$和$1$时，先平均再ReLU得到$0$，先ReLU再平均得到$1/2$。单调逐点激活与不含额外填充值的最大池化可以交换；归一化还读取组内统计量，改变顺序就可能改变输出。各架构因而用明确的模块顺序确定计算；跨架构的训练机制由后续《神经网络的训练》章展开。
 
 \subsection{输出和学习目标}
 \label{sec:cnn-output-objectives}
@@ -452,7 +441,7 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
   \ell=-\log p_y\text{。}
   \label{eq:cnn-image-classification}
 \end{equation}
-这里$y\in\{1,\ldots,q\}$为图像标签；训练学习卷积特征与分类层参数，使用时取最大得分类别。回归、二分类和多标签输出可以沿用第~\ref{sec:ffn-output-objectives}节的变换与损失。将最后一张特征图简单当作类别概率，并没有完成这些输出约束。
+这里$y\in\{1,\ldots,q\}$为图像标签；训练学习卷积特征与分类层参数，使用时取最大得分类别。回归、二分类和多标签输出可以沿用第~\ref{sec:ffn-output-objectives}节的变换与损失。分类输出的概率由这组类别得分共同归一化，最后一张特征图的数值本身仍是内部响应。
 
 若要预测每个像素的类别，就需要保留或恢复空间轴。设得分张量为$\bm A\in\mathbb R^{h\times w\times q}$，在每个位置单独应用Softmax，可得到$p_{i,j,k}$。给定像素标签$y_{i,j}$，逐位置交叉熵为
 \begin{equation}
@@ -476,14 +465,14 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
     \ell\!\left(\bm F_{\bm\theta}(\bm X_B)_t,\bm Y_t\right)\text{。}
   \label{eq:cnn-batch-objective}
 \end{equation}
-各项损失仍可相加，但每项预测都可能依赖整批输入。求导必须沿完整批计算图回传，包括均值与方差连接不同样本的路径；分别运行单样本前向、求导后再平均，一般不能得到$\nabla_{\bm\theta}L_B$。若要定义随机分批训练的总体目标，还需给定批抽样规则，再对$L_B$取期望；梯度累积与一次大批前向的区别见第~\ref{sec:training-inexact-gradients}节。正则项、数据增强和优化策略可以加入训练过程，本章重点是结构特有的梯度与信息传递。
+各项损失仍可相加，但每项预测都可能依赖整批输入。求导沿完整批计算图回传，包括均值与方差连接不同样本的路径。分别运行单样本前向会改变归一化统计量及其导数，求导后再平均得到的量一般不同于$\nabla_{\bm\theta}L_B$。若要定义随机分批训练的总体目标，还需给定批抽样规则，再对$L_B$取期望；梯度累积与一次大批前向的区别见第~\ref{sec:training-inexact-gradients}节。正则项、数据增强和优化策略可以加入训练过程，本章重点是结构特有的梯度与信息传递。
 
 \FloatBarrier
 
 \subsection{常见卷积网络架构}
 \label{sec:cnn-classic-architectures}
 
-完整架构要在空间精度、特征种类和计算成本之间分配资源。下采样减少空间位置，高层增加通道可以在较粗网格上保存更多特征；末端再根据任务读出。下面分别介绍LeNet、AlexNet、VGG和GoogLeNet。图中长方体表示特征张量，正面示意空间网格，厚度示意通道维；深色局部块与虚线突出一次局部映射，四角连线帮助追踪相邻张量的形状变化。全连接层用包含圆形神经元的平面方框表示，与卷积主体区分。主路径从左向右展开，实际尺寸写在各层或阶段下方；绘图尺寸不与张量元素数严格成比例。
+完整架构要在空间精度、特征种类和计算成本之间分配资源。下采样减少空间位置，高层增加通道可以在较粗网格上保存更多特征；末端再根据任务读出。LeNet、AlexNet、VGG和GoogLeNet分别体现了局部到整体、容量扩大、规则小核和多尺度分支的组织方式。图中叠片表示特征张量，正面示意空间网格，叠片示意通道维；深色局部块与算子内部的虚线突出一次局部映射。下方细节用层名对应主链中的算子，独立展示局部计算。全连接层用包含圆形神经元的平面方框表示。蓝色用于卷积特征与全连接，黄色用于池化或降采样，绿色用于少量卷积核细节。主路径从左向右展开，实际尺寸写在各层或阶段下方；绘图尺寸不与张量元素数严格成比例。
 
 \subsubsection{LeNet-5：从局部检测到整体读出}
 \label{sec:cnn-lenet}
@@ -492,14 +481,14 @@ Mathieu等研究了在CNN中利用这些复用关系的FFT实现\scite{mathieu20
 
 \begin{figure*}[tbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-lenet/figure.png}
-  \caption{LeNet-5的层次结构。C1、C3和C5为卷积层，S2、S4为原网络可学习的降采样层，F6为全连接层；原始十类读出采用欧氏径向基函数单元。特征片和局部映射均为示意，标签给出实际形状。C3的部分通道连接与降采样层的可学习参数未在图中逐条展开。}
+  \includegraphics[width=169.000mm]{figures/03-models/02-neural-network-models/generated/cnn-lenet/figure.png}
+  \caption{LeNet-5的层次结构。特征张量用叠片表示，层名与空间、通道尺寸标注在对应图元附近。C1、C3、C5为卷积层，S2、S4为可学习的平均降采样层，F6含84个单元，原始十类读出采用欧氏径向基函数。下方分别展开C3的跨通道局部卷积和S4的平均降采样；网格、叠片数和节点数均为示意，尺寸标签给出真实形状，C3部分通道连接未逐条展开。}
   \label{fig:cnn-lenet}
 \end{figure*}
 
-S2和S4不是今天无参数的标准平均池化：每张特征图的局部求和还经过可学习缩放、偏置和非线性。C3也不是每个输出都连接全部输入通道，而是采用指定的部分连接，使不同输出读取不同的通道组合。C5虽然空间输出为$1\times1$，仍是卷积层；对这里固定的输入形状，它恰好具有整体连接的作用。
+S2和S4采用可学习的降采样：每张特征图的局部求和还经过可学习缩放、偏置和非线性。C3采用指定的部分通道连接，不同输出读取不同的输入组合。C5虽然空间输出为$1\times1$，仍是卷积层；对这里固定的输入形状，它恰好具有整体连接的作用。
 
-因此，教学中常见的“普通卷积—平均池化—ReLU—Softmax”版本是对LeNet的改写。它便于使用现代算子实现，却不保留全部原始设计。阅读这类架构时，应分别识别空间缩小、通道组合和整体读出的职责，再核对版本差别；只按层名照搬，容易把不同年代的训练与输出约定混在一起。
+教学中常见的“普通卷积—平均池化—ReLU—Softmax”版本使用现代算子重写了这条处理链。它仍按局部检测、空间缩小和整体读出组织计算，但降采样参数、通道连接和输出规则已改变。具体版本由这些计算约定共同确定。
 
 \FloatBarrier
 
@@ -508,16 +497,16 @@ S2和S4不是今天无参数的标准平均池化：每张特征图的局部求�
 
 自然图像包含更多颜色、纹理和尺度变化，需要更丰富的局部表示。AlexNet包含五个卷积层和三个全连接层；隐藏层使用ReLU，在第一、第二和第五个卷积阶段后作最大池化，在前两个全连接层使用Dropout。卷积主体输出通道依次为$96,256,384,384,256$，前两层分别用较大核快速扩大覆盖范围，后三层用$3\times3$继续组合特征\scite{krizhevsky2012}
 
-图~\ref{fig:cnn-alexnet}采用能明确核算形状的$227\times227$教学输入约定。所有卷积不使用空洞，卷积与池化的空间尺寸均按式\eqref{eq:cnn-output-size}向下取整；三次最大池化均为$3\times3$窗口、步长二、无填充。首层卷积以$11\times11$核、步长四、无填充产生$55\times55$输出，池化降到$27\times27$；第二卷积使用$5\times5$核、步长一、四周各填充二，保持尺度，池化降到$13\times13$；后三层均为$3\times3$核、步长一、四周各填充一，保持该尺度。末次池化形成$6\times6\times256$，展平为9216维，接4096、4096和1000单元。原论文正文写输入$224\times224$，却展示首层55的空间尺寸；在无填充的向下取整规则下二者并不相符。这里显式选用227，避免把这个版本差异藏在图中。
+图~\ref{fig:cnn-alexnet}采用能明确核算形状的$227\times227$教学输入约定。所有卷积不使用空洞，卷积与池化的空间尺寸均按式\eqref{eq:cnn-output-size}向下取整；三次最大池化均为$3\times3$窗口、步长二、无填充。首层卷积以$11\times11$核、步长四、无填充产生$55\times55$输出，池化降到$27\times27$；第二卷积使用$5\times5$核、步长一、四周各填充二，保持尺度，池化降到$13\times13$；后三层均为$3\times3$核、步长一、四周各填充一，保持该尺度。末次池化形成$6\times6\times256$，展平为9216维，接4096、4096和1000单元。原论文正文写输入$224\times224$，却展示首层55的空间尺寸；在无填充的向下取整规则下二者并不相符。图和本节形状计算统一采用227输入。
 
 \begin{figure*}[tbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-alexnet/figure.png}
-  \caption{AlexNet的五个卷积层与三个全连接层。全部主路径在一行展开，卷积层、最大池化层与全连接层分别绘出；最后一次池化的输出展平为9216维。各层下方给出空间尺寸和通道数，Conv表示卷积，Pool表示池化。此图采用227输入及正文给定的填充约定，省略局部响应归一化、Dropout和原始双GPU的分组细节。}
+  \includegraphics[width=169.000mm]{figures/03-models/02-neural-network-models/generated/cnn-alexnet/figure.png}
+  \caption{AlexNet的五个卷积层与三个全连接层。全部主路径在一行展开，卷积层、最大池化层与全连接层分别绘出；最后一次池化的输出展平为9216维。各层下方给出空间尺寸和通道数，Conv表示卷积，Pool表示池化。下方依次展开Conv1的跨通道卷积、Pool2的最大池化和Conv4的卷积特征提取。网格、叠片和卷积核仅作局部映射示意，各层的实际尺寸与步幅以主链标注为准。此图采用227输入及正文给定的填充约定，省略局部响应归一化、Dropout和原始双GPU的分组细节。}
   \label{fig:cnn-alexnet}
 \end{figure*}
 
-容量增加也会把成本集中到尾部。仅9216维到4096维的全连接权重就有$37748736$个，下一层又有$16777216$个；它们与卷积核共享权重的组织不同，是全模型参数量的重要来源。原实现将网络分配到两块GPU，部分层限制跨GPU的通道连接，这也影响了分组方式。ReLU、数据增强和Dropout分别作用于非线性、训练输入变化与正则化；GPU解决计算可行性，不能代替这些学习设计。AlexNet的意义在于这些因素共同支撑了大规模监督学习，而不是某一个模块单独保证效果。
+容量增加也会把成本集中到尾部。仅9216维到4096维的全连接权重就有$37748736$个，下一层又有$16777216$个；它们与卷积核共享权重的组织不同，是全模型参数量的重要来源。原实现将网络分配到两块GPU，部分层限制跨GPU的通道连接，这也影响了分组方式。ReLU、数据增强和Dropout分别作用于非线性、训练输入变化与正则化；GPU让这些运算可以实际执行，训练设计则规定了参数如何由数据学得。这些条件共同支撑了这套大规模监督系统。
 
 \FloatBarrier
 
@@ -529,21 +518,21 @@ AlexNet混合不同核尺寸，VGG则研究较规则的小核堆叠。主体使�
 
 \begin{figure*}[tbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-vgg/figure.png}
-  \caption{VGG-16的五阶段卷积主体与全连接尾部。每个阶段内的$3\times3$卷积保持空间尺寸，阶段末池化减半；图中主体特征标注为池化后的形状。13个卷积层与三个全连接层组成16个带权重的层。每个卷积阶段合并展示其中的卷积堆叠与末端池化，平面神经元框表示全连接层；层下方分别标出空间尺寸与通道数。}
+  \includegraphics[width=169.000mm]{figures/03-models/02-neural-network-models/generated/cnn-vgg/figure.png}
+  \caption{VGG-16的五阶段卷积主体与全连接尾部。沿用AlexNet的特征叠片、池化、灰色展平及全连接图元；层名和尺寸分别置于对应图元上、下。每个Conv组包含标明次数的$3\times3$卷积并保持空间尺寸，其后的池化单独画出、使空间减半。下方展示Conv2组内单个卷积的代表性局部映射及Pool2的最大池化，并不将单个卷积等同于整个卷积组。13个卷积层加三个全连接层构成16个带权重层。网格、叠片数和节点数仅作示意；$a^2\times c$表示$a\times a\times c$。}
   \label{fig:cnn-vgg}
 \end{figure*}
 
-连续小核能够逐层扩大感受野。两个步长一的$3\times3$层覆盖$5\times5$跨度，三个覆盖$7\times7$；若各层通道均为$c$且忽略偏置，两个小核用$18c^2$个权重，单个$5\times5$用$25c^2$个。中间激活还增加了一次非线性，因此前者并非后者的精确替换；比较成立的通道假设也不能省略。
+连续小核能够逐层扩大感受野。两个步长一的$3\times3$层覆盖$5\times5$跨度，三个覆盖$7\times7$；若各层通道均为$c$且忽略偏置，两个小核用$18c^2$个权重，单个$5\times5$用$25c^2$个。这个权重比较固定了各层通道数。两个小核之间还加入非线性，候选映射由此改变；相同感受野只描述读取范围。
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/tikz/cnn-receptive-field-stack/figure.pdf}
+  \includegraphics[width=108.158mm]{figures/03-models/02-neural-network-models/tikz/cnn-receptive-field-stack/figure.pdf}
   \caption{三个步长一、无空洞的$3\times3$卷积逐层扩大几何感受野。彩色方格表示一个高层位置在原输入上可能读取的范围，中心实色格只用于对齐位置；跨度依次为$3,5,7$。图没有计入池化、跨位置归一化或边界填充造成的额外依赖。}
   \label{fig:cnn-receptive-field-stack}
 \end{figure}
 
-这种规则结构便于分阶段核算形状，但高分辨率阶段的活动值与乘加仍然很大，经典VGG的4096单元全连接尾部也有大量参数。增加深度时仍需合适的训练与正则化。VGG提供了一种清晰的深度组织方式，并没有自动解决深层串联中的梯度与退化问题。
+这种规则结构便于分阶段核算形状，但高分辨率阶段的活动值与乘加仍然很大，经典VGG的4096单元全连接尾部也有大量参数。增加深度时仍需合适的训练与正则化。VGG用统一的小核组织深度，串联变换中的梯度传播与训练退化仍需通过学习方法和连接设计处理。
 
 \FloatBarrier
 
@@ -554,19 +543,19 @@ AlexNet混合不同核尺寸，VGG则研究较规则的小核堆叠。主体使�
 
 \begin{figure*}[tb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-inception/figure.png}
+  \includegraphics[width=150.199mm]{figures/03-models/02-neural-network-models/generated/cnn-inception/figure.png}
   \caption{一个Inception模块的四分支教学配置。输入为$28\times28\times64$；四条分支分别输出16、32、16、16个通道，保持同一空间尺度，拼接得到$28\times28\times80$。中间的逐点卷积先压缩通道，最大池化采用步长一及same填充。圆角方框表示处理算子，各分支的标签给出核尺寸或通道数；右侧拼接框沿通道合并四路输出。四条路径实际并行，激活省略。}
   \label{fig:cnn-inception}
 \end{figure*}
 
 图中$3\times3$分支先将通道从64压到16，再输出32个通道，权重数为$64\times16+9\times16\times32=5632$；直接从64映射到32需要$18432$个。节省来自中间通道压缩，压缩也会限制该分支的表示。拼接保留分支间的区别，没有像相加那样把对应通道混合；后续卷积再学习如何组合这些通道。
 
-经典GoogLeNet先用普通卷积与池化形成$28\times28\times192$特征，再堆叠九个Inception模块，按两、五、两个模块分成三个尺度阶段；两个阶段间池化将空间降为14和7。末端$7\times7\times1024$特征经全局平均池化形成1024维向量，再作1000类分类。训练时，在中间层加入辅助分类器，让较浅位置也收到任务损失；推理时使用主分类路径。图~\ref{fig:cnn-googlenet}展示主路径，原论文按最长路径计22个带参数层，不能把一个Inception模块误计为一个普通卷积层\scite{szegedy2015googlenet}
+经典GoogLeNet先用普通卷积与池化形成$28\times28\times192$特征，再堆叠九个Inception模块，按两、五、两个模块分成三个尺度阶段；两个阶段间池化将空间降为14和7。末端$7\times7\times1024$特征经全局平均池化形成1024维向量，再作1000类分类。训练时，在中间层加入辅助分类器，让较浅位置也收到任务损失；推理时使用主分类路径。图~\ref{fig:cnn-googlenet}展示主路径，原论文按最长路径计22个带参数层，一个Inception模块内部则包含多条路径和多个卷积\scite{szegedy2015googlenet}
 
 \begin{figure*}[tbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-googlenet/figure.png}
-  \caption{经典GoogLeNet的主分类路径。卷积前端把$224\times224$输入变成$28\times28\times192$；两个、五个、两个Inception模块组成三个阶段，阶段间池化改变空间尺度。各阶段末的通道数为480、832和1024，全局平均池化后接1000类分类器。辅助分类分支省略，局部展开补充Inception的四分支组织，具体通道配置见图~\ref{fig:cnn-inception}。}
+  \includegraphics[width=169.000mm]{figures/03-models/02-neural-network-models/generated/cnn-googlenet/figure.png}
+  \caption{经典GoogLeNet的主分类路径。卷积前端把$224\times224$输入变成$28\times28\times192$；两个、五个、两个Inception模块组成三个阶段，阶段间池化改变空间尺度。各阶段末的通道数为480、832和1024，全局平均池化后接1000类分类器。辅助分类分支省略，下方以3a为代表展开单个Inception模块的四分支组织，主链的3a--3b组实际包含两个模块；分支机制见图~\ref{fig:cnn-inception}。}
   \label{fig:cnn-googlenet}
 \end{figure*}
 
@@ -637,7 +626,7 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
   \end{aligned}
   \label{eq:cnn-parameter-gradients}
 \end{equation}
-每个位置都提出一项局部更新意见，共享参数将这些意见相加。不同位置的贡献可以相互加强，也可以抵消；参数共享并不要求所有位置产生相同响应或相同梯度。这里$\delta$已包含批平均的$1/|B|$，汇总时不再除以批量大小。只有前向映射逐样本独立时，才可先由单样本损失分别求导，再在批量上平均。
+每次使用该权重都会产生一项局部导数，共享参数的总导数就是这些项之和。不同位置的贡献可以相互加强，也可以抵消；参数共享并不要求所有位置产生相同响应或相同梯度。这里$\delta$已包含批平均的$1/|B|$，汇总时不再除以批量大小。只有前向映射逐样本独立时，才可先由单样本损失分别求导，再在批量上平均。
 
 一个卷积输入$x_{t,u,v,c}$可能参与本样本的多个输出窗口，也可能连接多个输出通道。将卷积局部映射中所有包含它的项找出，得到
 \begin{equation}
@@ -647,14 +636,14 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
     \mathbb I\{u=u(i,a),\ v=v(j,b)\}\text{。}
   \label{eq:cnn-input-gradient}
 \end{equation}
-其中$u,v$在原输入范围内，$\mathbb I$为条件成立时取一的指示函数，求和范围沿用前向计算。该式适用于跨步和空洞，不需要凭印象猜核应当翻转几次。若使用复制或反射填充，一个原输入还可能对应多个扩展位置，需把这些位置的梯度再累加回来；不能将零填充下的单一索引条件直接照搬。
+其中$u,v$在原输入范围内，$\mathbb I$为条件成立时取一的指示函数，求和范围沿用前向计算。索引条件直接选出前向读取了该坐标的项，因此也适用于跨步和空洞。若使用复制或反射填充，一个原输入还可能对应多个扩展位置，需把这些位置的梯度再累加回来；其索引累积关系随填充映射改变。
 
 矩阵形式揭示了它与转置卷积的联系。固定参数时，将每个样本的张量展平，前向预激活为$\bm z_t=\bm C\bm x_t+\bm b_{\mathrm{rep}}$，$\bm b_{\mathrm{rep}}$表示各位置重复的偏置；把$\delta_{t,i,j,o}$展平为$\bm\delta_t$，就有
 \begin{equation}
   \nabla_{\bm x_t}L_B=\bm C^\top\bm\delta_t\text{。}
   \label{eq:cnn-backprop-transpose}
 \end{equation}
-输入梯度正是前向线性算子的转置作用。数据展开实现则先把每个窗口的梯度算出来，再把各列放回输入坐标，并累加重叠部分；这个回填步骤常称为col2im，它不是把重复窗口无条件复制回去。
+输入梯度正是前向线性算子的转置作用。数据展开实现则先把每个窗口的梯度算出来，再把各列放回输入坐标，并累加重叠部分；这个回填步骤常称为col2im，同一输入坐标对应的窗口梯度在此相加。
 
 仍用式\eqref{eq:cnn-matrix-example}，取仅含这一个输入的批量，不加归一化、不填充、步长一，令$L_B$为全部互相关输出之和。九个输出的$\delta$均为一，则
 \begin{equation}
@@ -672,7 +661,7 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
 
 \begin{figure*}[htbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-backprop-shared-overlap/figure.png}
+  \includegraphics[width=142.325mm]{figures/03-models/02-neural-network-models/generated/cnn-backprop-shared-overlap/figure.png}
   \caption{式~\eqref{eq:cnn-gradient-example}中的两种梯度累积。输入为按行排列$1$至$16$的$4\times4$矩阵，核为$(1,0;0,-1)$，步长一、无填充，损失为九个输出之和。左图汇总九个窗口对同一核参数的贡献；右图突出$x_{1,1}=6$的两项非零贡献，二者相消；另两项贡献因对应核值为零而为零。}
   \label{fig:cnn-backprop-shared-overlap}
 \end{figure*}
@@ -696,14 +685,14 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
        \mathbb I\{(u,v)=(u^*_{t,i,j,c},v^*_{t,i,j,c})\}\text{。}
   \label{eq:cnn-max-pooling-gradient}
 \end{equation}
-若多个元素并列最大，函数在该点不可微；实现可以按固定规则选择一个位置，也可以采用最大值集合上的合法次梯度分配。必须保持前后向约定一致。同一元素若是多个重叠窗口的最大值，会收到这些窗口梯度的和。
+若多个元素并列最大，函数在该点不可微；实现可以按固定规则选择一个位置，也可以采用最大值集合上的合法次梯度分配。后向采用与前向对应的选择或次梯度规则。同一元素若是多个重叠窗口的最大值，会收到这些窗口梯度的和。
 
 对式\eqref{eq:cnn-pooling-example}，令四个输出梯度均为一。平均池化使每个输入收到$1/4$，最大池化只让原矩阵中的$6,8,14,16$各收到$1$。回传规则因此保留了两种汇聚方式的区别：平均把影响均分，最大把影响路由到当前胜出的位置。卷积与池化梯度接入前章的反向传播后，就能联合更新整个网络；优化器和学习率的通用选择由后续训练章讨论。
 
 \section{支持更深的网络结构}
 \label{sec:cnn-deep-structures}
 
-连续堆叠卷积可以扩大感受野并增加非线性组合，却也使信息和梯度经过更长的变换链。前章已说明，Jacobian矩阵连乘可能放大或衰减梯度。即使初始化和归一化让训练开始收敛，更深的普通串联网络仍可能出现更高的训练误差。这里的\term{退化问题}（degradation problem）指增加层数后训练效果反而下降，不能仅用训练集外的过拟合来解释。ResNet论文在其图像实验中报告并研究了这一现象\scite{he2016resnet}
+连续堆叠卷积可以扩大感受野并增加非线性组合，却也使信息和梯度经过更长的变换链。前章已说明，Jacobian矩阵连乘可能放大或衰减梯度。即使初始化和归一化让训练开始收敛，更深的普通串联网络仍可能出现更高的训练误差。增加层数后训练误差反而上升，称为\term{退化问题}（degradation problem）。该现象发生在训练集上，涉及更深参数化的求解困难。ResNet论文在其图像实验中报告并研究了这一现象\scite{he2016resnet}
 
 跨层连接允许部分信息绕过某些变换。下面比较三种组织方式：直接相加、用门选择相加，以及保留旧特征再拼接新特征。它们都可以保持前馈计算，但改变了中间表示和梯度路径。
 
@@ -720,7 +709,7 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
 图~\ref{fig:cnn-resnet}展开一个基本模块中的层与残差连接。上方旁路把输入直接送到加法节点，主分支则计算需要叠加的变换；图中的模块还在相加后施加一次ReLU。
 \begin{figure*}[htbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-resnet/figure.png}
+  \includegraphics[width=169.000mm]{figures/03-models/02-neural-network-models/generated/cnn-resnet/figure.png}
   \caption{残差基本模块中的逐层变换与恒等旁路。主分支依次经过$3\times3$卷积、BN、ReLU及第二个$3\times3$卷积、BN，再与直接传来的输入逐元素相加并激活。两次卷积均保持$32\times32\times64$形状，上方旁路跳过主分支的变换。圆角方框表示算子，圆形加号节点表示逐元素相加；改变尺度或通道时，旁路需要投影。}
   \label{fig:cnn-resnet}
 \end{figure*}
@@ -740,18 +729,18 @@ GoogLeNet用多分支增加同层处理方式，用逐点卷积控制大核分�
   \end{aligned}
   \label{eq:cnn-residual-gradient}
 \end{equation}
-末行的第一项直接经过恒等路径，第二项经过残差分支。但两项仍可能相消，例如标量分支$F(x)=-x$就有$1+F'(x)=0$。多块连乘也可能放大或衰减梯度，因而这不是“永不消失”的保证。
+末行的第一项直接经过恒等路径，第二项经过残差分支。两项共同决定输入梯度，例如标量分支$F(x)=-x$就有$1+F'(x)=0$，两路贡献恰好相消。多块连乘后，尺度还随各块Jacobian矩阵变化；恒等路径改变了传播结构，整体梯度仍由全部路径决定。
 
 若记相加结果为$\bm z=\bm x+\bm F(\bm x)$，再令$\bm y=\operatorname{ReLU}(\bm z)$，则反向还要先经过ReLU：
 \[
   \nabla_{\bm x}\ell
     =(\bm I+\bm J_F)^\top\bm D_{\mathrm{ReLU}}\nabla_{\bm y}\ell\text{。}
 \]
-在$z_i\neq0$处，$\bm D_{\mathrm{ReLU}}$的第$i$个对角元素为$\mathbb I\{z_i>0\}$；零点按实现选定导数。恒等路径的贡献也会受这层筛选，不能把相加前后的输出混为一谈。
+在$z_i\neq0$处，$\bm D_{\mathrm{ReLU}}$的第$i$个对角元素为$\mathbb I\{z_i>0\}$；零点按实现选定导数。这层激活也筛选恒等路径传来的贡献，相加结果与最终输出因而具有不同的导数。
 
 当阶段间下采样或改变通道时，输入与分支结果不能直接逐元素相加。可用投影$\bm P$调整形状，写为$\bm y=\bm P\bm x+\bm F(\bm x)$；例如用跨步$1\times1$卷积同时改变空间尺寸与通道。此时跨层路径的Jacobian矩阵是$\bm P$，不再是$\bm I$，合并输出的Jacobian矩阵相应变为$\bm P+\bm J_F$。选择恒等或投影，取决于两条分支的形状和希望保留的映射。
 
-ResNet在多个阶段堆叠残差模块。基本模块常用两个$3\times3$卷积；瓶颈模块用$1\times1$压缩通道、$3\times3$处理空间、再用$1\times1$恢复通道，以控制主体计算。经典版本在相加后使用激活。比较不同版本时，应核对跳跃路径是否保持恒等，以及下采样究竟位于哪一条分支；仅写“使用残差”还不足以确定计算图。
+ResNet在多个阶段堆叠残差模块。基本模块常用两个$3\times3$卷积；瓶颈模块用$1\times1$压缩通道、$3\times3$处理空间、再用$1\times1$恢复通道，以控制主体计算。经典版本在相加后使用激活。不同版本通过激活位置、旁路投影和下采样所在分支确定计算图；这些选择共同影响信息和梯度路径。
 
 ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7$卷积取步长二、填充三，产生$112\times112$特征；接BN、ReLU及$3\times3$、步长二、填充一的最大池化，得到$56\times56$网格。四个阶段分别使用64、128、256、512个通道，每个阶段包含两个基本模块；后三阶段的首模块将空间减半，并用投影匹配相加形状。末端全局平均池化与分类层完成整体读出。
 
@@ -769,7 +758,7 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
 \end{equation}
 其中$\bm F$为变换路径，$\bm G$产生与输入同形状的门得分，Sigmoid逐元素把门值限制在$(0,1)$。在卷积模块中，$\bm F$和$\bm G$都可使用共享局部计算。门值接近零时以保留路径为主，接近一时以变换路径为主。原工作采用负的门偏置，使初始门倾向保留输入，帮助很深的网络开始学习\scite{srivastava2015highway}
 
-门也依赖输入，所以求导不能把它当成常数。记$\operatorname{Diag}(\bm v)$为以向量$\bm v$作对角线的矩阵，$\bm J_g$为门的Jacobian矩阵，则
+门值随输入变化，这一变化也参与输出导数。记$\operatorname{Diag}(\bm v)$为以向量$\bm v$作对角线的矩阵，$\bm J_g$为门的Jacobian矩阵，则
 \begin{equation}
   \begin{aligned}
     \bm J_y={}&\operatorname{Diag}(\bm g)\bm J_F
@@ -780,11 +769,11 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
 \end{equation}
 末项来自门值随输入变化的影响。负偏置使门初始更接近保留路径，也可能让Sigmoid进入导数较小的区域，门参数的学习仍需合适尺度。Highway增加了可学习的路由及其参数成本；式\eqref{eq:cnn-highway-block}中两条系数之和为一，与ResNet无门控的直接相加具有不同约束。
 
-图~\ref{fig:cnn-highway}展开变换、门和保留路径，两个逐元素乘法节点分别调节变换结果与原输入，再由相加节点合并。三条路径都保持$h\times w\times c$形状，门按位置和通道决定缩放系数；若设计需要改变形状，应先明确保留路径的投影及门的目标形状，不能直接套用同维公式。
+图~\ref{fig:cnn-highway}展开变换、门和保留路径，两个逐元素乘法节点分别调节变换结果与原输入，再由相加节点合并。三条路径都保持$h\times w\times c$形状，门按位置和通道决定缩放系数；改变形状的模块还要为保留路径安排投影，并使门与两路结果具有匹配的目标形状。
 
 \begin{figure*}[tbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-highway/figure.png}
+  \includegraphics[width=130.048mm]{figures/03-models/02-neural-network-models/generated/cnn-highway/figure.png}
   \caption{同形状卷积Highway模块。上方卷积与ReLU产生$\bm F(\bm x)$，门路径经卷积与Sigmoid产生$\bm g$，保留路径传递原输入；两个$\odot$节点分别计算$\bm g\odot\bm F(\bm x)$和$(\bm1-\bm g)\odot\bm x$，再由$+$节点相加。所有特征与门具有同一空间、通道形状，圆角方框表示各条路径的处理算子。}
   \label{fig:cnn-highway}
 \end{figure*}
@@ -811,14 +800,14 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
   =9k\left(Lc_0+\frac{kL(L-1)}2\right)\text{。}
   \label{eq:cnn-dense-cost}
 \end{equation}
-固定增长率下，这个简化块的通道相关成本随层数呈二次增长；瓶颈和压缩设计会改变具体成本。残差模块维持相加后的通道数，密集模块保留旧通道并增加新通道，二者对特征复用、活动值内存和计算的取舍不同，不能仅按跨层连接的数量判断效率。
+固定增长率下，这个简化块的通道相关成本随层数呈二次增长；瓶颈和压缩设计会改变具体成本。残差模块维持相加后的通道数，密集模块保留旧通道并增加新通道，二者以不同方式复用特征，活动值内存与计算量也由各自的通道增长和模块操作决定。
 
 
 图~\ref{fig:cnn-densenet}从左向右展示一个三层教学密集块：32个初始通道加上三组16个新通道，输出为80个通道。每次变换前的全部特征经旁路保留，再与本层新产生的通道拼接，因而后层仍能读取每个先前层的输出。若在块后接过渡层，可用$1\times1$卷积把80个通道压缩为40个，再通过池化把$32\times32$空间网格缩为$16\times16$。
 
 \begin{figure*}[tbp]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-densenet/figure.png}
+  \includegraphics[width=169.000mm]{figures/03-models/02-neural-network-models/generated/cnn-densenet/figure.png}
   \caption{DenseNet的三层教学密集块。各$\bm F_\ell$依次执行BN、ReLU和$3\times3$卷积，保持$32\times32$空间网格并新增16个通道。三次变换分别读取32、48、64个通道；上方旁路保留变换前的全部特征，标出的32、48、64为累计通道数；卷积下方的16为新增通道数。拼接位置将新旧特征沿通道合并，最终得到80个通道。逐次累积拼接等价于保留并向后传递全部先前层的输出，不作逐元素相加。}
   \label{fig:cnn-densenet}
 \end{figure*}
@@ -828,12 +817,29 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
 \section{理论分析}
 \label{sec:cnn-theory}
 
-卷积、池化和跨层连接改变了候选函数及其学习过程，但训练误差降低仍不能独自说明新图像上的风险。这里以期望风险与经验风险之间的差为泛化分析对象。假设$n$个训练样本独立同分布地来自$\mathcal P$，测试样本也来自$\mathcal P$，架构和参数约束在抽样前确定；数据相关约束需要另加选择代价。以下分别讨论数据、参数和结构，避免把某一个因素单独当作泛化保证。
+卷积、池化和跨层连接共同规定候选函数。以下先检查这些结构能否保留目标所需信息，再讨论共享参数的优化，最后考察训练所得预测在新图像上的风险。泛化分析采用$n$个独立同分布训练样本及同分布测试样本，架构和参数约束在抽样前确定；数据相关约束需要另加选择代价。结构是否容纳目标、更新是否得到合适参数，以及这些参数在新样本上的风险，对应不同的分析对象。
 
-\subsection{输入与数据对泛化的影响}
+\subsection{表达能力}
+\label{sec:cnn-expressivity}
+
+卷积把候选映射限制为局部、共享的变换，深度再组合局部模式。若目标要求重复识别同一种平移图案，这种限制与目标吻合；若不同位置必须采用不同规则，就需位置特征或相应读出。固定感受野之外的信息不能在该层直接参与判断，增加深度、核宽或全局读取才会改变这一边界。
+
+池化与下采样可能把多个输入映成同一个表示。如果两个类别所需区分的输入已被映成相同表示，后续层就只能给它们相同输出。函数族的表达能力因此同时取决于参数与结构保留的信息；位置、细节和交互被删除后，扩大后续层仍受这一限制。
+
+\subsection{收敛性}
+\label{sec:cnn-convergence}
+
+共享核收到所有位置的梯度之和，反向传播必须包含这些重复使用的贡献；共享减少独立参数，各层非线性与参数乘积仍使端到端目标通常具有非凸结构。对梯度Lipschitz连续且有下界的确定性目标，梯度下降在合适的固定步长下可使前$T$轮的平均平方梯度范数具有$O(1/T)$上界；这个驻点指标不保证找到全局最优候选。这个结论针对所给的光滑确定性目标。ReLU、随机批量、归一化和自适应更新分别改变了光滑性、梯度来源或更新规则，其收敛分析需要相应条件；残差路径本身仅规定计算结构。
+
+输入尺度、重叠窗口与整层算子范数改变曲率和梯度尺度，可能影响允许步长；实际速度还包含每轮的计算代价。固定特征上的凸读出与端到端特征学习应分别判断。具体更新方法和训练诊断见第\ref{chap:neural-network-training}章。
+
+\subsection{泛化性}
+\label{sec:cnn-generalization}
+
+\subsubsection{输入与数据}
 \label{sec:cnn-data-generalization}
 
-样本量首先要按独立信息的来源计数。同一图像中的像素、重叠裁块或同一段视频中的相邻帧通常相关；若理论假设独立图像，不能把一张图像的百万个像素当作百万个独立训练样本。按位置重复使用参数增加了学习信号的来源，但没有自动满足独立同分布条件。训练集与测试集也应按原始图像、对象或采集来源划分，避免高度相关的样本跨越划分边界。
+样本量首先要按独立信息的来源计数。同一图像中的像素、重叠裁块或同一段视频中的相邻帧通常相关；以独立图像为样本的分析，样本数由图像来源计数。一个图像内重复使用参数可以提供多项梯度贡献，这些贡献仍受同一图像内容的共同影响。按原始图像、对象或采集来源划分训练与测试数据，才与相应的独立证据来源一致。
 
 输入尺寸与尺度需要一起分析。若每个输入元素的绝对值不超过$a$，展平图像的欧氏范数只能粗略保证$\lVert\bm x\rVert_2\leq a\sqrt{hwc_{\mathrm{in}}}$。增大分辨率可能增加有用细节，也可能在范数界中增加复杂度项。按整张图像归一化可以控制总范数，却改变了局部数值尺度；逐通道标准化并不必然控制整图范数。较高分辨率下，固定像素大小的卷积核还覆盖较小的相对区域，因此输入尺寸也改变了结构与任务的配合。
 
@@ -859,23 +865,21 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
 \end{equation}
 这里$\mathcal H$是满足该核约束的函数空间。等号来自欧氏球上线性函数的最大值，第一条不等式来自均方根上界，交叉项因随机符号独立而消失。窗口数$m$没有显式出现，因为我们控制了平均后的特征范数；这不表示窗口产生了$m$倍独立样本。
 
-若损失取值于$[0,1]$、对得分具有Lipschitz常数$\lambda_{\mathrm{loss}}$，并满足
-\BookTheoremRef{thm:rademacher-risk-bound}{第二卷“基础、理论和可信性”的“二分类学习的可学习性”章“Rademacher复杂度给出的期望风险上界”定理}
-的可测性条件，由收缩引理和经验复杂度风险界，以至少$1-\delta$的概率，对全部上述模型有
+若损失取值于$[0,1]$、对得分具有Lipschitz常数$\lambda_{\mathrm{loss}}$，并满足相应可测性条件，由收缩引理和经验复杂度风险界，以至少$1-\delta$的概率，对全部上述模型有
 \begin{equation}
   R(f)\leq\widehat R_S(f)
     +\frac{2\lambda_{\mathrm{loss}}\alpha r_x}{\sqrt n}
     +3\sqrt{\frac{\log(2/\delta)}{2n}}\text{。}
   \label{eq:cnn-pooled-risk-bound}
 \end{equation}
-其中$\delta\in(0,1)$为失效概率，$R$与$\widehat R_S$使用同一损失。这个界让样本数、输入尺度和核约束各自承担明确作用；它不直接覆盖任意深层CNN，也不直接适用于无界交叉熵。若平均汇聚已经删掉标签需要的位置差异，复杂度很小的模型也可能具有较大的逼近误差。学习判断仍需结合式\eqref{eq:ffn-risk-decomposition}中的逼近、估计和优化三项。
+其中$\delta\in(0,1)$为失效概率，$R$与$\widehat R_S$使用同一损失（风险界参考\BookTheoremRef{thm:rademacher-risk-bound}{第二卷“基础、理论和可信性”的“二分类学习的可学习性”章“Rademacher复杂度给出的期望风险上界”定理}）。这个界针对受约束的线性共享核与有界Lipschitz损失，明确给出了样本数、输入尺度和核约束的作用。深层CNN或无界交叉熵改变了分析对象，需要另外建立复杂度与风险条件。若平均汇聚已经删掉标签需要的位置差异，复杂度很小的模型也可能具有较大的逼近误差。学习判断仍需结合式\eqref{eq:ffn-risk-decomposition}中的逼近、估计和优化三项。
 
-\subsection{参数对泛化的影响}
+\subsubsection{参数}
 \label{sec:cnn-parameter-generalization}
 
-卷积的参数规模由核尺寸与通道数决定，空间共享限制了独立可调的自由度。对固定有限的分段线性架构，可以把参数数和计算结构代入相应容量分析，但还需保留深度、计算单元及共享方式的条件；不能只把一个全连接网络的计数结论替换成卷积参数数。理论部分的VC分析提供最坏情形工具，实际得到的界也可能很松。
+卷积的参数规模由核尺寸与通道数决定，空间共享限制了独立可调的自由度。对固定有限的分段线性架构，可以把参数数和计算结构代入相应容量分析，但还需保留深度、计算单元及共享方式的条件；全连接架构的计数结果也需先核对是否允许这些共享与计算结构。理论部分的VC分析提供最坏情形工具，实际得到的界也可能很松。
 
-参数范数提供另一种约束。一个核展平后得到的$\bm W_{\mathrm{loc}}$描述单个窗口的映射，整个卷积层的$\bm C$却还包括窗口重复与重叠。两者的谱范数一般不同。以步长一、循环边界的一维核$(1,1)$为例，局部行向量范数为$\sqrt2$；输入为常数向量时，整层把该向量放大两倍，整层算子范数实际为$2$。把核的展平范数直接称为整层谱范数，会漏掉重叠作用。
+参数范数提供另一种约束。一个核展平后得到的$\bm W_{\mathrm{loc}}$描述单个窗口的映射，整个卷积层的$\bm C$却还包括窗口重复与重叠。两者的谱范数一般不同。以步长一、循环边界的一维核$(1,1)$为例，局部行向量范数为$\sqrt2$；输入为常数向量时，整层把该向量放大两倍，整层算子范数实际为$2$。局部核的展平范数描述一个窗口；整层谱范数还包含重叠窗口共同放大的作用。
 
 这个区别可以通过数据展开估计。设一个原输入坐标最多被$\mu$个窗口读取，把所有窗口堆成向量的取数映射记为$\bm E$。零填充下，每个坐标至多被重复$\mu$次，所以$\lVert\bm E\rVert_2\leq\sqrt\mu$。各窗口再独立应用同一局部矩阵，便有
 \begin{equation}
@@ -884,7 +888,7 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
     \leq\sqrt\mu\,\lVert\bm W_{\mathrm{loc}}\rVert_{\mathrm F}\text{。}
   \label{eq:cnn-operator-bound}
 \end{equation}
-其中$\lVert\cdot\rVert_{\mathrm F}$为Frobenius范数。普通步长一的二维窗口有$\mu\leq k_hk_w$；跨步和边界会改变重复次数，复制填充还需重新统计坐标复用。这是一个便于解释的上界，不保证紧。
+其中$\lVert\cdot\rVert_{\mathrm F}$为Frobenius范数。普通步长一的二维窗口有$\mu\leq k_hk_w$；跨步和边界会改变重复次数，复制填充还需重新统计坐标复用。这个上界由最大重复次数估计，各窗口贡献相消时，实际范数可以更小。
 
 在步长一、循环边界的条件下，傅里叶基可以将卷积化为各频率上的通道映射。对每个离散频率$(\omega_1,\omega_2)$，记核对应的复矩阵为$\widehat{\bm W}(\omega_1,\omega_2)\in\mathbb C^{c_{\mathrm{out}}\times c_{\mathrm{in}}}$，则
 \begin{equation}
@@ -893,25 +897,25 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
        \sigma_{\max}\!\left(\widehat{\bm W}(\omega_1,\omega_2)\right)\text{。}
   \label{eq:cnn-fourier-norm}
 \end{equation}
-这里$\sigma_{\max}$是最大奇异值，频域核使用与该卷积映射一致的变换约定。Sedghi等系统研究了这种卷积奇异值表示；有限图像的零填充、裁剪或跨步会改变线性算子，不能直接把循环边界的精确等式套用过去\scite{sedghi2019singular}
+这里$\sigma_{\max}$是最大奇异值，频域核使用与该卷积映射一致的变换约定。Sedghi等系统研究了这种卷积奇异值表示；有限图像的零填充、裁剪或跨步改变了线性算子，这时谱范数应对改变后的映射重新求取\scite{sedghi2019singular}
 
 对普通串联网络，若激活是$1$-Lipschitz，固定网络的输入扰动放大可由各层算子范数的乘积控制；归一化和池化则需计入自己的常数。深层泛化界通常还需要结合其他范数、分类间隔、输入尺度或函数空间的覆盖量，详见
 \BookSectionRef{sec:network-norm-bounds}{第二卷“基础、理论和可信性”的“深度学习的可学习性”章“基于参数大小的可学习性”节}。
-限制单层范数只控制其中一部分；将全部得分缩小也会缩小分类间隔，不能仅因参数数值变小就认定分类风险更低。
+限制单层范数只控制其中一部分；将全部得分缩小也会缩小分类间隔，风险控制因而还要同时记录得分相对于间隔的尺度。
 
-\subsection{网络结构对泛化的影响}
+\subsubsection{网络结构}
 \label{sec:cnn-structure-generalization}
 
-局部连接与参数共享通过限制候选映射减少自由度。如果在相同输入输出、相同后续层和相容参数约束下，把一个不共享权重的局部网络限制为所有位置共用权重，就得到其中一个子空间；复杂度不会因这种限制而增大。但子空间可能排除目标需要的规则。结构匹配时，这种限制可以减少估计负担；结构失配时，逼近误差可能增加。这才是卷积归纳偏置与泛化之间的有条件联系。
+局部连接与参数共享通过限制候选映射减少自由度。如果在相同输入输出、相同后续层和相容参数约束下，把一个不共享权重的局部网络限制为所有位置共用权重，就得到其中一个候选子类；在同一组输入样本上按相同定义计算的复杂度，不会因这一限制而增大。但候选子类可能排除目标需要的规则。结构匹配时，这种限制可以减少估计负担；结构失配时，逼近误差可能增加。这种结构限制同时作用于估计负担与逼近误差，取舍由目标是否符合共享规则决定。
 
-深度与通道宽度同时改变表示能力、参数约束和传播路径。增加通道可以保留更多局部特征，增加深度可以组合更大范围的信息；若各层范数随之变化，相应复杂度控制也会变化。式\eqref{eq:cnn-pooled-risk-bound}中没有显式出现通道宽度，并不说明任意加宽的深层网络都保留同样的界。要比较架构，应固定任务、输入尺度、损失和约束，再检查新增的候选函数与路径。
+深度与通道宽度同时改变表示能力、参数约束和传播路径。增加通道可以保留更多局部特征，增加深度可以组合更大范围的信息；若各层范数随之变化，相应复杂度控制也会变化。式\eqref{eq:cnn-pooled-risk-bound}中没有显式出现通道宽度，并不说明任意加宽的深层网络都保留同样的界。在固定任务、输入尺度、损失和约束后，新增候选函数与传播路径才构成可比较的变化。
 
 跨层连接还改变固定网络的敏感度。为单独考察合并操作，假设残差分支$\bm F$的Lipschitz常数不超过$\lambda_F$，忽略额外的归一化与输出激活，则
 \begin{equation}
   \operatorname{Lip}(\bm x+\bm F(\bm x))\leq1+\lambda_F\text{。}
   \label{eq:cnn-residual-lipschitz}
 \end{equation}
-残差块提供直接路径，但连续多个块的粗略上界仍为$\prod_\ell(1+\lambda_{F_\ell})$。若分支缩放为$\alpha_\ell\bm F_\ell$，相应因子变成$1+|\alpha_\ell|\lambda_{F_\ell}$。这个计算说明路径及尺度怎样影响扰动，也说明残差连接并不会自动使理论复杂度更小。
+残差块提供直接路径，但连续多个块的粗略上界仍为$\prod_\ell(1+\lambda_{F_\ell})$。若分支缩放为$\alpha_\ell\bm F_\ell$，相应因子变成$1+|\alpha_\ell|\lambda_{F_\ell}$。这个计算把直接路径和分支尺度都纳入了扰动上界，连续相乘的各因子仍可能扩大敏感度。
 
 对密集结构，把保留的全部特征作为当前状态$\bm s$，一次新增特征可写成$\bm s'=[\bm s,\bm F(\bm s)]$。使用拼接后各坐标的欧氏范数，有
 \begin{equation}
@@ -919,7 +923,7 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
   \leq(1+\lambda_F^2)\lVert\bm s_1-\bm s_2\rVert_2^2\text{。}
   \label{eq:cnn-dense-lipschitz}
 \end{equation}
-因子与相加的情形不同，状态维度也不断增长。拼接后卷积的局部输入通道数、范数约束和过渡层均要随之计入。Highway还涉及门的输入导数，式\eqref{eq:cnn-highway-gradient}中的末项不能省去。相加、拼接与门控各自改变了分析对象，没有仅凭连接名称成立的泛化排序。
+因子与相加的情形不同，状态维度也不断增长。拼接后卷积的局部输入通道数、范数约束和过渡层均要随之计入。Highway的门随输入变化，其影响由式\eqref{eq:cnn-highway-gradient}的末项给出。相加、拼接与门控各有不同的状态、范数和导数条件，泛化比较据此建立。
 
 池化的作用也依赖窗口是否重叠。对不重叠窗口，最大池化在欧氏范数下至多为$1$-Lipschitz；大小均为$q$的平均池化至多为$1/\sqrt q$-Lipschitz。因为一个窗口的最大值差不超过该窗口输入差的最大绝对值，而平均值差可由Cauchy--Schwarz不等式控制，再将不重叠窗口平方求和即可得到这些界。若窗口重叠，同一个坐标重复参与输出，需要额外考虑覆盖次数。汇聚减少位置细节、可能降低敏感度，也可能损失分割边界所需的信息。
 
@@ -928,29 +932,29 @@ ResNet-18的主干分为四个阶段：对$224\times224$输入，前端$7\times7
 \section{常见应用}
 \label{sec:cnn-applications}
 
-分类把整张图像压成一个答案，而分割和图像生成需要输出一张新的空间图。两类任务都可以使用\term{编码器—解码器}（encoder--decoder）结构：编码器逐步把输入变成较粗但通道更丰富的特征，解码器再逐步恢复输出网格。恢复分辨率只增加输出位置，并不能自动找回下采样中丢失的细节，因此还需要考虑哪些中间特征应当保留。
+分类把整张图像压成一个答案，而分割和图像生成需要输出一张新的空间图。两类任务都可以使用\term{编码器—解码器}（encoder--decoder）结构：编码器逐步把输入变成较粗但通道更丰富的特征，解码器再逐步恢复输出网格。恢复分辨率增加了输出位置，这些位置的内容仍来自保留下来的编码特征；解码结构因而还需要安排细节从哪里获得。
 
 \subsection{图像分割}
 \label{sec:cnn-segmentation}
 
 图像分割为每个位置预测类别，例如区分医学图像中的组织区域。输入为$\bm X\in\mathbb R^{h\times w\times c_{\mathrm{in}}}$，目标标签矩阵为$\bm Y\in\{1,\ldots,q\}^{h\times w}$。低层特征保留较精细的边缘，高层特征能够结合更大的上下文；解码时既需要知道区域属于什么，也需要知道轮廓落在哪里。
 
-U-Net用从编码器到对应解码阶段的\term{跳跃连接}（skip connection）补充这些信息，即让较早的特征直接进入较后的计算。它在同一尺度上沿通道轴拼接编码特征与上采样后的解码特征，再用卷积融合。这里的跳跃连接与ResNet的残差相加不同：前者保留两组独立通道，后者在对应坐标上求和。原始U-Net采用不填充卷积，需要裁剪编码特征再拼接；本节教学版本采用保持尺寸的卷积，简化空间对齐\scite{ronneberger2015unet}
+U-Net用从编码器到对应解码阶段的\term{跳跃连接}（skip connection）补充这些信息，即让较早的特征直接进入较后的计算。它在同一尺度上沿通道轴拼接编码特征与上采样后的解码特征，再用卷积融合。这里的跳跃连接沿通道保留两组特征，ResNet的残差连接则对匹配坐标求和；后续卷积读取的对象由此不同。原始U-Net采用不填充卷积，需要裁剪编码特征再拼接；本节教学版本采用保持尺寸的卷积，简化空间对齐\scite{ronneberger2015unet}
 
 图~\ref{fig:cnn-encoder-decoder}将一个三尺度例子的编码、解码主路径排成一行，上方保留同尺度的跳跃连接。$64\times64$输入在最高分辨率产生$32$个通道，下采样到$32\times32$后产生$64$个通道，再到$16\times16$产生$128$个通道。解码器把低分辨率特征上采样，并与相同网格的编码特征拼接；卷积再将拼接结果整理为该尺度的输出通道。最终用$1\times1$卷积将每个位置的$32$维特征映射为$q$个类别得分。
 
 \begin{figure*}[htb]
   \centering
-  \includegraphics[width=\linewidth]{figures/03-models/02-neural-network-models/generated/cnn-encoder-decoder/figure.png}
+  \includegraphics[width=150.199mm]{figures/03-models/02-neural-network-models/generated/cnn-encoder-decoder/figure.png}
   \caption{用于分割或着色的三尺度编码器—解码器。平面特征片表示特征张量，标签给出空间尺寸和通道数。每级解码先上采样到下一尺度，再在同尺度拼接框中沿通道合并编码特征，随后卷积融合；上方旁路均接入拼接节点。图中上采样保持通道数，因此两次拼接分别得到$128+64=192$和$64+32=96$个通道，卷积后变为64和32个。输出头产生$q$个类别得分或两个颜色通道；采用same卷积，省略原始U-Net的裁剪。}
   \label{fig:cnn-encoder-decoder}
 \end{figure*}
 
-\term{上采样}（upsampling）是增加网格分辨率的操作。可以先用最近邻或双线性插值生成更密的网格，再用普通卷积处理；也可以用转置卷积共同完成位置扩展与可学习变换。插值方式、目标尺寸和坐标对齐约定都要固定。输入高、宽若不能被总下采样倍数整除，应在进入网络前填充、在输出后裁剪，或显式按目标尺寸上采样，不能只按通道数判断能否拼接。
+\term{上采样}（upsampling）是增加网格分辨率的操作。可以先用最近邻或双线性插值生成更密的网格，再用普通卷积处理；也可以用转置卷积共同完成位置扩展与可学习变换。插值方式、目标尺寸和坐标对齐约定都要固定。输入高、宽若不能被总下采样倍数整除，可以在进入网络前填充、在输出后裁剪，或显式按目标尺寸上采样；拼接还要求两个空间轴对齐。
 
 训练时，每张图像提供像素标签，网络按式\eqref{eq:cnn-segmentation-loss}计算损失，再联合更新编码器、解码器和输出头。未标注位置通过掩码排除；若少数类别被大量背景像素淹没，可以在明确权重和归一化后使用加权损失。推理时不需要标签，在各位置取最大得分类别，得到与目标网格对齐的分割图。像素准确率可能主要反映背景，因此评价还需按任务检查区域重叠和边界质量，具体指标在图像处理部分展开。
 
-跨尺度连接补回的是编码器仍保存的细节，不能创造输入中没有的信息。如果编码器已把小目标消去，或训练标签的边界本身不可靠，增加解码层数也不会自动修复。选择分辨率、下采样深度和损失时，需要保持目标尺度、标注质量与结构之间的配合。
+跨尺度连接把编码器仍保存的细节送给解码器。小目标能否保留，取决于输入分辨率和下采样过程；预测边界的监督又来自标注质量。解码层数、损失和连接方式需要与这些信息来源共同配置。
 
 \FloatBarrier
 
@@ -971,7 +975,7 @@ U-Net用从编码器到对应解码阶段的\term{跳跃连接}（skip connectio
 
 平方损失还有一个与任务有关的限制。在颜色具有有限二阶矩且预测函数可自由选择时，条件平方损失的最优预测是$\mathbb E[\bm C\mid\bm X]$。若同一个灰度输入可能对应多种相距较远的颜色，平均值未必是一种合理着色；例如红与绿的平均可能降低饱和度。Zhang等将颜色空间离散成候选颜色，预测每个位置的颜色分布，用分类目标保留这种多解性，并讨论了平方损失的平均效应\scite{zhang2016colorization}
 
-若把输出头改为$q_{\mathrm{col}}$个颜色得分，就可以逐位置归一化为候选颜色概率，再按约定选择、平均或采样得到颜色。即使每个位置都有概率分布，也不自动获得整张图像在空间上的一致性。若希望对同一输入生成多个整体协调的结果，还需要引入随机变量并设计相应的分布学习目标。这里的确定性编码器—解码器说明了卷积如何连接亮度、上下文和颜色输出，不把单次回归预测当作完整的条件生成分布。
+若把输出头改为$q_{\mathrm{col}}$个颜色得分，就可以逐位置归一化为候选颜色概率，再按约定选择、平均或采样得到颜色。各位置分别归一化给出局部候选概率，整张图像的空间协调还依赖它们之间的联合关系。若希望对同一输入生成多个整体协调的结果，还需要引入随机变量并设计相应的分布学习目标。本节的确定性模型把亮度、上下文和颜色估计连接起来；完整的条件生成还要建模同一亮度输入下多种协调颜色之间的分布。
 
 \Needspace{20\baselineskip}
 \section{本章小结}
@@ -981,6 +985,9 @@ U-Net用从编码器到对应解码阶段的\term{跳跃连接}（skip connectio
 
 计算算法规定如何得到卷积结果，工程实现规定怎样组织存储、访存与并行执行。直接计算、矩阵化和变换方法各有运算与数值代价，分块、展开和融合则改变数据复用与读写；二者需要结合层形状和平台选择。
 
-数学卷积包含核翻转，网络常用互相关；填充、跨步、空洞和转置分别改变边界、窗口移动、核内采样与线性映射方向。明确这些约定，才能一致地计算输出形状、实现运算和推导梯度。参数共享使核梯度沿位置累积，窗口重叠使输入梯度累积；转置卷积在反向传播中出现，是因为链式法则需要转置算子，而非因为它能够逆转前向信息损失。
+数学卷积包含核翻转，网络常用互相关；填充、跨步、空洞和转置分别改变边界、窗口移动、核内采样与线性映射方向。明确这些约定，才能一致地计算输出形状、实现运算和推导梯度。参数共享使核梯度沿位置累积，窗口重叠使输入梯度累积。链式法则通过前向映射的转置，把输出梯度分配回输入，这一过程由导数关系确定。
 
-跨层相加、门控与拼接改变了深层计算中的信息和梯度路径，也带来不同的通道规模与成本。它们帮助组织可训练的网络，却没有单独保证泛化。预测可靠性仍取决于结构是否保留目标所需信息、样本是否提供足够独立证据、参数与传播尺度是否受控，以及算法能否得到合适的解。分割与着色共同显示了这种配合：编码器构造上下文，解码器形成空间输出，跳跃连接保留细节，而输出头和损失决定最终预测究竟表示类别、连续值还是不确定性。
+跨层相加、门控与拼接改变了深层计算中的信息和梯度路径，也带来不同的通道规模与成本。这些路径参与训练中的求导与信息传递。预测可靠性还取决于结构是否保留目标所需信息、样本是否提供足够独立证据、参数与传播尺度是否受控，以及算法能否得到合适的解。分割与着色共同显示了这种配合：编码器构造上下文，解码器形成空间输出，跳跃连接保留细节，而输出头和损失决定最终预测究竟表示类别、连续值还是不确定性。
+
+\paragraph{扩展阅读}
+Goodfellow等教材第9章介绍卷积、共享和池化的结构假设；LeCun等的早期文档识别研究展示这些机制怎样配合实际任务。两项资料中，边界、步长与读出方式的配置展示了等变计算怎样转为任务输出，以及哪些位置细节在汇聚时被舍去\scite{goodfellow2016,lecun1998}
