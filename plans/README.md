@@ -20,6 +20,7 @@
 
 | 部分 | 大纲 | 规划章数 |
 | --- | --- | --- |
+| 数学准备第二部分 | [空间三章重构大纲](spaces-and-geometry-outline.md) | 3（重构现有章节） |
 | 强化学习 | [部分大纲](reinforcement-learning-outline.md) | 8 |
 | 知识的获取 | [部分大纲](efficient-knowledge-use-outline.md) | 7 |
 | 知识的演进与迁移 | [部分大纲](knowledge-evolution-and-transfer-outline.md) | 7 |
