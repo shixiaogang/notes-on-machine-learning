@@ -1,5 +1,5 @@
 # 固定浅绿：Lancet Green 与白色按18%混合。
-GREEN_FILL = "#E3EFE9"
+GREEN_FILL = "#E8EEE9"
 
 def flat():
  s=np.linspace(-1,1,70);fig,axs=plt.subplots(1,2,figsize=(112*MM,71*MM),layout='constrained',sharex=True,sharey=True)

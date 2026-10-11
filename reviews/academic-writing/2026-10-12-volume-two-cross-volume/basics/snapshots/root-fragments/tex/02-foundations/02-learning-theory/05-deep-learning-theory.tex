@@ -1,0 +1,1481 @@
+\chapter{深度学习的可学习性}
+\label{chap:deep-learning-theory}
+
+设一个邮件分类网络已经把训练邮件全部分对。我们再增加参数，新的训练结果仍可分对这些邮件，却可能在新邮件上达到更低错误率。仅用“参数越多越容易记忆”无法解释这种可能性，因为架构允许表示什么函数，与训练最后选择哪个函数，是两个问题。同一架构既能记住训练邮件，也可能表示能够推广到新邮件的分类关系。
+
+前面的学习理论提供了不同分析对象：VC维与一致收敛约束整个候选空间，稳定性比较样本变化对算法输出的影响，并须结合经验最优性。要用于网络，我们需具体追踪权重怎样约束函数、训练怎样选择解、样本替换怎样影响参数和损失。下面对能够直接处理的非线性网络列明架构和范数条件；对难以完整求解的选解问题，则用线性回归、线性分类及深层线性网络建立机制，再说明推广边界。
+
+我们从四种对象进入这个共同问题。权重范数约束所选函数的复杂度，初始参数梯度在特定宽度与训练条件下给出近似固定特征，参数更新描述训练对解的偏好，参数分布则分别描述神经元群体和随机完整网络。这些对象都须经复杂度或稳定性推导接到风险，并保留近似能力与优化条件。模型规模、训练时间、任务或评价分布改变时，应按第~\ref{sec:learning-problem}节重新固定学习问题；本章在明确的设定中分析选解与泛化。
+
+\section{神经网络的学习问题}
+\label{sec:network-learning-problem}
+
+\subsection{网络与学习目标}
+
+我们先固定待分析的预测函数。前馈网络在每层用权重矩阵组合输入，再逐坐标应用激活，末层作线性输出。ReLU激活$\phi(a)=\max\{0,a\}$保留正值、将负值置零，多层组合因而一般不再等价于一次线性变换。省略偏置，将包括线性输出层在内的变换层数记为$L$，网络为
+\begin{equation}
+ f_{\bm W}(\bm x)=\bm W_L\phi\bigl(\bm W_{L-1}\phi(\cdots\phi(\bm W_1\bm x)\cdots)\bigr),
+ \label{eq:feedforward-network}
+\end{equation}
+其中$\bm W_\ell\in\mathbb R^{d_\ell\times d_{\ell-1}}$，$d_0$为输入维度，$d_1,\ldots,d_{L-1}$为隐藏宽度，$d_L$为输出维度，最大宽度为$w=\max_{0\leq\ell\leq L}d_\ell$。全部参数组成$\bm\theta\in\mathbb R^p$时，也记为$f_{\bm\theta}$。$p$计数可调数值，$L$计数依次变换次数，两者都不是VC维。第三卷以$L$计隐藏层数；这里换算时暂将其记为$L_{\mathrm h}$，于是本章$L=L_{\mathrm h}+1$，外部结果也统一按总变换层数理解。
+
+为了评价网络，取独立同分布样本$S=(z_1,\ldots,z_n)\sim\mathcal P^n$，$z_i=(\bm x_i,y_i)$。预测级损失记为$\ell_{\mathrm{pred}}(\widehat y,y)$，由参数产生的观测级损失则为$\ell_{\bm\theta}(z)=\ell_{\mathrm{pred}}(f_{\bm\theta}(\bm x),y)$，这样便接到第~\ref{sec:learning-problem}节的一般记号。样本与总体分别平均这一损失：
+\[
+ \hat R_S(\bm\theta)=\frac1n\sum_{i=1}^n\ell_{\bm\theta}(z_i),
+ \qquad
+ R_{\mathcal P}(\bm\theta)=\mathbb E_{z\sim\mathcal P}\ell_{\bm\theta}(z).
+\]
+算法利用经验风险选择参数，期望风险评价同分布新观测。分布明确时简写为$R(\bm\theta)$。讨论错误率采用零一损失，推导梯度更新时则另行列明平方或逻辑损失，以免混用目标。
+
+给定样本上存在零经验风险参数，称模型能够\term{插值}（interpolation）这份样本。平方损失要求预测数值逐项等于标签，零一损失只要求类别正确；交叉熵通常随分数增大才趋近零，所以类别全部正确并不等于交叉熵为零。\term{过参数化}（overparameterization）描述参数相对于样本或拟合约束很充足的情形，常以$p>n$粗略表示。是否实际插值仍取决于架构、数据和损失。
+
+\subsection{VC维与样本量}
+
+固定架构后，可以把它能表示的分类器作为假设空间，沿前面的VC理论推导样本量。Baum与Haussler在1988年研究了网络规模与泛化样本数的关系，包括阈值网络\scite{baum1988size}。这一分析先控制候选空间的VC维，再给出分布无关统计保证，尚无需描述每一步训练更新。
+
+容量还依赖计算结构，不能仅由参数量读取。对分段线性网络，Bartlett等给出ReLU网络$O(pL\log p)$的VC维上界，并在相应参数范围内构造达到$\Omega(pL\log(p/L))$的架构\scite{bartlett2019vc}。下界证明的是某些架构能够达到这一容量，不能移作每个$p$参数网络的下界。
+
+有了架构容量上界，就能代入二分类学习基本定理。下面把这一步统计推导单独写出，保留算法存在性与实际优化之间的区别：存在近似ERM学习算法，不保证梯度下降能找到对应参数。
+
+\begin{theorem}[有限VC维网络的不可知PAC样本量保证]
+\label{thm:network-vc-pac}
+设$(X,\mathcal X)$为可测输入空间，$Y=\{0,1\}$，
+$Z=X\times Y$取乘积$\sigma$代数。固定网络架构所表示的非空二分类假设空间
+$\mathcal H\subseteq Y^X$由可测函数组成，其VC维为有限数$d\geq1$。
+对$Z$上的任意概率分布$\mathcal P$，令
+$S=((x_1,y_1),\ldots,(x_n,y_n))\sim\mathcal P^n$，并定义零一损失下的
+\[
+ R_{\mathcal P}(h)=\mathbb P_{(x,y)\sim\mathcal P}\{h(x)\neq y\},
+ \qquad
+ \hat R_S(h)=\frac1n\sum_{i=1}^n\mathbb I\{h(x_i)\neq y_i\}.
+\]
+假设随机变量
+$\sup_{h\in\mathcal H}|\hat R_S(h)-R_{\mathcal P}(h)|$可测。
+存在通用常数$c>0$，使得任意$\varepsilon,\delta\in(0,1)$和任意
+$\mathcal P$下，只要
+\[
+ n\geq c\frac{d\log(2/\varepsilon)+\log(2/\delta)}{\varepsilon^2},
+\]
+每个满足$\hat R_S(\hat h)=\inf_{h\in\mathcal H}\hat R_S(h)$的经验风险
+最小化算法输出$\hat h$都以至少$1-\delta$的概率满足
+\[
+ R_{\mathcal P}(\hat h)\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon.
+\]
+\end{theorem}
+\begin{proof}
+由有限VC维的一致收敛结论，在所给样本量下，可以使事件
+$\sup_{h\in\mathcal H}|\hat R_S(h)-R_{\mathcal P}(h)|\leq\varepsilon/2$
+以至少$1-\delta$的概率成立。在该事件上，对任意$h\in\mathcal H$有
+\[
+ R_{\mathcal P}(\hat h)
+ \leq\hat R_S(\hat h)+\frac\varepsilon2
+ \leq\hat R_S(h)+\frac\varepsilon2
+ \leq R_{\mathcal P}(h)+\varepsilon.
+\]
+对右侧的$h$取下确界即可。证明使用了ERM的经验风险比较性质，没有给出实现ERM的
+计算方法。
+\end{proof}
+
+因此，固定有限架构可以在所列前提下获得统计学习保证。若手头样本数$n$远小于容量给出的充分门槛，这条定理就无法保证指定精度。另有适用于任意$n$的VC风险界，但它可能大于1而空泛，不能将它与前提尚未满足的样本量定理混同。实际训练若只实现近似ERM，还须计入经验优化误差。
+
+\subsection{过参数化的挑战}
+
+随机标签实验揭示了容量与所选函数之间的差距。Zhang等报告一些深度网络既能拟合真实标签，也能拟合随机打乱的标签\scite{zhang2021rethinking}。两种结果共享强表达能力，却可能有不同期望风险；只根据架构无法判断算法选择哪一种。图~\ref{fig:learning-deep-selection}分别画出架构允许的全部假设、拟合当前样本的插值集合，以及算法实际选出的一个点。风险分析最终需要评价这个点。
+
+\begin{figure*}[!htb]
+  \centering
+  \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/learning-theory-deep-selection/figure.png}
+  \caption{架构、样本和算法分别限定不同对象。外层是假设空间，内层是当前样本上经验风险
+ 为零的插值解集合；虚线表示样本施加的约束，实线表示算法的输入与输出。初始化、优化器
+ 和正则化参与选解。强调点仅示意算法选出一个插值解，不保证任意算法都实现插值；集合
+ 的形状和大小没有数值含义，插值也不保证期望风险小。}
+ \label{fig:learning-deep-selection}
+\end{figure*}
+
+插值集合中可以有只记住训练邮件、对新邮件默认分类的函数，也可以有利用促销词和链接关系的函数。在零一损失下，两者都可使训练风险为零，后一种却可能在新邮件上继续有效。扩大参数空间可能同时方便表示这两种函数，因此插值解增多并没有确定风险变化的方向。
+
+即使样本和架构固定，初始化、步长、优化器或正则化也可能使算法选出不同插值解。图中的算法箭头因而补充了集合大小无法说明的信息。我们要找的是所选解有哪些复杂度约束，以及训练为何偏向这些解；后面的范数、轨迹与分布分析分别回答这一问题。
+
+某些模型在接近插值阈值时风险上升，继续增加参数后却下降，这种形态称为\term{双重下降}（double descent）\scite{belkin2019double}。图~\ref{fig:learning-double-descent}作定性示意。一种可能机制是：阈值附近拟合噪声需要敏感的解，越过阈值后更多插值选择允许算法得到范数较小或较稳定的解。这一解释依赖数据与选解方式，不提供增加参数总能降低风险的保证。
+
+图~\ref{fig:learning-double-descent}中的两条曲线评价不同对象。经验风险到零附近，只说明拟合了当前样本；期望风险的峰值说明新观测损失在该设定中较高。要将峰值归因于敏感选解，仍须另行比较相邻样本或噪声响应。右侧风险下降则展示增加参数后可能选到更合适的插值函数。这些差别都无法仅从训练风险判断。
+
+可解的欠定线性回归说明算法为何重要。它可能有无穷多个插值解，零初始化梯度下降却选择最小欧氏范数解，并非随机等概率选择。增加参数会改变这个解及其噪声响应，风险也可能随之改变。第~\ref{sec:implicit-bias}节将证明选解机制，并进一步检查风险条件。
+
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=112.000mm]{figures/02-foundations/02-learning-theory/matplotlib/learning-theory-double-descent/figure.pdf}
+  \caption{双重下降的定性示意。虚线表示经验风险，实线表示一种可能出现的期望风险变化。
+ 插值后的期望风险还取决于算法如何选解。图中曲线用于说明概念，不是实验数据，
+ 也不表示所有网络都出现第二次下降。}
+ \label{fig:learning-double-descent}
+\end{figure}
+
+下面四条路线都在补充算法选择的信息。范数限制函数变化，初始梯度建立近似固定特征，更新动力学决定解的偏好，参数分布描述神经元演化或随机网络。它们的研究时间相互交叠，也共同借助复杂度和稳定性工具，不能当作彼此替代的顺次阶段。
+
+\subsection{从一般学习理论到神经网络}
+\label{sec:deep-general-learning}
+
+为了让各路线回答同一个问题，我们把低训练损失与低总体损失之间的分析写成风险分解。算法$A$输出属于比较空间$\mathcal H$时，分别记期望泛化差与经验优化误差为
+\[
+ \begin{aligned}
+ \Delta_n&=\mathbb E_S\bigl[R(A(S))-\hat R_S(A(S))\bigr],\\
+ \rho_n&=\mathbb E_S\left[\hat R_S(A(S))-
+                         \inf_{h\in\mathcal H}\hat R_S(h)\right].
+ \end{aligned}
+\]
+相关期望存在时，有
+\begin{equation}
+ \mathbb E_S R(A(S))-\inf_{h\in\mathcal H}R(h)
+ \leq\Delta_n+\rho_n.
+ \label{eq:deep-risk-decomposition}
+\end{equation}
+因为固定$h$满足$\mathbb E_S\hat R_S(h)=R(h)$，而$\mathbb E_S\inf_h\hat R_S(h)\leq\inf_h R(h)$，分解后便得到此式。第一项比较经验与总体评价，第二项比较算法与经验最优值；共同受控才使输出接近$\mathcal H$内最优风险。训练降低经验损失时，第一项仍可能增大。
+
+一致收敛与稳定性分别控制这里的$\Delta_n$。前者估计固定函数空间中所有假设的风险，后者比较不同训练样本产生的算法输出。因此，架构保持不变时，初始化、正则化和优化仍可能改变稳定性，而不会改变架构的VC维。
+
+权重大小可以参与两条路线。预先限制范数，可估计受限函数空间复杂度；比较样本替换后的参数时，范数又能限制参数变化向损失变化的放大。但后一条还须证明两次参数确实接近，单有小范数不够。参数分布也须经分布距离或信息量接到风险，不能由分布形式本身判断泛化。
+
+这些路径不能绕过不可学习性。零一二分类若允许任意输入—标签联合分布，无限VC维空间仍不可分布无关PAC学习，稳定性分析不会改变这点。不显含宽度的后续结论会保留范数、间隔或分布条件；它们评价这些条件下的风险，不是整个无限VC维空间的无约束保证。
+
+比较各结果时，我们会固定其损失和概率对象。高概率风险界、样本平均风险界与经验风险下降速度分别回答不同问题，不能互相替代；每条路径也须保留它对训练算法的额外要求。
+
+\section{基于参数大小的可学习性}
+\label{sec:network-norm-bounds}
+
+架构容量同时包括拟合随机标签和可推广关系的函数，因而按参数计数可能得到过大的样本门槛。若我们事先将候选函数限制在较小范数范围，就可以估计这个受限空间的复杂度。权重范数在此作为可计算的约束，补充参数数量没有描述的函数信息。
+
+这里“参数大小”计量向量或矩阵的范数，区别于数值个数。较强的局部变化可能需要较大权重放大，限制各层共同放大能力便能约束这些变化。本节先固定范数范围，估计其中全部网络的经验风险与总体风险关系；训练如何得到这样的权重，留给后面的算法分析。
+
+多层权重并不能简单相加：各层范数怎样组合、等价缩放怎样影响范数，以及分类间隔如何参与评价，都需要说明。不显含宽度的界也须保留这些条件，并不自动保证梯度下降找到满足条件的解。我们先建立范数与风险的联系，再追踪训练选择。
+
+\subsection{权重大小与分类间隔}
+
+从线性预测看，$|\langle\bm w,\bm x-\bm x'\rangle|\leq\|\bm w\|_2\|\bm x-\bm x'\|_2$，范数控制输入变化对分数的放大。即使参数数量相同，不同权重仍可产生不同敏感度。网络范数分析沿此思路考察参数共同形成的函数，而非只计参数。Bartlett在1996年研究了适当条件下权重大小对泛化保证的作用\scite{bartlett1996weights}。
+
+对于分类，还要知道分数与类别边界的距离。真实类别为第一类时，$(3,2,0)$与$(2.01,2,0)$都分类正确，但领先第二名的幅度分别为1和0.01。后者容许的分数扰动更小。我们将真实类别领先其余类别的幅度称为分类间隔。
+
+\begin{definition}[分类间隔]
+\label{def:network-margin}
+设$f_{\bm W}:X\to\mathbb R^K$是分类分数函数。
+其在带标签输入$(\bm x,y)$处的分类间隔定义为
+\begin{equation}
+ \operatorname{margin}_{\bm W}(\bm x,y)
+ =f_{\bm W}(\bm x)_y-\max_{j\neq y}f_{\bm W}(\bm x)_j.
+ \label{eq:network-margin}
+\end{equation}
+对于取值为$\{-1,+1\}$的二分类标签和标量分数$f(\bm x)$，定义间隔为$yf(\bm x)$。
+\end{definition}
+
+间隔为正时，真实类别分数高于其余类别。若各分数最多变化$\alpha$，领先幅度最多改变$2\alpha$，所以间隔大于$2\alpha$仍保留正确分类。范数要与间隔一起评价：统一放大分数同时放大二者，却不改变分类函数或错误率。
+
+\subsection{不显含宽度的期望风险界}
+
+先看两层ReLU网络。增加隐藏宽度增加了可选特征，但输出权重绝对值之和受限时，网络不能同时任意放大每个特征。下面允许任意隐藏单元数，用这个总量和隐藏权重范数约束函数空间。
+
+\begin{theorem}[两层网络的范数与期望风险]
+\label{thm:two-layer-norm-risk}
+设$n,d\geq1$，$X\subseteq\mathbb R^d$取Borel $\sigma$代数，
+$Y=\{-1,+1\}$，$\mathcal P$为$X\times Y$上的概率分布，且
+$S=((\bm x_1,y_1),\ldots,(\bm x_n,y_n))\sim\mathcal P^n$。
+假设$\|\bm x\|_2\leq r$在$\mathcal P$下几乎处处成立。
+在抽样前固定$A,B,r,\gamma>0$及$\delta\in(0,1)$，并令
+\[
+ \mathcal F_{A,B}=\left\{\bm x\mapsto\sum_{j=1}^m a_j\phi(\bm w_j^\top\bm x):
+ m\in\mathbb N,\ \sum_{j=1}^m|a_j|\leq A,\ \|\bm w_j\|_2\leq B\right\},
+\]
+其中$\phi(a)=\max\{0,a\}$。则任意满足
+$\|\bm x_i\|_2\leq r$的输入样本上的经验Rademacher复杂度满足
+\[
+ \widehat{\mathfrak R}_S(\mathcal F_{A,B})\leq\frac{2ABr}{\sqrt n}.
+\]
+对于样本$S$，以至少$1-\delta$的概率，所有$f\in\mathcal F_{A,B}$同时满足
+\begin{equation}
+ \mathbb P_{(\bm x,y)\sim\mathcal P}\{yf(\bm x)\leq0\}
+ \leq\frac1n\sum_{i=1}^n\mathbb I\{y_i f(\bm x_i)\leq\gamma\}
+ +\frac{4ABr}{\gamma\sqrt n}
+ +3\sqrt{\frac{\log(2/\delta)}{2n}}.
+ \label{eq:two-layer-margin-bound}
+\end{equation}
+这里把零间隔也计为错误，因此左侧同时控制采用任意固定平局规则时的零一损失期望风险。
+\end{theorem}
+\begin{proof}
+固定独立随机符号$\sigma_i\in\{-1,+1\}$。输出权重的约束给出
+\[
+ \sup_{f\in\mathcal F_{A,B}}\sum_{i=1}^n\sigma_i f(\bm x_i)
+ =A\sup_{\|\bm w\|_2\leq B}
+ \left|\sum_{i=1}^n\sigma_i\phi(\bm w^\top\bm x_i)\right|.
+\]
+绝对值可分别用正号与负号的上确界之和控制；由于$\bm w=0$可取，这两个上确界都非负。
+随机符号的对称性使它们的期望相同。再用ReLU的$1$-Lipschitz性质与收缩不等式，得到
+\[
+ \begin{aligned}
+ \widehat{\mathfrak R}_S(\mathcal F_{A,B})
+ &\leq\frac{2AB}{n}\mathbb E_{\bm\sigma}
+       \left\|\sum_{i=1}^n\sigma_i\bm x_i\right\|_2\\
+ &\leq\frac{2AB}{n}\sqrt{\sum_{i=1}^n\|\bm x_i\|_2^2}
+ \leq\frac{2ABr}{\sqrt n}.
+ \end{aligned}
+\]
+第二步使用Jensen不等式，交叉项因随机符号独立且均值为零而消失。
+
+令斜坡损失$\psi_\gamma(u)$在$u\leq0$时为1，在$0<u<\gamma$时为$1-u/\gamma$，
+在$u\geq\gamma$时为0。它上界零一错误指示函数，且为$1/\gamma$-Lipschitz。
+固定样本标签后，$\sigma_i y_i$仍是独立随机符号，因此损失函数空间的经验Rademacher
+复杂度不超过$\widehat{\mathfrak R}_S(\mathcal F_{A,B})/\gamma$。
+应用定理~\ref{thm:rademacher-risk-bound}的经验复杂度形式，并用
+$\psi_\gamma(y_i f(\bm x_i))\leq\mathbb I\{y_i f(\bm x_i)\leq\gamma\}$，
+即得所述期望风险上界。
+\end{proof}
+
+隐藏宽度$m$没有直接出现在右侧，所以固定$A,B,r,\gamma$时，增宽不必提高充分样本门槛。增宽若同时使$A,B$增长，或使更多样本间隔很小，界仍会变得宽松。宽度消失依赖于这些固定的约束。
+
+因此，范数替代参数计数是一条有条件的分析。把ReLU输出权重乘以很小正数，分类符号不变，范数与间隔却一起缩小，式~\eqref{eq:two-layer-margin-bound}中的比值没有改善。仅压小原始范数不能控制无约束分类空间的PAC学习；定理直接提供的是指定间隔尺度下的风险保证。
+
+我们可以把附加风险代价反解为样本门槛。给定$\varepsilon>0$，取
+\begin{equation}
+ n\geq\frac1{\varepsilon^2}
+ \left(\frac{4ABr}{\gamma}
+       +3\sqrt{\frac{\log(2/\delta)}2}\right)^2,
+ \label{eq:two-layer-sample-requirement}
+\end{equation}
+就使式~\eqref{eq:two-layer-margin-bound}在经验间隔错误率之外的两项不超过$\varepsilon$。若训练输出有至多$a$比例样本未达到$\gamma$间隔，则以概率至少$1-\delta$，零一风险不超过$a+\varepsilon$。门槛控制样本评价到总体评价的附加代价，$a$能否降低仍取决于训练与数据。
+
+减小范数与增大正确间隔都可改善这个上界，但单独压缩权重可能增加未达间隔的样本。范数—间隔比固定时，样本量增为四倍，附加误差界减半。这是充分界的缩放，既不保证实际测试错误减半，也不证明更少样本不能学习。
+
+\subsection{深层网络的谱复杂度}
+
+输入扰动在深层网络中逐层传播。谱范数$\|\bm W\|_2$是单位向量经矩阵变换后的最大长度，所以各层谱范数相乘可控制整体放大；激活为$a_\ell$-Lipschitz时，还须乘相应因子。图~\ref{fig:learning-spectral-product}沿同一输入变化展示这些乘积。后面采用1-Lipschitz激活，故激活因子为1。
+
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=113.404mm]{figures/02-foundations/02-learning-theory/tikz/learning-theory-spectral-product/figure.pdf}
+  \caption{谱范数与激活函数共同控制输入扰动。第$\ell$层线性变换至多放大$s_\ell=\|\bm W_\ell\|_2$倍，层间激活再至多放大$a_\ell$倍；末层为线性输出。右上方两类因子分别连到乘积上界，大括号归并各层作用。当激活均为$1$-Lipschitz时，只剩谱范数乘积；该乘积仍不是完整的泛化复杂度。}
+ \label{fig:learning-spectral-product}
+\end{figure}
+
+放大上界还不是函数复杂度。同一谱范数可以对应许多不同矩阵，因此我们还要控制指定近似精度下区分这些函数所需的数量。
+
+为记录各层矩阵的这种约束，沿用行分组范数$\|\bm A\|_{2,1}=\sum_i\|\bm A_{i,:}\|_2$。对无偏置、1-Lipschitz且零点为零的激活网络，Bartlett、Foster与Telgarsky在参考矩阵为零时使用
+\begin{equation}
+ \mathcal C(\bm W)=
+ \left(\prod_{\ell=1}^L\|\bm W_\ell\|_2\right)
+ \left[\sum_{\ell=1}^L
+ \left(\frac{\|\bm W_\ell\|_{2,1}}{\|\bm W_\ell\|_2}\right)^{2/3}
+ \right]^{3/2}.
+ \label{eq:spectral-margin-bound}
+\end{equation}
+乘积控制传播，混合范数项参与函数近似的计数。这里按各谱范数非零书写，零矩阵层另行处理。下面采用事先固定范数上限的版本，把这个量接到样本量与风险\scite{bartlett2017spectral}。
+
+\begin{theorem}[深层网络的谱复杂度与期望风险]
+\label{thm:spectral-network-risk}
+设$n,L\geq1$，固定维数$d_0,\ldots,d_L\leq w$且$d_L\geq2$，输入空间
+$X\subseteq\mathbb R^{d_0}$取Borel $\sigma$代数，标签空间
+$Y=\{1,\ldots,d_L\}$。对
+$\bm W_\ell\in\mathbb R^{d_\ell\times d_{\ell-1}}$，定义无偏置网络
+\[
+\begin{aligned}
+ \bm h_0(\bm x)&=\bm x,\\
+ \bm h_\ell(\bm x)
+ &=\phi_\ell(\bm W_\ell\bm h_{\ell-1}(\bm x)),
+ \qquad 1\leq\ell<L,\\
+ f_{\bm W}(\bm x)&=\bm W_L\bm h_{L-1}(\bm x).
+\end{aligned}
+\]
+其中各$\phi_\ell$固定、逐坐标作用、为$1$-Lipschitz且在零点为零。定义
+\[
+ \operatorname{margin}_{\bm W}(\bm x,y)
+ =f_{\bm W}(\bm x)_y-\max_{j\neq y}f_{\bm W}(\bm x)_j.
+\]
+对任意矩阵$\bm A$，记
+$\|\bm A\|_{2,1}=\sum_i\|\bm A_{i,:}\|_2$。
+设$\mathcal P$为$X\times Y$上的概率分布，
+$S=((\bm x_1,y_1),\ldots,(\bm x_n,y_n))\sim\mathcal P^n$，并令
+\[
+ R^{01}(\bm W)
+ =\mathbb P_{(\bm x,y)\sim\mathcal P}
+   \{\text{固定平局规则下 }f_{\bm W}\text{ 的预测不等于 }y\}.
+\]
+在抽样前固定$r,\gamma,s_\ell,b_\ell>0$及$\delta\in(0,1)$，并令
+\[
+ \mathcal C_0=
+ \left(\prod_{\ell=1}^L s_\ell\right)
+ \left[\sum_{\ell=1}^L(b_\ell/s_\ell)^{2/3}\right]^{3/2}.
+\]
+若$\|\bm x\|_2\leq r$在$\mathcal P$下几乎处处成立且$n\geq2$，
+则以至少$1-\delta$的概率，
+所有满足$\|\bm W_\ell\|_2\leq s_\ell$、
+$\|\bm W_\ell\|_{2,1}\leq b_\ell$的网络同时有
+\begin{equation}
+ \begin{aligned}
+ R^{01}(\bm W)\leq{}&\hat R_{S,\gamma}(\bm W)+\frac8n\\
+ &+\frac{72r\mathcal C_0\log(2w)\log n}{\gamma\sqrt n}
+ +3\sqrt{\frac{\log(1/\delta)}{2n}},
+ \end{aligned}
+ \label{eq:spectral-risk-explicit}
+\end{equation}
+其中
+$\hat R_{S,\gamma}=n^{-1}\sum_i
+\mathbb I\{\operatorname{margin}_{\bm W}(\bm x_i,y_i)\leq\gamma\}$
+为经验间隔错误率，预测使用固定的平局规则。
+\end{theorem}
+\begin{proof}
+采用Bartlett等论文附录引理A.8的固定范数约束界。
+该引理的复杂度项为
+$72\|\bm X\|_F\mathcal C_0\log(2w)\log n/(\gamma n)$，
+其中$\bm X$的各行为输入样本。由$\|\bm x_i\|_2\leq r$可得
+$\|\bm X\|_F\leq r\sqrt n$，代入便得到所述形式。
+这里使用了外部引理中的网络覆盖数估计，不把该组合估计视为已在本章证明。
+\end{proof}
+
+上界在经验间隔错误率外保留三项余量。指定附加误差$\varepsilon>0$后，选$n$使
+\[
+ \frac8n+\frac{72r\mathcal C_0\log(2w)\log n}{\gamma\sqrt n}
+ +3\sqrt{\frac{\log(1/\delta)}{2n}}\leq\varepsilon,
+\]
+即可得到概率至少$1-\delta$的$R^{01}(\bm W)\leq\hat R_{S,\gamma}(\bm W)+\varepsilon$。这是一条可逐个试代$n$的充分条件；忽略对数因子，门槛为$\bigl((r\mathcal C_0/\gamma)^2+\log(1/\delta)\bigr)/\varepsilon^2$量级。深度和宽度仍通过$\mathcal C_0$及对数参与，因此只替代了粗略参数计数，没有消除结构影响。
+
+固定输入尺度、间隔尺度，并比较经验间隔错误率相近的网络，较小谱复杂度给出较小风险上界。复杂度项主导且忽略对数变化时，$\mathcal C_0/\gamma$减半可将同一附加误差的充分样本量约降为四分之一。然而，上界较小不证明实际错误率较低；上界大于1时尚不能提供非平凡分类保证。经验间隔分布与复杂度需要共同观察。
+
+范数上限与间隔尺度在这条定理中必须先于样本固定。若训练后再选择它们，应对多组约束同时建立保证，或采用文献中的自适应版本，并加入额外对数项。不能直接把事后测量值代入固定约束而遗漏选择代价。
+
+ReLU的正齐次性使相邻层乘$c>0$与除$c$保留同一函数。谱范数乘积与混合范数比也保留，因此这一复杂度不会将这种等价表示判为不同分类能力。它同时结合范数约束和经验间隔评价。
+
+\term{Schatten范数}（Schatten norm）按奇异值的$p$范数（$1\leq p\leq\infty$）汇总矩阵的谱规模；非零矩阵的稳定秩则用总平方谱能量除以最大奇异值平方，零矩阵另约定为零。这些量与依赖坐标的行分组量不同（可参考\BookDefinitionRef{def:matrix-analysis-schatten-norm}{第一卷“线性空间”章的Schatten范数定义}及\BookDefinitionRef{def:matrix-analysis-stable-rank}{同章的稳定秩定义}）。不同风险界使用不同谱量，式~\eqref{eq:spectral-margin-bound}采用的是行分组比值，不能直接换成稳定秩。
+
+同一传播机制还可以连接参数稳定性，但比较对象要换成相邻样本的两次训练。若第$\ell$层变化至多$\alpha_{\ell,n}$，这一变化经后续层传递到输出。各层范数因而负责控制放大，下面把它与实际参数变化同时列出。
+
+\begin{theorem}[分层参数稳定性与期望泛化差]
+\label{thm:layerwise-parameter-stability}
+设$n,L\geq1$，$(X,\mathcal X)$为$\mathbb R^{d_0}$的可测子空间，
+$(Y,\mathcal Y)$为标签空间，$\mathcal P$为$X\times Y$上的概率分布，且
+$S=((\bm x_1,y_1),\ldots,(\bm x_n,y_n))\sim\mathcal P^n$。
+固定维数$d_0,\ldots,d_L$；对
+$\bm W_\ell\in\mathbb R^{d_\ell\times d_{\ell-1}}$，定义无偏置网络
+\[
+\begin{aligned}
+ \bm h_0(\bm x)&=\bm x,\\
+ \bm h_\ell(\bm x)
+ &=\phi_\ell(\bm W_\ell\bm h_{\ell-1}(\bm x)),
+ \qquad 1\leq\ell<L,\\
+ f_{\bm W}(\bm x)&=\bm W_L\bm h_{L-1}(\bm x).
+\end{aligned}
+\]
+各$\phi_\ell$固定、可测、逐坐标作用、为$1$-Lipschitz且在零点为零，
+并且$\|\bm x\|_2\leq r$对所有$\bm x\in X$成立。
+设可测确定性算法$A$对任意仅有一个观测不同的相邻样本$S,S'$输出
+$\bm W=A(S)$、$\bm W'=A(S')$，
+且每层均满足$\|\bm W_\ell\|_2,\|\bm W'_\ell\|_2\leq s_\ell$，并有
+$\|\bm W_\ell-\bm W'_\ell\|_2\leq\alpha_{\ell,n}$。
+设预测损失
+$\ell_{\mathrm{pred}}:\mathbb R^{d_L}\times Y\to\mathbb R$可测，并且对所有
+$y\in Y$和$\bm u,\bm v\in\mathbb R^{d_L}$都有
+\[
+ |\ell_{\mathrm{pred}}(\bm u,y)-\ell_{\mathrm{pred}}(\bm v,y)|
+ \leq G\|\bm u-\bm v\|_2,
+\]
+其中$r,G,s_\ell,\alpha_{\ell,n}\geq0$，且
+$\mathbb E_{y\sim\mathcal P_Y}|\ell_{\mathrm{pred}}(\bm 0,y)|<\infty$。
+定义
+\[
+\begin{aligned}
+ R(\bm W)
+ &=\mathbb E_{(\bm x,y)\sim\mathcal P}
+   \ell_{\mathrm{pred}}(f_{\bm W}(\bm x),y),\\
+ \hat R_S(\bm W)
+ &=\frac1n\sum_{i=1}^n
+   \ell_{\mathrm{pred}}(f_{\bm W}(\bm x_i),y_i).
+\end{aligned}
+\]
+则
+\[
+ \left|\mathbb E_S\bigl[R(A(S))-\hat R_S(A(S))\bigr]\right|
+ \leq Gr\sum_{\ell=1}^L\alpha_{\ell,n}\prod_{j\ne\ell}s_j.
+\]
+\end{theorem}
+\begin{proof}
+从$\bm W$出发，逐层把权重替换成$\bm W'$中的对应权重。
+只替换第$\ell$层时，该层输入的范数不超过$r\prod_{j<\ell}s_j$；
+本层产生的变化再经过后续各层，输出差至多为
+$r\alpha_{\ell,n}\prod_{j\ne\ell}s_j$。
+把各次替换的输出差相加，再乘损失的Lipschitz常数，便得到损失均匀稳定性上界。
+输出范数至多为$r\prod_j s_j$，所以零输出处的可积性与Lipschitz条件也保证
+测试损失和训练损失可积。
+由定理~\ref{thm:stability-expected-generalization}得到期望泛化差结论。
+\end{proof}
+
+右侧同时需要$s_j$和$\alpha_{\ell,n}$：前者限制放大，后者限制样本替换带来的变化。单有范数界只知$\alpha_{\ell,n}\leq2s_\ell$，不足以使泛化差随$n$消失。结论还针对Lipschitz损失，零一损失必须另外借助间隔连接。谱复杂度沿一致收敛控制函数空间，这里则沿稳定性控制实际算法，网络结构相似而条件不同。
+
+\section{基于参数梯度初始值的可学习性}
+\label{sec:neural-tangent-kernel}
+
+范数分析没有解释训练怎样选到受控函数。我们先考察一种可解情形：训练改变了输出，却几乎保留了输出对参数的局部敏感方向。初始梯度于是成为近似固定特征，在这一近似中，训练转为特征上的线性学习。
+
+具体地，将输入映射为$\bm\varphi_0(\bm x)=\nabla_{\bm\theta}f_{\bm\theta^{(0)}}(\bm x)$。每个坐标记录轻微调整某个初始参数时该输入的分数变化，而不是原图像坐标。输入的相似性由这些响应方向比较。某些无限宽极限可让这组特征在训练中保持有效，从而允许核方法的风险分析。
+
+这一路径需要依次说明三件事：初始梯度给出哪些特征，训练在特征空间选择哪个函数，这个函数的再生核空间范数和数据分布如何控制风险。训练拟合或核矩阵正定只完成其中部分工作，不能代替选解与泛化。
+
+\subsection{初始梯度与特征空间}
+
+为了固定近似对象，考虑$p$参数标量网络，记初始函数$f_0=f_{\bm\theta^{(0)}}$。初始化附近的一阶展开为
+\begin{equation}
+ f_{\bm\theta}(\bm x)\approx
+ f_0(\bm x)+\langle\bm\varphi_0(\bm x),\bm v\rangle,
+ \qquad \bm v=\bm\theta-\bm\theta^{(0)}.
+ \label{eq:initial-gradient-feature-map}
+\end{equation}
+它将参数增量映射为函数增量。图~\ref{fig:learning-ntk-linearization}在一个两参数教学网络中，沿实际轨迹比较真实输出、一阶输出及其差值。切空间属于输出或函数空间：初始梯度将$\bm v$映射为$x\mapsto\langle\bm\varphi_0(x),\bm v\rangle$，并非在参数平面任取投影得到。
+
+\begin{figure*}[!htb]
+  \centering
+  \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/matplotlib/learning-theory-ntk-linearization/figure.pdf}
+  \caption{初始化附近的参数轨迹与输出线性化。教学网络为$f_{(a,b)}(x)=a\tanh(bx)$，
+ 初值为$(1,1)^\top$；用单个样本$(x,y)=(1,0.9)$的半平方损失、步长0.3执行六次
+ 梯度下降，连同初值共七个检查点。中间的真实输出和一阶输出均在左侧同一参数轨迹
+ 上计算；三面板绘图区大小相同，参数、输出和绝对余项各用所标坐标范围，不能按纸面高度直接比较数值。右侧余项末次约为0.00152。近初始化时二者接近，
+ 但余项并非零。参数增量经初始雅可比映射到输出／函数空间的切空间；NTK是初始梯度在不同输入上的内积。
+ 此有限网络示例展示近似对象，不证明训练中核恒定或新输入上的误差受控。}
+ \label{fig:learning-ntk-linearization}
+\end{figure*}
+
+在线性化模型中，训练只改变系数$\bm v$，输入特征保持为$\bm\varphi_0(\bm x)$。这个特征由网络和初始化决定，通常不是末层激活，也不是经验风险梯度。输出梯度只依赖输入，经验风险梯度还包含标签与当前预测误差。
+
+从$\bm v=0$开始，每次经验风险梯度都是训练特征的线性组合，所以更新留在$\operatorname{span}\{\bm\varphi_0(\bm x_1),\ldots,\bm\varphi_0(\bm x_n)\}$。新输入的特征可以不在这个子空间，但它与训练特征的内积决定所学更新怎样影响预测。为表达这一传递关系，我们定义梯度内积对应的核。
+
+\begin{definition}[神经切线核]
+\label{def:neural-tangent-kernel}
+设网络输出对参数可微。参数为$\bm\theta$时的神经切线核（neural tangent kernel, NTK）为
+\[
+ K_{\bm\theta}(\bm x,\bm x')=
+ \left\langle\nabla_{\bm\theta}f_{\bm\theta}(\bm x),
+               \nabla_{\bm\theta}f_{\bm\theta}(\bm x')\right\rangle.
+\]
+记$K_0=K_{\bm\theta^{(0)}}$，其在$n$个训练输入上的核矩阵为$\bm K_0$，其中
+$(\bm K_0)_{i,j}=K_0(\bm x_i,\bm x_j)$。
+\end{definition}
+
+核值可以直接计算一次训练的传播。若用样本$i$更新，损失对当前分数的导数为$a_i$，在线性化模型中
+\[
+ \Delta\bm v=-\eta a_i\bm\varphi_0(\bm x_i),\qquad
+ \Delta f(\bm x_j)=-\eta a_i K_0(\bm x_j,\bm x_i).
+\]
+初始梯度方向相似时，一个输入的训练可能改变另一个的预测；正交时，此次更新对另一输入的分数没有影响。这个结论只描述当前固定特征下的信息传递。
+
+图~\ref{fig:learning-ntk-features}将同一次更新分成两步：训练输入的梯度产生参数增量，另一输入的输出梯度将增量转换为预测变化。两份梯度都针对网络输出与参数的关系，区别于末层表示和整份经验风险梯度。
+
+\begin{figure*}[!htb]
+  \centering
+  \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/learning-theory-ntk-features/figure.png}
+  \caption{初始梯度特征如何传递一次训练更新。在线性化模型中，样本$i$的梯度特征与损失对预测的导数$a_i$共同确定参数增量$\Delta\bm v$；将同一增量与样本$j$的梯度特征作内积，得到$\Delta f(\bm x_j)$。核值$K_0$正是两个初始梯度特征的内积。蓝色虚线把两份梯度关联到同一初始化，深色虚线展示核内积所用的两份梯度。特征条仅示意梯度坐标，不限定参数维数。对真实有限宽网络使用固定特征，还需控制核变化与线性化误差。}
+  \label{fig:learning-ntk-features}
+\end{figure*}
+
+Jacot等在特定参数化、初始化和无限宽极限下得到确定核，并在相应训练条件下证明它保持不变\scite{jacot2018ntk}。网络由固定梯度特征描述时，常称为\term{惰性训练}（lazy training）。宽度趋于无穷还需指定缩放，另一种缩放可得到持续变化的特征。有限宽应用必须检查核变化与线性化余项；ReLU导数只在可微点直接使用，不可微点还需约定。
+
+\subsection{核矩阵与训练结果}
+
+我们先用半平方损失计算训练输入上的变化。令$\bm f(t)$和$\bm y$分别为预测与标签向量，链式法则给出真实网络梯度流
+\[
+ \dot{\bm f}(t)=-\frac1n\bm K_{\bm\theta(t)}(\bm f(t)-\bm y).
+\]
+固定核模型将时间变化的矩阵换为$\bm K_0$，于是可以在各特征方向上求解。连续时间在此简化机制说明，离散更新还须检查步长。
+
+\begin{theorem}[固定NTK下的训练收敛]
+\label{thm:ntk-training-convergence}
+设$n\geq1$，$\bm K_0\in\mathbb R^{n\times n}$为正定矩阵，
+最小特征值为$\lambda_{\min}>0$，并给定
+$\bm y,\bm f(0)\in\mathbb R^n$。若
+$\dot{\bm f}(t)=-\bm K_0(\bm f(t)-\bm y)/n$，则
+\[
+ \bm f(t)-\bm y=e^{-\bm K_0t/n}(\bm f(0)-\bm y),
+\]
+并有
+$\|\bm f(t)-\bm y\|_2\leq e^{-\lambda_{\min}t/n}\|\bm f(0)-\bm y\|_2$。
+\end{theorem}
+\begin{proof}
+将$\bm K_0$正交对角化。特征值$\lambda_j$对应的残差分量满足
+\[
+ \dot e_j(t)=-\lambda_j e_j(t)/n,\qquad
+ e_j(t)=e^{-\lambda_jt/n}e_j(0).
+\]
+合并各方向即得矩阵指数表达式，再用$\lambda_j\geq\lambda_{\min}$控制欧氏范数。
+\end{proof}
+
+各核特征方向按对应特征值衰减：大特征值方向学得快，小特征值方向学得慢。相同训练时长下，标签在这些方向上的分量会改变经验误差。这个结论仅评价训练输入，下一步还要确定最终函数及其表示范数，才能分析新输入。
+
+\subsection{再生核空间与期望风险}
+\label{sec:ntk-rkhs-generalization}
+
+训练预测相同的函数可能来自不同参数位移，其中一些方向完全不改变输出。直接取某个参数向量的范数会计入这些冗余。固定核方法对所有表示取最小系数范数，从而将复杂度归到函数而不是任意表示。
+
+由$K_0$生成的\term{再生核希尔伯特空间}（reproducing kernel Hilbert space, RKHS）记为$\mathcal H_{K_0}$。核函数与预测函数的内积能够读取指定位置的值，因此空间范数可以控制该位置的读取误差（可参考\BookDefinitionRef{def:functional-rkhs}{第一卷“函数空间”章的再生核Hilbert空间定义}）。在有限维梯度特征下，它包含$g(\bm x)=\langle\bm v,\bm\varphi_0(\bm x)\rangle$，并以
+\[
+ \|g\|_{\mathcal H_{K_0}}
+ =\inf\{\|\bm v\|_2:g(\bm x)=\langle\bm v,\bm\varphi_0(\bm x)\rangle
+                         \text{ 对所有 }\bm x\text{ 成立}\}
+\]
+计算函数复杂度。下确界排除了不影响函数的系数方向。我们控制的是相对于初始化的变化$g=f-f_0$，而非默认$f_0=0$后的整个输出。
+
+为了拟合标签，应先减去初始预测，得到$r_i=y_i-f_0(\bm x_i)$和$\bm r=(r_1,\ldots,r_n)^\top$。从零参数位移出发，固定特征平方损失的梯度流在插值函数中选择最小RKHS范数者。下面将这个选解及其范数一起求出。
+
+\begin{theorem}[初始梯度特征的最小范数插值]
+\label{thm:ntk-minimum-rkhs-norm}
+设$X$为非空集合，$K_0:X\times X\to\mathbb R$为正定核，
+$\mathcal H_{K_0}$为其RKHS。给定$n\geq1$个输入$\bm x_1,\ldots,\bm x_n\in X$、
+实数标签$y_1,\ldots,y_n$和函数$f_0:X\to\mathbb R$，定义
+\[
+ (\bm K_0)_{i,j}=K_0(\bm x_i,\bm x_j),\qquad
+ r_i=y_i-f_0(\bm x_i),\qquad
+ \bm r=(r_1,\ldots,r_n)^\top.
+\]
+假设核矩阵$\bm K_0$正定，并令
+$\bm k_0(\bm x)=(K_0(\bm x_i,\bm x))_{i=1}^{n}$。
+满足$g(\bm x_i)=r_i$的最小RKHS范数函数为
+\[
+ \widehat g(\bm x)=\bm k_0(\bm x)^\top\bm K_0^{-1}\bm r,
+\]
+其范数满足
+\begin{equation}
+ \|\widehat g\|_{\mathcal H_{K_0}}^2
+ =\bm r^\top\bm K_0^{-1}\bm r
+ =\sum_{j=1}^n\frac{(\bm u_j^\top\bm r)^2}{\lambda_j},
+ \label{eq:ntk-label-spectral-complexity}
+\end{equation}
+其中$(\lambda_j,\bm u_j)$为$\bm K_0$的正交特征对。定义半平方经验损失
+\[
+ \mathcal E(g)=\frac1{2n}\sum_{i=1}^n
+ \bigl(f_0(\bm x_i)+g(\bm x_i)-y_i\bigr)^2.
+\]
+对$\mathcal E$从$g_0=0$出发的RKHS梯度流
+\[
+ \dot g_t=-\frac1n\sum_{i=1}^n
+ (f_0(\bm x_i)+g_t(\bm x_i)-y_i)K_0(\bm x_i,\cdot)
+\]
+收敛到$\widehat g$。
+\end{theorem}
+\begin{proof}
+将任意$g$分解为$\operatorname{span}\{K_0(\bm x_i,\cdot)\}_{i=1}^n$中的分量与正交分量。由再生性质，正交分量在所有训练输入上取值为零，去掉它不改变插值条件，却不会增大范数。最小范数函数因而形如
+$g=\sum_i a_iK_0(\bm x_i,\cdot)$。
+插值条件为$\bm K_0\bm a=\bm r$，故$\bm a=\bm K_0^{-1}\bm r$，且
+$\|g\|^2=\bm a^\top\bm K_0\bm a=\bm r^\top\bm K_0^{-1}\bm r$。
+对核矩阵作谱分解得到第二个等式。梯度流始终留在上述张成空间中，训练收敛定理又保证插值，因此只能收敛到这个唯一的插值函数。
+\end{proof}
+
+式~\eqref{eq:ntk-label-spectral-complexity}按核特征方向计算插值代价。小特征值只有遇到非零标签分量才增加范数。取
+\[
+ \bm K_0=\begin{pmatrix}1&1-a\\1-a&1\end{pmatrix},\qquad 0<a\leq1,
+\]
+其特征值为$2-a$和$a$。残余标签同为1时，范数平方为$2/(2-a)$；标签为1和$-1$时，却为$2/a$。$a$小时，初始梯度将两输入判为相似，强制相反输出便需要较大范数。核不变而标签方向改变，就足以改变复杂度及其风险界。
+
+要把这一范数接到总体风险，我们固定独立于样本的核，并要求$K_0(\bm x,\bm x)\leq\kappa^2$，即梯度特征范数至多$\kappa$。再事先指定$B$，分析$\mathcal G_B=\{g\in\mathcal H_{K_0}:\|g\|_{\mathcal H_{K_0}}\leq B\}$的Rademacher复杂度。
+
+\begin{theorem}[初始梯度特征的期望风险界]
+\label{thm:ntk-rkhs-risk}
+设$(X,\mathcal X)$为可测输入空间，$Y\subseteq\mathbb R$为可测标签空间，
+$\mathcal P$为$X\times Y$上的概率分布，且
+$S=((\bm x_1,y_1),\ldots,(\bm x_n,y_n))\sim\mathcal P^n$。
+函数$f_0:X\to\mathbb R$与可测正定核$K_0:X\times X\to\mathbb R$
+在抽样前确定；它们也可随机选取，但须与$S$独立，并且以下条件几乎必然成立。
+令$\mathcal H_{K_0}$为$K_0$的RKHS，假设
+$K_0(\bm x,\bm x)\leq\kappa^2$对所有$\bm x\in X$成立，并定义
+\[
+ \mathcal G_B=\{g\in\mathcal H_{K_0}:
+                   \|g\|_{\mathcal H_{K_0}}\leq B\}.
+\]
+损失$\ell:\mathbb R\times Y\to[0,1]$可测，且关于第一个变量为
+$G$-Lipschitz。对任意可测$f:X\to\mathbb R$，定义
+\[
+ R(f)=\mathbb E_{(\bm x,y)\sim\mathcal P}\ell(f(\bm x),y),\qquad
+ \hat R_S(f)=\frac1n\sum_{i=1}^n\ell(f(\bm x_i),y_i).
+\]
+假设随机变量
+$\sup_{g\in\mathcal G_B}|R(f_0+g)-\hat R_S(f_0+g)|$可测。
+对任意在抽样前固定的$B,\kappa,G>0$和$\delta\in(0,1)$，以概率至少
+$1-\delta$，对所有$g\in\mathcal G_B$同时有
+\begin{equation}
+ R(f_0+g)\leq\hat R_S(f_0+g)
+       +\frac{2G\kappa B}{\sqrt n}
+       +3\sqrt{\frac{\log(2/\delta)}{2n}}.
+ \label{eq:ntk-rkhs-risk}
+\end{equation}
+若存在$g_\star\in\mathcal G_B$使
+$y=f_0(\bm x)+g_\star(\bm x)$在$\mathcal P$下几乎处处成立，且
+$\ell(y,y)=0$，并且样本核矩阵
+$\bm K_0=(K_0(\bm x_i,\bm x_j))_{i,j=1}^n$几乎必然正定，则定义
+\[
+ \widehat g\in\argmin_{g\in\mathcal H_{K_0}}
+ \left\{\|g\|_{\mathcal H_{K_0}}:
+ f_0(\bm x_i)+g(\bm x_i)=y_i,\ 1\leq i\leq n\right\}.
+\]
+最小范数插值函数$\widehat g$满足同一上界且经验风险项为零。对任意
+$\varepsilon\in(0,1)$，一个充分样本量条件是
+\[
+ n\geq\max\left\{\frac{16G^2\kappa^2B^2}{\varepsilon^2},
+                  \frac{18\log(2/\delta)}{\varepsilon^2}\right\},
+\]
+此时期望风险以概率至少$1-\delta$不超过$\varepsilon$。
+\end{theorem}
+\begin{proof}
+利用再生性质、Cauchy--Schwarz不等式以及独立随机正负号的交叉项期望为零，得到
+\begin{align*}
+ \widehat{\mathfrak R}_S(\mathcal G_B)
+ &=\frac Bn\mathbb E_{\bm\sigma}
+       \left\|\sum_{i=1}^n\sigma_i K_0(\bm x_i,\cdot)\right\|_{\mathcal H_{K_0}}\\
+ &\leq\frac Bn\sqrt{\sum_{i=1}^nK_0(\bm x_i,\bm x_i)}
+ \leq\frac{\kappa B}{\sqrt n}.
+\end{align*}
+固定$f_0$产生的偏移与所选函数无关，故不改变上述复杂度。再由损失的Lipschitz收缩性质引入因子$G$，应用有界损失的期望风险界，即得式~\eqref{eq:ntk-rkhs-risk}。
+
+可实现函数$g_\star$满足所有插值条件，所以最小范数解满足$\|\widehat g\|\leq\|g_\star\|\leq B$，且经验风险为零。分别使风险界两项至多$\varepsilon/2$，就得到所列充分样本量。
+\end{proof}
+
+保证依赖小范数的目标表示、有界核对角、独立同分布抽样，以及训练达到对应插值解。即使特征无限多，也可以由$\kappa B$控制复杂度；坐标数量在这里没有单独决定风险。
+
+谱与标签也可共同验证范数条件。在同一高概率事件上，$\sum_j(\bm u_j^\top\bm r)^2/\lambda_j\leq B^2$就说明插值解属于所控空间。若这项条件另以概率至少$1-\delta_0$成立，联合失败概率至多$\delta+\delta_0$。$B$必须事先固定；观察后令$B=\|\widehat g\|$，需对一列预定范数球同时控制，而不能直接沿用原置信度。
+
+核正定、即$\lambda_{\min}(\bm K_0)>0$，只保证能够插值，不能替代小范数条件。粗略界$\bm r^\top\bm K_0^{-1}\bm r\leq\|\bm r\|_2^2/\lambda_{\min}$中，如果标签平方和$\|\bm r\|_2^2$按$n$增长而最小特征值只保持常数，复杂度项未必下降。Arora等对特定两层过参数化网络的分析同时使用标签与核谱，并在明确初始化、宽度和数据条件下得到训练及不显含宽度的样本复杂度保证\scite{arora2019finegrained}。
+
+同一范数也可以经PAC--Bayes进入风险。对有界损失，将训练后后验同样本独立的先验比较，相对熵记录后验偏离先验的代价，并与经验风险一起控制随机预测的总体风险（可参考\BookSectionRef{sec:information-pac-bayes}{第一卷“概率分布”章的“数据依赖下的同时风险控制”一节}）。网络随机预测器版本见第~\ref{sec:pac-bayes}节。对有限维位移，事先取$P_0=\mathcal N(0,s^2\bm I_p)$、$s>0$，再以$Q=\mathcal N(\widehat{\bm v},s^2\bm I_p)$描述训练中心附近参数。相对熵为$\|\widehat{\bm v}\|_2^2/(2s^2)$。将定理~\ref{thm:pac-bayes-bound}与Lipschitz性合并，以概率至少$1-\delta$，所有中心同时有
+\begin{equation}
+ \begin{aligned}
+ R(g_{\widehat{\bm v}})\leq{}&\hat R_S(g_{\widehat{\bm v}})+2Gs\kappa\\
+ &+\sqrt{\frac{\|\widehat{\bm v}\|_2^2/(2s^2)+\log((n+1)/\delta)}{2n}},
+ \end{aligned}
+ \label{eq:ntk-pac-bayes-risk}
+\end{equation}
+其中$g_{\bm v}=f_0+\langle\bm v,\bm\varphi_0\rangle$。投影扰动$\langle\bm v-\widehat{\bm v},\bm\varphi_0(\bm x)\rangle$的绝对值期望至多$s\kappa$，把随机预测的经验与总体风险分别转回中心各付出$Gs\kappa$。最小范数表示满足$\|\widehat{\bm v}\|_2^2=\|\widehat g\|_{\mathcal H_{K_0}}^2$，因此同一核谱量出现在信息代价中。
+
+PAC--Bayes增加了扰动—相对熵的取舍：增大$s$减小信息代价，却增加扰动损失。若插值范数统一有界，预先取$s_n=n^{-1/4}$可使两项下降，但这个简单构造可能比Rademacher界慢。各向同性高斯只在有限维参数空间直接可用；无限维RKHS不能假设存在协方差$s^2I$的同类概率分布，仍可采用前面的复杂度证明。
+
+\subsection{正则化、稳定性与有限宽度}
+
+固定梯度特征还使训练目标成为可用凸学习分析的问题。范数路线控制函数空间，稳定性路线则比较更换样本后的算法输出。一次训练中核变化小只约束时间变化，尚未控制两份相邻样本产生的函数距离。
+
+对$g_{\bm v}(\bm x)=f_0(\bm x)+\langle\bm v,\bm\varphi_0(\bm x)\rangle$加入二次惩罚，就可沿第~\ref{sec:regularized-learning}节比较相邻样本的最优解。这里固定与样本独立的初始化，并要求$\|\bm\varphi_0(\bm x)\|_2\leq\kappa$。
+
+\begin{theorem}[正则化固定特征模型的稳定性]
+\label{thm:ntk-stability-risk}
+设$(X,\mathcal X)$为可测输入空间，$(Y,\mathcal Y)$为可测标签空间，
+$\mathcal P$为$X\times Y$上的概率分布，且
+$S=((\bm x_1,y_1),\ldots,(\bm x_n,y_n))\sim\mathcal P^n$。
+在抽样前固定可测函数$f_0:X\to\mathbb R$和
+$\bm\varphi_0:X\to\mathbb R^p$，其中
+$\|\bm\varphi_0(\bm x)\|_2\leq\kappa$对所有$\bm x\in X$成立，并令
+$g_{\bm v}(\bm x)=f_0(\bm x)+\langle\bm v,\bm\varphi_0(\bm x)\rangle$。
+设损失$\ell:\mathbb R\times Y\to\mathbb R$可测，关于第一个变量凸且为
+$G$-Lipschitz，并满足
+$\mathbb E_{(\bm x,y)\sim\mathcal P}|\ell(f_0(\bm x),y)|<\infty$。
+定义
+\[
+ R(g_{\bm v})=\mathbb E_{(\bm x,y)\sim\mathcal P}
+                    \ell(g_{\bm v}(\bm x),y),\qquad
+ \hat R_S(g_{\bm v})=\frac1n\sum_{i=1}^n
+                    \ell(g_{\bm v}(\bm x_i),y_i).
+\]
+对$G,\kappa,\lambda>0$，令
+\[
+ \widehat{\bm v}_S=\argmin_{\bm v}
+ \left\{\frac1n\sum_{i=1}^n\ell(g_{\bm v}(\bm x_i),y_i)
+       +\frac\lambda2\|\bm v\|_2^2\right\},\qquad\lambda>0.
+\]
+则算法的均匀稳定性至多为$2G^2\kappa^2/(\lambda n)$，且对任意固定
+$\bm v\in\mathbb R^p$，
+\[
+ \mathbb E_S R(g_{\widehat{\bm v}_S})-R(g_{\bm v})
+ \leq\frac{2G^2\kappa^2}{\lambda n}+\frac\lambda2\|\bm v\|_2^2.
+\]
+\end{theorem}
+\begin{proof}
+单个样本损失关于$\bm v$为$G\kappa$-Lipschitz，经验目标为$\lambda$-强凸。定理~\ref{thm:regularized-erm-stability}给出替换一个样本后的参数距离上界$2G\kappa/(\lambda n)$，再乘损失的Lipschitz常数即得均匀稳定性及期望泛化差上界。正则化最优性还保证
+\[
+ \hat R_S(g_{\widehat{\bm v}_S})
+ \leq\hat R_S(g_{\bm v})+\frac\lambda2\|\bm v\|_2^2.
+\]
+对样本取期望，并使用固定$\bm v$的经验风险期望等于期望风险，得到结论。
+\end{proof}
+
+指定比较半径$B>0$，取$\lambda=2G\kappa/(B\sqrt n)$，得到
+\begin{equation}
+ \mathbb E_S R(g_{\widehat{\bm v}_S})
+ -\inf_{\|\bm v\|_2\leq B}R(g_{\bm v})
+ \leq\frac{2G\kappa B}{\sqrt n}.
+ \label{eq:ntk-sample-risk}
+\end{equation}
+这个选择平衡稳定性代价与正则化比较代价：$\lambda$增大时前者下降、后者上升。小特征值方向的放大由此受到限制。当前结论要求凸Lipschitz损失，前面的Rademacher结论要求有界Lipschitz损失，二者的概率保证也不同。
+
+真实有限宽网络还需从固定特征模型转回实际输出。记两者为$f_S,g_S$，若以概率至少$1-\delta_{\mathrm{app}}$对样本、初始化及算法随机性满足
+\[
+ \mathbb E_{\bm x\sim\mathcal P_X}|f_S(\bm x)-g_S(\bm x)|\leq\tau_n,
+\]
+则$G$-Lipschitz损失把期望风险差控制在$G\tau_n$。对$\mathcal P_X$几乎处处一致的$\tau_n$界同样足够；近似成功事件需与复杂度事件一起计失败概率。只有训练输入上的核矩阵接近，尚未证明新输入上的这个误差。因此完整风险保证同时依赖复杂度、经验拟合与近似控制。特征明显改变时，需要转向整个更新过程。
+
+\section{基于参数梯度更新的可学习性}
+\label{sec:implicit-bias}
+
+固定初始梯度适用于特征变化受控的训练。更一般的训练会改变这些特征，参数化和优化器也参与选择解。我们于是把分析对象从初始响应改为从初始化到结束的整条轨迹。
+
+固定步长梯度下降累加为
+\[
+ \bm\theta^{(t)}=\bm\theta^{(0)}
+ -\eta\sum_{s=0}^{t-1}\nabla_{\bm\theta}\hat R_S(\bm\theta^{(s)}).
+\]
+各项梯度在此前更新决定的位置计算，因此彼此依赖。两个参数即使当前经验风险相等，参数化、初始化和过去路径不同，也可能产生不同后续方向。\term{梯度动力学}（gradient dynamics）研究这些连续更新怎样决定最终函数。
+
+由初始化、损失、参数化和更新共同产生的选解倾向，称为\term{隐式偏差}（implicit bias）。这里偏差描述算法偏好，不是风险分解中的近似误差，也不是某次更新本身。线性平方损失可选最小范数插值解，线性逻辑损失可选最大间隔方向，矩阵分解则可改变奇异值增长；每种结论都须保留相应条件。
+
+选解性质还不是风险保证。我们可以先证明所选解具有受控范数、间隔或谱结构，再应用复杂度或直接风险分析；也可以比较相邻样本的最终输出，直接通过稳定性控制泛化差。
+
+\subsection{参数更新、隐式偏差与泛化路径}
+
+下面分别用三个可解场景观察更新选择：平方损失线性回归收敛到有限的最小范数解，可分逻辑分类的参数发散而方向趋于最大间隔，矩阵分解改变端到端谱演化。它们是并列机制，不是连续步骤，也不会统一导向核范数。每个场景都需要自己的数据与泛化条件。
+
+这些分析共用式~\eqref{eq:deep-risk-decomposition}。更新若选出受控几何结构，就用相应风险界控制泛化差；若映射$S\mapsto A(S)$稳定，则直接使用稳定性界。算法随机化时，平均还要包括内部随机数。接下来的三个场景展开前一路径，最后再讨论后一路径。
+
+\subsection{最小范数与线性回归泛化}
+
+只有训练观测$\bm x=(1,1)^\top,y=1$时，插值要求$w_1+w_2=1$。$(1,0)^\top$、$(0,1)^\top$和$(1/2,1/2)^\top$都可拟合，却在新输入$(1,0)^\top$上分别输出1、0与$1/2$。零初始化下，两梯度分量始终相同，轨迹保持$w_1=w_2$，只能趋于中点。其他解为$(1/2+a,1/2-a)^\top$，范数平方为$1/2+2a^2$，所以中点正是最小范数者。
+
+图~\ref{fig:learning-minimum-norm}在参数平面画出这条插值直线。零初始化轨迹沿$w_1=w_2$抵达离原点最近的点；直线其余点也满足训练约束，却对相同新输入给出不同预测。图只固定了选解，还没有提供新输入标签。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=88.854mm]{figures/02-foundations/02-learning-theory/tikz/learning-theory-minimum-norm/figure.pdf}
+  \caption{一个训练观测对应多个插值参数。直线上的A、B、C都使输入$(1,1)^\top$的预测为1，
+ 右侧列出它们对同一新输入$\bm x_{\mathrm{new}}=(1,0)^\top$的预测。对半平方损失从零初始化，图中以步长$1/4$
+ 画出前三次更新，轨迹趋向B；细弧表示经过B的欧氏范数等值线，说明B是插值直线上
+ 距离原点最近的点。这个教学例子解释选解规则，不给出新输入的真实标签或泛化保证。}
+ \label{fig:learning-minimum-norm}
+\end{figure}
+\FloatBarrier
+
+\begin{theorem}[梯度下降的最小范数选择]
+\label{thm:learning-gradient-descent-minimum-norm}
+设$n,d\geq1$且$d>n$，$\bm X\in\mathbb R^{n\times d}$满行秩，
+$\bm y\in\mathbb R^n$。对
+$\hat R_S(\bm w)=\|\bm X\bm w-\bm y\|_2^2/(2n)$，令
+\[
+ \bm w^{(t+1)}=\bm w^{(t)}-\eta\nabla\hat R_S(\bm w^{(t)}),
+ \qquad \bm w^{(0)}=0.
+\]
+若步长$0<\eta<2n/\|\bm X\|_2^2$，则
+\begin{equation}
+ \bm w^{(t)}\longrightarrow\hat{\bm w}
+ =\bm X^\top(\bm X\bm X^\top)^{-1}\bm y
+ =\argmin_{\bm X\bm w=\bm y}\|\bm w\|_2.
+ \label{eq:learning-minimum-norm-interpolator}
+\end{equation}
+\end{theorem}
+\begin{proof}
+每次更新的增量为$-\eta\bm X^\top(\bm X\bm w^{(t)}-\bm y)/n$，
+故所有迭代都在$\operatorname{range}(\bm X^\top)$内。残差满足
+\[
+ \bm e^{(t+1)}=
+ \left(\bm I-\frac\eta n\bm X\bm X^\top\right)\bm e^{(t)}.
+\]
+满行秩使$\bm X\bm X^\top$正定；步长条件使括号内全部特征值的绝对值小于1，
+所以残差趋于零。在上述行空间内，插值解唯一，正是式~\eqref{eq:learning-minimum-norm-interpolator}
+中的$\hat{\bm w}$。任意其他插值解均可写成
+\begin{equation}
+ \bm w=\hat{\bm w}+\bm v,\qquad\bm v\in\operatorname{null}(\bm X).
+ \label{eq:learning-interpolator-decomposition}
+\end{equation}
+行空间与零空间正交，故$\|\bm w\|_2^2=\|\hat{\bm w}\|_2^2+\|\bm v\|_2^2$。
+这证明了最小范数性质。
+\end{proof}
+
+零初始化排除了零空间分量。若初值已有此分量，梯度不会消除它，极限就未必最小范数。深层参数化还改变同一函数的参数表示及范数，因而不能把线性结论直接推广到全部网络。
+
+确定最小范数解后，我们还要计算它在新输入上的误差。将参数代入线性回归风险，可以分辨哪些误差来自未观察方向、哪些来自噪声，并说明为何选解规则没有脱离分布的统一样本量公式。
+
+固定标签模型$y=\bm x^\top\bm w_\star+\xi$，噪声与输入独立，均值零、方差$\sigma^2$，并记$\bm\Sigma=\mathbb E[\bm x\bm x^\top]$。风险采用完整平方损失$(\bm x^\top\bm w-y)^2$；前面优化的半平方损失只差常数，不改变最小范数极限。展开新观测误差，独立零均值噪声消去交叉项，得到
+\[
+ R(\bm w)-R(\bm w_\star)
+ =\|\bm w-\bm w_\star\|_{\bm\Sigma}^2,
+ \qquad\|\bm v\|_{\bm\Sigma}^2=\bm v^\top\bm\Sigma\bm v.
+\]
+这个加权距离按输入变化评价参数误差，因此仅看欧氏距离不能确定预测风险。
+
+\begin{theorem}[基于最小范数的回归期望风险]
+\label{thm:minimum-norm-risk-decomposition}
+设$\bm x\in\mathbb R^d$为满足
+$\mathbb E\|\bm x\|_2^2<\infty$的测试输入，
+$\bm\Sigma=\mathbb E[\bm x\bm x^\top]$。给定
+$\bm w_\star\in\mathbb R^d$，令测试标签
+$y=\bm x^\top\bm w_\star+\xi$，其中
+$\mathbb E[\xi\mid\bm x]=0$且$\mathbb E[\xi^2]<\infty$，并用完整平方损失定义
+\[
+ R(\bm w)=\mathbb E[(\bm x^\top\bm w-y)^2].
+\]
+固定满行秩设计矩阵$\bm X\in\mathbb R^{n\times d}$，其中$n<d$，
+训练标签为$\bm y=\bm X\bm w_\star+\bm\xi$，
+其中$\mathbb E[\bm\xi\mid\bm X]=0$、
+$\mathbb E[\bm\xi\bm\xi^\top\mid\bm X]=\sigma^2\bm I_n$且$\sigma^2\geq0$。
+令$\hat{\bm w}=\bm X^\top(\bm X\bm X^\top)^{-1}\bm y$，
+$\bm P_X=\bm X^\top(\bm X\bm X^\top)^{-1}\bm X$。则
+\begin{equation}
+ \begin{aligned}
+ &\mathbb E_{\bm\xi\mid\bm X}
+       [R(\hat{\bm w})-R(\bm w_\star)]\\
+ &\quad=\|(\bm I-\bm P_X)\bm w_\star\|_{\bm\Sigma}^2
+ +\sigma^2\operatorname{tr}\left[
+ \bm\Sigma\bm X^\top(\bm X\bm X^\top)^{-2}\bm X\right].
+ \end{aligned}
+ \label{eq:minimum-norm-prediction-risk}
+\end{equation}
+\end{theorem}
+\begin{proof}
+把训练标签代入最小范数解，有
+\[
+ \hat{\bm w}-\bm w_\star
+ =-(\bm I-\bm P_X)\bm w_\star
+   +\bm X^\top(\bm X\bm X^\top)^{-1}\bm\xi.
+\]
+在$\bm\Sigma$半范数下展开平方。条件噪声均值为零，使交叉项的期望为零；
+利用$\mathbb E[\bm\xi\bm\xi^\top\mid\bm X]=\sigma^2\bm I$计算最后一项，
+就得到迹表达式。
+\end{proof}
+
+若设计矩阵也随机且式~\eqref{eq:minimum-norm-prediction-risk}右侧可积，再对$\bm X$平均即可包括全部训练随机性。第一项对应样本未确定的目标方向，零初始化不会补出零空间中的目标；第二项对应拟合训练噪声，矩阵逆可能放大某些噪声方向。最小范数选择本身没有排除两者。零一风险的范数界也不能替代这里平方损失下的分布计算。
+
+协方差谱改变两类误差的权重。Bartlett等的良性过拟合分析说明，特定谱条件下，最小范数插值可以拟合噪声并保持小超额风险\scite{bartlett2020benign}。因此样本量分析必须同时说明算法选解与分布评价，不能只另换一个参数计数公式。
+
+一个精确例子取无噪声和各向同性输入：$\bm x_i\sim\mathcal N(0,\bm I_d)$，$\sigma=0$，故$\bm\Sigma=\bm I_d$。随机$n$维样本子空间具有旋转对称性，期望投影只能是单位矩阵的倍数；由$\operatorname{tr}(\bm P_X)=n$可知$\mathbb E\bm P_X=(n/d)\bm I_d$。于是
+\begin{equation}
+ \mathbb E_S[R(\hat{\bm w})-R(\bm w_\star)]
+ =\left(1-\frac nd\right)\|\bm w_\star\|_2^2,
+ \qquad n<d.
+ \label{eq:isotropic-minimum-norm-risk}
+\end{equation}
+$\|\bm w_\star\|_2=1,d=100,n=10$时，经验风险为零而平均超额风险为0.9。由精确式，使风险至多$\varepsilon<1$需要$n\geq d(1-\varepsilon)$。这个例子保留了维度影响，显示最小范数不会自动消除未观察方向的误差。
+
+\subsection{最大间隔与线性分类泛化}
+
+逻辑分类与平方回归的参数极限不同。对线性可分数据，沿正确方向放大参数会持续降低$\log(1+e^{-y\bm w^\top\bm x})$。经验风险下确界为零，却通常没有有限参数达到它。因此应追踪归一化方向，而不是要求参数向量收敛。
+
+取$y_i\in\{-1,1\}$，可分要求存在$\bm w$使所有$y_i\bm w^\top\bm x_i>0$。单位方向$\bm u$满足$\|\bm u\|_2=1$，其最小经验间隔为$\min_i y_i\bm u^\top\bm x_i$。将未归一化间隔固定为至少1后最小化范数，等价于最大化单位方向的这个最小值，得到硬间隔支持向量机的几何目标。
+
+\begin{theorem}[逻辑回归梯度下降的最大间隔方向]
+\label{thm:logistic-max-margin-direction}
+设$n,d\geq1$，$\bm x_i\in\mathbb R^d$、$y_i\in\{-1,+1\}$，
+且存在$\bm w\in\mathbb R^d$使
+$y_i\bm w^\top\bm x_i>0$对所有$1\leq i\leq n$成立。
+令$\bm X\in\mathbb R^{n\times d}$以$\bm x_i^\top$为第$i$行，并定义
+\[
+ \hat R_S(\bm w)=\frac1n\sum_{i=1}^{n}
+             \log(1+e^{-y_i\bm w^\top\bm x_i})
+\]
+以及迭代
+\[
+ \bm w^{(t+1)}=\bm w^{(t)}-\eta\nabla\hat R_S(\bm w^{(t)}).
+\]
+从任意$\bm w^{(0)}\in\mathbb R^d$出发，取
+$0<\eta<n/\|\bm X\|_2^2$。则$\|\bm w^{(t)}\|_2\to\infty$，且
+\[
+ \frac{\bm w^{(t)}}{\|\bm w^{(t)}\|_2}
+ \longrightarrow\frac{\widehat{\bm w}_{\mathrm{svm}}}
+                         {\|\widehat{\bm w}_{\mathrm{svm}}\|_2},
+\]
+其中
+\[
+ \widehat{\bm w}_{\mathrm{svm}}
+ =\argmin_{\bm w}\tfrac12\|\bm w\|_2^2
+ \quad\text{满足}\quad y_i\bm w^\top\bm x_i\geq1\quad(1\leq i\leq n).
+\]
+\end{theorem}
+以下证明采用Soudry等对可分逻辑回归证明的渐近展开\scite{soudry2018implicit}。
+\begin{proof}[证明（使用外部渐近结果）]
+在上述保守步长条件下，
+$\bm w^{(t)}=\widehat{\bm w}_{\mathrm{svm}}\log t+\bm\rho^{(t)}$，其中
+$\|\bm\rho^{(t)}\|_2=O(\log\log t)$。
+由于$\log\log t/\log t\to0$，除以$\log t$后取极限得到$\widehat{\bm w}_{\mathrm{svm}}$。该向量非零，故参数范数发散，并且归一化方向收敛到所述方向。这里的渐近展开是所引用的外部结果，本段只证明由该展开到方向收敛的推论。
+\end{proof}
+
+我们从梯度权重观察这一方向选择：
+\[
+ -\nabla\hat R_S(\bm w)
+ =\frac1n\sum_{i=1}^{n}
+       \frac{y_i\bm x_i}{1+e^{y_i\bm w^\top\bm x_i}}.
+\]
+大间隔样本的更新权重衰减较快，靠近边界的样本则继续影响方向。分类错误已为零时，逻辑损失仍推动方向变化。这个机制解释不替代方向极限的渐近证明。
+
+最大间隔方向可以通过前面的复杂度理论转为期望风险保证。
+\begin{theorem}[基于最大间隔的分类期望风险]
+\label{thm:max-margin-classification-risk}
+设$X\subseteq\mathbb R^d$取Borel $\sigma$代数，$Y=\{-1,+1\}$，
+$\mathcal P$为$X\times Y$上的概率分布。令
+\[
+ S=((\bm x_1,y_1),\ldots,(\bm x_n,y_n))\sim\mathcal P^n.
+\]
+假设$\|\bm x\|_2\leq r$在$\mathcal P$下几乎处处成立，其中$n\geq1$、$r>0$。
+事先固定$\gamma>0$和$\delta\in(0,1)$。则以概率至少$1-\delta$，所有满足
+$\|\bm u\|_2=1$的方向同时满足
+\begin{equation}
+ \begin{aligned}
+ \mathbb P_{(\bm x,y)\sim\mathcal P}\{y\bm u^\top\bm x\leq0\}
+ \leq{}&\frac1n\sum_{i=1}^n
+       \mathbb I\{y_i\bm u^\top\bm x_i\leq\gamma\}\\
+ &+\frac{2r}{\gamma\sqrt n}
+       +3\sqrt{\frac{\log(2/\delta)}{2n}}.
+ \end{aligned}
+ \label{eq:gradient-direction-margin-risk}
+\end{equation}
+左侧把零分数也计为错误，因而上界任意固定平局规则下的零一损失期望风险。
+\end{theorem}
+\begin{proof}
+单位范数线性函数类的经验Rademacher复杂度至多为$r/\sqrt n$。
+取在负间隔处为1、从0到$\gamma$线性下降、在不小于$\gamma$处为0的间隔损失。
+它以$1/\gamma$为Lipschitz常数，上界控制零一损失，而它在训练样本上的取值又不超过
+$\mathbb I\{y_i\bm u^\top\bm x_i\leq\gamma\}$。
+对该损失应用Rademacher复杂度的Lipschitz收缩和统一期望风险界，即得结论。
+\end{proof}
+
+最大经验方向间隔若大于预定$\gamma$，定理~\ref{thm:logistic-max-margin-direction}使充分训练后的方向达到这一阈值，式~\eqref{eq:gradient-direction-margin-risk}的经验项便为零。余项不超过$\varepsilon$的充分样本量为$O((r^2/\gamma^2+\log(1/\delta))/\varepsilon^2)$量级。
+
+真正进入风险的是归一化间隔。统一放大参数会同时放大原始间隔和范数，不改变比值；方向变化才可能改善它。样本可分也不保证随$n$增长仍有固定正间隔，记忆噪声得到的小间隔可能使界失效。标签噪声、优化器或深层参数化改变时，都要重新证明选解性质。
+
+\subsection{谱偏好与矩阵预测的泛化}
+
+深层线性网络虽没有激活，参数目标仍可非凸。$\bm W=\bm W_L\cdots\bm W_1$给出线性输出$\bm W\bm x$，不同分解表示同一映射，但对各因子的梯度包含其余因子，因而训练可以偏向不同端到端映射。
+
+先用二层分解$\bm W=\bm U\bm V^\top$计算这项区别。记经验目标$\mathcal L(\bm W)$及梯度$\bm G=\nabla_{\bm W}\mathcal L$，链式法则给出
+\[
+ \dot{\bm U}=-\bm G\bm V,\qquad
+ \dot{\bm V}=-\bm G^\top\bm U.
+\]
+从而
+\begin{equation}
+ \dot{\bm W}=-\bm G\bm V\bm V^\top-\bm U\bm U^\top\bm G.
+ \label{eq:factorized-gradient-flow}
+\end{equation}
+直接训练$\bm W$只用$-\bm G$，分解则让梯度两侧乘上变化的矩阵。这些因子调节各方向的有效速度，即使没有显式范数惩罚，也会在轨迹中累积。
+
+奇异值记录矩阵在各输入—输出方向的强度。少数非零奇异值意味着低秩，少数较大奇异值则允许低秩近似。对于多输出或矩阵观测，低秩表示若干预测方向共享较少线性结构。标量输出的端到端矩阵只有一行，不能用这项低秩解释概括其全部泛化行为。
+
+为了精确求解多层谱演化，我们增加平衡初始化：相邻层满足$\bm W_{j+1}^\top\bm W_{j+1}=\bm W_j\bm W_j^\top$。这使相邻因子的内积结构匹配，为下面的动力学提供可处理条件，并非任意初始化都具备的性质。
+
+\begin{theorem}[平衡深层线性网络的梯度流]
+\label{thm:balanced-deep-linear-flow}
+设$L,q\geq1$，$\bm W_j(t)\in\mathbb R^{q\times q}$，
+$\mathcal L:\mathbb R^{q\times q}\to\mathbb R$连续可微。记
+$\bm W=\bm W_L\cdots\bm W_1$、$\bm G=\nabla\mathcal L(\bm W)$，并令各因子满足
+\[
+ \dot{\bm W}_j
+ =-(\bm W_L\cdots\bm W_{j+1})^\top
+   \bm G
+   (\bm W_{j-1}\cdots\bm W_1)^\top,\qquad 1\leq j\leq L,
+\]
+其中空乘积为$\bm I_q$。假设初始化满足
+\[
+ \bm W_{j+1}(0)^\top\bm W_{j+1}(0)
+ =\bm W_j(0)\bm W_j(0)^\top,\qquad 1\leq j<L.
+\]
+在该微分方程的解存在且各层满秩的时间区间内，平衡关系保持，且
+\begin{equation}
+ \dot{\bm W}
+ =-\sum_{j=1}^{L}
+   (\bm W\bm W^\top)^{(L-j)/L}\bm G
+   (\bm W^\top\bm W)^{(j-1)/L}.
+ \label{eq:balanced-matrix-gradient-flow}
+\end{equation}
+在某个正奇异值$\sigma_k$为单重且可微的时刻，若其左右奇异向量为$\bm u_k,\bm v_k$，则
+\begin{equation}
+ \dot\sigma_k=-L\sigma_k^{2-2/L}\bm u_k^\top\bm G\bm v_k.
+ \label{eq:deep-singular-value-dynamics}
+\end{equation}
+\end{theorem}
+\begin{proof}
+写$\bm A_j=\bm W_L\cdots\bm W_{j+1}$、$\bm B_j=\bm W_{j-1}\cdots\bm W_1$，空乘积取单位矩阵。链式法则给出
+$\dot{\bm W}_j=-\bm A_j^\top\bm G\bm B_j^\top$，故
+\[
+ \dot{\bm W}=-\sum_j\bm A_j\bm A_j^\top\bm G\bm B_j^\top\bm B_j.
+\]
+将同一导数代入相邻层的Gram矩阵，可核对
+$\frac{\mathrm d}{\mathrm dt}(\bm W_{j+1}^\top\bm W_{j+1}-\bm W_j\bm W_j^\top)=0$。
+平衡关系因而始终成立，并允许将各层写为相互匹配的奇异值分解
+$\bm W_j=\bm U_j\bm D\bm U_{j-1}^\top$。于是
+$\bm W=\bm U_L\bm D^L\bm U_0^\top$，而
+$\bm A_j\bm A_j^\top=(\bm W\bm W^\top)^{(L-j)/L}$、
+$\bm B_j^\top\bm B_j=(\bm W^\top\bm W)^{(j-1)/L}$。
+代回乘积导数得到第一式。再用单重奇异值的微分关系
+$\dot\sigma_k=\bm u_k^\top\dot{\bm W}\bm v_k$，每个求和项均贡献
+$-\sigma_k^{2-2/L}\bm u_k^\top\bm G\bm v_k$，得到第二式。
+\end{proof}
+
+式~\eqref{eq:deep-singular-value-dynamics}中，其他梯度投影相近时，小奇异值方向更新较慢，大方向较快，因此可以解释少数方向先增长。但投影的符号和大小也随训练变化，不能由此保证任意数据上取得最低秩。Arora等分析了这类深层分解谱偏好；离散应用还需控制步长与平衡误差\scite{arora2019deepfactorization}。
+
+要进入复杂度界，我们还需矩阵的总尺度。\term{核范数}（nuclear norm）$\|\bm W\|_*$是奇异值之和，这里的“核”不同于NTK核函数。秩至多$q$且$\|\bm W\|_F\leq F$时，Cauchy--Schwarz给出$\|\bm W\|_*\leq\sqrt qF$。低秩只有连同受控尺度，才提供小核范数。
+
+因子参数的大小与核范数之间存在一个精确的静态关系。
+\begin{lemma}[二层分解的范数关系]
+\label{lem:factorization-nuclear-norm}
+设$\bm W\in\mathbb R^{d_1\times d_2}$，并取
+$k\geq\operatorname{rank}(\bm W)$。当
+$\bm U\in\mathbb R^{d_1\times k}$、$\bm V\in\mathbb R^{d_2\times k}$时，
+\[
+ \|\bm W\|_*=\min_{\bm U\bm V^\top=\bm W}
+       \tfrac12(\|\bm U\|_F^2+\|\bm V\|_F^2).
+\]
+\end{lemma}
+\begin{proof}
+核范数与谱范数的对偶关系以及Cauchy--Schwarz不等式给出
+$\|\bm U\bm V^\top\|_*\leq\|\bm U\|_F\|\bm V\|_F$，再用
+$ab\leq(a^2+b^2)/2$得到下界。若$\bm W=\bm P\bm\Sigma\bm Q^\top$是紧奇异值分解，取
+$\bm U=\bm P\bm\Sigma^{1/2}$、$\bm V=\bm Q\bm\Sigma^{1/2}$，两因子的范数平方都等于$\operatorname{tr}\bm\Sigma$，从而达到等号。当$k>\operatorname{rank}(\bm W)$时，在两因子后补零列以满足指定列数。
+\end{proof}
+
+引理联系的是显式因子范数最小化与端到端核范数，尚未说明单纯经验损失梯度流会最小化它。Gunasekar等的有关结论还要求观测矩阵两两可交换、初始化趋零及插值极限存在等条件\scite{gunasekar2017matrix}。链式法则给不出这些额外性质。
+
+还有选解不能由范数最小化概括的情形。Razin与Cohen构造矩阵分解问题，使平方经验风险趋零而所有矩阵范数发散\scite{razin2020norms}。所以谱的低秩趋势、核范数界和显式正则化须分别证明，不能统一称作隐式核范数惩罚。
+
+若训练确实得到受控核范数，我们再固定它服务的预测问题：输入矩阵$\bm A$，输出$h_{\bm W}(\bm A)=\langle\bm W,\bm A\rangle_F$，内积为对应元素乘积之和。$\bm A$可以选择单个待预测元素，也可以表示多个元素的线性观测。这个观测级风险是后面复杂度界的评价对象。
+
+将$\bm W$写为奇异值与秩一方向之和，每个单位方向满足$|\bm u^\top\bm A\bm v|\leq\|\bm A\|_2$，因此
+\[
+ |\langle\bm W,\bm A\rangle_F|\leq\|\bm W\|_*\|\bm A\|_2.
+\]
+沿$\bm A$最大奇异方向分配全部核范数可取等号。这一对偶关系在模型侧限制总奇异值，在输入侧控制最大方向强度，将矩阵约束接到预测幅度。
+
+\begin{theorem}[基于谱结构的矩阵预测期望风险]
+\label{thm:nuclear-norm-generalization}
+设$n,d_1,d_2\geq1$，矩阵输入空间为$\mathbb R^{d_1\times d_2}$，
+$(Y,\mathcal Y)$为可测标签空间，
+$\mathcal P$为$\mathbb R^{d_1\times d_2}\times Y$上的概率分布，且
+$S=((\bm A_1,y_1),\ldots,(\bm A_n,y_n))\sim\mathcal P^n$。
+假设$\|\bm A\|_F\leq r$在$\mathcal P$下几乎处处成立。
+对$\bm W\in\mathbb R^{d_1\times d_2}$，令
+$h_{\bm W}(\bm A)=\langle\bm W,\bm A\rangle_F$。
+损失$\ell:\mathbb R\times Y\to[0,1]$可测，且关于预测值为$G$-Lipschitz；定义
+\[
+ R(h_{\bm W})=\mathbb E_{(\bm A,y)\sim\mathcal P}
+                    \ell(h_{\bm W}(\bm A),y),\qquad
+ \hat R_S(h_{\bm W})=\frac1n\sum_{i=1}^n
+                    \ell(h_{\bm W}(\bm A_i),y_i).
+\]
+固定$B,r,G>0$和$\delta\in(0,1)$，以概率至少$1-\delta$，
+所有$\|\bm W\|_*\leq B$同时满足
+\[
+ R(h_{\bm W})\leq\hat R_S(h_{\bm W})
+       +\frac{2GBr}{\sqrt n}
+       +3\sqrt{\frac{\log(2/\delta)}{2n}}.
+\]
+特别地，若对某个矩阵分解训练算法另行证明其输出$\bm W_S$满足
+$\|\bm W_S\|_*\leq B$，则$\bm W_S$服从同一个期望风险界。
+若进一步规定$q\geq1$、$F>0$、
+$\operatorname{rank}(\bm W)\leq q$且$\|\bm W\|_F\leq F$，
+可将复杂度项中的$B$取为$\sqrt qF$。
+\end{theorem}
+\begin{proof}
+由核范数与谱范数的对偶关系，预测函数空间的经验Rademacher复杂度为
+\[
+ \frac Bn\mathbb E_{\bm\sigma}
+       \left\|\sum_{i=1}^n\sigma_i\bm A_i\right\|_2
+ \leq\frac Bn\sqrt{\sum_{i=1}^n\|\bm A_i\|_F^2}
+ \leq\frac{Br}{\sqrt n}.
+\]
+其中先用谱范数不超过Frobenius范数，再利用随机正负号使平方展开的交叉项期望为零。对损失应用Lipschitz收缩与经验Rademacher期望风险界，即得结论。低秩情形由$\|\bm W\|_*\leq\sqrt q\|\bm W\|_F$得到。
+\end{proof}
+
+在所列核范数条件下，使风险附加项至多$\varepsilon$的充分样本量为$O((G^2B^2r^2+\log(1/\delta))/\varepsilon^2)$。若秩为$q$且尺度受控，可将相应量写为$G^2qF^2r^2$。这说明低秩如何进入保证；$F,r$仍可能随矩阵规模增长，因此并未无条件消除维度影响。
+
+这个风险评价观测分布中的预测，完整恢复未知矩阵还要覆盖、噪声和目标结构条件。我们先证明动力学在指定初始化及数据下选出某类矩阵，再控制其核范数或其他复杂度，最后计算风险。更新链式法则只完成几何解释，不能独立证明可学习性。
+
+\subsection{参数更新的稳定性与泛化}
+
+最小范数选择不等于样本稳定。固定$\bm X$而把标签改为$\bm y+\Delta\bm y$，由最小范数解及奇异值分解可得
+\[
+ \Delta\hat{\bm w}=\bm X^\top(\bm X\bm X^\top)^{-1}\Delta\bm y,
+ \qquad
+ \|\Delta\hat{\bm w}\|_2\leq
+ \frac{\|\Delta\bm y\|_2}{\sigma_{\min}(\bm X)}.
+\]
+$\sigma_{\min}(\bm X)$是最小非零奇异值，它小时，即使标签变化小，参数仍可能明显改变。完整样本替换还会改变$\bm X$，所以这个固定设计例子仅帮助定位敏感方向。
+
+要沿第~\ref{sec:algorithmic-stability}节使用参数稳定性，必须实际证明上述变化小，并检查损失的Lipschitz转换。逻辑回归则可能参数范数发散而方向稳定，原参数距离未必适合当前评价。此时可以直接比较预测函数或损失。
+
+若已证明平均参数稳定性$\bar\alpha_n$，损失关于参数为$L_\theta$-Lipschitz，经验优化误差至多$\rho_n$，定理~\ref{thm:parameter-stability-learning}给出
+\[
+ \mathbb E_S R(A(S))-\inf_{h\in\mathcal H}R(h)
+ \leq L_\theta\bar\alpha_n+\rho_n.
+\]
+深层网络还可按定理~\ref{thm:layerwise-parameter-stability}逐层传播变化。隐式偏差帮助确定选解映射$S\mapsto A(S)$，稳定性则把这一映射的样本敏感度转为风险。比较必须使用相邻训练样本，不能以一次训练中相邻迭代的距离代替。
+
+初始化、优化器或参数化改变后，算法偏好的范数与间隔可能变化，但风险判断仍需同时核对经验拟合、预测性质和样本敏感度。例如，可分逻辑回归继续训练可增大归一化间隔，同时使参数范数发散，所以参数范数下降不能作为统一训练准则。
+
+矩阵分解还存在表示冗余：不同因子可给出同一端到端矩阵。若任务只评价预测，应区分因子变化与矩阵变化，或直接比较相邻样本下的损失。
+
+动力学确定算法选什么解，稳定性确定换一个样本时所选解改变多少。结合它们仍要检查分布与风险，双重下降区域同样如此：最小范数是否有益，取决于输入谱、噪声和目标，不由$p>n$单独决定。
+
+\section{基于参数分布的可学习性}
+\label{sec:parameter-distributions}
+
+\subsection{参数分布的两种语义}
+
+此前以参数点描述训练输出。宽网络还可以把大量参数组织为分布，以追踪神经元群体或训练结果附近的网络集合。采用这项描述前，必须先决定概率质量的基本单位，因为下面两种分布代表不同对象。
+
+第一种单位是神经元：同一网络的神经元参数组成经验分布$\rho$，对单元输出积分得到确定函数$f_\rho$，平均场理论研究$\rho$的演化。第二种单位是完整网络：后验$Q$在完整参数向量上取值，每次抽取才得到一个完整预测器。前者表示一个网络，后者描述随机网络输出，不能因都用概率测度就混同。
+
+图~\ref{fig:parameter-distribution-semantics}固定这两个基本单位。左侧以神经元为积分单位，得到一个确定预测器；右侧从完整参数向量的后验中抽取随机预测器。概率质量所对应的单位不同，不能把两种运算互相替代。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/parameter-distribution-semantics/figure.png}
+  \caption{两种分布的基本元素不同。平均场侧对单个神经元的贡献$a\phi(\bm w^\top\bm x)$积分，由神经元参数分布$\rho$得到确定性预测器$f_\rho$；网络、参数集合与积分表示同一预测器的不同表述，不是对完整网络的输出再做集成。PAC--Bayes侧的$Q$以完整参数向量为元素，抽取$\bm\theta$后才得到完整预测器$f_{\bm\theta}$。}
+  \label{fig:parameter-distribution-semantics}
+\end{figure*}
+
+比较相邻样本产生的同类分布时，我们采用一阶Wasserstein距离。它在保持两边边缘分布的配对中，寻找最低的平均搬运距离；在Polish空间及有限一阶矩条件下，这给出有限的分布距离（可参考\BookSectionRef{sec:information-optimal-transport}{第一卷“概率分布”章的“质量位置的差异”一节}）。当前参数空间为欧氏空间，分布均有有限一阶矩。$W_1(\rho_S,\rho_{S'})$在神经元空间中比较群体，$W_1(Q_S,Q_{S'})$在完整网络空间中比较随机输出，两者不是同一底层空间。
+
+风险分析也随单位改变。神经元分布先经积分变为预测函数，再由复杂度或样本稳定性控制泛化；完整网络后验则可与独立先验比较，以相对熵给出随机预测风险界。下面分别推导，并说明Wasserstein距离、相对熵和互信息所比较的分布。
+
+\subsection{平均场表示与Wasserstein稳定性接口}
+
+特征随训练持续改变时，我们希望记录神经元整体怎样移动。平均场方法用参数空间中的质量分布替代逐个单元的记录，再研究质量演化。
+
+取$m$隐藏单元的两层网络，使用$1/m$缩放：
+\[
+ f_m(\bm x)=\frac1m\sum_{j=1}^m a_j\phi(\bm w_j^\top\bm x).
+\]
+给每个$(a_j,\bm w_j)$赋质量$1/m$，得到$\rho_m=m^{-1}\sum_{j=1}^m\delta_{(a_j,\bm w_j)}$，其中$\delta_{(a,\bm w)}$是在$(a,\bm w)$处的点质量分布。求和便等于
+\begin{equation}
+ f_{\rho_m}(\bm x)=\int a\phi(\bm w^\top\bm x)\,\mathrm d\rho_m(a,\bm w).
+ \label{eq:mean-field-network}
+\end{equation}
+例如两种参数各占一半时，输出为两种单元贡献的平均；按同样比例复制全部单元，积分不变。分布在此表示单个网络的组成。
+
+\term{平均场理论}（mean-field theory）分析适当缩放下$\rho_m$趋近连续分布$\rho$时的训练。Mei等给出两层网络的极限及有限宽近似\scite{mei2018meanfield,mei2019meanfield}。训练中质量移动会改变$\bm w$及其特征，因此区别于固定核。两种极限依赖缩放与训练条件，不能简单按宽网络和窄网络划分。
+
+积分对$\rho$线性，所以预测损失凸时，风险作为分布的函数也凸。但有限网络通过移动有限个质量点优化，参数化仍可非凸。分布凸性没有直接保证普通梯度下降全局收敛，也没有单独控制样本泛化。
+
+我们进一步比较替换一项后得到的$\rho_S,\rho_{S'}$。固定参数域$\Theta\subseteq\mathbb R^q$和输入域$\mathcal X$，要求$\rho_S\in\mathcal P_1(\Theta)$，单元输出$\psi_{\bm\vartheta}(\bm x)$对所有$\bm x\in\mathcal X$一致地关于$\bm\vartheta\in\Theta$为$L_\psi$-Lipschitz，预测损失为$G$-Lipschitz。若相邻样本满足$W_1(\rho_S,\rho_{S'})\leq a_n$，则
+\[
+ \left|\mathbb E_S\bigl[R(f_{\rho_S})-\hat R_S(f_{\rho_S})\bigr]\right|
+ \leq G L_\psi a_n.
+\]
+为看清转换，对任意耦合$\pi\in\Pi(\rho_S,\rho_{S'})$有
+\[
+ |f_{\rho_S}(\bm x)-f_{\rho_{S'}}(\bm x)|
+ \leq L_\psi\mathbb E_\pi
+       \|\bm\vartheta-\bm\vartheta'\|_2.
+\]
+对耦合取下确界，再转换损失并应用第~\ref{sec:algorithmic-stability}节的恒等式，即得泛化界。对$\psi_{(a,\bm w)}(\bm x)=a\phi(\bm w^\top\bm x)$，输入、$a,\bm w$有界加上激活Lipschitz性可验证统一$L_\psi$；也可用其他假设直接证明同一个界。推导需要的正是这一致界。
+
+上述推导只给出稳定性接口，尚未从某个动力学证明$a_n$。具体算法还需初始化耦合、训练时长、损失与势函数正则性，以及相邻样本的Wasserstein速率。要比较最优风险，再固定允许分布集合$\mathcal M$，要求输出$\rho_S\in\mathcal M$满足
+\[
+ \mathbb E_S\left[
+   \hat R_S(f_{\rho_S})
+   -\inf_{\rho\in\mathcal M}\hat R_S(f_\rho)
+ \right]\leq\xi_n.
+\]
+固定$\rho\in\mathcal M$有$\mathbb E_S\hat R_S(f_\rho)=R(f_\rho)$，从而$\mathbb E_S\inf_{\rho\in\mathcal M}\hat R_S(f_\rho)\leq\inf_{\rho\in\mathcal M}R(f_\rho)$。与泛化差合并，得到
+\begin{equation}
+ 0\leq
+ \mathbb E_S R(f_{\rho_S})
+ -\inf_{\rho\in\mathcal M}R(f_\rho)
+ \leq G L_\psi a_n+\xi_n.
+ \label{eq:mean-field-excess-risk}
+\end{equation}
+当$a_n\to0$且$\xi_n\to0$具有分布无关速率时，对比较空间$\{f_\rho:\rho\in\mathcal M\}$得到平均超额风险收敛。它非负，Markov不等式进一步给出
+\[
+ \mathbb P\left\{
+ R(f_{\rho_S})-\inf_{\rho\in\mathcal M}R(f_\rho)>\varepsilon
+ \right\}
+ \leq\frac{G L_\psi a_n+\xi_n}{\varepsilon}.
+\]
+右侧不超过$\delta$时便达到相应PAC保证。
+
+最终若使用有限宽$f_{\rho_{m,S}}$，还须把逼近$\rho_S$造成的训练及总体风险误差加入式~\eqref{eq:mean-field-excess-risk}。无限神经元极限中的分布收敛，不能单独提供有限宽预测保证。
+
+现在将随机单位由一个网络内的神经元，改为完整网络。$\rho$抽出单元后还需积分形成预测，下面的$Q$抽取一次就得到完整预测器。因此要重新定义风险与参照分布。
+
+\subsection{完整网络分布与随机预测器泛化}
+\label{sec:pac-bayes}
+
+令算法从$S$得到完整参数上的$Q_S$，预测时再抽参数。PAC--Bayes将它与样本独立先验比较，给出对样本高概率成立的界；分布稳定性则与相邻样本的$Q_{S'}$比较，控制平均泛化差。相对熵平均分解还可联系互信息，但不能合并两种概率保证。
+
+\paragraph{PAC--Bayes风险界}
+
+假设训练中心经验风险低，而且附近扰动网络也有低损失。要评价这组网络，我们可用样本依赖分布描述它，再同时计算随机网络的经验风险与相对事先分布的选择代价。这正是PAC--Bayes的比较方式。
+
+\begin{definition}[PAC--Bayes的先验与后验]
+\label{def:pac-bayes-distributions}
+设$\Theta$为完整网络的参数空间。先验$P_0$是与样本$S$独立的$\Theta$上概率分布，
+后验$Q_S$是由$S$决定的$\Theta$上概率分布。对于任意分布$Q$，定义
+\[
+ \hat R_S(Q)=\mathbb E_{\bm\theta\sim Q}\hat R_S(\bm\theta),
+ \qquad R(Q)=\mathbb E_{\bm\theta\sim Q}R(\bm\theta).
+\]
+\end{definition}
+
+“后验”在此表示数据依赖分布，不要求按贝叶斯公式求出。评价先从$Q$抽参数再预测，通常不等于均值参数网络风险。教学例子中，两网络经验错误率0.02、0.10，后验概率0.9、0.1，平均为$0.9\times0.02+0.1\times0.10=0.028$。先验各赋$1/2$时，信息代价为$D_{\mathrm{KL}}(Q\|P_0)=0.9\log1.8+0.1\log0.2\approx0.368$。经验风险评价预测，相对熵评价重新分配概率质量，二者各有作用。
+
+为在有界风险间比较，定义Bernoulli相对熵$\operatorname{kl}(a\|b)=a\log(a/b)+(1-a)\log((1-a)/(1-b))$，端点取连续延拓。下面使用便于完整推导的常数。
+
+\begin{theorem}[PAC--Bayes期望风险界]
+\label{thm:pac-bayes-bound}
+设$(Z,\mathcal Z)$为可测观测空间，$\mathcal P$为其上的概率分布，
+$(\Theta,\mathcal T)$为参数空间。对每个$\bm\theta\in\Theta$，令
+$z\mapsto\ell(\bm\theta,z)$为可测的$[0,1]$值损失，并假设联合映射
+$(\bm\theta,z)\mapsto\ell(\bm\theta,z)$可测。令
+$S=(z_1,\ldots,z_n)\sim\mathcal P^n$，其中$n\geq1$，并定义
+\[
+ \hat R_S(\bm\theta)=\frac1n\sum_{i=1}^n\ell(\bm\theta,z_i),
+ \qquad
+ R(\bm\theta)=\mathbb E_{z\sim\mathcal P}\ell(\bm\theta,z).
+\]
+对$\Theta$上的任意概率分布$Q$，定义
+\[
+ \hat R_S(Q)=\mathbb E_{\bm\theta\sim Q}\hat R_S(\bm\theta),
+ \qquad
+ R(Q)=\mathbb E_{\bm\theta\sim Q}R(\bm\theta).
+\]
+对$a,b\in[0,1]$，定义
+\[
+ \operatorname{kl}(a\|b)
+ =a\log\frac ab+(1-a)\log\frac{1-a}{1-b},
+\]
+端点按连续延拓解释。
+设先验$P_0$为与$S$独立的$\Theta$上概率分布。
+对于任意$\delta\in(0,1)$，以至少$1-\delta$的概率，所有$Q\ll P_0$同时满足
+\begin{equation}
+ \operatorname{kl}\bigl(\hat R_S(Q)\|R(Q)\bigr)
+ \leq\frac{D_{\mathrm{KL}}(Q\|P_0)+\log((n+1)/\delta)}{n}.
+ \label{eq:pac-bayes-kl}
+\end{equation}
+从而在同一事件上，
+\[
+ R(Q)\leq\hat R_S(Q)+
+ \sqrt{\frac{D_{\mathrm{KL}}(Q\|P_0)+\log((n+1)/\delta)}{2n}}.
+\]
+\end{theorem}
+\begin{proof}
+固定参数$\bm\theta$，记其期望风险为$r$。
+若单样本损失为Bernoulli变量，经验风险为$k/n$的概率是
+$\binom nk r^k(1-r)^{n-k}$，故
+\[
+ \begin{aligned}
+ &\mathbb E_S e^{n\operatorname{kl}(\hat R_S(\bm\theta)\|r)}\\
+ &\quad=\sum_{k=0}^n\binom nk
+       \left(\frac kn\right)^k\left(1-\frac kn\right)^{n-k}
+ \leq n+1.
+ \end{aligned}
+\]
+每一项都是某个二项分布取值于$k$的概率，因而不超过1。
+对一般$[0,1]$损失，指数函数与相对熵的凸性允许逐个把损失替换成具有相同均值的
+Bernoulli端点变量，而不减小指数矩；因此上界仍然成立。
+
+对独立先验积分，再使用Markov不等式，以至少$1-\delta$的概率有
+\[
+ \mathbb E_{\bm\theta\sim P_0}
+ e^{n\operatorname{kl}(\hat R_S(\bm\theta)\|R(\bm\theta))}
+ \leq\frac{n+1}{\delta}.
+\]
+在这个只由样本决定的事件上，对任意$Q\ll P_0$使用换测度不等式
+\begin{equation}
+ \mathbb E_Q g\leq D_{\mathrm{KL}}(Q\|P_0)+\log\mathbb E_{P_0}e^g,
+ \label{eq:change-of-measure}
+\end{equation}
+其推导见式~\eqref{eq:information-change-measure}。
+取$g(\bm\theta)=n\operatorname{kl}(\hat R_S(\bm\theta)\|R(\bm\theta))$，
+再由$\operatorname{kl}$的联合凸性把左侧下界为
+$n\operatorname{kl}(\hat R_S(Q)\|R(Q))$，即得第一式。
+最后使用$\operatorname{kl}(a\|b)\geq2(a-b)^2$得到第二式。
+\end{proof}
+
+Maurer的精细指数矩估计可在相应条件下把$n+1$换成$2\sqrt n$\scite{maurer2004pacbayes}。当前形式展示了固定网络集中、先验积分与数据依赖后验三步。风险界还需小后验经验风险才有低总体风险；相对于假设空间的PAC学习则须进一步证明算法找到经验误差小且相对熵增长足够慢的后验。
+
+若后验满足$D_{\mathrm{KL}}(Q_S\|P_0)\leq K$，我们可直接要求
+\begin{equation}
+ 2n\varepsilon^2\geq K+\log((n+1)/\delta)
+ \label{eq:pac-bayes-sample-requirement}
+\end{equation}
+使经验风险外的代价不超过$\varepsilon$。忽略$n$的对数，充分样本量随$(K+\log(1/\delta))/\varepsilon^2$增长。作为教学读界例子，经验风险至多0.02、附加量至多0.03，便以概率至少$1-\delta$得到随机预测风险至多0.05；这些数值不代表实测结果。
+
+如果整个后验的平均经验风险为零，可直接利用$\operatorname{kl}(0\|r)=-\log(1-r)$，在同一事件中得到
+\[
+ R(Q_S)\leq1-\exp\left(-\frac{K+\log((n+1)/\delta)}n\right)
+ \leq\frac{K+\log((n+1)/\delta)}n.
+\]
+此时充分条件为$n\varepsilon\geq K+\log((n+1)/\delta)$。中心网络分类正确尚不足以使后验平均经验风险为零，因此不能据此直接使用该速率。
+
+PAC--Bayes用相对独立先验的代价$K$衡量复杂度，大参数网络也可能有小代价，但须实际计算。构造后验时，扰动经验损失与信息代价需要共同控制；扩大低损失邻域或让后验贴近先验，都可能增加另一项。下面以高斯说明这个取舍。
+
+连续先验下，在单个训练参数取点质量通常导致无限相对熵。改取$Q=\mathcal N(\hat{\bm\theta},\sigma^2\bm I)$，将中心附近完整网络纳入评价。对$p$维先验$P_0=\mathcal N(0,\tau^2\bm I)$，有
+\begin{equation}
+ D_{\mathrm{KL}}(Q\|P_0)=\frac{\|\hat{\bm\theta}\|_2^2}{2\tau^2}
+ +\frac p2\left(\frac{\sigma^2}{\tau^2}-1-\log\frac{\sigma^2}{\tau^2}\right).
+ \label{eq:gaussian-pac-bayes-kl}
+\end{equation}
+低损失邻域大时可以扩大后验，但方差代价在$\sigma^2=\tau^2$才最小，向两侧偏离都增加。因此平坦性需落实为扰动损失与相对熵比较；单看Hessian或谷宽仍受参数化影响\scite{dinh2017sharp}。
+
+图~\ref{fig:learning-flat-sharp}固定坐标、方向和参数化，对比同等扰动的经验损失增幅。宽谷在此方向上增幅较小，说明局部扰动代价较低，尚需后验经验风险与先验代价共同支持泛化。重缩放坐标可以改变谷宽，所以截面宽窄不是函数本身不变的风险属性。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/learning-theory-flat-sharp/figure.png}
+  \par\smallskip
+  \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/learning-theory-flat-sharp/quantitative-panels.pdf}
+  \caption{参数扰动代价与PAC--Bayes中的两项控制。上部示意窄谷、宽谷附近的参数扰动与随机预测器；在相应定理条件下，泛化保证还需同时控制后验经验风险与相对于独立先验的相对熵代价。下部两个面板共用相同横纵尺度，横轴为同一单位方向上的参数位移$s$，即$\bm\theta=\hat{\bm\theta}+s\bm u$、$\|\bm u\|_2=1$。构造的窄谷与宽谷分别为$0.1+0.45s^2$、$0.1+0.08s^2$；实心点为谷底，空心点对应相同位移$s=0.6$，经验风险分别增加0.162和0.0288。上部轮廓没有数值含义，下部曲线仅为可复算的教学构造。谷的宽度受参数化与坐标尺度影响，宽谷不必具有较小的期望风险。}
+ \label{fig:learning-flat-sharp}
+\end{figure*}
+
+\paragraph{后验分布的稳定性}
+
+我们再改变参照对象：PAC--Bayes比较$Q_S$与固定$P_0$，稳定性比较$Q_S$与相邻样本产生的$Q_{S'}$。接近固定先验并没有自动给出样本替换变化小的结论。
+
+如果两个后验可以耦合为平均参数距离较小的网络对，且损失关于完整参数为Lipschitz，就能控制随机预测器的平均损失差。下面将耦合距离直接接到泛化恒等式。
+
+\begin{theorem}[参数分布稳定性与期望泛化差]
+\label{thm:distribution-stability-generalization}
+设$(Z,\mathcal Z)$为可测观测空间，$\mathcal P$为其上的概率分布，
+$S=(z_1,\ldots,z_n)\sim\mathcal P^n$，其中$n\geq1$。
+参数空间$\Omega\subseteq\mathbb R^p$取Borel $\sigma$代数；可测随机学习算法根据
+$S$输出具有有限一阶矩的概率分布$Q_S$，再抽取$\bm\theta\sim Q_S$。
+设损失$\ell:\Omega\times Z\to[0,1]$联合可测，并且对每个$z\in Z$及任意
+$\bm\theta,\bm\theta'\in\Omega$都有
+\[
+ |\ell(\bm\theta,z)-\ell(\bm\theta',z)|
+ \leq L_\theta\|\bm\theta-\bm\theta'\|_2.
+\]
+定义
+\[
+ \begin{aligned}
+ R(\bm\theta)&=\mathbb E_{z\sim\mathcal P}\ell(\bm\theta,z),&
+ \hat R_S(\bm\theta)&=\frac1n\sum_{i=1}^n\ell(\bm\theta,z_i),\\
+ R(Q)&=\mathbb E_{\bm\theta\sim Q}R(\bm\theta),&
+ \hat R_S(Q)&=\mathbb E_{\bm\theta\sim Q}\hat R_S(\bm\theta).
+ \end{aligned}
+\]
+其中$L_\theta,\alpha_n\geq0$。若任意仅替换一条观测所得的相邻样本$S,S'$都满足
+$W_1(Q_S,Q_{S'})\leq\alpha_n$，则
+\[
+ \begin{aligned}
+ \sup_z\left|\mathbb E_{Q_S}\ell(\bm\theta,z)
+              -\mathbb E_{Q_{S'}}\ell(\bm\theta,z)\right|
+ &\leq L_\theta\alpha_n,\\
+ \left|\mathbb E_S[R(Q_S)-\hat R_S(Q_S)]\right|
+ &\leq L_\theta\alpha_n.
+ \end{aligned}
+\]
+进一步，若$\Theta\subseteq\Omega$为可测比较空间、$\rho_n\geq0$、
+$Q_S(\Theta)=1$几乎必然成立，且
+\[
+ \mathbb E_S\left[\hat R_S(Q_S)-\inf_{\bm\theta\in\Theta}
+                           \hat R_S(\bm\theta)\right]\leq\rho_n,
+\]
+则$\mathbb E_S R(Q_S)-\inf_{\bm\theta\in\Theta}R(\bm\theta)
+\leq L_\theta\alpha_n+\rho_n$。
+若这两个速率对所有允许分布一致趋于零，则得到相对于$\Theta$的随机PAC学习保证。
+\end{theorem}
+\begin{proof}
+对任意配对分布$\pi\in\Pi(Q_S,Q_{S'})$，损失期望之差的绝对值不超过
+\[
+ \mathbb E_\pi|\ell(\bm\theta,z)-\ell(\bm\theta',z)|
+ \leq L_\theta\mathbb E_\pi\|\bm\theta-\bm\theta'\|_2.
+\]
+对$\pi$取下确界得到均匀稳定性，再由前章的替换样本恒等式得到期望泛化差。
+对于任意固定$\bm\theta\in\Theta$，近似ERM条件给出
+$\mathbb E_S\hat R_S(Q_S)\leq R(\bm\theta)+\rho_n$。
+加上泛化差并取下确界即得超额期望风险界。
+由于$Q_S$以$\Theta$为支撑，联合随机变量
+$R(\bm\theta)-\inf_{\bm\vartheta\in\Theta}R(\bm\vartheta)$非负，且
+\[
+ \mathbb E_{S,\,\bm\theta\sim Q_S}
+ \left[R(\bm\theta)-\inf_{\bm\vartheta\in\Theta}R(\bm\vartheta)\right]
+ =\mathbb E_S R(Q_S)-\inf_{\bm\vartheta\in\Theta}R(\bm\vartheta)
+ \leq L_\theta\alpha_n+\rho_n.
+\]
+对这个联合随机变量应用Markov不等式，失败概率至多
+$(L_\theta\alpha_n+\rho_n)/\varepsilon$；令它不超过$\delta$即得到同时包含样本和
+后验抽样随机性的PAC保证。
+\end{proof}
+
+已有$W_1(Q_S,Q_{S'})\leq c/n$和$\rho_n\leq c'/\sqrt n$时，稳定性与经验最优性给出
+\[
+ \mathbb E_S R(Q_S)-\inf_{\bm\theta\in\Theta}R(\bm\theta)
+ \leq\frac{L_\theta c}{n}+\frac{c'}{\sqrt n}.
+\]
+例如$n\geq\max\{2L_\theta c/\varepsilon,\,4(c')^2/\varepsilon^2\}$足以使平均超额风险不超过$\varepsilon$。这是对给定速率的条件推论，具体网络仍需训练分析来证明这些速率。
+
+参数耦合难以估计时，还可比较相邻后验总变差。$[0,1]$损失的期望差不超过该距离，再由$\sqrt{D_{\mathrm{KL}}(Q_S\|Q_{S'})/2}$控制。此处相对熵两端都是相邻后验，不能直接替换为后验—先验代价。
+
+\paragraph{相对熵与互信息}
+
+若随机输出为$W$、边缘分布为$\bar Q=\mathbb E_SQ_S$，相关相对熵有限时有
+\begin{equation}
+ \mathbb E_SD_{\mathrm{KL}}(Q_S\|P_0)
+ =I(W;S)+D_{\mathrm{KL}}(\bar Q\|P_0).
+ \label{eq:pac-bayes-information-decomposition}
+\end{equation}
+将对数密度比分成$\log(\mathrm dQ_S/\mathrm d\bar Q)$和$\log(\mathrm d\bar Q/\mathrm dP_0)$再平均，即得此式。第一项记录当前样本的信息，第二项记录总体输出与先验的偏离。它联系平均PAC--Bayes代价与信息稳定性，却没有把互信息的期望保证变为逐样本高概率保证。
+
+若平均先验代价满足$\mathbb E_SD_{\mathrm{KL}}(Q_S\|P_0)\leq K_n$，第二项非负给出$I(W;S)\leq K_n$，定理~\ref{thm:mutual-information-risk}便得到
+\[
+ \left|\mathbb E_S[R(Q_S)-\hat R_S(Q_S)]\right|
+ \leq\sqrt{\frac{K_n}{2n}}.
+\]
+参数分布由此沿一般信息稳定性进入风险分解，再与经验最优性合并。PAC--Bayes另给样本高概率事件中的同时后验保证，两种概率对象仍不同。
+
+\paragraph{两类参数分布的联系与边界}
+
+回到随机单位，$\rho_S$抽取一次只得到一个神经元，式~\eqref{eq:mean-field-network}的积分才得到完整$f_{\rho_S}$；$Q_S$则直接抽出完整网络。所以前者的风险评价确定积分函数，后者的$R(Q_S)$平均多个完整函数的风险。
+
+距离的用途也随单位而定。$W_1(\rho_S,\rho_{S'})$经单元Lipschitz性控制积分函数的稳定性，$W_1(Q_S,Q_{S'})$经完整参数Lipschitz性控制随机输出稳定性，$D_{\mathrm{KL}}(Q_S\|P_0)$则用于换测度的高概率界。任何一个小，都不会无条件使另外两个小。
+
+可以在更高层让算法随机输出神经元分布，再以其完整积分预测器组成PAC--Bayes后验。但要重新定义随机对象、先验与损失，并核对可测性和绝对连续性。这并非平均场极限的直接结果。两条分支是不同的分析方式，而不是一个定理的两种表述。
+
+\FloatBarrier
+\section{理论的比较与使用}
+\label{sec:deep-theory-comparison}
+
+四个入口都要解释有限样本训练为何可能得到小期望风险，但分工不同：范数约束函数，初始梯度固定特征，更新选择解，分布再区分群体表示与完整网络随机化。表~\ref{tab:deep-generalization-routes}据此整理它们与一般学习工具的关系。复杂度、稳定性和PAC--Bayes是连接工具，不能再误列为互斥的上位入口。
+
+这些界尚不具备直接数值排名的共同条件。范数间隔界评价分类错误，固定特征界评价有界Lipschitz损失，最小范数回归使用平方损失，PAC--Bayes评价随机预测器。式~\eqref{eq:ntk-pac-bayes-risk}还付出扰动代价才转回中心。因此必须先统一损失、输出与置信要求，再比较右侧。
+
+\begin{table*}[!htb]
+ \centering
+ \small
+ \begin{tabular}{p{24mm}p{43mm}p{46mm}p{38mm}}
+ \toprule
+ 分析入口 & 与一般学习理论的联系 & 期望风险与样本量由什么控制 & 对训练的指导\\
+ \midrule
+ 参数大小 & 函数空间复杂度控制泛化；分层参数变化也可转为损失稳定性 & 经验间隔错误率、范数与间隔之比、样本量及置信度 & 同时控制范数与经验间隔，不能只缩小权重\\
+ 参数梯度初始值 & 固定特征接上RKHS复杂度、PAC--Bayes与正则化稳定性 & 标签与核谱的关系、RKHS范数、样本量和近似误差 & 检查初始特征能否以较小范数表达目标\\
+ 参数梯度更新 & 动力学确定选解，再用风险分解、复杂度或稳定性控制泛化 & 最小范数解的数据依赖风险、归一化间隔、矩阵谱与样本敏感性 & 检查初始化、损失、参数化和优化器怎样共同选择解\\
+ 参数分布 & 神经元分布通过稳定性分析确定性积分模型；完整网络分布通过PAC--Bayes或稳定性分析随机预测器 & 神经元分布变化、有限宽度误差、后验经验风险、相对熵代价与置信度 & 先区分$\rho$与$Q$的随机单位，再选择相应距离和泛化结论\\
+ \bottomrule
+ \end{tabular}
+ \caption{神经网络泛化分析的四个入口。每一行对应本章一个上位分析角度；
+ 具体的复杂度界、稳定性定理和PAC--Bayes界是连接该角度与期望风险的工具。}
+ \label{tab:deep-generalization-routes}
+\end{table*}
+
+同一训练结果可以沿多个入口分析。隐式偏差确定低范数选解后，范数间隔界可评价分类风险，样本稳定性则提供另一个保证。固定初始特征允许RKHS范数与正则化分析；特征明显变化时转向真实动力学或神经元分布。PAC--Bayes也可评价结果附近网络，但其直接对象仍是对应随机预测器。
+
+设计改变的对象须明确。范数约束限制候选空间，$\ell_2$惩罚修改目标，权重衰减在更新中收缩参数，初始化和优化器参与选解。PAC--Bayes先验在观察当前样本前固定，可以只用于事后评价，不必用于训练。因此它们不是同一种假设空间限制。
+
+更强约束还可能排除有用函数。缩小范数球可降低复杂度，却使目标不再可表示，即使达到类内最优风险仍留下近似误差。评价训练方案时，我们分别检查空间是否含低风险函数、算法是否达到低经验风险，以及输出是否满足泛化条件。现有工具支持这些判断，没有给出任意任务都适用的结构与训练选择法。
+
+推算样本量时，先固定风险目标与可达到的经验误差，再求附加项足够小的$n$。范数、间隔、稳定性与后验代价若随$n$改变，都要一起代入。固定其他量得到的缩放仅是条件结论；上界空泛时需要更具体的分布和算法分析，不能把上界当成测试错误率。
+
+\FloatBarrier
+\Needspace{8\baselineskip}
+\section{本章小结}
+\label{sec:deep-learning-summary}
+
+参数数量约束整个架构的容量，却不能独立解释某次过参数化训练的风险。我们还需确定算法所选函数，控制复杂度或样本敏感度，并核对近似能力和分布条件。VC维提供固定架构的统计保证，选解分析则帮助评价架构内的具体结果。
+
+范数与间隔限制函数复杂度，初始梯度在惰性条件下建立核特征，完整更新追踪经验解选择，参数分布分别组织神经元与随机网络。这些对象只有接到经验拟合、近似能力与样本量，才形成学习保证。核正定解决插值存在性，最小范数与最大间隔解决条件下的选解，平均场解决分布表示与极限，PAC--Bayes解决随机后验风险；各自条件不能省略。
+
+它们也能接到稳定性：范数限制变化的放大，动力学决定样本替换后的轨迹差，分布距离与信息量控制随机输出依赖。训练中的相邻迭代与相邻训练样本是不同的比较。沿稳定性得到学习还必须加入经验优化误差，复杂度与PAC--Bayes则提供另外的充分分析。
+
+所有结论都绑定明确模型、数据和训练设定。规模、时间或任务一起改变时，须重新说明固定与变化对象。下一章进一步改变训练与评价分布，研究源域信息为何能够支持目标域预测。
+
+\Needspace{18\baselineskip}
+\paragraph{延伸阅读}
+Bartlett、Foster与Telgarsky的谱归一化间隔分析展示各层范数和分类间隔怎样共同进入风险。可对照网络等价缩放，检查为何单独缩小权重或只报参数数目都不足以评价分类保证\scite{bartlett2017spectral}。
+
+Arora等的两层网络分析适合追踪核谱与标签如何同时影响训练和风险；Soudry等的可分分类分析则说明逻辑参数发散时方向为何仍趋向最大间隔\scite{arora2019finegrained,soudry2018implicit}。
+
+Maurer的PAC--Bayes推导可用于核对先验积分、指数矩和换测度步骤，尤其可比较更精细常数需要哪些条件\scite{maurer2004pacbayes}。
+
+Razin与Cohen的矩阵分解反例展示范数解释的边界：训练偏好可能无法由固定矩阵范数完整表示，可结合前面的谱动力学与静态范数引理对照\scite{razin2020norms}。

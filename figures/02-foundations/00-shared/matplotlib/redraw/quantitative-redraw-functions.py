@@ -37,8 +37,8 @@ def coverage():
         risks.append(np.cumsum(np.isin(order,[9,10]))/np.arange(1,11)*100)
     assert risks[0][7]==0 and risks[1][7]==25 and risks[0][-1]==risks[1][-1]==20
     x=np.arange(1,11)*10; fig,ax=single(76)
-    ax.plot(x,risks[0],color=BLUE,marker='o',mfc='white',ms=4)
-    ax.plot(x,risks[1],color=RED,ls='--',marker='^',mfc='white',ms=4)
+    ax.plot(x,risks[0],color=BLUE,marker='o',mfc='white',ms=4,clip_on=False)
+    ax.plot(x,risks[1],color=RED,ls='--',marker='^',mfc='white',ms=4,clip_on=False)
     ax.plot([80,80],[0,25],color=MUTED,ls=':',lw=.6)
     ax.text(81,29,r'乙：$2/8$');ax.text(77,3,r'甲：$0/8$',ha='right')
     ax.text(23,96,'分数乙');ax.text(20,9,'分数甲')

@@ -17,13 +17,13 @@ ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists()
 OUT=Path(__file__).resolve().parent
 ARCHIVE=json.loads((OUT/'archive.json').read_text())
 def destination(key):return ROOT/ARCHIVE[key]['folder']
-sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
+sys.path.insert(0,str(ROOT/'figures/02-foundations/00-shared/academic-drawing'))
 from plot_style import *
 configure()
 FACTS=OUT/'facts'
 MM=1/25.4
 YELLOW=GREEN # This class of fine quantitative curve requires a visible Lancet hue.
-YELLOW_FILL=SAGE
+YELLOW_FILL=GREEN_FILL
 GRAY=MUTED
 SCOPE=json.loads((OUT/'scope.json').read_text())['figures']
 LOOKUP={Path(f['source'][0]).stem:f for f in SCOPE}
@@ -85,11 +85,11 @@ def calibration_panel():
 
 def fairness_rate_panel():
     groups=['u','v'];values=[[24/100,52/100],[16/20,48/60],[16/24,48/52]];denoms=[['24/100','52/100'],['16/20','48/60'],['16/24','48/52']]
-    fig,axs=plt.subplots(1,3,figsize=(169*MM,72*MM),layout='constrained',sharex=True)
+    fig,axs=plt.subplots(1,3,figsize=(164.6*MM,72*MM),layout='constrained',sharex=True)
     for ax,title,vs,ss in zip(axs,['人口统计均等','均等化赔率','正预测值均等'],values,denoms):
         ax.barh([1,0],vs,color=[BLUE,RED],height=.3);ax.set(xlim=(0,1.05),ylim=(-.45,1.7),yticks=[0,1],yticklabels=['$v$','$u$'],title=title,xticks=[0,.5,1]);ax.xaxis.set_major_formatter(PercentFormatter(1,decimals=0))
         for y,v,s in zip([1,0],vs,ss):ax.text(v+.02,y,s,va='center',fontsize=7.6)
-    note(axs[1].text(.52,1.45,'两组假正例率也相同：8/80 = 4/40',ha='center',fontsize=7.4))
+    note(axs[1].text(.52,1.45,'两组假正例率也相同：8/80 = 4/40',ha='center',fontsize=7.5))
     export(fig,'03-trustworthiness','trust-fairness-incompatibility',{'n_each_group':100,'counts':{'u':{'TP':16,'FP':8,'positives':20,'negatives':80},'v':{'TP':48,'FP':4,'positives':60,'negatives':40}},'selection_rates':values[0],'true_positive_rates':values[1],'false_positive_rates':[.1,.1],'positive_predictive_values':values[2],'bars_from_zero':True})
 
 def dp_panel():
@@ -124,8 +124,11 @@ def conformal_panel():
 
 if __name__=='__main__':
     load_math_functions()
+    import argparse
+    parser=argparse.ArgumentParser();parser.add_argument('--functions',nargs='*');args=parser.parse_args()
     failures=[]
     for fn in [training,point_distribution,coverage,robustness,fairness,proxy,flat,selection,ntk,support,importance,radar,error_decomposition,double_descent,distribution_shift,linear_panel,discriminative_panel,calibration_panel,fairness_rate_panel,dp_panel,uniform_panel,local_panel,attribution_panel,conformal_panel]:
+        if args.functions and fn.__name__ not in args.functions:continue
         try:fn();print(fn.__name__,'rendered',flush=True)
         except Exception as exc:failures.append({'function':fn.__name__,'error':str(exc)});plt.close('all');print(fn.__name__,'FAILED',str(exc),flush=True)
     (OUT/'charts-records.json').write_text(json.dumps(RECORDS,ensure_ascii=False,indent=2))

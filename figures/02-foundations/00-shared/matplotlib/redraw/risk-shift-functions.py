@@ -46,10 +46,11 @@ def double_descent():
                   ((30,15),(39,25),(43,44),(47,44)),
                   ((47,44),(51,44),(51,20),(62,12)),
                   ((62,12),(70,6),(82,5),(94,4))]
-    training = [((3,31),(20,14),(36,4),(47,.7))]
+    training = [((3,31),(20,14),(36,4),(47,0))]
     p = bezier_path(population, (96,49))
     tr = bezier_path(training, (96,49))
-    tr = np.vstack([tr, (94/96, .7/49)])
+    tr = np.vstack([tr, (94/96, 0)])
+    assert tr[-1,1] == 0 and tr[tr[:,0]>=47/96,1].max() == 0
     assert np.all(np.diff(tr[:, 0])>0) and np.all(np.diff(tr[:, 1])<=1e-12)
     fig = canvas(height=64)
     ax = fig.add_axes([.12,.24,.82,.69]); clean_axes(ax)
