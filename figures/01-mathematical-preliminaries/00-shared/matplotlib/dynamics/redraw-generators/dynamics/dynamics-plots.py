@@ -22,9 +22,9 @@ from resource_paths import asset_path
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
-from plot_style import BLUE, RED, GREEN as YELLOW
+from plot_style import BLUE, RED, GREEN, YELLOW
 from plot_style import INK, STROKE, MUTED as GREY, BLUE_FILL as PALE
 RECORDS = {}
 CHAPTERS = {
@@ -69,7 +69,7 @@ def save(fig, name, expressions, sampling, parameters, question, width_mm, heigh
         'outputs': outputs,
         'validation': {'analytic_values': 'Checked by assertions and direct evaluation in generator',
                        'visual': 'See validation.json; output hashes identify externally inspected versions',
-                       'book_compilation': 'No TeX compilation or embedded book-page inspection, at user request'},
+                       'book_compilation': 'Drawing replay alone is not book-page approval; see redraw-20261011 review and current build/check-target'},
     }
     chapter = Path('tex/01-mathematical-preliminaries')/CHAPTERS[name]
     meta['source'] = {'file':str(chapter), 'sha256':hashlib.sha256((ROOT/chapter).read_bytes()).hexdigest()}
@@ -112,10 +112,10 @@ for ax,step in zip(axs,[.5,2.2]):
     numeric=(1-step)**np.arange(len(grid))
     exact_t=np.linspace(0,8.8,701)
     ax.plot(exact_t,np.exp(-exact_t),color=BLUE,label='精确解')
-    ax.plot(grid,numeric,color=RED,marker='s',ms=3,ls='--',label='Euler 状态')
+    ax.plot(grid,numeric,color=(GREEN if step<2 else RED),marker='s',ms=3,ls='--',label='Euler 状态')
     ax.axhline(0,color=GREY,lw=.6)
-    ax.set(xlim=(0,8.8),ylim=(-2.5,2.5),xlabel='时间 $t$')
-    ax.set_title(rf'$h={step:g},\quad 1-h={1-step:g}$',fontweight='normal',fontsize=9)
+    ax.set(xlim=(-.12,9.0),ylim=(-2.5,2.5),xlabel='时间 $t$')
+    ax.set_title(rf'$h={step:g},\quad 1-h={1-step:g}$',fontweight='normal',fontsize=8)
     ax.legend(loc='upper left')
 axs[0].set_ylabel('状态 $x$')
 save(fig,'euler-stability',{'ode':'dx/dt=-x, x(0)=1','exact':'x(t)=exp(-t)','euler':'x_k=(1-h)^k, t_k=k*h'}, {'exact':'701 evenly spaced points in [0,8.8]','euler':'all grid points k*h<=8.8'}, {'h':[.5,2.2]},'How can a stable differential equation give a growing numerical trajectory?',169,64)
@@ -128,7 +128,7 @@ K=prior_var/(prior_var+noise_var); post_mean=prior_mean+K*(reading-prior_mean); 
 assert np.allclose([K,post_mean,post_var],[.8,1.6,.8])
 fig,ax=canvas(112,64)
 ax.plot(state,density(state,prior_mean,prior_var),color=BLUE,label=r'预测 $\mathcal{N}(0,4)$')
-ax.plot(state,density(state,post_mean,post_var),color=RED,ls='--',label=r'滤波 $\mathcal{N}(1.6,0.8)$')
+ax.plot(state,density(state,post_mean,post_var),color=GREEN,ls='--',label=r'滤波 $\mathcal{N}(1.6,0.8)$')
 ax.axvline(reading,color=GREY,ls=':',lw=.6)
 ax.text(reading+.15,.02,'读数 2',fontsize=8)
 ax.set(xlim=(-6,6),ylim=(0,.53),xlabel='隐藏状态 $x$',ylabel='条件密度')
@@ -141,11 +141,11 @@ fig,axs=canvas(169,65,ncols=2,sharex=True)
 for ax,cfn in zip(axs,[1,9]):
     threshold=1/(1+cfn)
     ax.plot(p,1-p,color=BLUE,label='预测阳性')
-    ax.plot(p,cfn*p,color=RED,ls='--',label='预测阴性')
+    ax.plot(p,cfn*p,color=GREEN,ls='--',label='预测阴性')
     ax.axvline(threshold,color=GREY,ls=':',lw=.6)
     ax.scatter([threshold],[1-threshold],color=INK,s=17,zorder=4)
     ax.set(xlim=(0,1),ylim=(0,cfn*1.04),xlabel='阳性概率 $p$')
-    ax.set_title(rf'$c_{{\mathrm{{FP}}}}=1,\quad c_{{\mathrm{{FN}}}}={cfn}$',fontweight='normal',fontsize=9)
+    ax.set_title(rf'$c_{{\mathrm{{FP}}}}=1,\quad c_{{\mathrm{{FN}}}}={cfn}$',fontweight='normal',fontsize=8)
     ax.text(threshold+.02,.20 if cfn==1 else cfn*.40,rf'阈值 ${threshold:g}$',fontsize=8)
     ax.legend(loc='upper center')
 axs[0].set_ylabel('条件风险')
@@ -156,11 +156,11 @@ eta=np.linspace(-.5,11.5,1201); losses=np.array([0,2,10]); probabilities=np.arra
 phi=eta+np.maximum(losses[None,:]-eta[:,None],0)@probabilities/(1-alpha)
 assert np.isclose(2+np.maximum(losses-2,0)@probabilities/(1-alpha),5.2)
 fig,ax=canvas(112,64)
-ax.plot(eta,phi,color=YELLOW)
-ax.scatter([2],[5.2],color=YELLOW,edgecolor=STROKE,lw=.6,s=29,zorder=4)
+ax.plot(eta,phi,color=BLUE)
+ax.scatter([2],[5.2],color=BLUE,edgecolor=STROKE,lw=.6,s=29,zorder=4)
 ax.plot([2,2], [4.4,5.2], color=GREY,ls=':',lw=.6)
 ax.plot([-.5,2],[5.2,5.2],color=GREY,ls=':',lw=.6)
-ax.text(2.35,4.70,r'最小点 $(2,5.2)$',fontsize=8.5)
+ax.text(2.35,4.70,r'最小点 $(2,5.2)$',fontsize=8)
 ax.set(xlim=(-.5,11.5),ylim=(4.4,12),xlabel=r'阈值 $\eta$',ylabel=r'目标 $\phi(\eta)$')
 ax.set_xticks([0,2,5,10]); ax.set_yticks([5.2,8,10,12])
 save(fig,'cvar-threshold',{'phi':'eta + E[(L-eta)_+]/(1-alpha)','distribution':'P(L=0,2,10)=(0.6,0.3,0.1)','tail_mean':'(0.1*10+0.15*2)/0.25=5.2'}, {'eta':'1201 evenly spaced points in [-0.5,11.5]','breakpoints':[0,2,10],'breakpoint_values_in_grid':True}, {'alpha':alpha,'losses':losses.tolist(),'probabilities':probabilities.tolist(),'VaR':2,'CVaR':5.2},'Why can a quantile differ from the average of the worst tail mass?',112,64)
@@ -172,7 +172,7 @@ ax.axhspan(-.7,0,color=PALE,zorder=0)
 ax.plot(k,safe,color=BLUE,marker='o',ms=3.5,label=r'$u_t=-0.5x_t$')
 ax.plot(k,unsafe,color=RED,marker='s',ms=3.5,ls='--',label=r'$u_t=-1.5x_t$')
 ax.axhline(0,color=GREY,lw=.6)
-ax.text(5.3,-.53,'禁止区域 $x<0$',fontsize=8.5)
+ax.text(5.3,-.53,'禁止区域 $x<0$',fontsize=8)
 ax.set(xlim=(-.1,8.1),ylim=(-.7,1.17),xlabel='离散时刻 $t$',ylabel='状态 $x_t$')
 ax.set_xticks([0,2,4,6,8]); ax.legend(loc='upper right')
 save(fig,'stability-safety',{'plant':'x_(t+1)=x_t+u_t, x_0=1','safe':'x_t=(0.5)^t','unsafe':'x_t=(-0.5)^t'}, {'t':'all integers 0,...,8'}, {'safe_set':'[0,infinity)','feedback_gains':[.5,1.5]},'Why is eventual convergence not enough to guarantee safety throughout a trajectory?',112,64)
@@ -183,7 +183,7 @@ fig,ax=canvas(112,64)
 ax.fill_between(x,bound,.25,color=PALE,zorder=0)
 ax.plot(x,bound,color=GREY,ls=':',lw=.6,label='可行边界 $u=-x$')
 ax.plot(x,nominal,color=BLUE,label='名义动作 $-1$')
-ax.plot(x,corrected,color=RED,ls='--',label='安全投影')
+ax.plot(x,corrected,color=GREEN,ls='--',label='安全投影')
 ax.annotate('',xy=(.2,-.2),xytext=(.2,-1),arrowprops={'arrowstyle':'->','lw':.6,'color':STROKE})
 ax.text(.27,-.50,'$x=0.2$',fontsize=8)
 ax.set(xlim=(0,2),ylim=(-2.25,.25),xlabel='当前状态 $x$',ylabel='动作 $u$')
@@ -193,12 +193,12 @@ save(fig,'barrier-projection',{'plant':'dx/dt=u','h':'h(x)=x, alpha(h)=h','feasi
 # Best response is a correspondence, not necessarily a continuous function.
 fig,ax=canvas(112,75)
 for xs,ys in [([0,0],[0,.5]),([1,1],[.5,1]),([0,1],[.5,.5])]: ax.plot(xs,ys,color=BLUE)
-for xs,ys in [([0,.5],[1,1]),([.5,1],[0,0]),([.5,.5],[0,1])]: ax.plot(xs,ys,color=RED,ls='--')
+for xs,ys in [([0,.5],[1,1]),([.5,1],[0,0]),([.5,.5],[0,1])]: ax.plot(xs,ys,color=GREEN,ls='--')
 ax.scatter([.5],[.5],color=INK,s=25,zorder=5)
-ax.text(.56,.55,'共同最佳响应',fontsize=8.4)
+ax.text(.56,.55,'共同最佳响应',fontsize=8)
 ax.set(xlim=(-.08,1.08),ylim=(-.08,1.23),xlabel='行方选正面的概率 $p$',ylabel='列方选正面的概率 $q$',aspect='equal')
 ax.set_xticks([0,.5,1]);ax.set_yticks([0,.5,1])
-ax.legend(handles=[Line2D([0],[0],color=BLUE,label='行方最佳响应'),Line2D([0],[0],color=RED,ls='--',label='列方最佳响应')],loc='upper center',ncols=2,columnspacing=1.2,fontsize=8)
+ax.legend(handles=[Line2D([0],[0],color=BLUE,label='行方最佳响应'),Line2D([0],[0],color=GREEN,ls='--',label='列方最佳响应')],loc='upper center',ncols=2,columnspacing=1.2,fontsize=8)
 save(fig,'matching-best-responses',{'payoff':'M=[[1,-1],[-1,1]], row maximizes and column minimizes','BR1':'p=0 if q<0.5; p in [0,1] if q=0.5; p=1 if q>0.5','BR2':'q=1 if p<0.5; q in [0,1] if p=0.5; q=0 if p>0.5'}, {'segments':'exact piecewise correspondence; all endpoints included','not_a_trajectory':True}, {'equilibrium':[.5,.5]},'Why must a mixed equilibrium be a mutual best response, including tied actions?',112,75)
 
 # The same feasible sum has different solutions when disagreement changes.

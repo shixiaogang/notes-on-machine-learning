@@ -17,11 +17,11 @@ ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'build.sh').is_f
 sys.path.insert(0, str(ROOT / 'figures/00-shared'))
 from resource_paths import asset_path
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
-from plot_style import (BLUE, RED, GREEN as YELLOW, INK, MUTED, BLUE_FILL,
+from plot_style import (BLUE, RED, GREEN, YELLOW, INK, MUTED, BLUE_FILL,
                         configure, prepare_figure, style_record)
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 RECORDS = []
 
 
@@ -79,8 +79,8 @@ def kernel_distinguishability():
     ax = axes[0]
     ax.vlines([0], 0, [1], color=BLUE, lw=1.1)
     ax.scatter([0], [1], color=BLUE, s=20, zorder=3, label=r'$P=\delta_0$')
-    ax.vlines([-1, 1], 0, [.5, .5], color=RED, lw=1.1, ls='--')
-    ax.scatter([-1, 1], [.5, .5], color=RED, marker='s', s=20, zorder=3,
+    ax.vlines([-1, 1], 0, [.5, .5], color=GREEN, lw=1.1, ls='--')
+    ax.scatter([-1, 1], [.5, .5], color=GREEN, marker='s', s=20, zorder=3,
                label=r'$Q=(\delta_{-1}+\delta_1)/2$')
     ax.set(xlim=(-1.4, 1.4), ylim=(0, 1.55), xlabel='$x$', ylabel='概率质量')
     ax.set_xticks([-1, 0, 1]); ax.set_yticks([0, .5, 1])
@@ -88,8 +88,8 @@ def kernel_distinguishability():
     ax.legend(loc='upper center', frameon=False, handlelength=1.4)
     ax = axes[1]
     mmd_squared = 1.5 + .5*np.exp(-2) - 2*np.exp(-.5)
-    ax.bar([0, 1], [0, np.sqrt(mmd_squared)], color=YELLOW, width=.48)
-    ax.scatter([0], [0], color=YELLOW, s=20, zorder=3)
+    ax.bar([0, 1], [0, np.sqrt(mmd_squared)], color=BLUE, width=.48)
+    ax.scatter([0], [0], color=BLUE, s=20, zorder=3)
     ax.text(0, .035, '$0$', ha='center')
     ax.text(1, np.sqrt(mmd_squared)+.025, f'{np.sqrt(mmd_squared):.3f}', ha='center')
     ax.set(ylim=(0, .75), ylabel='总体MMD')

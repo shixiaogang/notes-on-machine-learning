@@ -17,9 +17,9 @@ sys.path.insert(0, str(ROOT / 'figures/00-shared'))
 from resource_paths import asset_path
 sys.path.insert(0,str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure,prepare_figure,style_record
-from plot_style import BLUE,RED,GREEN as YELLOW,STROKE,MUTED,GRID,BLUE_FILL,RED_FILL,YELLOW_FILL
+from plot_style import BLUE,RED,GREEN, YELLOW,STROKE,MUTED,GRID,BLUE_FILL,RED_FILL,YELLOW_FILL
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 CHAPTER='tex/01-mathematical-preliminaries/'
 
 def save(fig,name,size,chapter,purpose,formula,parameters,data=None):
@@ -72,7 +72,7 @@ def overlap():
       {'output_positions':[.5,1.5],'curve_points':401,'curve_interval':[-.3,2.3]})
 
 def lasalle():
-    size=[110,87]
+    size=[112,87]
     fig,ax=plt.subplots(figsize=np.array(size)/25.4)
     fig.subplots_adjust(left=.17,right=.97,bottom=.18,top=.94)
     w=np.sqrt(3)/2
@@ -86,10 +86,10 @@ def lasalle():
     for radius in [.25,.5,.75,1]:
         ax.plot(radius*np.cos(th),radius*np.sin(th),color=GRID,lw=.5,zorder=0)
     ax.axhline(0,color=MUTED,lw=.6,ls='--',zorder=1)
-    ax.plot(q,p,color=YELLOW,lw=1.1,zorder=2)
-    ax.scatter([1,0],[0,0],s=[17,14],color=[YELLOW,STROKE],zorder=3)
+    ax.plot(q,p,color=BLUE,lw=1.1,zorder=2)
+    ax.scatter([1,0],[0,0],s=[17,14],color=[BLUE,STROKE],zorder=3)
     for a,b in [(30,58),(220,248),(520,548)]:
-        ax.annotate('',xy=(q[b],p[b]),xytext=(q[a],p[a]),arrowprops={'arrowstyle':'->','color':YELLOW,'lw':1.1,'mutation_scale':8})
+        ax.annotate('',xy=(q[b],p[b]),xytext=(q[a],p[a]),arrowprops={'arrowstyle':'->','color':BLUE,'lw':1.1,'mutation_scale':8})
     ax.annotate('起点 (1, 0)',xy=(1,0),xytext=(.50,.16),arrowprops={'arrowstyle':'-','color':MUTED,'lw':.6})
     ax.text(-1.05,.12,r'零导数集合 $p=0$',color=MUTED,fontsize=8)
     ax.annotate('最大不变集：原点',xy=(0,0),xytext=(-.88,.62),arrowprops={'arrowstyle':'-','color':MUTED,'lw':.6})
@@ -102,15 +102,17 @@ def lasalle():
 
 def quadratic_variation():
     size=[169,75];n=4096;dt=1/n;seed=20261006
-    rng=np.random.default_rng(seed)
-    increments=np.sqrt(dt)*rng.standard_normal(n)
-    path=np.r_[0,np.cumsum(increments)];t=np.linspace(0,1,n+1)
+    retained=ROOT/"figures/01-mathematical-preliminaries/04-random-variables-distributions-and-causality/matplotlib/teaching-dynamics/brownian-increments.csv"
+    table=np.genfromtxt(retained,delimiter=",",names=True)
+    increments=table["increment"]
+    path=np.r_[0,table["cumulative_path"]];t=np.r_[0,table["time"]]
+    assert len(increments)==n and np.allclose(path[1:],np.cumsum(increments),rtol=0,atol=1e-12)
     values=[]
     fig,axes=plt.subplots(1,2,figsize=np.array(size)/25.4)
     fig.subplots_adjust(left=.075,right=.975,bottom=.23,top=.86,wspace=.28)
-    axes[0].plot(t,path,color=YELLOW,lw=1.1)
+    axes[0].plot(t,path,color=BLUE,lw=1.1)
     axes[0].set(xlabel=r'时间 $t$',ylabel='累计高斯增量',title='同一组细网格增量的路径折线',xlim=(0,1))
-    for mesh,color in [(64,BLUE),(1024,RED)]:
+    for mesh,color in [(64,BLUE),(1024,GREEN)]:
         stride=n//mesh
         d=np.diff(path[::stride]);times=t[::stride];qv=np.r_[0,np.cumsum(d*d)]
         assert len(times)==mesh+1
@@ -120,13 +122,12 @@ def quadratic_variation():
     axes[1].set(xlabel=r'时间 $t$',ylabel='平方增量累计和',title='改变分割，不重新生成路径',xlim=(0,1),ylim=(0,1.28))
     axes[1].legend(loc='upper left',handlelength=1.7)
     for ax in axes:ax.grid(axis='y')
-    np.savetxt(asset_path(HERE, 'brownian-increments.csv'),np.c_[t[1:],increments,path[1:]],delimiter=',',header='time,increment,cumulative_path',comments='',fmt='%.17g')
     save(fig,'brownian-quadratic-variation',size,'04-random-variables-distributions-and-causality/01-random-variables.tex',
       'Quadratic variation is accumulated along time on the same coupled sample, distinct from endpoint variance across samples.',
       'delta W_i=sqrt(1/4096)*epsilon_i with seeded independent N(0,1); coarse increments sum the same fine increments; Q_m(t)=sum completed coarse increments squared; E Q_m(1)=1 and Var Q_m(1)=2/m',
       {'seed':seed,'fine_intervals':n,'coarse_intervals':[64,1024],'endpoint_sums':values,
        'scope':'A finite Gaussian-grid teaching construction; a single polygon is not a proof of Brownian convergence or a differentiable Brownian path.'},
-      str((asset_path(HERE, 'brownian-increments.csv')).relative_to(ROOT)))
+      str(retained.relative_to(ROOT)))
 
 if __name__=='__main__':
     overlap();lasalle();quadratic_variation()

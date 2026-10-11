@@ -104,6 +104,7 @@ def prepare_figure(fig):
         # English first gives actual Fira glyphs; CJK falls back only to the
         # explicitly loaded Normal face. Notes opt into WenKai by role.
         note=getattr(text,'academic_role','')=='note'
+        if note:text.set_fontsize(7.5)
         text.set_fontfamily([EN,STIX,NOTE if note else CN]);text.set_fontweight('normal')
         if note: text.set_fontsize(7.5)
         text.set_math_fontfamily('custom')

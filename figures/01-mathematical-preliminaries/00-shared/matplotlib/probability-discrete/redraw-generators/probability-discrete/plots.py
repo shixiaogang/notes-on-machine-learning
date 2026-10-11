@@ -16,10 +16,10 @@ sys.path.insert(0, str(ROOT / 'figures/00-shared'))
 from resource_paths import asset_path
 sys.path.insert(0,str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record
-from plot_style import BLUE, RED, GREEN as YELLOW, MUTED as GRAY, GRID, YELLOW_FILL
+from plot_style import BLUE, RED, GREEN, YELLOW, MUTED as GRAY, GRID, YELLOW_FILL
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 records={}
 def panels(n=2,width=169,height=67):
     fig,axs=plt.subplots(1,n,figsize=(width/25.4,height/25.4),layout='constrained')
@@ -42,13 +42,13 @@ def save(fig,name,formula,parameters,data,reference):
 # A density is integrated, whereas the CDF records accumulated probability.
 x=np.linspace(-.035,.285,641);dens=np.where((x>=0)&(x<=.25),4.,0.);cdf=np.clip(4*x,0,1)
 fig,(a,b)=panels()
-a.plot([-.035,0,0,.25,.25,.285],[0,0,4,4,0,0],color=YELLOW)
-a.fill_between([.10,.15],0,4,color=YELLOW_FILL)
-a.annotate('面积 0.20',(.125,2.1),ha='center',fontsize=8.5)
+a.plot([-.035,0,0,.25,.25,.285],[0,0,4,4,0,0],color=BLUE)
+a.fill_between([.10,.15],0,4,color=BLUE_FILL)
+a.annotate('面积 0.20',(.125,2.1),ha='center',fontsize=8)
 a.set(xlabel='$x$',ylabel='密度 $f(x)$',title='(a) 高度与区间面积',xlim=(-.035,.285),ylim=(0,4.7))
-b.plot(x,cdf,color=YELLOW)
+b.plot(x,cdf,color=BLUE)
 b.vlines([.10,.15],0,[.4,.6],colors=GRAY,ls=':',lw=.6)
-b.plot([.10,.15],[.4,.6],'o',color=YELLOW,ms=4)
+b.plot([.10,.15],[.4,.6],'o',color=BLUE,ms=4)
 b.annotate('$F(0.15)-F(0.10)=0.20$',(.14,.51),xytext=(.025,.85),fontsize=8)
 b.set(xlabel='$x$',ylabel='分布函数 $F(x)$',title='(b) 累积概率的差',xlim=(-.035,.285),ylim=(0,1.05))
 save(fig,'probability-density-cdf','f(x)=4 I(0<=x<=1/4); F(x)=clip(4x,0,1)',
@@ -58,11 +58,11 @@ save(fig,'probability-density-cdf','f(x)=4 I(0<=x<=1/4); F(x)=clip(4x,0,1)',
 q=np.array([.5,.4,.1]);p=np.array([.2,.3,.5]);g=np.array([1.,2.,4.]);w=p/q
 fig,(a,b)=panels();xx=np.arange(3);bw=.34
 for ax,ys1,ys2,l1,l2 in [(a,q,p,'采样分布 $Q$','目标分布 $P$'),(b,q*g,q*w*g,'未加权 $q_jg_j$','加权 $q_jw_jg_j$')]:
-    ax.bar(xx-bw/2,ys1,bw,color=BLUE,label=l1);ax.bar(xx+bw/2,ys2,bw,color=RED,label=l2)
+    ax.bar(xx-bw/2,ys1,bw,color=BLUE,label=l1);ax.bar(xx+bw/2,ys2,bw,color=GREEN,label=l2)
     ax.set_xticks(xx,['$a$','$b$','$c$']);ax.set_ylim(bottom=0);ax.legend(loc='upper left')
     for xpos,ys in [(xx-bw/2,ys1),(xx+bw/2,ys2)]:
         for pos,v in zip(xpos,ys):ax.text(pos,v+.025,f'{v:g}',ha='center',va='bottom',fontsize=8)
-a.set(title='(a) 目标质量与抽样频率',ylabel='概率质量',ylim=(0,.90))
+a.set(title='(a) 目标分布与采样分布',ylabel='概率质量',ylim=(0,.90))
 b.set(title='(b) 对期望的逐项贡献',ylabel='概率 × 函数值',ylim=(0,2.65))
 save(fig,'probability-importance-weights','w=p/q; E_Q[g]=sum(q*g); E_P[g]=E_Q[w*g]',
      {'outcomes':['a','b','c']},{'Q':q.tolist(),'P':p.tolist(),'g':g.tolist(),'weights':w.tolist(),'unweighted_contributions':(q*g).tolist(),'weighted_contributions':(p*g).tolist()},
@@ -72,10 +72,10 @@ save(fig,'probability-importance-weights','w=p/q; E_Q[g]=sum(q*g); E_P[g]=E_Q[w*
 t=np.arange(31);pn=(1-.7**t)/3;periodic=(t%2).astype(float)
 n=np.arange(1,101);ratio=np.array([1+2*sum((1-k/j)*.7**k for k in range(1,j)) for j in n])
 fig,(a,b)=panels()
-a.plot(t,pn,color=BLUE,label='非周期链');a.plot(t,periodic,color=RED,ls='--',marker='.',ms=3,label='二状态周期链')
+a.plot(t,pn,color=BLUE,label='非周期链');a.plot(t,periodic,color=GREEN,ls='--',marker='.',ms=3,label='二状态周期链')
 a.axhline(1/3,color=GRAY,ls=':',lw=.6);a.legend(loc='lower center',bbox_to_anchor=(.5,1.0),ncol=2);a.set(xlabel='步数 $t$',ylabel='$P(Z_t=2)$',ylim=(-.04,1.15))
 a.set_title('(a) 从状态 0 出发的分布',pad=22)
-b.plot(n,ratio,color=YELLOW);b.axhline(17/3,color=GRAY,ls=':',lw=.6);b.axhline(1,color=GRAY,ls='--',lw=.6)
+b.plot(n,ratio,color=BLUE);b.axhline(17/3,color=GRAY,ls=':',lw=.6);b.axhline(1,color=GRAY,ls='--',lw=.6)
 b.text(44,5.88,'极限 $17/3$',fontsize=8);b.text(55,1.17,'独立基准 1',fontsize=8)
 b.set(xlabel='样本量 $n$',ylabel=r'$n\,\mathrm{Var}(\bar Y_n)/\mathrm{Var}(Y_0)$',ylim=(0,6.6))
 b.set_title('(b) 相关性对均值方差的放大',pad=22)
@@ -86,7 +86,7 @@ save(fig,'stochastic-mixing-variance','P=[[.9,.1],[.2,.8]]; P(Z_t=2|Z_0=0)=(1-.7
 
 ang=np.linspace(0,2*np.pi,401);ell1=np.column_stack([np.cos(ang)/2,np.sin(ang)/np.sqrt(2)]);ell2=np.column_stack([np.cos(ang)/np.sqrt(3),np.sin(ang)/np.sqrt(3)])
 fig,(a,)=panels(1,112,75)
-a.plot(*ell1.T,color=BLUE,label=r'$V=\mathrm{diag}(4,2)$');a.plot(*ell2.T,color=RED,ls='--',label=r'$V=\mathrm{diag}(3,3)$')
+a.plot(*ell1.T,color=BLUE,label=r'$V=\mathrm{diag}(4,2)$');a.plot(*ell2.T,color=GREEN,ls='--',label=r'$V=\mathrm{diag}(3,3)$')
 a.axhline(0,color=GRAY,lw=.6);a.axvline(0,color=GRAY,lw=.6);a.set_aspect('equal');a.legend(loc='upper right',bbox_to_anchor=(1.0,1.22),ncol=1)
 a.set(xlabel='第一坐标误差 $e_1$',ylabel='第二坐标误差 $e_2$',xlim=(-.82,.82),ylim=(-.82,.82))
 save(fig,'stochastic-design-ellipsoids','e^T V e<=1; e_i=cos/sin(angle)/sqrt(V_ii)',
@@ -96,7 +96,7 @@ save(fig,'stochastic-design-ellipsoids','e^T V e<=1; e_i=cos/sin(angle)/sqrt(V_i
 
 n=np.arange(1,201);ci=1.96*2/np.sqrt(n);pi=1.96*2*np.sqrt(1+1/n)
 fig,(a,)=panels(1,112,69)
-a.plot(n,ci,color=BLUE,label='均值置信区间');a.plot(n,pi,color=RED,ls='--',label='单次观测预测区间');a.legend(loc='upper right')
+a.plot(n,ci,color=BLUE,label='均值置信区间');a.plot(n,pi,color=GREEN,ls='--',label='单次观测预测区间');a.legend(loc='upper right')
 a.plot([25,25],[ci[24],pi[24]],'o',color=GRAY,ms=3);a.axvline(25,color=GRAY,ls=':',lw=.6)
 a.set(xlabel='样本量 $n$',ylabel='区间半宽',xlim=(1,200),ylim=(0,6))
 save(fig,'statistics-mean-prediction-width','CI halfwidth=1.96*sigma/sqrt(n); PI halfwidth=1.96*sigma*sqrt(1+1/n)',
@@ -107,7 +107,7 @@ save(fig,'statistics-mean-prediction-width','CI halfwidth=1.96*sigma/sqrt(n); PI
 r=np.linspace(-3,3,601);delta=1.;sq=.5*r*r;hub=np.where(abs(r)<=delta,sq,delta*abs(r)-.5*delta**2)
 fig,(a,b)=panels()
 for ax,y1,y2 in [(a,sq,hub),(b,r,np.clip(r,-delta,delta))]:
-    ax.plot(r,y1,color=BLUE,label='平方损失');ax.plot(r,y2,color=RED,ls='--',label='Huber损失');ax.set_xlabel('残差 $r$');ax.legend(loc='upper left')
+    ax.plot(r,y1,color=BLUE,label='平方损失');ax.plot(r,y2,color=GREEN,ls='--',label='Huber损失');ax.set_xlabel('残差 $r$');ax.legend(loc='upper left')
 a.legend(loc='upper center');a.set(title='(a) 对大残差的惩罚',ylabel='损失');b.set(title='(b) 单个残差的得分贡献',ylabel=r'损失导数 $\psi(r)$')
 save(fig,'statistics-huber-loss','squared loss=r^2/2; Huber=r^2/2 if |r|<=delta else delta*|r|-delta^2/2; psi=clip(r,-delta,delta)',
      {'delta':1,'interpretation':'bounded residual score; influence of complete estimator also depends on design and curvature'},
@@ -117,7 +117,7 @@ save(fig,'statistics-huber-loss','squared loss=r^2/2; Huber=r^2/2 if |r|<=delta 
 h=np.linspace(0,4,401);tv=np.array([math.erf(z/(2*np.sqrt(2))) for z in h]);kl=h*h/2
 fig,axs=panels(3,169,64)
 for ax,y,title,ylab in zip(axs,[kl,tv,h],['(a) KL散度','(b) 总变差','(c) $W_2$距离'],['$h^2/2$',r'$2\Phi(h/2)-1$','$h$']):
-    ax.plot(h,y,color=YELLOW);ax.set(title=title,xlabel='均值间距 $h$',ylabel=ylab,xlim=(0,4),ylim=(0,max(y)*1.09))
+    ax.plot(h,y,color=BLUE);ax.set(title=title,xlabel='均值间距 $h$',ylabel=ylab,xlim=(0,4),ylim=(0,max(y)*1.09))
 save(fig,'information-gaussian-distances','For P=N(0,1), Q=N(h,1): KL=h^2/2; TV=2*Phi(h/2)-1; W2=|h|',
      {'sigma':1,'warning':'different objects and units; heights are not rankings of strength'},
      {'h':h.tolist(),'KL':kl.tolist(),'TV':tv.tolist(),'W2':h.tolist()},
@@ -126,7 +126,7 @@ save(fig,'information-gaussian-distances','For P=N(0,1), Q=N(h,1): KL=h^2/2; TV=
 q=np.linspace(.015,.8,601);p=.2;exact=p*np.log(p/q)+(1-p)*np.log((1-p)/(1-q));quad=(q-p)**2/(2*p*(1-p))
 fig,(a,b)=panels()
 for ax in [a,b]:
-    ax.plot(q,exact,color=BLUE,label='精确 KL');ax.plot(q,quad,color=RED,ls='--',label='Fisher二阶项');ax.axvline(p,color=GRAY,lw=.6,ls=':');ax.set_xlabel('目标参数 $q$')
+    ax.plot(q,exact,color=BLUE,label='精确 KL');ax.plot(q,quad,color=GREEN,ls='--',label='Fisher二阶项');ax.axvline(p,color=GRAY,lw=.6,ls=':');ax.set_xlabel('目标参数 $q$')
 a.set(title='(a) 全部显示范围',ylabel=r'$D_{\rm KL}(\mathrm{Ber}(0.2)\|\mathrm{Ber}(q))$',xlim=(.015,.8),ylim=(0,1.3));a.legend(loc='upper center')
 b.set(title='(b) 局部放大',ylabel='散度',xlim=(.14,.26),ylim=(0,.016));b.legend(loc='upper left')
 save(fig,'information-fisher-local','KL(Ber(p)||Ber(q))=p log(p/q)+(1-p) log((1-p)/(1-q)); local=(q-p)^2/[2p(1-p)]',
@@ -136,9 +136,9 @@ save(fig,'information-fisher-local','KL(Ber(p)||Ber(q))=p log(p/q)+(1-p) log((1-
 
 r=np.linspace(0,1,201);lower=.6*(1-r);upper=lower+r
 fig,(a,b)=panels()
-a.bar([0,1],[.44,.2],color=[BLUE,RED],width=.55);a.set_xticks([0,1],['观测均值差','调整后的ATE']);a.set(title='(a) 混杂改变比较人群',ylabel='处理效应',ylim=(0,.6))
+a.bar([0,1],[.44,.2],color=[BLUE,GREEN],width=.55);a.set_xticks([0,1],['观测均值差','调整后的ATE']);a.set(title='(a) 混杂改变比较人群',ylabel='处理效应',ylim=(0,.6))
 for pos,v in enumerate([.44,.2]):a.text(pos,v+.015,f'{v:.2f}',ha='center')
-b.fill_between(r,lower,upper,color=YELLOW_FILL);b.plot(r,lower,color=YELLOW);b.plot(r,upper,color=YELLOW);b.vlines(.2,.48,.68,color=GRAY,ls=':',lw=.6)
+b.fill_between(r,lower,upper,color=BLUE_FILL);b.plot(r,lower,color=BLUE);b.plot(r,upper,color=BLUE);b.vlines(.2,.48,.68,color=GRAY,ls=':',lw=.6)
 b.set(title='(b) 未覆盖质量与识别范围',xlabel='未覆盖目标质量 $r$',ylabel='策略价值',xlim=(0,1),ylim=(0,1.05));b.annotate('$r=0.2$：$[0.48,0.68]$',(.2,.58),xytext=(.28,.10),fontsize=8)
 save(fig,'causal-confounding-coverage','X equiprobable; e(0)=.2,e(1)=.8; E[Y0|X]=(.1,.5), E[Y1|X]=(.3,.7); raw=.62-.18=.44, adjusted=.2; bounds .6(1-r)+[0,r]',
      {'covariate_mass':[.5,.5],'propensity':[.2,.8],'control_mean':[.1,.5],'treated_mean':[.3,.7],'covered_reward':.6,'reward_range':[0,1]},

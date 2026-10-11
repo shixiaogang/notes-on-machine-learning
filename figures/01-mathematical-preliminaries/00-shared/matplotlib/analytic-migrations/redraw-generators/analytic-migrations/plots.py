@@ -5,7 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
-from plot_style import configure,prepare_figure,style_record,BLUE,RED,MUTED,GREEN as YELLOW,STROKE
+from plot_style import configure,prepare_figure,style_record,BLUE,RED,MUTED,GREEN, YELLOW,STROKE
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL, note
 configure();OUT=Path(__file__).parent
 record={'type':'analytic teaching examples, not empirical measurements','style':style_record(),'figures':{}}
 def save(fig,name,data):
@@ -27,17 +28,17 @@ save(fig,'signal-basic-operations',{'original':base,'original_energy':4,'operati
 arrivals=np.array([.6,1.8,3.2]);ends=np.r_[0,arrivals,4.35];fig,ax=plt.subplots(figsize=(112/25.4,70/25.4));fig.subplots_adjust(left=.13,right=.96,bottom=.16,top=.92)
 ax.step(ends,[0,1,2,3,3],where='post',color=BLUE,label='$N_t$')
 for i,(a,b) in enumerate(zip(ends[:-1],ends[1:])):
- ax.plot([a,b],[i-a,i-b],color=RED,ls='--',label='$N_t-t$' if i==0 else None)
- if i>0:ax.plot([a,a],[i-1-a,i-a],color=RED,ls='--')
+ ax.plot([a,b],[i-a,i-b],color=GREEN,ls='--',label='$N_t-t$' if i==0 else None)
+ if i>0:ax.plot([a,a],[i-1-a,i-a],color=GREEN,ls='--')
 ax.set(xlim=(0,4.35),ylim=(-1.55,3.7),xlabel='$t$',ylabel='过程取值');ax.legend();ax.grid(axis='y')
 save(fig,'poisson-compensation',{'arrival_times':[.6,1.8,3.2],'rate':1,'construction':'chosen illustrative arrivals, not sampled observations','count':'N_t=count(arrival<=t)','compensated':'N_t-t'})
 ks=np.arange(8);us=np.array([0,1,.5,.75,.625,.6875,.65625,.671875]);fig,axs=plt.subplots(1,2,figsize=(169/25.4,80/25.4));fig.subplots_adjust(left=.105,right=.98,bottom=.19,top=.88,wspace=.3)
 a=axs[0];a.plot(ks,us,color=BLUE,marker='o',ms=3);a.axhline(2/3,color=MUTED,ls='--',lw=.8);a.set(title='相同初态下的加热输入更新',xlabel='$k$',ylabel='$u_1^{(k)}=u_2^{(k)}$',xticks=[0,2,4,6],yticks=[0,2/3,1]);a.set_yticklabels(['0','$2/3$','1']);a.grid()
 a=axs[1];loop=[(1,1),(1,0),(0,0),(0,1),(1,1)]
-for p,q in zip(loop[:-1],loop[1:]):a.annotate('',xy=q,xytext=p,arrowprops={'arrowstyle':'->','color':RED,'lw':1.1})
+for p,q in zip(loop[:-1],loop[1:]):a.annotate('',xy=q,xytext=p,arrowprops={'arrowstyle':'->','color':GREEN,'lw':1.1})
 t=np.linspace(0,2*np.pi,181);a.plot(.5+.3*np.cos(t),.5+.3*np.sin(t),color=BLUE)
 for ang in [0,np.pi]:a.annotate('',xy=(.5+.3*np.cos(ang-.25),.5+.3*np.sin(ang-.25)),xytext=(.5+.3*np.cos(ang),.5+.3*np.sin(ang)),arrowprops={'arrowstyle':'->','color':BLUE,'lw':1.1})
-a.scatter([.5],[.5],c=YELLOW,edgecolors=STROKE,s=25);a.annotate('均衡',(.5,.5),xytext=(0,7),textcoords='offset points',ha='center');a.set(title='匹配硬币的两种循环',xlabel='$p$',ylabel='$q$',xlim=(-.1,1.12),ylim=(-.1,1.12),xticks=[0,.5,1],yticks=[0,.5,1],aspect='equal');a.grid(ls=':');a.text(.5,-.24,'蓝色：连续梯度流；红色：同时响应',transform=a.transAxes,ha='center',fontsize=8)
+a.scatter([.5],[.5],c=BLUE,edgecolors=STROKE,s=25);a.annotate('均衡',(.5,.5),xytext=(0,7),textcoords='offset points',ha='center');a.set(title='匹配硬币的两种循环',xlabel='$p$',ylabel='$q$',xlim=(-.1,1.12),ylim=(-.1,1.12),xticks=[0,.5,1],yticks=[0,.5,1],aspect='equal');a.grid(ls=':');note(a.text(.5,-.24,'蓝色实线：连续梯度流；绿色箭头：同时响应',transform=a.transAxes,ha='center',fontsize=7.5))
 save(fig,'game-update-trajectories',{'iterations':ks.tolist(),'both_players':us.tolist(),'limit':2/3,'discrete_cycle':loop,'continuous_orbit':{'center':[.5,.5],'radius':.3,'direction':'clockwise'}})
 eps=np.logspace(-4,-1,121);coeff=1e-4/(np.sqrt(2)*eps);response=np.full_like(eps,5e-5)
 fig,ax=plt.subplots(figsize=(112/25.4,75/25.4));fig.subplots_adjust(left=.17,right=.97,bottom=.18,top=.95)

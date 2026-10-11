@@ -22,10 +22,10 @@ sys.path.insert(0, str(ROOT / 'figures/00-shared'))
 from resource_paths import asset_path
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record
-from plot_style import BLUE, RED, GREEN as YELLOW, MUTED as GRAY, GRID, BLUE_FILL, RED_FILL
+from plot_style import BLUE, RED, GREEN, YELLOW, MUTED as GRAY, GRID, BLUE_FILL, RED_FILL
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 CHAPTERS = Path("tex/01-mathematical-preliminaries")
 RECORDS = {}
 
@@ -62,11 +62,11 @@ def save(fig, name, chapter, difficulty, formula, parameters, data, design):
 
 # Rare spikes: the value graph has jumps, so disconnected pieces are drawn.
 fig, (a, b) = canvas(2, 169, 65)
-for n, color, linestyle in ((4, BLUE, "-"), (16, RED, "--")):
+for n, color, linestyle in ((4, BLUE, "-"), (16, GREEN, "--")):
     a.plot([0, 1 / n], [n, n], color=color, linestyle=linestyle,
            label=f"$n={n}$")
     a.plot([1 / n, 1], [0, 0], color=color, linestyle=linestyle)
-    a.fill_between([0, 1 / n], 0, n, color=BLUE_FILL if n == 4 else RED_FILL)
+    a.fill_between([0, 1 / n], 0, n, color=BLUE_FILL if n == 4 else GREEN_FILL)
     a.plot(1 / n, n, "o", color=color, markersize=3.3)
     a.plot(1 / n, 0, "o", markerfacecolor="white", markeredgecolor=color,
            markersize=3.3, zorder=5)
@@ -76,7 +76,7 @@ a.set_xticks([0, 0.25, 0.5, 0.75, 1])
 a.legend(loc="upper right")
 n = np.arange(2, 101)
 b.plot(n, 1 / n, color=BLUE, label=r"$\mathbb{P}(V_n>1)$")
-b.plot(n, np.ones_like(n), color=RED, linestyle="--", label=r"$\mathbb{E}V_n$")
+b.plot(n, np.ones_like(n), color=GREEN, linestyle="--", label=r"$\mathbb{E}V_n$")
 b.set(xlabel="$n$", ylabel="概率或期望", xlim=(2, 100), ylim=(0, 1.12),
       title="(b) 概率变小，期望不变")
 b.legend(loc="center right")
@@ -98,7 +98,7 @@ var_fixed = (1 - 0.8 ** (2 * t)) / 9
 for ax, fixed, average in ((a, mean_fixed, np.ones_like(ta)),
                            (b, var_fixed, 1 / ta)):
     ax.plot(t, fixed, color=BLUE, label=r"$\alpha=0.2$")
-    ax.plot(ta, average, color=RED, linestyle="--", label=r"$\alpha_t=1/(t+1)$")
+    ax.plot(ta, average, color=GREEN, linestyle="--", label=r"$\alpha_t=1/(t+1)$")
     ax.set(xlabel="更新次数 $t$", xlim=(0, 40), ylim=(0, 1.1))
     ax.legend(loc="upper right" if ax is b else "lower right")
 a.set(title="(a) 重复实验的均值", ylabel=r"$\mathbb{E}\theta^{(t)}$")
@@ -129,12 +129,12 @@ assert np.allclose(coeff, [9.2, 1.4]) and np.isclose(constant, 10.25)
 x = np.linspace(-0.2, 3.2, 321)
 fig, (a,) = canvas(1, 112, 68)
 a.plot(x, np.full_like(x, constant), color=BLUE, label="局部常数")
-a.plot(x, coeff[0] + coeff[1] * x, color=RED, linestyle="--", label="局部线性")
+a.plot(x, coeff[0] + coeff[1] * x, color=GREEN, linestyle="--", label="局部线性")
 a.scatter(x_data, y_data, color=GRAY, s=24, zorder=4, label="三个观测")
 a.scatter([0, 0], [constant, coeff[0]], marker="s", s=32,
-          facecolors="white", edgecolors=[BLUE, RED], linewidths=1.0, zorder=5)
-a.text(0.14, 10.39, "$10.25$", fontsize=8.5)
-a.text(0.14, 8.82, "$9.2$", fontsize=8.5,
+          facecolors="white", edgecolors=[BLUE, GREEN], linewidths=1.0, zorder=5)
+a.text(0.14, 10.39, "$10.25$", fontsize=8)
+a.text(0.14, 8.82, "$9.2$", fontsize=8,
        bbox={"facecolor": "white", "edgecolor": "none", "pad": 0.3})
 a.axvline(0, color=GRAY, linestyle=":", linewidth=0.6)
 a.set(xlabel="输入 $x$", ylabel="响应或拟合值", xlim=(-0.3, 3.3), ylim=(8.45, 14.2))
@@ -158,9 +158,9 @@ hb -= (1 - epsilon) * np.log1p(-epsilon)
 mutual = np.log(2) - hb
 fig, (a,) = canvas(1, 112, 66)
 a.plot(epsilon, hb, color=BLUE, label=r"$H(X\mid Y)$")
-a.plot(epsilon, mutual, color=RED, linestyle="--", label="$I(X;Y)$")
+a.plot(epsilon, mutual, color=GREEN, linestyle="--", label="$I(X;Y)$")
 a.axhline(np.log(2), color=GRAY, linewidth=0.6, linestyle=":")
-a.text(0.29, np.log(2) + 0.018, r"$H(X)=\log 2$", fontsize=8.5)
+a.text(0.29, np.log(2) + 0.018, r"$H(X)=\log 2$", fontsize=8)
 a.set(xlabel=r"翻转概率 $\varepsilon$", ylabel="信息量（nat）",
       xlim=(0, 0.5), ylim=(0, 0.79))
 a.legend(loc="center right")

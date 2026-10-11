@@ -22,10 +22,10 @@ from resource_paths import asset_path
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 CHAPTER_DIR = Path("tex/01-mathematical-preliminaries")
-from plot_style import BLUE, RED, GREEN as YELLOW
+from plot_style import BLUE, RED, GREEN, YELLOW
 from plot_style import INK, STROKE, MUTED as GREY, GRID
 
 
@@ -123,7 +123,7 @@ def transient_growth():
     fig, ax = plt.subplots(figsize=(112 / 25.4, 64 / 25.4))
     fig.subplots_adjust(left=.14, right=.97, bottom=.22, top=.95)
     axes_style(ax)
-    for coupling, color, marker in [(0, BLUE, "o"), (4, RED, "s")]:
+    for coupling, color, marker in [(0, BLUE, "o"), (4, GREEN, "s")]:
         states = np.column_stack((coupling * k * 2. ** (1 - k), 2. ** (-k)))
         values = np.linalg.norm(states, axis=1)
         norms.append(values)
@@ -154,11 +154,11 @@ def cvar_reweighting():
     fig.subplots_adjust(left=.14, right=.97, bottom=.23, top=.94)
     axes_style(ax)
     positions = np.arange(3)
-    for offset, values, color, label in [(-.17, nominal, BLUE, "原概率 p"), (.17, reweighted, RED, "风险评价 q")]:
+    for offset, values, color, label in [(-.17, nominal, BLUE, "原概率 p"), (.17, reweighted, GREEN, "风险评价 q")]:
         bars = ax.bar(positions + offset, values, width=.29, color=color, label=label)
         for bar, value in zip(bars, values):
             ax.text(bar.get_x() + bar.get_width() / 2, value + .023,
-                    f"{value:g}", ha="center", va="bottom", fontsize=8.3)
+                    f"{value:g}", ha="center", va="bottom", fontsize=8)
     ax.set(xlim=(-.6, 2.6), ylim=(0, .85), xticks=positions, xticklabels=["0", "2", "10"],
            yticks=[0, .2, .4, .6, .8], xlabel="损失 L", ylabel="概率质量")
     ax.legend(loc="upper center", ncols=2)
