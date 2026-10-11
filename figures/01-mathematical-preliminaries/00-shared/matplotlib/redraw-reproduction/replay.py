@@ -56,7 +56,8 @@ def main():
    # a literal '~', which TeX would otherwise expand as an active character.
    if STYLE != ROOT/'figures/00-shared/academic-drawing':
     preamble=preamble.replace('figures/00-shared/academic-drawing',str(STYLE).replace('~',r'\string~'))
-   render_tikz.PREAMBLE=preamble+'\n\\begin{document}\n'
+   border=row.get('preview_border_pt',2)
+   render_tikz.PREAMBLE=preamble+'\n\\PreviewBorder='+str(border)+'pt\n\\begin{document}\n'
    dest=ROOT/row['folder']
    if proof:dest=proof/Path(row['folder']).relative_to('figures')
    result=render_tikz.render(ROOT/row['source'][0],dest)

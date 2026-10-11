@@ -138,7 +138,8 @@ def source_stats(text: str) -> dict:
         "definitions": len(re.findall(r"\\begin\{definition\}", text)),
         "theorems": len(re.findall(r"\\begin\{(?:theorem|lemma)\}", text)),
         "examples": len(re.findall(r"\\begin\{example\}", text)),
-        "figures": len(re.findall(r"\\begin\{figure\*?\}", text)),
+        "figures": (len(re.findall(r"\\begin\{figure\*?\}", text))
+                    + len(re.findall(r"\\functionalinlinefigurecaption\{fig:", text))),
         "labels": len(LABEL_RE.findall(text)),
     }
 

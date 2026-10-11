@@ -57,18 +57,19 @@ def save(fig, name, expressions, sampling, parameters, question, width_mm, heigh
         fig.savefig(path, dpi=300, facecolor='white')
         outputs[ext] = {'file':str(path.relative_to(ROOT)),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
     meta = {
-        'figure': name, 'generator': 'dynamics-plots.py', 'created': '2026-10-06',
+        'figure': name, 'generator': str(Path(__file__).relative_to(ROOT)), 'construction_origin_date': '2026-10-06',
         'kind': 'analytic teaching construction; not an experiment or observed data',
         'question': question, 'expressions': expressions, 'sampling': sampling,
         'parameters': parameters, 'data_source': 'Expressions and exact examples in the corresponding volume-one chapter; derived in this script.',
         'size_mm': [width_mm,height_mm],
-        'fonts': {'cjk':'fonts/SourceHanSansSC-Normal.otf','western':'fonts/FiraMath-Regular.otf','math':'Fira Math custom mathtext'},
-        'palette': {'blue':BLUE,'red':RED,'single_series':YELLOW,'neutral':GREY},
+        'fonts': style_record()['fonts'],
+        'palette_policy': style_record()['palette'],
+        'palette_assignment': 'Semantic roles are explicit in the source; current per-export artist-data/typography and bound manual review establish actual assignments, not the number of series.',
         'style': style_record(),
         'style_helper_sha256': hashlib.sha256((Path(__import__('plot_style').__file__)).read_bytes()).hexdigest(),
         'outputs': outputs,
         'validation': {'analytic_values': 'Checked by assertions and direct evaluation in generator',
-                       'visual': 'See validation.json; output hashes identify externally inspected versions',
+                       'visual': 'No automatic visual approval; consult current asset-bound manual review',
                        'book_compilation': 'Drawing replay alone is not book-page approval; see redraw-20261011 review and current build/check-target'},
     }
     chapter = Path('tex/01-mathematical-preliminaries')/CHAPTERS[name]
@@ -83,7 +84,7 @@ linear=np.convolve(x,h)
 circular=np.array([sum(x[r]*np.pad(h,(0,1))[(t-r)%3] for r in range(3)) for t in range(3)])
 assert np.allclose(linear,[1,1,-1,-1]) and np.allclose(circular,[0,1,-1])
 fig, axs=canvas(112,82,nrows=2,sharex=True,sharey=True)
-for ax,values,color,marker,label in zip(axs,[linear,circular],[BLUE,RED],['o','s'],['零延拓','周期边界（长度 3）']):
+for ax,values,color,marker,label in zip(axs,[linear,circular],[BLUE,GREEN],['o','s'],['零延拓','周期边界（长度 3）']):
     t=np.arange(len(values)); ax.vlines(t,0,values,color=color,lw=1.1)
     ax.scatter(t,values,s=20,color=color,marker=marker,zorder=3)
     ax.axhline(0,color=GREY,lw=.6)
@@ -99,7 +100,7 @@ f1=np.cos(.8*np.pi*t); f2=np.cos(1.2*np.pi*t)
 assert np.allclose(np.cos(.8*np.pi*sample_t),np.cos(1.2*np.pi*sample_t))
 fig,ax=canvas(112,64)
 ax.plot(t,f1,color=BLUE,label=r'$\cos(0.8\pi t)$')
-ax.plot(t,f2,color=RED,ls='--',label=r'$\cos(1.2\pi t)$')
+ax.plot(t,f2,color=GREEN,ls='--',label=r'$\cos(1.2\pi t)$')
 ax.scatter(sample_t,np.cos(.8*np.pi*sample_t),color=INK,s=18,zorder=4,label='共同样本')
 ax.set(xlim=(-.1,5.1),ylim=(-1.3,1.5),xlabel='连续位置 $t$',ylabel='信号值')
 ax.set_xticks(range(6)); ax.set_yticks([-1,0,1]); ax.legend(loc='upper center',ncols=3,columnspacing=.9,handlelength=1.5)
@@ -217,7 +218,7 @@ for ax,d,opt in zip(axs,[(1,1),(0,1)],[(3,3),(2.5,3.5)]):
     ax.set_xticks([0,2,4,6]);ax.set_yticks([0,2,4,6])
 axs[0].set_ylabel('参与者 2 收益 $u_2$')
 save(fig,'bargaining-disagreement',{'feasible':'u_1>=0, u_2>=0, u_1+u_2<=6','objective':'maximize (u_1-d_1)*(u_2-d_2) with u_i>=d_i','optimum':'equal gains along u_1+u_2=6'}, {'geometry':'exact vertices and optimal points; no fitted data'}, {'disagreement':[[1,1],[0,1]],'optima':[[3,3],[2.5,3.5]]},'How does changing a disagreement point change bargaining while retaining the same feasible outcomes?',169,71)
-manifest={'date':'2026-10-06', 'generator':'figures/00-shared/academic-drawing/dynamics/dynamics-plots.py',
+manifest={'construction_origin_date':'2026-10-06', 'generator':str(Path(__file__).relative_to(ROOT)),
           'generator_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
           'style':style_record(),
           'style_helper_sha256':hashlib.sha256((Path(__import__('plot_style').__file__)).read_bytes()).hexdigest(),

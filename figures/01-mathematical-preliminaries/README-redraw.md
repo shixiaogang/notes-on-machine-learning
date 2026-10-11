@@ -1,23 +1,23 @@
 # 卷一图像复现
 
-本次归档接入111张已有图与5张补图。正文使用实际导出的PDF（数据图、简单图、组合图）或PNG（模型背景加真实字体）；原有图标签保留。
+2026-10-11 修订。卷一原有 129 幅编号图按当前规范重绘，其中包括函数空间章的 8 幅非浮动图；本轮另补充 7 幅图、2 张表，并扩展第十七章已有的对象对照表。当前共 136 幅编号图。资源索引中的 `is_addition` 保留历史分类，不能据此推算本轮新增数量。
 
-图像源、精确数据或解析定义、最终成品、生成记录和预览审查结果位于各部分的 `matplotlib/`、`tikz/`、`generated/` 子目录。跨部分的共同生成器保留一份；具体对应关系见 `00-shared/matplotlib/redraw-reproduction/registry.json`。
+正文使用数据图、简单图和组合图的 PDF，或无字模型背景与真实字体合成的 PNG。图源、精确数据、导出文件和生成记录位于各部分的 `matplotlib/`、`tikz/`、`generated/` 子目录。跨部分生成器只保留一份；当前对象、源文件和正文资产对应关系见 `00-shared/resource-manifest.json`，执行路由见 `00-shared/matplotlib/redraw-reproduction/registry.json`。
 
-从项目根目录运行：
+在所属 worktree 根目录运行，例如：
 
 ```sh
-python3 figures/01-mathematical-preliminaries/00-shared/matplotlib/redraw-reproduction/replay.py v1-prelim-minimum-infimum
-python3 figures/01-mathematical-preliminaries/00-shared/matplotlib/redraw-reproduction/replay.py v1-prelim-preimage-inverse
-python3 figures/01-mathematical-preliminaries/06-mathematics-and-machine-learning/generated/static-learning-framework/typeset.py
+python3 figures/01-mathematical-preliminaries/00-shared/matplotlib/redraw-reproduction/replay.py v1-prelim-minimum-infimum --proof-dir build/figure-replay
+python3 figures/01-mathematical-preliminaries/00-shared/matplotlib/redraw-reproduction/replay.py v1-functional-query-tree --proof-dir build/figure-replay
+python3 figures/01-mathematical-preliminaries/06-mathematics-and-machine-learning/generated/static-learning-process/typeset.py
 ```
 
-数据与简单图可追加 `--proof-dir build/figure-replay`，将复核成品写入本工作区的临时构建目录。跨图共用一个Matplotlib生成器时，该入口会重绘该生成器覆盖的全部数据图；数值数组与解析公式保持原定义，不作重采样或平滑。两张组合图逐面板采用TikZ几何与Matplotlib数值曲线，再以PyMuPDF合成矢量PDF。
+数据图与简单图的 `--proof-dir` 将复核输出写入本 worktree 的临时目录。共用 Matplotlib 源文件的图按源文件组执行，保留当前导出的科学数组；有随机过程的示例读取已冻结的数据，不重新抽样。简单图按真实源文件名导出并安装正文实际引用的文件，查询树的 `query-tree.pdf` 也纳入路由。两张组合图分别使用 TikZ 几何和 Matplotlib 数值面板，再以 PyMuPDF 合成 PDF。
 
-复杂图保留实际模型生成的无字背景、提示词、送入模型的外部参考图及来源、各次生成记录。`labels-source.json`与`typeset.py`确定当前文字位置、字体、字号与颜色；重放排字不会重新生成背景，也不会清除背景纹理。因果补图的五个概率面板由 `probability-data.json`与 `build_probability_panels.py`精确生成；模型不决定概率柱高。
+复杂图保留实际模型生成的无字背景、提示词、参考图和各轮来源。每图的 `labels-source.json` 与 `typeset.py` 决定真实字体、位置和字号。排字重放使用已保留的背景，不再次调用模型；全局入口目前不支持复杂图的 `--proof-dir`，默认执行会改写该图的派生输出。隔离复核应复制背景和标签定义后使用同一排字模块。模型生成本身不保证像素一致。
 
-统一样式依赖 `figures/00-shared/academic-drawing/`，字体仅使用项目根 `fonts/` 中的思源黑体Normal、霞鹜文楷、Fira Math与仅补Fira缺失数学字形的STIX2。字体许可证与共享样式由统一集成保留，不在各图重复复制。环境依赖为Python 3.9以上、Matplotlib、NumPy、Pillow、fontTools、PyMuPDF，以及TikZ复现所需XeLaTeX与xdvipdfmx。
+表示定理图与因果推前图已分别改用 TikZ 和精确 Matplotlib 源，不再执行旧生成式目录。因果图的两点先验、后验与推前概率由 `04-random-variables-distributions-and-causality/matplotlib/causal-two-point-pushforwards/` 中的有理数输入决定。卷积变换机制图以及温度、静态学习和交互学习图使用保留的模型背景。
 
-`generation.json`给出当前相对路径、源文件与最终图像散列和可重放命令。`generation-preview.json`明确保留历史预览记录，历史机器路径只用于追踪实际生成调用，不是当前复现入口。生成模型调用具有随机性，其图案不保证重新生成时逐像素相同；保留背景之后的排字和确定数值面板可以重放。
+共享样式位于 `figures/00-shared/academic-drawing/`。字体仅使用项目 `fonts/` 的思源黑体 Normal、霞鹜文楷 Regular、Fira Math，以及仅补缺失数学字形的 STIX Two Math。当前五色与固定浅底按 `specs/figures.md`；模型背景的近似偏差另行记录。复现环境见 `00-shared/matplotlib/redraw-reproduction/dependencies.json`，需要 Matplotlib、NumPy、Pillow、fontTools、PyMuPDF，以及 TikZ 所需的 XeLaTeX、xdvipdfmx。缓存只写各 worktree 的 `build/figure-proofs/`。
 
-预览审查与正文集成后验收是两个阶段。已有 `review.json`记录模型机制、文字与图案避让、原尺寸及1100px预览检查；整书版面和成品一致性由统一集成后的七版构建核验。
+原生输出、实际书页和文字审查分开记录。`00-shared/reviews/`、`00-shared/matplotlib/redraw-ch01-09/` 与 `00-shared/matplotlib/redraw-ch10-16/review-20261011/` 保存作者检查、独立意见及修订闭环；最终集成记录绑定当前源文件、正文资产和 PDF。`scripts/render_volume_one_figure_pages.py` 仅收集实际图页、字号与哈希，不自动判断科学含义或视觉质量。旧日期记录描述当时版本，不作为当前验收结论。

@@ -147,7 +147,7 @@ save(fig,'causal-confounding-coverage','X equiprobable; e(0)=.2,e(1)=.8; E[Y0|X]
 
 m=np.arange(1,21);allpatterns=2.**m;restricted=1+m*(m+1)/2
 fig,(a,)=panels(1,112,70)
-a.semilogy(m,allpatterns,color=BLUE,label='任意二值标记 $2^m$');a.semilogy(m,restricted,color=RED,ls='--',label='区间标记 $1+m(m+1)/2$');a.legend(loc='upper left')
+a.semilogy(m,allpatterns,color=BLUE,label='任意二值标记 $2^m$');a.semilogy(m,restricted,color=GREEN,ls='--',label='区间标记 $1+m(m+1)/2$');a.legend(loc='upper left')
 a.set(xlabel='互异输入数 $m$',ylabel='可实现模式数（对数轴）',xlim=(1,20));a.set_xticks([1,5,10,15,20])
 save(fig,'combinatorics-growth-patterns','unrestricted=2^m; interval classifiers=1+m(m+1)/2; at-most-two-positive class has same count but different patterns',
      {'ordered_inputs':True,'m_max':20}, {'m':m.tolist(),'all_patterns':allpatterns.tolist(),'interval_patterns':restricted.tolist()},
@@ -163,14 +163,14 @@ save(fig,'combinatorics-coverage-marginals','Q2={b,c,d}, Q3={c,e}, Q4={d,e}; mar
 A=np.array([[0,1,1,0],[1,0,1,1],[1,1,0,1],[0,1,1,0]],dtype=float);L=np.diag(A.sum(1))-A;eig,U=np.linalg.eigh(L);eig[np.abs(eig)<1e-12]=0;initial=np.array([1.,0,0,0]);time=1.;smooth=U@(np.exp(-time*eig)*(U.T@initial))
 t=np.linspace(0,2,201)
 fig,(a,b)=panels();xx=np.arange(4);bw=.34
-a.bar(xx-bw/2,initial,bw,color=BLUE,label='$t=0$');a.bar(xx+bw/2,smooth,bw,color=RED,label='$t=1$');a.axhline(.25,color=GRAY,ls=':',lw=.6)
+a.bar(xx-bw/2,initial,bw,color=BLUE,label='$t=0$');a.bar(xx+bw/2,smooth,bw,color=GREEN,label='$t=1$');a.axhline(.25,color=GRAY,ls=':',lw=.6)
 a.set_xticks(xx,['1','2','3','4']);a.set(title='(a) 同一图上的信号平滑',xlabel='顶点',ylabel='信号值',ylim=(0,1.25));a.legend(loc='upper right')
-for lam,color,ls in [(0,BLUE,'-'),(2,RED,'--'),(4,YELLOW,':')]:b.plot(t,np.exp(-lam*t),color=color,ls=ls,label=fr'$\lambda={lam}$')
+for lam,color,ls in [(0,BLUE,'-'),(2,GREEN,'--'),(4,PURPLE,':')]:b.plot(t,np.exp(-lam*t),color=color,ls=ls,label=fr'$\lambda={lam}$')
 b.set(title='(b) 各频率的保留比例',xlabel='扩散时间 $t$',ylabel=r'$e^{-t\lambda}$',ylim=(0,1.15));b.legend(loc='upper right')
 save(fig,'graph-diffusion-spectrum','L=diag(A1)-A; f(t)=U diag(exp(-t*lambda)) U^T f(0); initial=(1,0,0,0)',
      {'adjacency':A.tolist(),'initial':initial.tolist(),'snapshot_time':time,'limit':[.25]*4,'roundoff_rule':'Eigenvalues with absolute value below 1e-12 are represented as zero.'},
      {'eigenvalues':eig.tolist(),'snapshot':smooth.tolist(),'t':t.tolist(),'frequency_gains':{str(j):np.exp(-j*t).tolist() for j in [0,2,4]}},
      '01-graph-theory.tex: eq:graph-theory-running-edges and graph heat equation')
 
-(asset_path(HERE, 'sources.json')).write_text(json.dumps({'description':'Reproducible analytical teaching figures, October 2026. All values follow displayed formulas or explicit finite constructions in these chapters.','fonts':{'Chinese':'fonts/SourceHanSansSC-Normal.otf','Latin':'fonts/FiraMath-Regular.otf','math':'Fira Math custom mathtext'},'palette':{'one_series':YELLOW,'two_series':[BLUE,RED],'three_series':[BLUE,RED,YELLOW]},'style':style_record(),'figures':records},ensure_ascii=False,indent=2)+'\n')
+(asset_path(HERE, 'sources.json')).write_text(json.dumps({'description':'Reproducible analytical teaching figures, October 2026. All values follow displayed formulas or explicit finite constructions in these chapters.','fonts':style_record()['fonts'],'palette_policy':style_record()['palette'],'palette_assignment':'Semantic roles are explicit in each construction; actual current style is recorded in per-export artist-data/typography and bound manual review, not by series count','style':style_record(),'figures':records},ensure_ascii=False,indent=2)+'\n')
 print(f'Generated {len(records)} figures with PDF/SVG/PNG and formula/data provenance.')

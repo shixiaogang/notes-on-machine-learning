@@ -18,7 +18,7 @@ from resource_paths import asset_path
 sys.path.insert(0,str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure,prepare_figure,style_record
 from plot_style import BLUE,RED,GREEN, YELLOW,STROKE,MUTED,GRID,BLUE_FILL,RED_FILL,YELLOW_FILL
-from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL, note
 configure()
 CHAPTER='tex/01-mathematical-preliminaries/'
 
@@ -29,7 +29,7 @@ def save(fig,name,size,chapter,purpose,formula,parameters,data=None):
         path=asset_path(HERE, f'{name}.{ext}')
         fig.savefig(path,dpi=300,facecolor='white')
         outputs[ext]={'file':str(path.relative_to(ROOT)),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}
-    record={'figure':name,'date':'2026-10-06','purpose':purpose,
+    record={'figure':name,'construction_origin_date':'2026-10-06','purpose':purpose,
       'generator':str(Path(__file__).relative_to(ROOT)),
       'generator_sha256':hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
       'source':{'chapter':CHAPTER+chapter,'sha256':hashlib.sha256((ROOT/CHAPTER/chapter).read_bytes()).hexdigest()},
@@ -37,8 +37,9 @@ def save(fig,name,size,chapter,purpose,formula,parameters,data=None):
       'data_file':data,'size_mm':size,'style':style_record(),
       'style_helper_sha256':hashlib.sha256((Path(__import__('plot_style').__file__)).read_bytes()).hexdigest(),
       'software':{'Matplotlib':matplotlib.__version__,'NumPy':np.__version__},'outputs':outputs,
-      'checks':{'mathematics':'assertions in generator','visual':'see validation.json',
-        'boundary':'standalone PNG and PDF raster only; no TeX compilation or book-page inspection'}}
+      'checks':{'analytic_scope':'Construction and assertions executed by this generator',
+        'visual':'No automatic visual approval; consult current asset-bound manual review',
+        'boundary':'This export record does not establish book compilation, target consistency or actual book-page acceptance; those checks are recorded separately'}}
     (asset_path(HERE, f'{name}.json')).write_text(json.dumps(record,ensure_ascii=False,indent=2)+'\n')
     plt.close(fig)
 
@@ -50,20 +51,20 @@ def overlap():
         a,b=max(0,t-1),min(1,t)
         assert b-a==.5
         ax.add_patch(Rectangle((0,.56),1,.19,facecolor=BLUE_FILL,edgecolor=BLUE,lw=1.1))
-        ax.add_patch(Rectangle((t-1,.22),1,.19,facecolor=RED_FILL,edgecolor=RED,lw=1.1))
-        ax.add_patch(Rectangle((a,.10),b-a,.77,facecolor=YELLOW_FILL,edgecolor='none',zorder=-1))
-        ax.plot([a,b],[.92,.92],color=YELLOW,lw=1.1)
+        ax.add_patch(Rectangle((t-1,.22),1,.19,facecolor=GREEN_FILL,edgecolor=GREEN,lw=1.1))
+        ax.add_patch(Rectangle((a,.10),b-a,.77,facecolor=PURPLE_FILL,edgecolor='none',zorder=-1))
+        ax.plot([a,b],[.92,.92],color=PURPLE,lw=1.1)
         ax.text(.5,.66,r'$f(\tau)$',ha='center',va='center')
         ax.text(t-.5,.32,r'$g(t-\tau)$',ha='center',va='center')
         ax.set(xlim=(-.65,1.65),ylim=(0,1.09),xticks=[-.5,0,.5,1,1.5],yticks=[],xlabel=r'积分位置 $\tau$',title=f'固定输出位置 t = {t}')
         ax.spines['left'].set_visible(False)
-        ax.text((a+b)/2,1.0,'重叠长度 0.5',ha='center',color=MUTED)
+        note(ax.text((a+b)/2,1.0,'重叠长度 0.5',ha='center',color=MUTED))
     ax=axes[2]
     t=np.linspace(-.3,2.3,401)
     y=np.maximum(0,np.minimum(1,t)-np.maximum(0,t-1))
     assert np.isclose(np.interp(1,t,y),1,atol=.004)
-    ax.plot(t,y,color=YELLOW)
-    ax.scatter([.5,1.5],[.5,.5],color=YELLOW,s=18,zorder=3)
+    ax.plot(t,y,color=PURPLE)
+    ax.scatter([.5,1.5],[.5,.5],color=PURPLE,s=18,zorder=3)
     ax.set(xlim=(-.3,2.3),ylim=(-.03,1.17),xticks=[0,1,2],yticks=[0,.5,1],xlabel=r'输出位置 $t$',ylabel='重叠长度',title='全部位置的卷积输出')
     ax.grid(axis='y')
     save(fig,'continuous-convolution-overlap',size,'03-graphs-and-signals/01-signal-representation-and-processing.tex',

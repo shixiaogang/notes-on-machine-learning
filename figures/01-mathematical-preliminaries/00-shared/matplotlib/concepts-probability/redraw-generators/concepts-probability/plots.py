@@ -86,7 +86,7 @@ save(fig, "probability-vanishing-spikes", "04-random-variables-distributions-and
      {"left_n": [4, 16], "right_n": [2, 100], "uniform_support": [0, 1]},
      {"n": n.tolist(), "tail_probability_at_1": (1 / n).tolist(),
       "expectation": np.ones_like(n).tolist(), "spike_areas": [1, 1]},
-     "Two aligned panels distinguish sample-path value from averaged quantities; blue solid/red dashed comparisons with explicit legends. No line crosses either jump.")
+     "Two aligned panels distinguish sample-path value from averaged quantities; blue solid/green dashed comparisons with explicit legends. No line crosses either jump.")
 
 
 # Exact mean and variance of the mean-root update, rather than one random run.
@@ -170,7 +170,7 @@ save(fig, "information-binary-channel-information", "04-random-variables-distrib
      "X~Bernoulli(.5); N~Bernoulli(epsilon) independent; Y=X xor N; H(X|Y)=Hb(epsilon); I(X;Y)=log(2)-Hb(epsilon). Natural logarithms; 0*log(0)=0.",
      {"input_probability": 0.5, "epsilon_domain": [0, 0.5], "samples": 501, "unit": "nat"},
      {"epsilon": epsilon.tolist(), "conditional_entropy": hb.tolist(), "mutual_information": mutual.tolist()},
-     "One shared axis shows two complementary information quantities; input entropy is a neutral reference. Blue solid and red dashed curves remain distinguishable in grayscale.")
+     "One shared axis shows two complementary information quantities; input entropy is a neutral reference. Blue solid and green dashed curves remain distinguishable in grayscale.")
 
 
 # Cross-world joint distributions are constructions, not observed trial data.
@@ -208,10 +208,11 @@ save(fig, "causal-cross-world-couplings", "04-random-variables-distributions-and
      "Aligned 2x2 probability heatmaps use a shared white-to-yellow scale and explicit cell values; equal margins are verified numerically. No colorbar is needed for the two directly printed values.")
 
 (asset_path(HERE, "sources.json")).write_text(json.dumps({
-    "schema": "analytic-teaching-figures-v1", "generator": "plots.py",
-    "fonts": ["fonts/LXGWWenKai-Regular.ttf", "fonts/FiraMath-Regular.otf", "Fira Math custom mathtext"],
+    "schema": "analytic-teaching-figures-v1", "generator": str(Path(__file__).relative_to(ROOT)),
+    "fonts": style_record()["fonts"],
     "font_representation": "PDF Type 3 subset vector glyphs; SVG glyph outlines; labels remain editable in plots.py",
-    "palette": {"blue": BLUE, "red": RED, "yellow": YELLOW, "neutral": GRAY},
+    "palette_policy": style_record()["palette"],
+    "palette_assignment": "Semantic roles chosen explicitly in the source; per-export artist-data/typography and bound manual review establish actual current assignments",
     "style": style_record(),
     "figures": RECORDS,
 }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

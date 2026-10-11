@@ -57,6 +57,12 @@ def check(registry):
         digest = hashlib.sha256(graphic.read_bytes()).hexdigest()
         if item.get('sha256') != digest:
             errors.append(f'Changed asset since registry: {asset}')
+        if item.get('current_body_sha256') and item['current_body_sha256'] != hashlib.sha256(source.read_bytes()).hexdigest():
+            errors.append(f'Changed body since current review binding: {owner}')
+        for path, expected_digest in item.get('current_source_sha256', {}).items():
+            dependency = ROOT / path
+            if not dependency.is_file() or hashlib.sha256(dependency.read_bytes()).hexdigest() != expected_digest:
+                errors.append(f'Changed source since current review binding: {path}')
         if item.get('is_addition') and not re.search(r'\\(?:ref|autoref|cref)\{' + re.escape(label) + r'\}', text):
             errors.append(f'Addition has no introduction reference: {label}')
         group = str(item['volume'])
@@ -79,7 +85,8 @@ def check(registry):
         errors.append(f'Body/registry mismatch: missing={sorted(active-labels)}, unused={sorted(labels-active)}')
     return {'figures': len(records), 'counts': counts, 'errors': errors,
             'checks': ['unique labels', 'caption and body asset', 'asset SHA-256',
-                       'complete three-volume coverage', 'addition references']}
+                       'complete three-volume coverage', 'addition references',
+                       'current source and body bindings when recorded']}
 
 
 def main():

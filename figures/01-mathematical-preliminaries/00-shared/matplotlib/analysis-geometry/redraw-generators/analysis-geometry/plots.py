@@ -18,9 +18,9 @@ sys.path.insert(0, str(ROOT / 'figures/00-shared'))
 from resource_paths import asset_path
 
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
-from plot_style import (configure, prepare_figure, style_record, CN, EN, BLUE, RED, GREEN as YELLOW, INK, MUTED, GRID, YELLOW_FILL)
+from plot_style import (configure, prepare_figure, style_record, CN, EN, BLUE, RED, GREEN, YELLOW, INK, MUTED, GRID, YELLOW_FILL)
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 LINE = MUTED
 
 RECORDS = []
@@ -52,7 +52,7 @@ def recurrence():
         decaying.append(.5 * decaying[-1] + .1 / (k + 1))
     fig, (ax,) = axes()
     ax.plot(t, constant, color=BLUE, marker="o", ms=3, label=r"$\delta_t=0.1$")
-    ax.plot(t, decaying, color=RED, marker="s", ms=3, label=r"$\delta_t=0.1/(t+1)$")
+    ax.plot(t, decaying, color=GREEN, marker="s", ms=3, label=r"$\delta_t=0.1/(t+1)$")
     ax.axhline(.2, color=LINE, ls="--", lw=.6)
     ax.text(12, .25, r"$0.1/(1-0.5)=0.2$", fontsize=8)
     ax.set(xlabel="迭代步 t", ylabel="递推值 e(t)", ylim=(0, 1.06), xticks=[0,5,10,15,20])
@@ -62,7 +62,7 @@ def recurrence():
 
 def convergence():
     fig, axs = axes(2, 79)
-    for n, color, ls in [(4,BLUE,"-"),(8,RED,"--"),(16,YELLOW,":")]:
+    for n, color, ls in [(4,BLUE,"-"),(8,GREEN,"--"),(16,PURPLE,":")]:
         axs[0].plot([0,1/n], [n,n], color=color, ls=ls)
         axs[0].plot([1/n,1/n],[0,n],color=color,ls=":",lw=.6)
         axs[0].plot([1/n,1],[0,0],color=color,ls=ls,label=f"$n={n}$")
@@ -73,7 +73,7 @@ def convergence():
     n=20
     x=np.linspace(0,2*np.pi,2401)
     axs[1].plot(x,np.sin(n*x)/n,color=BLUE,label=r"$f_n(x)=\sin(nx)/n$")
-    axs[1].plot(x,np.cos(n*x),color=RED,ls="--",label=r"$f_n'(x)=\cos(nx)$")
+    axs[1].plot(x,np.cos(n*x),color=GREEN,ls="--",label=r"$f_n'(x)=\cos(nx)$")
     axs[1].set(title="(b) 函数误差小，导数仍振荡",xlabel="$x$",ylabel="函数值 / 导数值",ylim=(-1.12,1.12),xticks=[0,np.pi,2*np.pi],xticklabels=["0",r"$\pi$",r"$2\pi$"])
     axs[1].legend(frameon=False,fontsize=8,loc="upper center",
                   bbox_to_anchor=(.5,-.25))
@@ -92,9 +92,9 @@ def optimization():
         path=[np.array([2.,2.])]
         for _ in range(18): path.append(path[-1]-eta*matrix@path[-1])
         paths.append(np.array(path))
-    for ax,path,color,title in zip(axs,paths,[BLUE,RED],["(a) 固定步长的梯度下降","(b) 按曲率缩放的更新"]):
+    for ax,path,color,title in zip(axs,paths,[BLUE,GREEN],["(a) 固定步长的梯度下降","(b) 按曲率缩放的更新"]):
         ax.plot(path[:,0],path[:,1],"o-",color=color,ms=2.5)
-        ax.scatter([0],[0],marker="*",color=YELLOW,s=45,zorder=5)
+        ax.scatter([0],[0],marker="*",color=PURPLE,s=45,zorder=5)
         ax.set_title(title)
     save(fig,"optimization-preconditioned-paths",{"formula":"f(w)=0.5*(w1^2+16*w2^2)",
         "parameters":{"initial":[2,2],"gradient_eta":.1,"preconditioner":[[1,0],[0,.0625]],"preconditioned_eta":.5,"steps":18},
@@ -102,18 +102,18 @@ def optimization():
 
 def functional_tents():
     x=np.linspace(0,1,2001);fig,(ax,)=axes()
-    for n,c,ls in [(5,BLUE,"-"),(25,RED,"--")]:
+    for n,c,ls in [(5,BLUE,"-"),(25,GREEN,"--")]:
         ax.plot(x,np.maximum(1-n*x,0),color=c,ls=ls,label=f"$n={n}$")
     ax.scatter([0],[1],color=INK,s=18,zorder=5)
-    ax.text(.31,.70,r"$f_n(0)=1$",fontsize=10)
-    ax.text(.31,.48,r"$\|f_n\|_2=1/\sqrt{3n}\to0$",fontsize=10)
+    ax.text(.31,.70,r"$f_n(0)=1$",fontsize=8)
+    ax.text(.31,.48,r"$\|f_n\|_2=1/\sqrt{3n}\to0$",fontsize=8)
     ax.set(xlabel="$x$",ylabel="$f_n(x)$",xlim=(-.02,1),ylim=(-.03,1.10))
     ax.legend(frameon=False,fontsize=8)
     save(fig,"functional-point-evaluation",{"formula":"f_n(x)=max(1-n*x,0), x in [0,1]; integral f_n^2=1/(3*n)","parameters":{"n":[5,25]},"sampling":"2001 uniform samples including both breakpoints exactly."})
 
 def spectral_shrinkage():
     j=np.arange(1,26);mu=1./j**2;fig,(ax,)=axes()
-    for lam,c,mark in [(.01,BLUE,"o"),(.1,RED,"s")]:
+    for lam,c,mark in [(.01,BLUE,"o"),(.1,GREEN,"s")]:
         ax.plot(j,mu/(mu+lam),color=c,marker=mark,ms=2.8,label=rf"$\lambda={lam}$")
     ax.set(xlabel="谱方向 j",ylabel="保留比例",ylim=(0,1.05),xticks=[1,5,10,15,20,25])
     ax.legend(frameon=False,fontsize=8)
@@ -141,7 +141,7 @@ if __name__ == "__main__":
                   circle_distances]:
         build()
     (asset_path(OUT, "manifest.json")).write_text(json.dumps({"purpose":"Teaching constructions; no experimental data.",
-        "style":style_record(),"numpy":np.__version__,"matplotlib":matplotlib.__version__,"fonts":{"Chinese":CN,"Latin":EN,"math":"Fira Math custom mathtext"},
-        "export_settings":{"formats":["pdf","svg","png"],"png_dpi":360,"font_size_pt":8.5,
+        "style":style_record(),"numpy":np.__version__,"matplotlib":matplotlib.__version__,"fonts":style_record()["fonts"],
+        "export_settings":{"formats":["pdf","svg","png"],"png_dpi":360,"font_size_policy_pt":style_record()["label_size_pt"],
             "pdf_fonttype":3,"svg_fonttype":"path","background":"white","tex_rendering":False},
-        "palette":{"blue":BLUE,"red":RED,"yellow":YELLOW},"figures":RECORDS},ensure_ascii=False,indent=2)+"\n")
+        "palette_policy":style_record()["palette"],"palette_assignment":"Semantic roles chosen explicitly in each construction; current artist-data/typography and bound manual review determine actual assignments","figures":RECORDS},ensure_ascii=False,indent=2)+"\n")

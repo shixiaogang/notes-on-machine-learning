@@ -47,24 +47,22 @@ def save(fig, name, width, height, chapter, question, formulas, data, sampling):
                         "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
     source = CHAPTER_DIR / chapter
     record = {
-        "figure": name, "date": "2026-10-06", "generator": "concept-plots.py",
+        "figure": name, "construction_origin_date": "2026-10-06", "generator": str(Path(__file__).relative_to(ROOT)),
         "generator_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "purpose": question, "kind": "analytic teaching construction; not observed data",
         "source": {"file": str(source), "sha256": hashlib.sha256((ROOT / source).read_bytes()).hexdigest()},
         "formulas": formulas, "parameters_and_constructed_data": data,
         "sampling_and_processing": sampling, "size_mm": [width, height],
-        "fonts": {"Chinese": "fonts/SourceHanSansSC-Normal.otf", "Western": "fonts/FiraMath-Regular.otf",
-                  "Mathematics": "Fira Math custom mathtext",
-                  "mixed_text": "Western first with per-glyph fallback; Chinese first for Chinese/mathtext spans"},
-        "palette": {"two_series": [BLUE, RED], "single_series": YELLOW,
-                    "text": INK, "neutral": GREY},
+        "fonts": style_record()["fonts"],
+        "palette_policy": style_record()["palette"],
+        "palette_assignment": "Semantic roles chosen explicitly in each construction; actual current assignments are recorded in per-export artist-data/typography and bound manual reviews, not determined by series count.",
         "style": style_record(),
         "style_helper_sha256": hashlib.sha256((Path(__import__('plot_style').__file__)).read_bytes()).hexdigest(),
         "software": {"Matplotlib": matplotlib.__version__, "NumPy": np.__version__},
         "outputs": outputs,
-        "validation": {"analytic": "Assertions in generator passed",
-                       "visual": "See validation.json for inspected output hashes",
-                       "scope": "No TeX compilation or embedded book-page inspection, at user request"},
+        "validation": {"analytic_scope": "Construction and assertions executed by this generator; this source record is not blanket mathematical acceptance.",
+                       "visual": "No automatic visual approval; see current asset-bound manual review and per-export typography/artist-data.",
+                       "book_scope": "Compilation, target consistency and actual book-page inspection are separate checks; this source record does not assert their completion."},
     }
     (asset_path(HERE, f"{name}.json")).write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
     plt.close(fig)
@@ -89,19 +87,19 @@ def amplitude_phase():
     for ax in (time_ax, mag_ax, phase_ax):
         axes_style(ax)
     time_ax.plot(n, x, "o-", color=BLUE, ms=3.4, label="原序列 x")
-    time_ax.plot(n, z, "s--", color=RED, ms=3.2, label="右移两格 z")
+    time_ax.plot(n, z, "s--", color=GREEN, ms=3.2, label="右移两格 z")
     time_ax.set(xlim=(-.2, 7.2), ylim=(-1.25, 1.65), xticks=n,
                 yticks=[-1, 0, 1], xlabel="离散位置 n", ylabel="信号值")
     time_ax.legend(loc="upper right", ncols=2, handlelength=1.8)
     time_ax.set_title("离散波形", pad=4)
-    for offset, values, color, label in [(-.14, xf, BLUE, "x"), (.14, zf, RED, "z")]:
+    for offset, values, color, label in [(-.14, xf, BLUE, "x"), (.14, zf, GREEN, "z")]:
         mag_ax.bar(n + offset, np.abs(values), width=.25, color=color, label=label)
     mag_ax.set(xlim=(-.45, 7.45), ylim=(0, 4.9), xticks=n, yticks=[0, 2, 4],
                xlabel="频率索引 k", ylabel="系数幅度")
     mag_ax.set_title("幅度", pad=4)
     mag_ax.legend(loc="upper center", ncols=2)
     phase_ax.scatter(nonzero - .1, np.angle(xf[nonzero]), marker="o", s=24, color=BLUE, label="x")
-    phase_ax.scatter(nonzero + .1, np.angle(zf[nonzero]), marker="s", s=22, color=RED, label="z")
+    phase_ax.scatter(nonzero + .1, np.angle(zf[nonzero]), marker="s", s=22, color=GREEN, label="z")
     phase_ax.set(xlim=(-.45, 7.45), ylim=(-2.15, 2.15), xticks=n,
                  yticks=[-np.pi / 2, 0, np.pi / 2],
                  yticklabels=[r"$-\pi/2$", "0", r"$\pi/2$"],

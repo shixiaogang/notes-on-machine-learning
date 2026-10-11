@@ -18,10 +18,10 @@ HERE = Path(__file__).resolve().parent
 ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'build.sh').is_file() and (p / 'tex/book.tex').is_file())
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record
-from plot_style import BLUE, RED, GREEN as YELLOW, INK, STROKE, MUTED, GRID, YELLOW_FILL
+from plot_style import BLUE, RED, GREEN, YELLOW, INK, STROKE, MUTED, GRID, YELLOW_FILL
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 RECORDS = []
 MM = 1 / 25.4
 
@@ -52,8 +52,8 @@ def mobius():
     assert g == [0, 2, 2, 7] and h == [0, 2, 2, 3]
     fig, ax = new_figure(112, 64)
     x = np.arange(4)
-    for offset, values, color, label in [(-.18, g, BLUE, '累计 $g$'), (.18, h, RED, '局部 $h$')]:
-        ax.bar(x + offset, values, width=.32, color=color, edgecolor=STROKE, linewidth=.6, label=label)
+    for offset, values, color, label in [(-.18, g, BLUE, '累计 $g$'), (.18, h, GREEN, '局部 $h$')]:
+        ax.bar(x + offset, values, width=.32, color=color, edgecolor=STROKE, linewidth=.6, hatch="//" if label == "局部 $h$" else None, label=label)
         for xx, yy in zip(x + offset, values):
             ax.text(xx, yy + .18, str(yy), ha='center', va='bottom')
     ax.set_xticks(x, [r'$\varnothing$', r'$\{1\}$', r'$\{3\}$', r'$\{1,3\}$'])
@@ -73,9 +73,9 @@ def fat_square():
             lo_x, hi_x = (gamma, 1.42) if sx > 0 else (-1.42, -gamma)
             lo_y, hi_y = (gamma, 1.42) if sy > 0 else (-1.42, -gamma)
             ax.add_patch(Rectangle((lo_x, lo_y), hi_x-lo_x, hi_y-lo_y,
-                                  facecolor=YELLOW_FILL, edgecolor='none'))
-            ax.plot(sx * gamma, sy * gamma, 'o', color=YELLOW, ms=4.5,
-                    mfc=YELLOW if gamma <= 1 else 'white', mew=.9)
+                                  facecolor=GREEN_FILL if gamma <= 1 else RED_FILL, edgecolor='none'))
+            ax.plot(sx * gamma, sy * gamma, 'o', color=GREEN if gamma <= 1 else RED, ms=4.5,
+                    mfc=GREEN if gamma <= 1 else 'white', mew=.9)
         ax.add_patch(Rectangle((-1, -1), 2, 2, fill=False, edgecolor=STROKE, linewidth=1))
         ax.axvline(0, lw=.6, color=MUTED); ax.axhline(0, lw=.6, color=MUTED)
         ax.set(xlim=(-1.42, 1.42), ylim=(-1.42, 1.42), aspect='equal',
@@ -92,7 +92,7 @@ def fat_square():
 def power_convergence():
     x = np.linspace(0, 1, 501); n = np.arange(1, 101)
     fig, axes = new_figure(169, 67, ncols=2)
-    for k, color, ls in zip([2, 8, 32], [BLUE, RED, YELLOW], ['-', '--', '-.']):
+    for k, color, ls in zip([2, 8, 32], [BLUE, GREEN, PURPLE], ['-', '--', '-.']):
         axes[0].plot(x, x**k, color=color, ls=ls, label=f'$n={k}$')
     axes[0].plot([0, 1], [0, 0], color=MUTED, lw=.6)
     axes[0].plot(1, 0, 'o', color=MUTED, mfc='white', ms=4, mew=.6)
@@ -100,7 +100,7 @@ def power_convergence():
     axes[0].set(xlim=(-.02, 1.04), ylim=(-.04, 1.08), xticks=[0, .5, 1],
                 yticks=[0, .5, 1], xlabel='$x$', ylabel='函数值')
     axes[0].legend(loc='upper left', handlelength=1.7)
-    axes[1].plot(n, (2*n+1)**-.5, color=YELLOW, label=r'$L^2$误差')
+    axes[1].plot(n, (2*n+1)**-.5, color=BLUE, label=r'$L^2$误差')
     axes[1].axhline(1, color=MUTED, lw=.6, ls='--', label='上确界误差')
     axes[1].set(xlim=(1, 100), ylim=(0, 1.08), xticks=[1, 25, 50, 100],
                 yticks=[0, .5, 1], xlabel='$n$', ylabel='误差')
@@ -120,7 +120,7 @@ def clarke():
     fig, axes = new_figure(169, 67, ncols=2)
     for ax, sign in zip(axes, [1, -1]):
         ax.plot(x, sign*np.abs(x), color=BLUE)
-        ax.axhline(0, color=RED, ls='--', lw=1.1)
+        ax.axhline(0, color=GREEN if sign > 0 else RED, ls='--', lw=1.1)
         ax.plot(0, 0, 'o', color=BLUE, ms=4)
         ax.set(xlim=(-1.2, 1.2), ylim=(-1.25, 1.25), xticks=[-1, 0, 1],
                yticks=[-1, 0, 1], xlabel='$x$', ylabel='$f(x)$')
@@ -138,10 +138,10 @@ def chord():
     fig, ax = new_figure(112, 75)
     ax.plot(x, x*x/2, color=BLUE, label='$f$')
     xx = np.linspace(-1, 2, 301)
-    ax.plot(xx, .5*xx+1, color=RED, label='弦')
-    ax.plot(x, .5*x-.125, color=YELLOW, ls='--', label='切线')
-    ax.plot([-1, 2], [.5, 2], 'o', ms=4, color=RED)
-    ax.plot(.5, .125, 'o', ms=4, color=YELLOW)
+    ax.plot(xx, .5*xx+1, color=GREEN, label='弦')
+    ax.plot(x, .5*x-.125, color=PURPLE, ls='--', label='切线')
+    ax.plot([-1, 2], [.5, 2], 'o', ms=4, color=GREEN)
+    ax.plot(.5, .125, 'o', ms=4, color=PURPLE)
     ax.set(xlim=(-1.3, 2.3), ylim=(-.85, 2.85), xlabel='$x$', ylabel='函数值',
            xticks=[-1, 0, .5, 2], yticks=[0, 1, 2])
     ax.legend(loc='upper left')
@@ -159,10 +159,10 @@ def majorizer():
     assert np.all(Q-F >= -1e-14)
     fig, ax = new_figure(112, 75)
     ax.plot(x, F, color=BLUE, label='$F$')
-    ax.plot(x, Q, color=RED, label='$Q$')
-    ax.plot(x, tangent, color=YELLOW, ls='--', label='切线')
+    ax.plot(x, Q, color=GREEN, ls='--', label='$Q$')
+    ax.plot(x, tangent, color=PURPLE, ls=':', label='切线')
     ax.plot(1, .5, 'o', ms=4, color=STROKE)
-    ax.plot(.5, .25, 'o', ms=4, color=RED)
+    ax.plot(.5, .25, 'o', ms=4, color=GREEN)
     ax.plot(.5, .125, 'o', ms=4, color=BLUE)
     ax.plot([.5, .5], [.125, .25], color=MUTED, lw=.6)
     ax.set(xlim=(-.6, 2.1), ylim=(-1.12, 2.95), xlabel='$x$', ylabel='函数值',
@@ -184,8 +184,8 @@ def point_readout():
     for value in [-1, 0, 1, 1.25]:
         ax.plot(xs, (value-xs)/.75, color=GRID, lw=.6)
     ax.annotate('', xy=(1, .75), xytext=(0, 0),
-                arrowprops={'arrowstyle': '->', 'lw': 1.1, 'color': YELLOW})
-    ax.plot(.8, .6, 'o', color=YELLOW, ms=4.5)
+                arrowprops={'arrowstyle': '->', 'lw': 1.1, 'color': GREEN})
+    ax.plot(.8, .6, 'o', color=GREEN, ms=4.5)
     ax.text(.8, 1.1, r'$(4/5,3/5)$', ha='center')
     ax.text(1.04, .67, r'$K_{3/4}$', ha='left', va='top')
     ax.axhline(0, color=MUTED, lw=.6); ax.axvline(0, color=MUTED, lw=.6)
@@ -207,12 +207,12 @@ def locality():
     gaussian = np.exp(-((x-.5)**2)/(2*.12**2))
     fig, ax = new_figure(112, 75)
     ax.plot(x, bernstein, color=BLUE, label='Bernstein')
-    ax.plot(x, hat, color=RED, ls='--', label='样条帽')
-    ax.plot(x, gaussian, color=YELLOW, ls='-.', label='高斯基')
+    ax.plot(x, hat, color=GREEN, ls='--', label='样条帽')
+    ax.plot(x, gaussian, color=PURPLE, ls='-.', label='高斯基')
     ax.set(xlim=(0, 1), ylim=(-.02, 1.08), xlabel='$x$', ylabel='单位系数的函数增量',
            xticks=[0, .25, .5, .75, 1], yticks=[0, .5, 1])
     ax.legend(loc='upper left', handlelength=1.7)
-    fig.subplots_adjust(left=.14, right=.98, bottom=.18, top=.98)
+    fig.subplots_adjust(left=.14, right=.95, bottom=.18, top=.98)
     save(fig, 'functional-basis-locality',
          ['B_{4,2}(x)=6x^2(1-x)^2', 'hat(x)=max(1-|x-.5|/.25,0)',
           'gaussian(x)=exp(-(x-.5)^2/(2*.12^2))'],

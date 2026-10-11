@@ -19,9 +19,9 @@ GRAY = "#6B7280"
 
 import sys
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
-from plot_style import (configure, prepare_figure, style_record, CN, EN, BLUE, RED, GREEN as YELLOW, INK, MUTED, GRID, YELLOW_FILL)
+from plot_style import (configure, prepare_figure, style_record, CN, EN, BLUE, RED, GREEN, YELLOW, INK, MUTED, GRID, YELLOW_FILL)
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 
 records = {}
 parser = argparse.ArgumentParser(description=__doc__)
@@ -62,7 +62,7 @@ def save(fig, name, brief, formula, parameters, data, source, width, height):
 # The endpoint membership changes attainment, although the infimum is fixed.
 x = np.linspace(0, 1, 401)
 fig, axes = panels(2, width=112, height=67)
-for ax, color, closed, title in zip(axes, [BLUE, RED], [False, True],
+for ax, color, closed, title in zip(axes, [BLUE, GREEN], [False, True],
                                     ["(a) 开区间 $X=(0,1)$", "(b) 闭区间 $X=[0,1]$"]):
     ax.plot(x, x, color=color)
     ax.plot([0, 1], [0, 1], "o", ms=6, mec=color, mew=1,
@@ -102,7 +102,7 @@ h = np.linspace(0, .5, 301)
 b.plot(h, np.ones_like(h), color=RED, lw=1.1)
 b.plot([0], [1], "o", mfc="white", mec=RED, ms=6, mew=1, zorder=5)
 b.plot([0], [0], "o", mfc=RED, mec=RED, ms=5, zorder=5)
-b.axhspan(0, .5, color=GRAY, alpha=.10)
+b.axhspan(0, .5, color=BLUE_FILL)
 b.axhline(.5, color=GRAY, ls=":", lw=.6)
 b.text(.29, .54, r"$\varepsilon=1/2$", fontsize=8)
 b.text(.245, 1.23, "任意小的 $h>0$\n输出距离仍为 $1$", ha="center", va="center", fontsize=8)
@@ -126,28 +126,28 @@ for ax in [a, b, c]:
     ax.set(xlim=(-1.08, 1.08), ylim=(-.09, 1.28), xlabel="$x$")
     ax.set_xticks([-1, 0, 1])
     ax.set_yticks([0, .5, 1])
-a.plot(x, x * x, color=YELLOW)
-a.axvspan(-.5, .5, color=GRAY, alpha=.08)
-a.axhspan(0, .25, color=GRAY, alpha=.12)
+a.plot(x, x * x, color=BLUE)
+a.axvspan(-.5, .5, color=BLUE_FILL)
+a.axhspan(0, .25, color=YELLOW_FILL)
 a.axhline(.25, color=GRAY, ls=":", lw=.6)
 a.vlines([-.5, .5], 0, .25, color=GRAY, ls="--", lw=.6)
-a.plot([-.5, .5], [.25, .25], "o", mfc="white", mec=YELLOW, ms=4, zorder=5)
+a.plot([-.5, .5], [.25, .25], "o", mfc="white", mec=BLUE, ms=4, zorder=5)
 a.plot([0], [0], "o", color=GRAY, ms=3, zorder=5)
 a.text(-.99, .09, r"$\varepsilon=1/4$", fontsize=8)
 a.text(0, .62, r"$\delta=1/2$", ha="center", fontsize=8)
 a.text(-.99, 1.11, "$f(x)=x^2$", fontsize=8)
 a.set(title="(a) 连续与邻域控制", ylabel="函数值")
-b.plot([-1, 0], [0, 0], color=YELLOW)
-b.plot([0, 1], [1, 1], color=YELLOW)
-b.plot([0], [0], "o", mfc="white", mec=YELLOW, ms=6, mew=1, zorder=5)
-b.plot([0], [1], "o", color=YELLOW, ms=6, zorder=5)
+b.plot([-1, 0], [0, 0], color=BLUE)
+b.plot([0, 1], [1, 1], color=BLUE)
+b.plot([0], [0], "o", mfc="white", mec=BLUE, ms=6, mew=1, zorder=5)
+b.plot([0], [1], "o", color=BLUE, ms=6, zorder=5)
 b.text(-.95, .72, r"$x\uparrow0$" + " 时\n函数值仍为 $0$", fontsize=8)
 b.annotate("$j(0)=1$", (0, 1), xytext=(.17, .47), fontsize=8,
            arrowprops={"arrowstyle":"-", "color":GRAY, "lw":.6})
 b.text(-.98, 1.11, r"$j(x)=\mathbb{I}\{x\geq0\}$", fontsize=8)
 b.set(title="(b) 跳跃处不连续")
-c.plot(x, np.abs(x), color=YELLOW)
-c.plot([0], [0], "o", color=YELLOW, ms=4, zorder=5)
+c.plot(x, np.abs(x), color=BLUE)
+c.plot([0], [0], "o", color=BLUE, ms=4, zorder=5)
 c.text(-.99, .10, "$f'_-(0)=-1$", fontsize=8)
 c.text(.27, .10, "$f'_+(0)=1$", fontsize=8)
 c.text(-.98, 1.11, "$f(x)=|x|$", fontsize=8)
@@ -179,8 +179,8 @@ remainder1 = 1.5*h*h + h**3
 remainder2 = h**3
 fig, (a, b) = panels(2, height=81)
 a.plot(x, exact, color=BLUE, lw=1.1, label="$f(x)$")
-a.plot(x, t1, color=RED, ls="--", lw=1.1, label="一阶近似 $T_1(h)$")
-a.plot(x, t2, color=YELLOW, ls=":", lw=1.1, label="二阶近似 $T_2(h)$")
+a.plot(x, t1, color=GREEN, ls="--", lw=1.1, label="一阶近似 $T_1(h)$")
+a.plot(x, t2, color=PURPLE, ls=":", lw=1.1, label="二阶近似 $T_2(h)$")
 a.plot([x0], [f0], "o", color=GRAY, ms=4, zorder=5)
 for xpoint in [.4, .6]:
     a.plot([xpoint], [xpoint**3-3*xpoint], "o", mfc="white", mec=BLUE, ms=4, zorder=5)
@@ -190,15 +190,15 @@ a.set(title="(a) 共同函数与两阶近似", xlabel="$x$", ylabel="函数值",
       xlim=(.15, .85), ylim=(-2.25, -.35))
 a.set_xticks([.2, .4, .5, .6, .8])
 a.legend(loc="upper right")
-b.plot(h, remainder1, color=RED, ls="--", label="$f(x_0+h)-T_1(h)$")
-b.plot(h, remainder2, color=YELLOW, ls=":", lw=1.1, label="$f(x_0+h)-T_2(h)$")
+b.plot(h, remainder1, color=GREEN, ls="--", label="$f(x_0+h)-T_1(h)$")
+b.plot(h, remainder2, color=PURPLE, ls=":", lw=1.1, label="$f(x_0+h)-T_2(h)$")
 b.axhline(0, color=GRAY, lw=.6)
 b.axvline(0, color=GRAY, lw=.6)
 for step in [-.1, .1]:
     r1 = 1.5*step*step+step**3
     r2 = step**3
-    b.plot([step], [r1], "o", mfc=RED, mec="#4C4D4F", mew=.5, ms=4, zorder=5)
-    b.plot([step], [r2], "s", mfc=YELLOW, mec="#4C4D4F", mew=.5, ms=4, zorder=5)
+    b.plot([step], [r1], "o", color=GREEN, mfc=GREEN, mec="#4C4D4F", mew=.5, ms=4, zorder=5)
+    b.plot([step], [r2], "s", color=PURPLE, mfc=PURPLE, mec="#4C4D4F", mew=.5, ms=4, zorder=5)
     b.annotate(f"{r1:.3f}", (step, r1), xytext=(step, .039),
                ha="center", fontsize=8, arrowprops={"arrowstyle":"-", "color":GRAY,"lw":.6})
     b.annotate(f"{r2:.3f}", (step, r2), xytext=(step, -.015),
@@ -206,7 +206,7 @@ for step in [-.1, .1]:
 b.set(title="(b) 扣除近似后的误差", xlabel="带符号步长 $h$", ylabel="剩余函数值",
       xlim=(-.21, .21), ylim=(-.026, .087))
 b.set_xticks([-.2, -.1, 0, .1, .2])
-b.legend(loc="upper center", fontsize=7.8)
+b.legend(loc="upper center", fontsize=8)
 steps = [-.1, .1]
 step_data = [{"h": step, "x": x0+step, "f": (x0+step)**3-3*(x0+step),
               "T1": f0+fp*step, "T2": f0+fp*step+.5*fpp*step*step,
@@ -217,7 +217,7 @@ save(fig, "analysis-derivative-orders",
      "f(x)=x^3-3x; x0=1/2; h=x-x0; f0=-11/8; f'(x0)=-9/4; f''(x0)=3. T1(h)=f0+f'(x0)h; T2(h)=T1(h)+f''(x0)h^2/2. f(x0+h)-T1(h)=3h^2/2+h^3; f(x0+h)-T2(h)=h^3.",
      {"x0": x0, "f0": f0, "first_derivative": fp, "second_derivative": fpp,
       "local_x_domain": [.15,.85], "remainder_h_domain": [-.2,.2], "highlighted_steps": steps,
-      "color_roles": "Blue exact function, red first-order approximant/remainder, yellow second-order approximant/remainder; colors remain consistent across panels."},
+      "color_roles": "Blue exact function, green first-order approximant/remainder, purple second-order approximant/remainder; colors remain consistent across panels."},
      {"local_x": x.tolist(), "local_h": h_local.tolist(), "exact_f": exact.tolist(), "T1": t1.tolist(), "T2": t2.tolist(),
       "h": h.tolist(), "first_order_remainder": remainder1.tolist(),
       "second_order_remainder": remainder2.tolist(), "highlighted_evaluations": step_data},
@@ -226,8 +226,9 @@ save(fig, "analysis-derivative-orders",
 manifest = {
     "style": style_record(),
     "description": "Four analytical teaching figures for the opening mathematics chapters.",
-    "fonts": {"Chinese": "fonts/SourceHanSansSC-Normal.otf", "Latin": "fonts/FiraMath-Regular.otf", "math": "Fira Math custom mathtext"},
-    "palette": {"blue": BLUE, "red": RED, "yellow": YELLOW, "auxiliary_gray": GRAY},
+    "fonts": style_record()["fonts"],
+    "palette_policy": style_record()["palette"],
+    "palette_assignment": "Semantic roles chosen explicitly in each construction; current artist-data/typography and bound manual review establish actual assignments",
     "vector_outputs": "PDF embeds fonts; SVG uses vector glyph paths. Editable labels and all plotted geometry remain in plots.py.",
     "latex_execution": False,
     "figures": records,
