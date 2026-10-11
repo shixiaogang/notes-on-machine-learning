@@ -27,4 +27,4 @@ r3全版本构建、成品一致性、测试与版次检查通过。实际书页
 
 审查用完整PDF副本完整保留在本任务忽略的build及原子任务目录，提交只保留受审SHA、源快照和实际页图，七份最终成品仍位于target。原始交付清单的历史路径及根目录迁移对应见[frozen-pdf-preservation.json](frozen-pdf-preservation.json)；没有删除原冻结证据。原始prompt、源摘录、补丁上下文及日志的字节保留，其空白检查范围见[whitespace-scope.json](whitespace-scope.json)。
 
-[完整页用途绑定](final-page-bindings-r4.json)汇总201张实际保存的PNG用途（包含同一物理页的不同审核用途），绑定原渲染器、比例与色彩模式。当前任务源与图页自查已完成。主工作区串行集成后的重建须单独校验，结果将由main-integration记录追加；不得以r4旧PDF哈希直接称为未来main成品验收。
+[完整页用途绑定](final-page-bindings-r4.json)汇总201张实际保存的PNG用途（包含同一物理页的不同审核用途），绑定原渲染器、比例与色彩模式。当前任务源与图页自查已完成。主工作区已串行集成并重新生成七份成品，全部检查通过；201份页用途严格比对相同，最新PDF SHA与实际结果见[main集成闭环](main-integration/README.md)。r4旧SHA保留为历史版本，不冒充main最终成品。
