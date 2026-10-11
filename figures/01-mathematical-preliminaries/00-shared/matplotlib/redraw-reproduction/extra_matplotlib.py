@@ -3,7 +3,7 @@ from pathlib import Path
 import sys,json,math
 import numpy as np
 import matplotlib.pyplot as plt
-import fitz
+import pymupdf as fitz
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 OUT=Path(__file__).resolve().parent
 REGISTRY=json.loads((OUT/'registry.json').read_text())
@@ -12,6 +12,7 @@ def figure_dir(key):
  return Path(__import__('os').environ['ACADEMIC_PROOF_DIR'])/p.relative_to('figures') if __import__('os').environ.get('ACADEMIC_PROOF_DIR') else ROOT/p
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
 from plot_style import configure,prepare_figure,style_record,BLUE,RED,GREEN,MUTED,note
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
 sys.path.insert(0,str(OUT));import instrument_export
 
@@ -45,16 +46,16 @@ def mixed(key,which):
   theta=np.linspace(0,np.pi,601);arc=theta;chord=2*np.sin(theta/2)
   fig,ax=plt.subplots(figsize=(82/25.4,65/25.4),layout='constrained')
   ax.plot(theta,arc,color=BLUE,label='短弧长度')
-  ax.plot(theta,chord,color=RED,ls='--',label='弦长')
+  ax.plot(theta,chord,color=GREEN,ls='--',label='弦长')
   ax.set(xlabel=r'圆心角 $\theta$',ylabel='距离',xlim=(0,np.pi),ylim=(0,3.4),xticks=[0,np.pi/2,np.pi],xticklabels=['0',r'$\pi/2$',r'$\pi$'],yticks=[0,1,2,3])
   ax.legend(loc='upper left')
   definition={'circle_radius':1,'theta':theta.tolist(),'arc':arc.tolist(),'chord':chord.tolist(),'formulas':['d_intrinsic=theta, 0<=theta<=pi','d_extrinsic=2*sin(theta/2)']}
  export(fig,key,'data-panel')
  d=figure_dir(key);(d/'data-panel-definitions.json').write_text(json.dumps(definition,ensure_ascii=False,indent=2)+'\n')
- left=fitz.open(d/'source.pdf');right=fitz.open(d/'data-panel.pdf');doc=fitz.open();page=doc.new_page(width=169/25.4*72,height=68/25.4*72)
- page.show_pdf_page(fitz.Rect(0,0,84/25.4*72,page.rect.height),left,0)
- page.show_pdf_page(fitz.Rect(85/25.4*72,0,page.rect.width,page.rect.height),right,0)
+ left=fitz.open(d/'source.pdf');right=fitz.open(d/'data-panel.pdf');doc=fitz.open();page=doc.new_page(width=169/25.4*72,height=65/25.4*72)
+ page.show_pdf_page(fitz.Rect(0,0,82/25.4*72,page.rect.height),left,0)
+ page.show_pdf_page(fitz.Rect(87/25.4*72,0,page.rect.width,page.rect.height),right,0)
  doc.save(d/'figure.pdf');page.get_pixmap(dpi=360).save(d/'figure.png');(d/'figure.svg').write_text(page.get_svg_image(text_as_path=True))
- (d/'composition.json').write_text(json.dumps({'route':'TikZ geometry + Matplotlib quantitative panel, vector PDF composition with PyMuPDF','left':'source.pdf','right':'data-panel.pdf','page_mm':[169,68],'definitions':'data-panel-definitions.json','style':style_record()},ensure_ascii=False,indent=2)+'\n')
+ (d/'composition.json').write_text(json.dumps({'route':'TikZ geometry + Matplotlib quantitative panel, vector PDF composition with PyMuPDF at native 82mm panel widths','left':'source.pdf','right':'data-panel.pdf','page_mm':[169,65],'definitions':'data-panel-definitions.json','style':style_record()},ensure_ascii=False,indent=2)+'\n')
  left.close();right.close();doc.close()
 paths();mixed('ch06-transient-growth','transient');mixed('geometry-circle-distances','circle')

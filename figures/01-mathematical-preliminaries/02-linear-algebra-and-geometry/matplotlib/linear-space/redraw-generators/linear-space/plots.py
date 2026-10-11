@@ -15,9 +15,11 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 ROOT = next(p for p in HERE.parents if (p / "build.sh").exists())
 sys.path.insert(0, str(ROOT / "figures/00-shared/academic-drawing"))
+sys.path.insert(0, str(ROOT / "figures/00-shared"))
+from resource_paths import asset_path
 from plot_style import BLUE, RED, STROKE, configure, prepare_figure, style_record
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 
 def export(fig, name):
     prepare_figure(fig)
@@ -31,16 +33,16 @@ frobenius = np.array([8.604650, 3.168596, 1.019804, .2, 0])
 fig, (ax, detail) = plt.subplots(1, 2, figsize=(112/25.4, 68/25.4),
                                 gridspec_kw={"width_ratios": [3, 1]}, layout="constrained")
 ax.plot(rank, spectral, color=BLUE, marker="o", markersize=3, label="谱误差")
-ax.plot(rank, frobenius, color=RED, linestyle="--", marker="o", markerfacecolor="white", markersize=4, label="Frobenius误差")
+ax.plot(rank, frobenius, color=GREEN, linestyle="--", marker="o", markerfacecolor="white", markersize=4, label="Frobenius误差")
 ax.axhline(1, color=STROKE, lw=.6, ls="--")
 ax.set(xlabel="$k$", ylabel="误差", xticks=rank, yticks=[1, 4, 8], ylim=(-.15, 9.2))
 ax.legend(loc="upper right", fontsize=8)
 detail.scatter([0], [spectral[2]], color=BLUE, s=18)
-detail.scatter([0], [frobenius[2]], facecolor="white", edgecolor=RED, s=26)
+detail.scatter([0], [frobenius[2]], facecolor="white", edgecolor=GREEN, s=26)
 detail.axhline(1, color=STROKE, lw=.6, ls="--")
 detail.set(title="$k=2$ 局部放大", ylim=(.98, 1.04), xlim=(-.5, 1), xticks=[], yticks=[1, 1.02])
 detail.annotate("$1$", (0, 1), (.3, .991), fontsize=8, arrowprops={"arrowstyle":"-", "color":BLUE,"lw":.5})
-detail.annotate("$1.0198$", (0, 1.019804), (.15, 1.032), fontsize=8, arrowprops={"arrowstyle":"-", "color":RED,"lw":.5})
+detail.annotate("$1.0198$", (0, 1.019804), (.15, 1.032), fontsize=8, arrowprops={"arrowstyle":"-", "color":GREEN,"lw":.5})
 export(fig, "error-rank-curves")
 
 k = np.arange(21)
@@ -68,6 +70,7 @@ export(fig, "transient-growth")
 data = {"rank_error": {"k":rank.tolist(), "spectral":spectral.tolist(), "frobenius":frobenius.tolist()},
         "transient_growth": {"A":[[.8,4],[0,.5]], "initial":[0,1], "k":k.tolist(), "x1":x1.tolist(), "x2":x2.tolist(), "norm":norm.tolist(),
                              "formula":"x1(k)=40/3*(0.8^k-0.5^k); x2(k)=0.5^k"}}
-(HERE / "data.json").write_text(json.dumps(data, ensure_ascii=False, indent=2)+"\n")
+data_path = asset_path(HERE, "data.json")
+data_path.write_text(json.dumps(data, ensure_ascii=False, indent=2)+"\n")
 sources = [f"figures/01-mathematical-preliminaries/02-linear-algebra-and-geometry/tikz/linear-space/{name}.tex" for name in ["error-rank-curves", "transient-growth"]]
-(HERE / "sources.json").write_text(json.dumps({"sources":sources, "data_sha256":hashlib.sha256((HERE/"data.json").read_bytes()).hexdigest(), "style":style_record(), "exports":["pdf", "svg", "png300dpi"]}, ensure_ascii=False, indent=2)+"\n")
+(asset_path(HERE, "sources.json")).write_text(json.dumps({"sources":sources, "data_sha256":hashlib.sha256(data_path.read_bytes()).hexdigest(), "style":style_record(), "exports":["pdf", "svg", "png300dpi"]}, ensure_ascii=False, indent=2)+"\n")

@@ -16,8 +16,8 @@ ROOT = next(p for p in Path(__file__).resolve().parents if (p / 'build.sh').is_f
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record, BLUE, RED, GRID, MUTED
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 L = np.array([[1, -1, 0, 0], [-1, 2, -1, 0],
               [0, -1, 2, -1], [0, 0, -1, 1]], dtype=float)
 D = np.diag([1, 2, 2, 1])
@@ -37,7 +37,7 @@ ax.axhline(0, color=MUTED, lw=.6, zorder=0)
 ax.axvline(2.5, color=GRID, lw=.6, linestyle=':', zorder=0)
 ax.plot(x, ratio, color=BLUE, marker='o', markersize=4,
         label=r'RatioCut：$L u_2=(2-\sqrt{2})u_2$')
-ax.plot(x, ncut, color=RED, marker='s', markersize=4, linestyle='--',
+ax.plot(x, ncut, color=GREEN, marker='s', markersize=4, linestyle='--',
         label=r'NCut：$L y_2=\frac{1}{2} D^{(w)}y_2$')
 ax.set_xticks(x)
 ax.set_xlabel('路径上的顶点编号')

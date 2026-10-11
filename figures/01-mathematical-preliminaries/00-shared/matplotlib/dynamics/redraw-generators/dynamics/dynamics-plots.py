@@ -22,9 +22,9 @@ from resource_paths import asset_path
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
-from plot_style import BLUE, RED, GREEN as YELLOW
+from plot_style import BLUE, RED, GREEN, YELLOW
 from plot_style import INK, STROKE, MUTED as GREY, BLUE_FILL as PALE
 RECORDS = {}
 CHAPTERS = {
@@ -83,7 +83,7 @@ linear=np.convolve(x,h)
 circular=np.array([sum(x[r]*np.pad(h,(0,1))[(t-r)%3] for r in range(3)) for t in range(3)])
 assert np.allclose(linear,[1,1,-1,-1]) and np.allclose(circular,[0,1,-1])
 fig, axs=canvas(112,82,nrows=2,sharex=True,sharey=True)
-for ax,values,color,marker,label in zip(axs,[linear,circular],[BLUE,RED],['o','s'],['零延拓','周期边界（长度 3）']):
+for ax,values,color,marker,label in zip(axs,[linear,circular],[BLUE,GREEN],['o','s'],['零延拓','周期边界（长度 3）']):
     t=np.arange(len(values)); ax.vlines(t,0,values,color=color,lw=1.1)
     ax.scatter(t,values,s=20,color=color,marker=marker,zorder=3)
     ax.axhline(0,color=GREY,lw=.6)
@@ -99,7 +99,7 @@ f1=np.cos(.8*np.pi*t); f2=np.cos(1.2*np.pi*t)
 assert np.allclose(np.cos(.8*np.pi*sample_t),np.cos(1.2*np.pi*sample_t))
 fig,ax=canvas(112,64)
 ax.plot(t,f1,color=BLUE,label=r'$\cos(0.8\pi t)$')
-ax.plot(t,f2,color=RED,ls='--',label=r'$\cos(1.2\pi t)$')
+ax.plot(t,f2,color=GREEN,ls='--',label=r'$\cos(1.2\pi t)$')
 ax.scatter(sample_t,np.cos(.8*np.pi*sample_t),color=INK,s=18,zorder=4,label='共同样本')
 ax.set(xlim=(-.1,5.1),ylim=(-1.3,1.5),xlabel='连续位置 $t$',ylabel='信号值')
 ax.set_xticks(range(6)); ax.set_yticks([-1,0,1]); ax.legend(loc='upper center',ncols=3,columnspacing=.9,handlelength=1.5)

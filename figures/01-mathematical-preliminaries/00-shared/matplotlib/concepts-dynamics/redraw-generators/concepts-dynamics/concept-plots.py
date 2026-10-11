@@ -22,10 +22,10 @@ from resource_paths import asset_path
 sys.path.insert(0, str(ROOT / 'figures/00-shared/academic-drawing'))
 from plot_style import configure, prepare_figure, style_record
 
+from plot_style import BLUE, GREEN, YELLOW, RED, PURPLE, BLUE_FILL, GREEN_FILL, YELLOW_FILL, RED_FILL, PURPLE_FILL
 configure()
-YELLOW_FILL = "#EDF4F0"  # Pale fill of the same Lancet Green semantic series.
 CHAPTER_DIR = Path("tex/01-mathematical-preliminaries")
-from plot_style import BLUE, RED, GREEN as YELLOW
+from plot_style import BLUE, RED, GREEN, YELLOW
 from plot_style import INK, STROKE, MUTED as GREY, GRID
 
 
@@ -89,19 +89,19 @@ def amplitude_phase():
     for ax in (time_ax, mag_ax, phase_ax):
         axes_style(ax)
     time_ax.plot(n, x, "o-", color=BLUE, ms=3.4, label="原序列 x")
-    time_ax.plot(n, z, "s--", color=RED, ms=3.2, label="右移两格 z")
+    time_ax.plot(n, z, "s--", color=GREEN, ms=3.2, label="右移两格 z")
     time_ax.set(xlim=(-.2, 7.2), ylim=(-1.25, 1.65), xticks=n,
                 yticks=[-1, 0, 1], xlabel="离散位置 n", ylabel="信号值")
     time_ax.legend(loc="upper right", ncols=2, handlelength=1.8)
     time_ax.set_title("离散波形", pad=4)
-    for offset, values, color, label in [(-.14, xf, BLUE, "x"), (.14, zf, RED, "z")]:
+    for offset, values, color, label in [(-.14, xf, BLUE, "x"), (.14, zf, GREEN, "z")]:
         mag_ax.bar(n + offset, np.abs(values), width=.25, color=color, label=label)
     mag_ax.set(xlim=(-.45, 7.45), ylim=(0, 4.9), xticks=n, yticks=[0, 2, 4],
                xlabel="频率索引 k", ylabel="系数幅度")
     mag_ax.set_title("幅度", pad=4)
     mag_ax.legend(loc="upper center", ncols=2)
     phase_ax.scatter(nonzero - .1, np.angle(xf[nonzero]), marker="o", s=24, color=BLUE, label="x")
-    phase_ax.scatter(nonzero + .1, np.angle(zf[nonzero]), marker="s", s=22, color=RED, label="z")
+    phase_ax.scatter(nonzero + .1, np.angle(zf[nonzero]), marker="s", s=22, color=GREEN, label="z")
     phase_ax.set(xlim=(-.45, 7.45), ylim=(-2.15, 2.15), xticks=n,
                  yticks=[-np.pi / 2, 0, np.pi / 2],
                  yticklabels=[r"$-\pi/2$", "0", r"$\pi/2$"],
