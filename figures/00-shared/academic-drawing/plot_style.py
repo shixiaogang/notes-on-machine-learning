@@ -1,4 +1,4 @@
-"""Academic drawing 2026-10: actual fonts, Lancet colors, exact source data.
+"""Academic drawing 2026-10: actual fonts, five muted colors, exact source data.
 Only styles text and artists; never substitutes, samples, smooths or changes data.
 """
 from pathlib import Path
@@ -27,9 +27,11 @@ for p,alias in [(CN_FILE,CN),(NOTE_FILE,NOTE),(EN_FILE,EN),(STIX_FILE,STIX)]:
     font_manager.fontManager.ttflist.append(entry)
 font_manager.fontManager._findfont_cached.cache_clear()
 
-BLUE,CYAN,ICE,GREEN,GRASS,SAGE,YELLOW,PEACH,ORANGE,CORAL,RED = PALETTE = ['#7B95C6','#49C2D9','#A1D8E8','#67A583','#A2C986','#D0E2C0','#FDED95','#FFC1A6','#F59C7C','#F47254','#C85E62']
+# Compatibility names bind archived scientific generators to five exact hues.
+BLUE,GREEN,YELLOW,RED,PURPLE = PALETTE = ['#7188A3','#829C8B','#B4A16F','#A7787D','#9588A5']
 INK,STROKE,MUTED,GRID='#3B4252','#4C4D4F','#6B7280','#D8DCE2'
-BLUE_FILL,RED_FILL,YELLOW_FILL='#E7ECF5','#F5E2E3','#FEF9D9'
+BLUE_FILL,GREEN_FILL,YELLOW_FILL,RED_FILL,PURPLE_FILL='#E5EAF0','#E8EEE9','#F1ECDD','#F0E5E6','#ECE8F0'
+CYAN,ICE,GRASS,SAGE,PEACH,ORANGE,CORAL=BLUE,BLUE_FILL,GREEN,GREEN_FILL,YELLOW_FILL,YELLOW,RED
 def is_cjk(code): return 0x2e80<=code<=0x9fff or 0xf900<=code<=0xfaff or 0xff00<=code<=0xffef
 class AcademicUnicodeFonts(_mathtext.UnicodeFonts):
     """Fira math with explicitly selected Chinese face for mixed math labels.
@@ -79,8 +81,8 @@ class AcademicUnicodeFonts(_mathtext.UnicodeFonts):
 MathTextParser._font_type_mapping['custom']=AcademicUnicodeFonts
 
 def configure():
-    mpl.rcParams.update({'font.family':[EN,STIX,CN],'font.size':8.5,'font.weight':'normal',
-      'axes.labelsize':8.5,'axes.titlesize':9,'axes.labelweight':'normal','axes.titleweight':'normal',
+    mpl.rcParams.update({'font.family':[EN,STIX,CN],'font.size':8,'font.weight':'normal',
+      'axes.labelsize':8,'axes.titlesize':8,'axes.labelweight':'normal','axes.titleweight':'normal',
       'xtick.labelsize':8,'ytick.labelsize':8,'legend.fontsize':8,
       'mathtext.fontset':'custom','mathtext.default':'it','mathtext.fallback':None,
       'mathtext.rm':EN,'mathtext.it':EN,'mathtext.bf':EN,'mathtext.bfit':EN,'mathtext.cal':EN,
@@ -104,11 +106,6 @@ def prepare_figure(fig):
         note=getattr(text,'academic_role','')=='note'
         text.set_fontfamily([EN,STIX,NOTE if note else CN]);text.set_fontweight('normal')
         text.set_math_fontfamily('custom')
-    for line in fig.findobj(Line2D):
-        try:
-            if colors.to_hex(line.get_color()).upper()==YELLOW:
-                line.set_color(GREEN) # pale yellow is not legible as a fine data curve
-        except (ValueError,TypeError):pass
     if fig.get_layout_engine() is not None:
         for _ in range(3):fig.canvas.draw()
         fig.set_layout_engine(None)
@@ -117,10 +114,10 @@ def note(text):
     text.academic_role='note';text.set_fontfamily([EN,STIX,NOTE]);return text
 
 def style_record():
-    return {'palette_name':'Lancet 2024-07','palette':PALETTE,'fonts':{
+    return {'palette_name':'Book muted five-color 2026-10-11','palette':PALETTE,'fonts':{
       'Chinese_body':str(CN_FILE.relative_to(ROOT)),'Chinese_note':str(NOTE_FILE.relative_to(ROOT)),
       'Latin_digits_math':str(EN_FILE.relative_to(ROOT)),'only_missing_math_glyphs':str(STIX_FILE.relative_to(ROOT))},'font_sha256':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in [CN_FILE,NOTE_FILE,EN_FILE,STIX_FILE]},
       'mathtext':'custom Fira Math; CJK-specific fallback to explicitly loaded Normal/WenKai; general math fallback disabled; actual STIX2 only for Fira-absent glyphs per user authorization',
-      'line_width_pt':{'main':1.1,'axes':.75,'auxiliary':.6,'grid':.4},'background':'white',
-      'fine_yellow_curve':'use Lancet Green for readability; same exact data; legends follow curve',
+      'label_size_pt':{'main':8,'note':7.5},'fixed_pale_fills':{'blue':BLUE_FILL,'green':GREEN_FILL,'yellow':YELLOW_FILL,'red':RED_FILL,'purple':PURPLE_FILL},'line_width_pt':{'main':1.1,'axes':.75,'auxiliary':.6,'grid':.4},'background':'white',
+      'fine_yellow_curve':'No automatic color substitution; semantic colors are chosen explicitly in scientific sources',
       'export':'PDF vector Type3 outlines; SVG glyph paths; PNG genuine export dpi'}
