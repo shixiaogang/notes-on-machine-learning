@@ -61,7 +61,10 @@ def main():
    if proof:dest=proof/Path(row['folder']).relative_to('figures')
    result=render_tikz.render(ROOT/row['source'][0],dest)
    if row['route']=='simple':
-    for ext in ['pdf','png','svg']:shutil.copy2(dest/('source.'+ext),dest/('figure.'+ext))
+    native=Path(row['source'][0]).stem
+    body=Path(row['asset']).stem
+    if native != body:
+     for ext in ['pdf','png','svg']:shutil.copy2(dest/(native+'.'+ext),dest/(body+'.'+ext))
    print(key,'TikZ',result['physical_size_mm'],flush=True)
   if row['route'] in ['data','mixed']:
    src=next(s for s in row['source'] if s.endswith('.py'))
