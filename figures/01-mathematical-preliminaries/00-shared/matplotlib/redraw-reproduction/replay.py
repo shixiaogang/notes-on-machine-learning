@@ -51,7 +51,12 @@ def main():
   if row['route'] in ['simple','mixed']:
    import render_tikz
    render_tikz.ROOT=ROOT
-   render_tikz.PREAMBLE=(STYLE/'preamble.tex').read_text().replace('figures/00-shared/academic-drawing',str(STYLE))+'\n\\begin{document}\n'
+   preamble=(STYLE/'preamble.tex').read_text()
+   # Canonical inputs stay relative to ROOT: an absolute iCloud path contains
+   # a literal '~', which TeX would otherwise expand as an active character.
+   if STYLE != ROOT/'figures/00-shared/academic-drawing':
+    preamble=preamble.replace('figures/00-shared/academic-drawing',str(STYLE).replace('~',r'\string~'))
+   render_tikz.PREAMBLE=preamble+'\n\\begin{document}\n'
    dest=ROOT/row['folder']
    if proof:dest=proof/Path(row['folder']).relative_to('figures')
    result=render_tikz.render(ROOT/row['source'][0],dest)

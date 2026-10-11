@@ -2,7 +2,7 @@
 
 资源采用与 `tex/` 相同的卷、部分目录，再按制作方式分为 `tikz/`、`matplotlib/` 和 `generated/`。输出格式不决定分类：TikZ 的 PDF、SVG 和 PNG 预览仍随图源保存；采样数据与其生成脚本随实际使用它们的图组保存。
 
-跨部分复用的图组、生成器及记录位于各卷 `00-shared/`；跨卷工具可放入根级 `00-shared/`。本轮前三卷重绘共用的字体、Lancet 调色板、Matplotlib 与独立 TikZ 导出入口位于 `00-shared/academic-drawing/`；历史生成器保留各自入口。复杂图组的子目录按内容命名，保留源文件、数据、生成参数与预览。跨部分生成器旁的 `assets.json` 指明各成图的实际归档位置，由 `figures/00-shared/resource_paths.py` 解析；各部分独用的成图不会因为共用脚本而留在共享目录。
+跨部分复用的图组、生成器及记录位于各卷 `00-shared/`；跨卷工具可放入根级 `00-shared/`。当前共用字体、五种柔和语义色、Matplotlib 与独立 TikZ 导出入口位于 `00-shared/academic-drawing/`。第一卷按现行规范重绘；其他卷的历史成图须以各自记录确认适用样式。复杂图组的子目录按内容命名，保留源文件、数据、生成参数与预览。跨部分生成器旁的 `assets.json` 指明各成图的实际归档位置，由 `figures/00-shared/resource_paths.py` 解析；各部分独用的成图不会因为共用脚本而留在共享目录。
 
 ## 现有资源
 

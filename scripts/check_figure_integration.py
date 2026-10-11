@@ -10,6 +10,19 @@ ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / 'figures/00-shared/academic-drawing/integration-manifest.json'
 
 
+def figure_blocks(text):
+    """Include the numbered non-floating figures used in function spaces."""
+    result = []
+    for env, block in re.findall(r'\\begin\{(figure\*?)\}(.*?)\\end\{\1\}', text, re.S):
+        labels = re.findall(r'\\label\{(fig:[^}]+)\}', block)
+        result.append((env, block, labels))
+    for block in re.findall(r'\\begin\{minipage\}.*?\\end\{minipage\}', text, re.S):
+        labels = re.findall(r'\\functionalinlinefigurecaption\{(fig:[^}]+)\}', block)
+        if labels:
+            result.append(('inline', block, labels))
+    return result
+
+
 def check(registry):
     records = registry['records']
     labels = set()
@@ -26,17 +39,20 @@ def check(registry):
             errors.append(f'Missing body or graphic: {label}')
             continue
         text = source.read_text()
-        blocks = re.findall(r'\\begin\{(figure\*?)\}(.*?)\\end\{\1\}', text, re.S)
-        matches = [block for _, block in blocks if '\\label{' + label + '}' in block]
+        blocks = figure_blocks(text)
+        matches = [(env, block) for env, block, labels in blocks if label in labels]
         if len(matches) != 1:
             errors.append(f'Expected one figure block: {label}')
-        elif asset not in matches[0]:
+        elif asset not in matches[0][1]:
             errors.append(f'Figure does not use archived asset: {label}')
-        elif matches[0].count('\\begingroup') != matches[0].count('\\endgroup'):
+        elif matches[0][1].count('\\begingroup') != matches[0][1].count('\\endgroup'):
             errors.append(f'Unbalanced figure group: {label}')
-        elif '\\caption' not in matches[0]:
+        elif not any(cmd in matches[0][1] for cmd in ['\\caption', '\\functionalinlinefigurecaption']):
             errors.append(f'Missing caption: {label}')
-        if graphic.suffix not in {'.pdf', '.png'}:
+        # A legacy inline TikZ source is itself executed by the book. Redrawn
+        # standalone exports use PDF, with the source kept separately.
+        inline_source = graphic.suffix == '.tex' and len(matches) == 1 and matches[0][0] == 'inline'
+        if graphic.suffix not in {'.pdf', '.png'} and not inline_source:
             errors.append(f'Unexpected production format: {asset}')
         digest = hashlib.sha256(graphic.read_bytes()).hexdigest()
         if item.get('sha256') != digest:
@@ -46,18 +62,17 @@ def check(registry):
         group = str(item['volume'])
         counts.setdefault(group, {'replacement': 0, 'addition': 0})
         counts[group]['addition' if item.get('is_addition') else 'replacement'] += 1
-    expected = {'1': {'replacement': 116, 'addition': 5},
+    expected = registry.get('expected_counts', {'1': {'replacement': 116, 'addition': 5},
                 '2': {'replacement': 83, 'addition': 7},
-                '3': {'replacement': 211, 'addition': 8}}
+                '3': {'replacement': 211, 'addition': 8}})
     if counts != expected:
         errors.append(f'Integration counts differ: {counts}')
-    # The original inventory was exhaustive: all first-three-volume figures
-    # must have an entry, including the newly added diagrams.
+    # Cover both ordinary floating figures and explicitly numbered inline
+    # figures; the latter must not disappear from the inventory.
     active = set()
     for slug in ['01-mathematical-preliminaries', '02-foundations', '03-models']:
         for path in (ROOT / 'tex' / slug).rglob('*.tex'):
-            for _, block in re.findall(r'\\begin\{(figure\*?)\}(.*?)\\end\{\1\}', path.read_text(), re.S):
-                block_labels = re.findall(r'\\label\{(fig:[^}]+)\}', block)
+            for _, _, block_labels in figure_blocks(path.read_text()):
                 if block_labels:
                     active.add(block_labels[0])
     if active != labels:

@@ -105,6 +105,7 @@ def prepare_figure(fig):
         # explicitly loaded Normal face. Notes opt into WenKai by role.
         note=getattr(text,'academic_role','')=='note'
         text.set_fontfamily([EN,STIX,NOTE if note else CN]);text.set_fontweight('normal')
+        if note: text.set_fontsize(7.5)
         text.set_math_fontfamily('custom')
     if fig.get_layout_engine() is not None:
         for _ in range(3):fig.canvas.draw()

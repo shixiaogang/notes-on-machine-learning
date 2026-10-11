@@ -22,7 +22,8 @@ def save(self,file,*args,**kwargs):
  for ax in self.axes:
   for axis in [ax.xaxis,ax.yaxis]:
    for tick in axis.get_major_ticks()+axis.get_minor_ticks():all_tick_text.update([tick.label1,tick.label2])
-   for tick in axis._update_ticks():drawn_tick_text.update([tick.label1,tick.label2])
+   if ax.axison and axis.get_visible():
+    for tick in axis._update_ticks():drawn_tick_text.update([tick.label1,tick.label2])
  for t in self.findobj(Text):
   if not t.get_visible() or not t.get_text() or (t in all_tick_text and t not in drawn_tick_text):continue
   b=Text.get_window_extent(t,renderer)  # Glyph rectangle, excluding Annotation leader/arrow.
