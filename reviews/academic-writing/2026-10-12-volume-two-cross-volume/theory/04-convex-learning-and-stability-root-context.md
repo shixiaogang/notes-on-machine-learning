@@ -1,4 +1,4 @@
-### tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex:36–71
+### tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex:36–71
 0036 
 0037 \section{一致收敛}
 0038 \label{sec:real-valued-classes}
@@ -36,7 +36,7 @@
 0070 假定存在可数子空间$\mathcal F_0\subseteq\mathcal F$，使每个$f\in\mathcal F$都是
 0071 $\mathcal F_0$中某个函数序列的逐点极限。则以下两个命题等价：
 
-### tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1092–1114
+### tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1092–1114
 1092 代入定理~\ref{thm:generalization-optimization-learning}即得结论。
 1093 \end{proof}
 1094 
@@ -61,7 +61,7 @@
 1113 设$S\sim\mathcal P^n$，$W=A_n(S,U)$，$U$独立于$S$。
 1114 若存在不依赖$\mathcal P$的非负序列$\iota_n$，满足
 
-### tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1149–1177
+### tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1149–1177
 1149 \end{theorem}
 1150 \begin{proof}
 1151 令$P=P_{S,W}$、$Q=P_S\otimes P_W$，并记
@@ -92,7 +92,7 @@
 1176 $\mathcal W$非空，$\ell:\mathcal W\times Z\to[0,1]$可测。对每个允许分布
 1177 $\mathcal P$，令$S=(z_1,\ldots,z_n)\sim\mathcal P^n$，令算法内部随机数
 
-### tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1244–1268
+### tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1244–1268
 1244 \]
 1245 对$n$项求和，再用三角不等式即可。
 1246 \end{proof}
@@ -111,7 +111,7 @@
 1259 
 1260 \begin{figure*}[!htb]
 1261   \centering
-1262   \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/learning-theory-conditional-information/figure.png}
+1262   \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/learning-theory-conditional-information/figure.png}
 1263   \caption{条件互信息的抽样构造。每行有两个独立观测，左、右分别编号0、1；选择变量决定哪一个进入训练样本。图中$\bm B=(1,1,1)$，箭头与训练集中的内容同时标出选中的观测。算法接收选中的三个观测与独立随机种子$U$；条件互信息衡量已知全部六个观测时，输出对选择变量揭示了多少信息。}
 1264  \label{fig:conditional-information}
 1265 \end{figure*}
@@ -119,7 +119,7 @@
 1267 \begin{definition}[算法的条件互信息量]
 1268 \label{def:algorithm-cmi}
 
-### tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1431–1455
+### tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1431–1455
 1431   \caption{期望风险的两条分析路线。左侧同时控制整个决策空间，右侧控制算法输出的期望
 1432  泛化差；两条路线都要结合经验最优性。右侧用$\beta_n$泛指所选稳定性定理提供的代价项。}
 1433  \label{fig:learning-risk-routes}
@@ -146,7 +146,7 @@
 1454 \label{def:convex-learning-problem}
 1455 若$\mathcal W$是凸集，并且对每个$z\in Z$，函数$w\mapsto\ell(w,z)$为凸函数，则称
 
-### tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1823–1847
+### tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex:1823–1847
 1823  凸且$M$-光滑时，$\eta\leq2/M$保证不扩张；满足本章强凸光滑条件时，
 1824  $\eta\leq1/M$保证至多以$1-\mu\eta$收缩。仅有光滑性不能排除扩张。}
 1825  \label{fig:stability-curvature}
@@ -173,7 +173,7 @@
 1846 \]
 1847 固定$n\geq1$并取$\lambda>\kappa$。对$S=(z_1,\ldots,z_n)\in Z^n$，假设
 
-### tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex:2012–2036
+### tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex:2012–2036
 2012  \frac{2cL^2T^a}{n}\sum_{t=t_0}^{T-1}(t+1)^{-a-1}
 2013  \leq\frac{2cL^2T^a}{an}\,t_0^{-a}.
 2014 \]

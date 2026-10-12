@@ -18,7 +18,7 @@
 
 核心问题：怎样确定讨论对象，表达一个有明确条件和范围的结论，并验证它？
 
-源文件：[01-sets-functions-and-proofs.tex](../tex/01-mathematical-preliminaries/01-mathematical-language-combinatorics-analysis-optimization/01-sets-functions-and-proofs.tex)。
+源文件：[01-sets-functions-and-proofs.tex](../tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/01-sets-functions-and-proofs.tex)。
 
 ### 1.1 集合与关系
 
@@ -73,7 +73,7 @@
 
 核心问题：怎样计数有限候选、构造候选解并核验其质量，再判断整类问题的可计算性与计算代价？
 
-源文件：[02-combinatorics.tex](../tex/01-mathematical-preliminaries/01-mathematical-language-combinatorics-analysis-optimization/02-combinatorics.tex)。
+源文件：[02-combinatorics.tex](../tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/02-combinatorics.tex)。
 
 ### 2.1 候选空间的结构与计数
 
@@ -124,7 +124,7 @@
 
 核心问题：怎样从有限表达进入无限过程，并判断近似、变化和累计在极限下保留什么？
 
-源文件：[03-mathematical-analysis.tex](../tex/01-mathematical-preliminaries/01-mathematical-language-combinatorics-analysis-optimization/03-mathematical-analysis.tex)。
+源文件：[03-mathematical-analysis.tex](../tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/03-mathematical-analysis.tex)。
 
 ### 3.1 集合的距离、权重与可测范围
 
@@ -251,7 +251,7 @@
 
 核心问题：给定目标、可行范围和计算预算，怎样构造一个足够好的解，并判断它究竟好在哪里？
 
-源文件：[04-optimization.tex](../tex/01-mathematical-preliminaries/01-mathematical-language-combinatorics-analysis-optimization/04-optimization.tex)。
+源文件：[04-optimization.tex](../tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/04-optimization.tex)。
 
 ### 4.1 优化问题的定义与基本性质
 
@@ -328,7 +328,7 @@
 
 核心问题：怎样表示、比较和变换有限维线性对象，并在求解、逼近与扰动下得到可靠结果？
 
-源文件：[01-linear-algebra-and-matrix-analysis.tex](../tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/01-linear-algebra-and-matrix-analysis.tex)。
+源文件：[01-linear-algebra-and-matrix-analysis.tex](../tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/01-linear-algebra-and-matrix-analysis.tex)。
 
 ### 5.1 元素与表示
 
@@ -407,7 +407,7 @@
 
 核心问题：怎样在非线性可行空间中记录位置、运算与求解，并区分局部模型、采样逼近与整体保证？
 
-源文件：[02-differential-geometry-and-symmetry.tex](../tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/02-differential-geometry-and-symmetry.tex)。
+源文件：[02-differential-geometry-and-symmetry.tex](../tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/02-differential-geometry-and-symmetry.tex)。
 
 ### 6.1 元素与表示
 
@@ -490,7 +490,7 @@
 
 核心问题：怎样表示和比较整函数，通过读取获取信息，并在逼近与扰动下求解？
 
-源文件：[03-functional-analysis-and-approximation.tex](../tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/03-functional-analysis-and-approximation.tex)。
+源文件：[03-functional-analysis-and-approximation.tex](../tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/03-functional-analysis-and-approximation.tex)。
 
 ### 7.1 元素与表示
 
@@ -575,7 +575,7 @@
 
 核心问题：给定随时间或位置变化的信号，怎样辨认其结构、选择表示、计算映射，并判断采样后还能恢复什么？
 
-源文件：[01-signal-representation-and-processing.tex](../tex/01-mathematical-preliminaries/03-graphs-and-signals/01-signal-representation-and-processing.tex)。
+源文件：[01-signal-representation-and-processing.tex](../tex/01-mathematical-preliminaries-upper/03-graphs-and-signals/01-signal-representation-and-processing.tex)。
 
 ### 8.1 信号的对象与表示
 
@@ -680,7 +680,7 @@
 
 核心问题：把局部关系写成一张图后，怎样检索路径与连通关系、划分和简化结构、选择满足约束的方案，并在图上变换和汇总函数？
 
-源文件：[02-graph-structure-and-computation.tex](../tex/01-mathematical-preliminaries/03-graphs-and-signals/02-graph-structure-and-computation.tex)。
+源文件：[02-graph-structure-and-computation.tex](../tex/01-mathematical-preliminaries-upper/03-graphs-and-signals/02-graph-structure-and-computation.tex)。
 
 ### 9.1 图的对象与表示
 
@@ -799,7 +799,7 @@
 
 核心问题：怎样表示随机对象及依赖关系，计算变换和累计量，并判断有限样本推断与不同随机序列的收敛？
 
-源文件：[01-random-variables.tex](../tex/01-mathematical-preliminaries/04-random-variables-distributions-and-causality/01-random-variables.tex)。
+源文件：[01-random-variables.tex](../tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/01-random-variables.tex)。
 
 ### 10.1 随机对象的表示
 
@@ -958,7 +958,7 @@
 
 核心问题：怎样比较概率分布、计算分布变化引起的期望响应、优化分布，并判断样本评价能否代表总体？
 
-源文件：[02-information-theory-and-statistical-geometry.tex](../tex/01-mathematical-preliminaries/04-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex)。
+源文件：[02-information-theory-and-statistical-geometry.tex](../tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex)。
 
 ### 11.1 观测的信息量
 
@@ -1055,7 +1055,7 @@
 
 核心问题：给定原因与背景时，结果怎样响应；得知事实后怎样计算同一个体的替代结果；只有数据时，哪些响应与生成结构能够确定，哪些只能限制在一个范围内？
 
-源文件：[03-causal-response-and-structure.tex](../tex/01-mathematical-preliminaries/04-random-variables-distributions-and-causality/03-causal-response-and-structure.tex)。
+源文件：[03-causal-response-and-structure.tex](../tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/03-causal-response-and-structure.tex)。
 
 ### 12.1 因果响应的表示
 
@@ -1134,7 +1134,7 @@
 
 核心问题：给定状态演化规律和行动条件，怎样求轨迹与分布，判断不同极限和扰动，再根据观测推断状态？
 
-源文件：[01-action-and-state.tex](../tex/01-mathematical-preliminaries/05-dynamical-systems-control-decision-and-games/01-action-and-state.tex)。
+源文件：[01-action-and-state.tex](../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/01-action-and-state.tex)。
 
 ### 13.1 状态演化的建模
 
@@ -1267,7 +1267,7 @@
 
 核心问题：通过可实施策略，哪些轨迹能够实现，怎样使状态或跟踪误差收敛，并在扰动与约束下保持所需行为？
 
-源文件：[02-policy-realization-and-control.tex](../tex/01-mathematical-preliminaries/05-dynamical-systems-control-decision-and-games/02-policy-realization-and-control.tex)。
+源文件：[02-policy-realization-and-control.tex](../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/02-policy-realization-and-control.tex)。
 
 ### 14.1 策略的实现与可达轨迹
 
@@ -1322,7 +1322,7 @@
 
 核心问题：策略怎样通过行动诱导轨迹，怎样评价并计算这些轨迹的价值，又怎样选择策略获得更好的轨迹价值？
 
-源文件：[03-policy-value-and-optimization.tex](../tex/01-mathematical-preliminaries/05-dynamical-systems-control-decision-and-games/03-policy-value-and-optimization.tex)。
+源文件：[03-policy-value-and-optimization.tex](../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/03-policy-value-and-optimization.tex)。
 
 ### 15.1 策略的表示与价值
 
@@ -1405,7 +1405,7 @@
 
 核心问题：多方共同选择策略时，各方取得什么价值、怎样响应其他参与者；策略持续更新能否到达均衡，即使未收敛，实际序列的累积表现能否与最佳固定策略相比？
 
-源文件：[04-multi-agent-response-and-evolution.tex](../tex/01-mathematical-preliminaries/05-dynamical-systems-control-decision-and-games/04-multi-agent-response-and-evolution.tex)。
+源文件：[04-multi-agent-response-and-evolution.tex](../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/04-multi-agent-response-and-evolution.tex)。
 
 ### 16.1 策略的多方行动与信息
 
@@ -1482,7 +1482,7 @@
 
 核心问题：怎样从具体学习设定确定数学分析对象、所求结论与成立条件，再找到相应的数学知识与工具？
 
-源文件：[01-mathematics-and-future-research.tex](../tex/01-mathematical-preliminaries/06-mathematics-and-machine-learning/01-mathematics-and-future-research.tex)。
+源文件：[01-mathematics-and-future-research.tex](../tex/02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning/01-mathematics-and-future-research.tex)。
 
 ### 17.1 学习问题的共同构成
 

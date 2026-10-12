@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c13`
 - 分支：`codex/v2-skill-fix-c13`
 - 基线提交：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文路径：`tex/02-foundations/03-trustworthiness/04-fairness.tex`
+- 正文路径：`tex/03-foundations/03-trustworthiness/04-fairness.tex`
 - 基线正文 SHA-256：`477b0a8ca2cdc9c474b63eed64785e0be1dbb49810dd4a7720c96e4ae1a67385`
 - 基线正文 Git blob：`234128a390bc95b8c786e18d26ca92e2629fd3a2`
 - 修订正文 SHA-256：`87514d71b8824b181e81a38a6437a92bb1512ce1c6ac21c8f86a37df6e395f25`

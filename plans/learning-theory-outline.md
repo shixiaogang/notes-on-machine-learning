@@ -2,18 +2,18 @@
 
 状态：本部分六章已经进入当前 PDF，覆盖机器学习理论基础、二分类、多分类、一般学习、深度学习和迁移学习。正文按概念依赖组织定义、定理、证明、例子与适用边界。
 
-本文件中的章次表示本部分内部顺序。正式章号由LaTeX根据出版单元生成：全集在全书范围内连续编号，单卷在当前卷内连续编号。本部分位于第二卷，当前全集对应第21章至第26章，第二卷单卷对应第4章至第9章。
+本文件中的章次表示本部分内部顺序。正式章号由LaTeX根据出版单元生成：各卷独立编号，章号跨部分连续。本部分位于卷三，对应第4章至第9章。
 
 ## 章节安排
 
 | 次序 | 章名 | 本章要解决的问题 | 正文文件 |
 | --- | --- | --- | --- |
-| 1 | 机器学习理论基础 | 什么叫学会，学习理论研究哪些问题，这些问题怎样发展而来？ | `tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex` |
-| 2 | 二分类学习的可学习性 | 哪些二分类问题可学习，需要多少样本，还需满足什么计算条件？ | `tex/02-foundations/02-learning-theory/02-binary-classification.tex` |
-| 3 | 多分类学习的可学习性 | 标签空间扩大后，容量、一致收敛与可学习性怎样分化？ | `tex/02-foundations/02-learning-theory/03-multiclass-classification.tex` |
-| 4 | 一般学习的可学习性 | 超出零一分类以后，函数复杂度和算法稳定性怎样支持泛化？ | `tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex` |
-| 5 | 深度学习的可学习性 | 怎样从参数大小、梯度和参数分布分析网络的选解与泛化？ | `tex/02-foundations/02-learning-theory/05-deep-learning-theory.tex` |
-| 6 | 迁移学习的可学习性 | 训练与使用分布不同时，哪些信息和条件能够支持目标域预测？ | `tex/02-foundations/02-learning-theory/06-transfer-learning-theory.tex` |
+| 1 | 机器学习理论基础 | 什么叫学会，学习理论研究哪些问题，这些问题怎样发展而来？ | `tex/03-foundations/02-learning-theory/01-statistical-learning-framework.tex` |
+| 2 | 二分类学习的可学习性 | 哪些二分类问题可学习，需要多少样本，还需满足什么计算条件？ | `tex/03-foundations/02-learning-theory/02-binary-classification.tex` |
+| 3 | 多分类学习的可学习性 | 标签空间扩大后，容量、一致收敛与可学习性怎样分化？ | `tex/03-foundations/02-learning-theory/03-multiclass-classification.tex` |
+| 4 | 一般学习的可学习性 | 超出零一分类以后，函数复杂度和算法稳定性怎样支持泛化？ | `tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex` |
+| 5 | 深度学习的可学习性 | 怎样从参数大小、梯度和参数分布分析网络的选解与泛化？ | `tex/03-foundations/02-learning-theory/05-deep-learning-theory.tex` |
+| 6 | 迁移学习的可学习性 | 训练与使用分布不同时，哪些信息和条件能够支持目标域预测？ | `tex/03-foundations/02-learning-theory/06-transfer-learning-theory.tex` |
 
 第一章建立共同语言、研究地图、历史脉络和成功标准；第二章完整展开二分类中的容量、样本和计算分析；第三章说明多分类中一致收敛与可学习性不再由同一个维度统一刻画。第四章把讨论扩展到一般损失，并比较整个决策空间的复杂度与算法输出的稳定性。第五章将这些工具用于神经网络，第六章进一步改变训练与评价之间的分布关系。
 
@@ -31,7 +31,7 @@
 
 符号沿用全书约定：假设空间记为$\mathcal H$，具体假设记为$h$，数据分布记为$\mathcal P$，样本序列记为$S$，期望风险与经验风险分别记为$R$和$\hat R_S$。一般学习中的观测记为$z$，决策空间记为$\mathcal W$；向量和矩阵按`specs/latex.md`排版。
 
-正文目录已按当前共享入口及章节源文件同步。下面的章、节编号采用本部分的局部编号；全集中的连续编号以 PDF 自动目录为准。细化到正文实际使用的标题层级，保留标题与范围仍适用的展开说明。
+正文目录已按当前共享入口及章节源文件同步。下面的章、节编号采用本部分的局部编号；卷内正式编号以 PDF 自动目录为准。细化到正文实际使用的标题层级，保留标题与范围仍适用的展开说明。
 
 ## 第1章 机器学习理论基础
 

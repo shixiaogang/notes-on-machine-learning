@@ -12,7 +12,7 @@
 | 数学与后续研究 | [第17章职责](chapter17-learning-framework-outline.md) | 共同对象、学习设定、分析关系与数学工具的对应；五节，含独立小结 |
 | 机器学习基础 | [引言](introduction-outline.md)、[模型简介](machine-learning-models-outline.md)、[范式简介](machine-learning-paradigms-outline.md) | 第二卷前三章的现行安排 |
 | 机器学习理论 | [部分大纲](learning-theory-outline.md) | 六章；全集21—26章，第二卷单卷4—9章 |
-| 可信性 | [六卷结构](book-structure.md)中的内容边界 | 八章；具体节次以 `tex/02-foundations/03-trustworthiness/` 为准 |
+| 可信性 | [六卷结构](book-structure.md)中的内容边界 | 八章；具体节次以 `tex/03-foundations/03-trustworthiness/` 为准 |
 | 经典模型 | [部分大纲](classic-models-outline.md) | 六章；集成学习包含 `ensemble-learning/` 中由章入口调用的节文件 |
 | 神经网络模型 | [部分大纲](neural-network-models-outline.md) | 九章；模型、训练与泛化分工 |
 | 概率图模型 | [部分大纲](probabilistic-graphical-models-outline.md) | 十四章；表示、推断、学习与典型模型 |

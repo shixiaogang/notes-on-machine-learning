@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c07`
 - 分支：`codex/v2-skill-fix-c07`
 - 基线：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 受审正文：`tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex`
+- 受审正文：`tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex`
 - 基线正文SHA-256：`fc620b8309d21ba3510efd8e781201c34f1816fe5088914bb6d0fb8af0ba5a74`
 - 修订后正文SHA-256：`b388ebb20d59adb3f581f6c97f5cb21cb566423837a478bc11ec57f1703c4eca`
 - 修订后Git对象：`699834b7b46ca47dca3d34943f50ca604bc5a91a`

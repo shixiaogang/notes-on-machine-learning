@@ -2,7 +2,7 @@ from pathlib import Path
 import re, json, hashlib, difflib
 ROOT=Path(__file__).resolve().parents[2]
 BASE=ROOT/'build/cross-volume-theory'
-PREFIX=Path('tex/02-foundations/02-learning-theory')
+PREFIX=Path('tex/03-foundations/02-learning-theory')
 names=['02-binary-classification.tex','03-multiclass-classification.tex','04-convex-learning-and-stability.tex']
 texts={n:(BASE/'snapshots/volume-two'/PREFIX/n).read_text() for n in names}
 changes=[]

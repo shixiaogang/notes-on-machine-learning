@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c11`
 - 分支：`codex/v2-skill-fix-c11`
 - 基线提交：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文路径：`tex/02-foundations/03-trustworthiness/02-reliability.tex`
+- 正文路径：`tex/03-foundations/03-trustworthiness/02-reliability.tex`
 - 汇总输入：`v2-c11-r1.md`、`v2-c11-r2.md`、`v2-c11-r3.md`
 - 基线正文：476行，Git blob `e3d774d726df6a83d60654844d380f2ea2f3e4ec`，SHA-256 `4fd07725f8fa06e0994575d55ef54872db7109d05b0db2ff6435ef3d39be3f2e`
 - 修订正文：480行，Git blob `74d16211786fa6f069ddcc85de6336683911ec73`，SHA-256 `3315acd3f89947bfdf5de0ce5b85a077d08a53a0d1a55daf982ed31065201e98`

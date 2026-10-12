@@ -28,7 +28,7 @@
 
 补丁：`proposals/basics-cross-volume.patch`（已用 `git apply --check` 在本次原基线检查，退出0）。12 个局部单元，改模型和范式两个文件；引言不改。
 
-完整逐段 old/new 与各段修前/后 SHA：`proposals/units.json`。两章建议完整文本：`proposals/draft/tex/02-foundations/01-basics/`。建议文字由审查者实际编写；prepare.py 只复制指定文本、生成差分与摘要，不生成语义判断。
+完整逐段 old/new 与各段修前/后 SHA：`proposals/units.json`。两章建议完整文本：`proposals/draft/tex/03-foundations/01-basics/`。建议文字由审查者实际编写；prepare.py 只复制指定文本、生成差分与摘要，不生成语义判断。
 
 | 文件 | 7535c2f8 原文 SHA256 | 建议稿 SHA256 |
 |---|---|---|

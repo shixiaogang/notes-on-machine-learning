@@ -40,8 +40,8 @@ for f in freeze['figures']:
   for name,digest in proof['font_sha256'].items():assert sha(ROOT/'fonts'/name)==digest
   row['approximate_pixel_density_at_print_dpi']=round(proof['pixel_width']/proof['physical_width_mm']*25.4,2)
  rows.append(row)
-shared=['figures/02-foundations/00-shared/academic-drawing/'+n for n in ['plot_style.py','preamble.tex','palette.tex','render_tikz.py','README.md']]
-shared+=['figures/02-foundations/00-shared/matplotlib/redraw/'+n for n in ['charts.py','analytic-redraw-functions.py','risk-shift-functions.py','quantitative-redraw-functions.py']]
+shared=['figures/03-foundations/00-shared/academic-drawing/'+n for n in ['plot_style.py','preamble.tex','palette.tex','render_tikz.py','README.md']]
+shared+=['figures/03-foundations/00-shared/matplotlib/redraw/'+n for n in ['charts.py','analytic-redraw-functions.py','risk-shift-functions.py','quantitative-redraw-functions.py']]
 root=ROOT.parent/'volume-two-figures'
 sharedrows=[]
 for p in shared:

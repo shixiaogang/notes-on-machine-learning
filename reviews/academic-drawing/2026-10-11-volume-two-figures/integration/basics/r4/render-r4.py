@@ -49,12 +49,12 @@ for f in previous['figures']:
     if f['method']=='tikz': inputs.add(d/'figure.tex')
     elif f['method']=='matplotlib':
         inputs.update(d.glob('*.json'))
-        inputs.add(ROOT/'figures/02-foundations/00-shared/matplotlib/redraw/charts.py')
+        inputs.add(ROOT/'figures/03-foundations/00-shared/matplotlib/redraw/charts.py')
     else:
         for name in ['labels.json','typesetting-20261011.json','text-layer.png']:
             inputs.add(d/name)
-        inputs.add(ROOT/'figures/02-foundations/01-basics/generated/render-20261011.py')
-        inputs.add(ROOT/'figures/02-foundations/00-shared/generated/typeset_common.py')
+        inputs.add(ROOT/'figures/03-foundations/01-basics/generated/render-20261011.py')
+        inputs.add(ROOT/'figures/03-foundations/00-shared/generated/typeset_common.py')
         inputs.add(ROOT/f['selected_background'])
     sources.append({'label':f['label'],'method':f['method'],'asset':f['source'],'asset_sha256':sha(ROOT/f['source']),'matches_submitted_asset':sha(ROOT/f['source'])==f['sha256'],'inputs':[{'path':str(p.relative_to(ROOT)),'sha256':sha(p)} for p in sorted(inputs) if p.is_file()]})
 (OUT/'render-manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')

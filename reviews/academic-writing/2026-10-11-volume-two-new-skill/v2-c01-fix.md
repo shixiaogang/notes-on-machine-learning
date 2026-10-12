@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c01`
 - 分支：`codex/v2-skill-fix-c01`
 - 基线：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文：`tex/02-foundations/01-basics/01-introduction.tex`
+- 正文：`tex/03-foundations/01-basics/01-introduction.tex`
 - 基线正文Git对象：`55f879f2383dc00be3b14178152cf13495b91a06`
 - 修订后正文SHA-256：`e9622d77623f45e27ced69554d80168b9f26e91379496aa25fcc198dc7271094`
 - 修订后正文Git对象：`939eaf22b5e21bc2fc6d11d5fce4bf789a3a1192`
@@ -18,10 +18,10 @@
 
 实际入口关系为：
 
-1. `tex/02-foundations/volume.tex`
-2. `tex/02-foundations/01-basics/part.tex`
-3. `tex/02-foundations/01-basics/reading-guide.tex`
-4. `tex/02-foundations/01-basics/01-introduction.tex`
+1. `tex/03-foundations/volume.tex`
+2. `tex/03-foundations/01-basics/part.tex`
+3. `tex/03-foundations/01-basics/reading-guide.tex`
+4. `tex/03-foundations/01-basics/01-introduction.tex`
 
 本章没有继续输入其他正文片段。图、脚本和CSV只作为核验材料读取，不在本次修改范围内。
 

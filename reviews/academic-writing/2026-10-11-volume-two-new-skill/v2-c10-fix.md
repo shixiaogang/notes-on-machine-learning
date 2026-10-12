@@ -9,8 +9,8 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c10`
 - 分支：`codex/v2-skill-fix-c10`
 - 基线提交：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 受审与修订正文：`tex/02-foundations/03-trustworthiness/01-foundations.tex`
-- 基线可恢复位置：`git show 65de1f9ae4eacde76fdb27a832e1214f386623d5:tex/02-foundations/03-trustworthiness/01-foundations.tex`
+- 受审与修订正文：`tex/03-foundations/03-trustworthiness/01-foundations.tex`
+- 基线可恢复位置：`git show 65de1f9ae4eacde76fdb27a832e1214f386623d5:tex/03-foundations/03-trustworthiness/01-foundations.tex`
 - 基线 Git blob：`9229ec38de361d8049f5a26eaa253020b58c98c5`
 - 基线 SHA-256：`9ef25e8d92acb6f808d84c1938f982b1c9b1a2fbc5a204ddb85a6f1b3d08b0e2`
 - 修订 Git blob：`599448e02e53f84b56144d9cae9ce0920a319597`

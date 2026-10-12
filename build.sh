@@ -5,44 +5,16 @@ set -euo pipefail
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$project_root"
 
-book_source=tex/main.tex
-book_output=target/machine-learning-notes.pdf
-volume_slugs=(
-  01-mathematical-preliminaries
-  02-foundations
-  03-models
-  04-paradigms
-  05-applications
-  06-systems
-)
-volume_sources=(
-  tex/01-mathematical-preliminaries/main.tex
-  tex/02-foundations/main.tex
-  tex/03-models/main.tex
-  tex/04-paradigms/main.tex
-  tex/05-applications/main.tex
-  tex/06-systems/main.tex
-)
-volume_outputs=(
-  target/vol1-mathematical-preliminaries.pdf
-  target/vol2-foundations.pdf
-  target/vol3-models.pdf
-  target/vol4-paradigms.pdf
-  target/vol5-applications.pdf
-  target/vol6-systems.pdf
-)
-
 usage() {
-  printf '用法: %s [build|volume <slug>|volumes|all|check-target|watch|release|clean]\n' "${0##*/}"
-  printf '  build          增量编译全集，使用快速无损压缩（默认）\n'
+  printf '用法: %s [build|volume <slug>|volumes|all|check-target|watch <slug>|release <slug>|clean]\n' "${0##*/}"
+  printf '  build          仅编译输入变化、缺失或损坏的卷（默认）\n'
   printf '  volume <slug>  只编译指定单卷\n'
-  printf '  volumes        依次编译六个单卷\n'
-  printf '  all            依次编译全集和六个单卷\n'
-  printf '  check-target   检查七份成品与正文是否一致\n'
-  printf '  watch          只监听全集，不打开新窗口\n'
-  printf '  release        以最高压缩等级编译全集\n'
-  printf '  clean          清除全集与六个单卷的构建缓存和产物\n'
-  printf '可用卷名：%s\n' "${volume_slugs[*]}"
+  printf '  volumes/all    首次构建或全书变更时编译十二卷\n'
+  printf '  check-target   检查十二份成品和各卷构建记录\n'
+  printf '  watch <slug>   监听指定卷，成功后更新该卷成品和记录\n'
+  printf '  release <slug> 以最高无损压缩等级编译指定卷\n'
+  printf '  clean          清除本工作区的构建缓存和产物\n'
+  python3 scripts/book_catalog.py slugs
 }
 
 require_latexmk() {
@@ -89,19 +61,22 @@ prepare_fonts() {
   done
 }
 
-build_entry() {
-  local source="$1"
-  local output="$2"
-  shift 2
+build_volume() {
+  local slug="$1"
+  local entry
+  entry="$(python3 -c 'import sys; from scripts.book_catalog import volumes; v=next((v for v in volumes() if v["slug"]==sys.argv[1]), None); sys.exit("未知卷名："+sys.argv[1]) if v is None else print(v["entry"]+" "+v["pdf"])' "$slug")"
+  local source="${entry%% *}"
+  local output="target/${entry#* }"
 
   require_latexmk
   prepare_fonts
+  python3 scripts/book_catalog.py references "$slug"
+  local snapshot
+  snapshot="$(mktemp "${TMPDIR:-/tmp}/book-inputs.XXXXXX")"
+  python3 scripts/check_target_pdfs.py snapshot > "$snapshot"
   local compression="${BOOK_PDF_COMPRESSION:-1}"
   local previous_compression=""
-  local output_name="${output##*/}"
-  local job_name="${source#tex/}"
-  job_name="${job_name%/main.tex}"
-  if [[ "$source" == "$book_source" ]]; then job_name=main; fi
+  local job_name="$slug"
   local cached_pdf="build/$job_name.pdf"
   local compression_cache="build/.pdf-compression-$job_name"
   local latexmk_options=(-interaction=nonstopmode -halt-on-error -file-line-error)
@@ -119,63 +94,42 @@ build_entry() {
   latexmk \
     "${latexmk_options[@]}" \
     -jobname="$job_name" \
-    "$@" \
     "$source"
   mkdir -p target
   cp "$cached_pdf" "$output.tmp"
   mv "$output.tmp" "$output"
   printf '%s\n' "$compression" > "$compression_cache"
-}
-
-volume_index() {
-  local slug="$1"
-  local index
-  for index in "${!volume_slugs[@]}"; do
-    if [[ "${volume_slugs[$index]}" == "$slug" ]]; then
-      printf '%s\n' "$index"
-      return 0
-    fi
-  done
-  return 1
-}
-
-build_volume() {
-  local slug="$1"
-  local index
-  index="$(volume_index "$slug")"
-  build_entry "${volume_sources[$index]}" "${volume_outputs[$index]}"
+  python3 scripts/check_target_pdfs.py record --volume "$slug" --snapshot "$snapshot"
+  rm -f "$snapshot"
 }
 
 build_volumes() {
   local slug
-  for slug in "${volume_slugs[@]}"; do
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
     build_volume "$slug"
-  done
+  done < <(python3 scripts/book_catalog.py slugs)
 }
 
 clean_project() {
-  require_latexmk
-  local index
-  latexmk -C -jobname=main "$book_source"
-  for index in "${!volume_slugs[@]}"; do
-    latexmk -C \
-      -jobname="${volume_slugs[$index]}" \
-      "${volume_sources[$index]}"
-  done
   rm -rf -- "$project_root/build" "$project_root/target"
 }
 
 case "${1:-build}" in
   build)
-    build_entry "$book_source" "$book_output"
+    affected="$(python3 scripts/check_target_pdfs.py affected)"
+    if [[ -z "$affected" ]]; then
+      printf '各卷输入与成品一致，无需重新编译。\n'
+    else
+      while IFS= read -r slug; do
+        build_volume "$slug"
+      done <<< "$affected"
+    fi
+    python3 scripts/check_target_pdfs.py check
     ;;
   volume)
     if [[ -z "${2:-}" ]]; then
-      printf '错误：volume 缺少卷名；可用卷名：%s。\n' "${volume_slugs[*]}" >&2
-      exit 2
-    fi
-    if ! volume_index "$2" >/dev/null; then
-      printf '错误：未知卷名 "%s"；可用卷名：%s。\n' "$2" "${volume_slugs[*]}" >&2
+      printf '错误：volume 缺少卷名，使用 --help 查看可用卷名。\n' >&2
       exit 2
     fi
     build_volume "$2"
@@ -184,25 +138,24 @@ case "${1:-build}" in
     build_volumes
     ;;
   all)
-    snapshot="$(mktemp "${TMPDIR:-/tmp}/book-inputs.XXXXXX")"
-    trap 'rm -f "$snapshot"' EXIT
-    python3 scripts/check_target_pdfs.py snapshot > "$snapshot"
-    build_entry "$book_source" "$book_output"
     build_volumes
-    python3 scripts/check_target_pdfs.py record --snapshot "$snapshot"
+    python3 -c 'from pathlib import Path; from scripts.book_catalog import volumes; expected={v["pdf"] for v in volumes()}; [p.unlink() for p in Path("target").glob("*.pdf") if p.name not in expected]'
     python3 scripts/check_target_pdfs.py check
     ;;
   check-target)
     python3 scripts/check_target_pdfs.py check
     ;;
   watch)
-    build_entry "$book_source" "$book_output"
-    export BOOK_TARGET_PDF="$book_output"
-    build_entry "$book_source" "$book_output" -pvc -view=none
+    [[ -n "${2:-}" ]] || { usage >&2; exit 2; }
+    build_volume "$2"
+    export BOOK_WATCH_SLUG="$2"
+    latexmk -interaction=nonstopmode -halt-on-error -file-line-error \
+      -jobname="$2" -pvc -view=none "tex/$2/main.tex"
     ;;
   release)
     export BOOK_PDF_COMPRESSION=9
-    build_entry "$book_source" "$book_output"
+    [[ -n "${2:-}" ]] || { usage >&2; exit 2; }
+    build_volume "$2"
     ;;
   clean)
     clean_project

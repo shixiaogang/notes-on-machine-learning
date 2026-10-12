@@ -2,7 +2,7 @@
 
 日期 2026-10-11；改写者 transformer_audit 自查。实际范围：part.tex 接入的本章全文；章/节/小节/子小节标题、标签、图片路径尺寸、引文键、展示与行内数学序列保留。读者起点：概述章的非线性隐藏表示，向量/矩阵、损失与链式法则。文献事实未重新检索，数学核心没有重证，未构建/查看本次新文字的 PDF；独立复核由根代理另做。
 
-原稿 `../../snapshot-before/tex/03-models/02-neural-network-models/02-feedforward-networks.tex`，SHA256 `e902c2a714192f47528bb564ed4e0fb9ec199b201893d9b7b581bba1e0b54ad1`。
+原稿 `../../snapshot-before/tex/05-neural-network-models/02-feedforward-networks.tex`，SHA256 `e902c2a714192f47528bb564ed4e0fb9ec199b201893d9b7b581bba1e0b54ad1`。
 第一次改稿 `after.tex`，SHA256 `17e85bfa093e1d3a8673ac93fd0f72c0a765328fa286622dfade6c4300b8e986`；整章复读后消除局部重复及连续分号。
 受审新稿 `after-v2.tex`，SHA256 `a46464c044a3c5c57b06839c3f10028f846b2142405108c42d423f9e46ad7f6e`。稳定地址在 `units-v2.json`；自动提取只提供引文/地址/句号边界，没有生成下列语义理由。
 

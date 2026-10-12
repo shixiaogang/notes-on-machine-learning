@@ -3,7 +3,7 @@
 日期：2026-10-11。审查者：theory_first_half，AI 自查；不是独立复核。
 受审版本 v1：`01-v1.tex`，SHA-256 `501a9e6f09faaabd72ee3871c8a472c9f9c93007d1c9ff6af9236d7e1656b706`。
 基线 v0：`01-v0.tex`，SHA-256 `de85436e359a445a5679c7178090ae5a840c4badd37e18e2c65c679d0b1578f7`。
-可恢复快照与编号文件均在本目录。实际正文只包含 `tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex`；没有其他正文输入。图源没有改动。
+可恢复快照与编号文件均在本目录。实际正文只包含 `tex/03-foundations/02-learning-theory/01-statistical-learning-framework.tex`；没有其他正文输入。图源没有改动。
 目标读者：已学第一卷概率、统计、Bayes决策与基本数学，初次进入学习理论。后章术语只作定位，不作为本地证明的前提。
 限制：本次核对文字、符号、量词及内部推理；未独立核验全部文献、图像像素和最终 PDF 版面，未编译。所有外部历史/前沿判断继承基线引文，没有新增归因。
 

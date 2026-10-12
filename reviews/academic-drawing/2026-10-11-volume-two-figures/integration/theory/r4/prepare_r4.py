@@ -61,7 +61,7 @@ for x in oldtext:
  if x['id']=='OV-G1325':matches=[i for i in matches if '平均经验优化误差' in norm(doc[i].get_text()) and '条件互信息' in norm(doc[i].get_text())]
  assert len(matches)==1,(x['id'],matches);i=matches[0];p=doc[i]
  out=B/'text-pages'/f'page-{i+1:04d}-{x["id"]}.png';render(pdf,i+1,out)
- src=I/'tex/02-foundations/02-learning-theory'/x['source_name'];lines=src.read_text().splitlines();span=x['source_line_range']
+ src=I/'tex/03-foundations/02-learning-theory'/x['source_name'];lines=src.read_text().splitlines();span=x['source_line_range']
  m['text_pages'].append({'id':x['id'],'source_name':x['source_name'],'source_sha256_r4':sha(src),'source_line_range':span,'source_text_r4':'\n'.join(lines[span[0]-1:span[1]]),'reported_overfull_r3_pt':x['reported_overfull_pt'],'physical_page':i+1,'printed_page':p.get_label(),'pdf_sha256':sha(pdf),'proof_png':str(out.relative_to(B)),'proof_sha256':sha(out),'comparison_to_r3':compare(out,OLD/x['proof_png']),'page_text':p.get_text(),'review_status':'comparison prepared; changed page or six repaired paragraphs await actual review'})
 (B/'r4-binding.json').write_text(json.dumps(m,ensure_ascii=False,indent=2)+'\n')
 (B/'inputs-r4-sha.json').write_text(json.dumps({str(p.relative_to(I)):sha(p) for p in sorted(I.rglob('*')) if p.is_file()},ensure_ascii=False,indent=2)+'\n')

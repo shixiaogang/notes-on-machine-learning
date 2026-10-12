@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c16`
 - 分支：`codex/v2-skill-fix-c16`
 - 共同基线提交：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文：`tex/02-foundations/03-trustworthiness/07-privacy.tex`
+- 正文：`tex/03-foundations/03-trustworthiness/07-privacy.tex`
 - 基线 Git blob：`84c4e27607efa748d1f9b320650707e1101ef6ca`
 - 基线正文 SHA-256：`f51dafe15530c0967c677dee013d2c992a9423f96f470e958e6e04015f475151`
 - 修订后未提交 Git blob：`aea10ddc1a06a98143d2c1fe4652117e39c946e8`

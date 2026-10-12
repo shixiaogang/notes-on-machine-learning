@@ -1,6 +1,6 @@
 # 第18章无向图模型：固定稿写作自查
 
-范围是实际接入的 `03-undirected.tex` 全文。受审前稿来自 `snapshot-before/tex/03-models/03-probabilistic-graphical-models/03-undirected.tex`，SHA256 为 `056b79ef1bbf31021a35786ed7a30aca4a3bf6630e34d42b3c93751a2085b0fc`。最终新稿是本目录 `after.tex`，SHA256 为 `d8dbc51eed009afab98a27adf0d20e93cf23ea06c5ba1fa009b2234dfa8341b5`。另保留了复读时修正两处措辞前的 `draft-27bd4f92.tex`，SHA256 为 `27bd4f929ced5ad5205d913794c2fb0e0e1ca5d03acd0221b2116536da6afbd5`；它只用于 F07 的中间稿证据，最终审查以下述 final 为准。
+范围是实际接入的 `03-undirected.tex` 全文。受审前稿来自 `snapshot-before/tex/06-probabilistic-graphical-models/01-representation/03-undirected.tex`，SHA256 为 `056b79ef1bbf31021a35786ed7a30aca4a3bf6630e34d42b3c93751a2085b0fc`。最终新稿是本目录 `after.tex`，SHA256 为 `d8dbc51eed009afab98a27adf0d20e93cf23ea06c5ba1fa009b2234dfa8341b5`。另保留了复读时修正两处措辞前的 `draft-27bd4f92.tex`，SHA256 为 `27bd4f929ced5ad5205d913794c2fb0e0e1ca5d03acd0221b2116536da6afbd5`；它只用于 F07 的中间稿证据，最终审查以下述 final 为准。
 
 机械清单 `units.json` 只给地址，不生成审查判断。U001–U184 按正文顺序定位，U145A 是紧随 U145 的第六幅图注，专门拆出，合计185个文字单元。其中6个图注、2个表注，定义/定理的公式前后文字也在清单内；仅“则”等公式连接语与对应数学单元一起读。独立显示公式 M01–M73，按源码出现顺序编号，含 align 环境；数学中的标点属于公式单元。scite 自动产生的句号按实际语义处理，不把缺少显式源码句号算作粘连。此章没有独立算法环境，广度优先检测的完整算法说明位于 U075。
 

@@ -2,15 +2,15 @@
 from pathlib import Path
 import subprocess, json, hashlib, shutil
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
-BASE=ROOT/'figures/02-foundations/03-trustworthiness/generated'
+BASE=ROOT/'figures/03-foundations/03-trustworthiness/generated'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def record(p,role,source):return {'file':str(p.relative_to(ROOT)),'sha256':sha(p),'role':role,'source':source}
 SHARED=BASE/'references-20261011'
 SHARED.mkdir(exist_ok=True)
 specs={
- 'multi-task-20261011.png':('volume-two-figures-basics','figures/02-foundations/01-basics/generated/multi-task-learning/background-20261011-r5.png','共享单一模型及反馈组织；纯白模块与低饱和细描边，不借用任务标签'),
- 'pate-20261011.png':('volume-two-figures','figures/02-foundations/03-trustworthiness/generated/pate-private-teachers/background-20261011-r3.png','多分支汇合的层级与白底模块，不借用隐私机制'),
- 'defense-20261011.png':('volume-two-figures','figures/02-foundations/03-trustworthiness/generated/defense-in-depth/background-20261011-r3.png','平面流程、细描边与白底；不借用防御语义')}
+ 'multi-task-20261011.png':('volume-two-figures-basics','figures/03-foundations/01-basics/generated/multi-task-learning/background-20261011-r5.png','共享单一模型及反馈组织；纯白模块与低饱和细描边，不借用任务标签'),
+ 'pate-20261011.png':('volume-two-figures','figures/03-foundations/03-trustworthiness/generated/pate-private-teachers/background-20261011-r3.png','多分支汇合的层级与白底模块，不借用隐私机制'),
+ 'defense-20261011.png':('volume-two-figures','figures/03-foundations/03-trustworthiness/generated/defense-in-depth/background-20261011-r3.png','平面流程、细描边与白底；不借用防御语义')}
 shared={}
 for name,(tree,rel,role) in specs.items():
  src=ROOT.parent/tree/rel

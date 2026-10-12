@@ -29,7 +29,7 @@ class ScanTexTests(unittest.TestCase):
 
     def scan(self, text: str):
         return self.audit_index_terms.scan_tex(
-            text, Path("tex/01-mathematical-preliminaries/chapter.tex"), "01-mathematical-preliminaries"
+            text, Path("tex/01-mathematical-preliminaries-upper/chapter.tex"), "01-mathematical-preliminaries-upper"
         )
 
     def test_preserves_optional_sort_key_nested_braces_and_raw_call(self) -> None:
@@ -149,23 +149,16 @@ class CollectTermsTests(unittest.TestCase):
     def test_follows_input_order_and_assigns_shared_terms_to_first_volume(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            volumes = [
-                "01-mathematical-preliminaries",
-                "02-foundations",
-                "03-models",
-                "04-paradigms",
-                "05-applications",
-                "06-systems",
-            ]
+            volumes = self.audit_index_terms.VOLUMES
             for volume in volumes:
                 volume_dir = root / "tex" / volume
                 volume_dir.mkdir(parents=True)
                 (volume_dir / "volume.tex").write_text("", encoding="utf-8")
-            first = root / "tex" / "01-mathematical-preliminaries"
+            first = root / "tex" / "01-mathematical-preliminaries-upper"
             (first / "volume.tex").write_text(
                 "\\input{fragments/root}\n"
-                "\\input{tex/01-mathematical-preliminaries/b}\n"
-                "\\input{tex/01-mathematical-preliminaries/a}\n",
+                "\\input{tex/01-mathematical-preliminaries-upper/b}\n"
+                "\\input{tex/01-mathematical-preliminaries-upper/a}\n",
                 encoding="utf-8",
             )
             fragments = root / "fragments"
@@ -177,7 +170,7 @@ class CollectTermsTests(unittest.TestCase):
                 "\\term{甲}\\term{共享}", encoding="utf-8"
             )
             (first / "b.tex").write_text(
-                "\\term{乙}\\input{tex/01-mathematical-preliminaries/nested}", encoding="utf-8"
+                "\\term{乙}\\input{tex/01-mathematical-preliminaries-upper/nested}", encoding="utf-8"
             )
             (first / "nested.tex").write_text(
                 "\\term{共享}\\term{丙}", encoding="utf-8"
@@ -206,7 +199,7 @@ class CollectTermsTests(unittest.TestCase):
             ],
         )
         self.assertTrue(
-            all(item.volume == "01-mathematical-preliminaries" for item in occurrences)
+            all(item.volume == "01-mathematical-preliminaries-upper" for item in occurrences)
         )
 
 
@@ -218,7 +211,7 @@ class MappingAndAuditTests(unittest.TestCase):
     def occurrence(
         self,
         display: str,
-        volume: str = "01-mathematical-preliminaries",
+        volume: str = "01-mathematical-preliminaries-upper",
         sort_key: str | None = None,
     ):
         optional = f"[{sort_key}]" if sort_key is not None else ""
@@ -238,7 +231,7 @@ class MappingAndAuditTests(unittest.TestCase):
         self,
         source: str,
         translation: str,
-        owner: str = "01-mathematical-preliminaries",
+        owner: str = "01-mathematical-preliminaries-upper",
         line: int = 1,
     ):
         return self.audit_index_terms.TermMapping(
@@ -255,7 +248,7 @@ class MappingAndAuditTests(unittest.TestCase):
     def test_parses_balanced_mapping_arguments_and_owner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shard = root / "tex" / "index-terms" / "01-mathematical-preliminaries.tex"
+            shard = root / "tex" / "index-terms" / "01-mathematical-preliminaries-upper.tex"
             shard.parent.mkdir(parents=True)
             shard.write_text(
                 "\\DeclareBookIndexTerm"
@@ -269,12 +262,12 @@ class MappingAndAuditTests(unittest.TestCase):
         self.assertEqual(len(mappings), 1)
         self.assertEqual(mappings[0].key, "含{嵌套}词条")
         self.assertEqual(mappings[0].translation, "nested {English} term")
-        self.assertEqual(mappings[0].owner, "01-mathematical-preliminaries")
+        self.assertEqual(mappings[0].owner, "01-mathematical-preliminaries-upper")
 
     def test_parses_semantic_alias_separately_from_base_mappings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shard = root / "tex" / "index-terms" / "01-mathematical-preliminaries.tex"
+            shard = root / "tex" / "index-terms" / "01-mathematical-preliminaries-upper.tex"
             shard.parent.mkdir(parents=True)
             shard.write_text(
                 "% \\DeclareBookIndexTermAlias"
@@ -323,8 +316,8 @@ class MappingAndAuditTests(unittest.TestCase):
         )
         aliases = [
             self.audit_index_terms.TermAlias(
-                path=Path("tex/index-terms/01-mathematical-preliminaries.tex"),
-                owner="01-mathematical-preliminaries",
+                path=Path("tex/index-terms/01-mathematical-preliminaries-upper.tex"),
+                owner="01-mathematical-preliminaries-upper",
                 line=2,
                 column=1,
                 raw_identity="pgm-soundness",
@@ -358,7 +351,7 @@ class MappingAndAuditTests(unittest.TestCase):
             self.mapping("重复", "conflict", line=2),
             self.mapping("孤立", "orphan"),
             self.mapping("自映射", "自映射"),
-            self.mapping("错误分片", "wrong owner", owner="03-models"),
+            self.mapping("错误分片", "wrong owner", owner="04-classic-models"),
         ]
         occurrences.append(self.occurrence("错误分片"))
 
@@ -388,10 +381,10 @@ class MappingAndAuditTests(unittest.TestCase):
 
     def test_audit_assigns_cross_volume_term_to_global_first_occurrence(self) -> None:
         occurrences = [
-            self.occurrence("共享词", volume="03-models"),
-            self.occurrence("共享词", volume="04-paradigms"),
+            self.occurrence("共享词", volume="04-classic-models"),
+            self.occurrence("共享词", volume="07-reinforcement-learning"),
         ]
-        mappings = [self.mapping("共享词", "shared term", owner="03-models")]
+        mappings = [self.mapping("共享词", "shared term", owner="04-classic-models")]
 
         diagnostics = self.audit_index_terms.audit(occurrences, mappings)
 
@@ -470,19 +463,19 @@ class MappingAndAuditTests(unittest.TestCase):
         self.assertEqual(diagnostics, [])
 
     def test_volume_index_rejects_terms_only_used_in_another_volume(self):
-        term = self.occurrence("机器学习")._replace(volume="02-foundations")
+        term = self.occurrence("机器学习")._replace(volume="03-foundations")
         mappings = [self.mapping("机器学习", "machine learning")]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "build").mkdir()
-            for edition in ["main", "03-models"]:
+            for edition in ["main", "04-classic-models"]:
                 (root / "build" / (edition + ".idx")).write_text(
                     "\\indexentry{机器学习@机器学习，machine learning|hyperpage}{1}\n")
                 (root / "build" / (edition + ".ind")).write_text("")
             diagnostics = self.audit_index_terms._artifact_diagnostics(
                 root, [term], mappings, [])
         self.assertEqual(len(diagnostics), 1)
-        self.assertEqual(diagnostics[0].path, Path("build/03-models.idx"))
+        self.assertEqual(diagnostics[0].path, Path("build/04-classic-models.idx"))
         self.assertEqual(diagnostics[0].code, "ORPHAN_INDEX_TERM")
 
     def test_index_artifact_audit_rejects_untranslated_mapped_term(
@@ -511,8 +504,8 @@ class MappingAndAuditTests(unittest.TestCase):
             semantic_id="pgm-faithfulness",
         )
         alias = self.audit_index_terms.TermAlias(
-            path=Path("tex/index-terms/03-models.tex"),
-            owner="03-models",
+            path=Path("tex/index-terms/04-classic-models.tex"),
+            owner="04-classic-models",
             line=1,
             column=1,
             raw_identity="pgm-faithfulness",

@@ -7,7 +7,7 @@
 - 角色：第4名汇总修订者；参与本轮正文修改，因此本记录中的复读属于AI自查，不是独立复核。
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c05`
 - 分支与基线：`codex/v2-skill-fix-c05`，`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文：`tex/02-foundations/02-learning-theory/02-binary-classification.tex`
+- 正文：`tex/03-foundations/02-learning-theory/02-binary-classification.tex`
 - 原始版本：Git blob `d57bd3658bcf0f4c21f672def8e5ca3bff7cb7f1`，SHA-256
   `9087e37c914f6192acbb8d37bb28dac740e40fe99e9d2e0f0ecaece1e2267cb1`
 - 修订版本：当前工作区正文，1519行，SHA-256

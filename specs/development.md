@@ -31,11 +31,11 @@ git status --short
 
 ## 验证与集成
 
-提交前遵循下文提交要求与 [LaTeX 与数学记号规范](latex.md)，在当前任务 worktree 内运行 `./build.sh all` 和 `./build.sh check-target`，确认七份 PDF 与 `target/.build-manifest.json` 对应当前输入。worktree 隔离不减免成品一致性检查，也不允许绕过提交钩子。
+提交前遵循下文提交要求与 [LaTeX 与数学记号规范](latex.md)，在当前任务 worktree 内运行 `./build.sh build` 和 `./build.sh check-target`。前者只更新输入变化、缺失或损坏的卷，后者确认十二份 PDF 与各卷构建记录一致。首次构建或出版结构变化时运行 `./build.sh all`。worktree 隔离不减免成品一致性检查，也不允许绕过提交钩子。
 
 交付时说明 worktree 路径、分支、基线、变更范围和实际验证结果。未提交的成果应保留在原 worktree 并明确告知；不能让用户误以为变更已进入 `main`。
 
-将变更集成到目标分支时，确认目标工作区没有会被覆盖的修改，并在该工作区停止构建或监听。集成操作串行进行；可使用专门的集成 worktree，但不能强行检出已经被其他 worktree 占用的分支。先合并源文件并解决冲突，再按最终源文件重新生成七份 PDF 和构建清单，运行 `./build.sh check-target` 及相应检查。PDF 和构建清单的冲突不能只靠选择某一分支版本解决；单个任务验证通过也不代表合并后的版本已通过验证。
+将变更集成到目标分支时，确认目标工作区没有会被覆盖的修改，并在该工作区停止构建或监听。集成操作串行进行；可使用专门的集成 worktree，但不能强行检出已经被其他 worktree 占用的分支。先合并源文件并解决冲突，再按最终源文件执行 `./build.sh build` 更新受影响卷及构建清单，运行 `./build.sh check-target` 及相应检查。PDF 和构建清单的冲突不能只靠选择某一分支版本解决；单个任务验证通过也不代表合并后的版本已通过验证。
 
 ## 收尾与清理
 
@@ -108,7 +108,7 @@ git status --short
 docs(theory): 补充算法稳定性的泛化界推导
 fix(basics): 修正训练集与测试集的符号引用
 style(layout): 将边注编号改为按章重置
-refactor(book): 按六卷结构重组章节目录
+refactor(book): 按十二卷结构重组章节目录
 build(latex): 按字体文件路径加载中文字体
 docs(specs): 统一提交消息格式与变更划分规则
 ```
@@ -121,12 +121,15 @@ docs(specs): 统一提交消息格式与变更划分规则
 
 ### 提交前的 PDF 一致性
 
-每次提交必须运行 `./build.sh all`，完成全部七份成品并生成
-`target/.build-manifest.json`，再运行 `./build.sh check-target`。
-`target/` 纳入 Git；将七份 PDF、校验记录及对应正文一并暂存。
-版本化 `.githooks/pre-commit` 拒绝未暂存的正文输入，重新构建全部版本，
-并核对暂存区 PDF 与当前正文和构建记录一致。若构建更新了成品，重新暂存
-`target/` 后再提交；禁止绕过检查提交旧 PDF。
+每次提交运行 `./build.sh build`，只编译受影响卷并更新
+`target/.build-manifest.json` 中对应记录，再运行 `./build.sh check-target`。
+`target/` 纳入 Git；将发生变化的 PDF、清单及对应正文一并暂存。
+版本化 `.githooks/pre-commit` 拒绝未暂存的正文输入，编译受影响卷，
+并核对暂存区十二份 PDF 与各卷当前输入和构建记录一致。若构建更新了成品，
+重新暂存对应 PDF 和清单后再提交；禁止绕过检查提交旧 PDF。
+每卷输入由活跃正文、所用图像及图源、实际调用的索引词条与文献、引用目标位置、
+字体和共享样式构成。局部正文或未使用文献变更不要求编译无关卷；
+共享字体、样式与构建工具变化会使全部使用它们的卷重新构建。
 新克隆需执行 `git config --local core.hooksPath .githooks` 启用检查。
 已有仓库的 linked worktree 通常共享此配置；应检查 `git config --get core.hooksPath`
 是否为 `.githooks`，且当前 worktree 中钩子存在并可执行，不为单个任务随意改写共享配置。

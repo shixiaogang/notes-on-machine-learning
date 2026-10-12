@@ -1,0 +1,960 @@
+\chapter{强化学习概述}
+\label{chap:rl-overview}
+
+仓储中的移动机器人要绕开货箱，驶向指定的停靠区。前进还是转向，既影响当前的位置，也影响下一步还能走哪些路线。我们可以让机器人每一步都尽量靠近目标，但这条规则可能使它在障碍前反复试探，或者进入难以脱身的位置。当前一步走得近，不等于整段行动能完成任务。要选择动作，我们需要把动作引起的环境变化与此后的结果一起考虑。
+
+\term{强化学习}（reinforcement learning, RL）研究怎样根据行动后得到的反馈学习决策规则。学习者尝试一种行动，观察结果，再调整以后的选择；调整所依据的目标是长期累计收益，而不只是当前一步的评分。反馈可以是收益，也可以是代价。图~\ref{fig:rl-overview-embodied-setting}~中的机器人展示了这种交互：动作改变场景，新场景又成为下一次决策的依据。
+
+为了逐步核算这些关系，我们将仓储场景简化成一个带障碍和随机移动的网格任务。动作规定能选择什么，策略规定怎样选择，奖励规定怎样计分，价值则用于比较尚未发生的长期结果。策略还决定会收集到哪些经验，因此评价行为与理解数据来源必须放在同一个问题中。概率、条件期望与优化基础足以支撑本章的主要推理；如何计算价值、再如何从经验估计价值，由后续两章展开。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-embodied-loop}
+  \caption{强化学习的具身交互示意。移动机器人依据当前状态选择动作，环境执行动作后改变场景，并返回奖励和下一状态。插图只表达交互关系，不表示精确动力学、传感器结构或实验结果。}
+  \label{fig:rl-overview-embodied-setting}
+\end{figure}
+
+% Outline: 1.1
+\section{强化学习的基本设定}
+\label{sec:rl-overview-setting}
+
+% Outline: 1.1.1
+\subsection{智能体与环境的交互}
+\label{sec:rl-overview-interaction}
+
+在仓储任务中，机器人可以提交前进、转向或停止等命令，却不能直接指定命令执行后的精确位置。地面摩擦、货箱位置和执行误差也会影响实际运动。我们把选择命令的主体称为\term{智能体}（agent），把命令给定后产生运动和反馈的过程称为\term{环境}（environment）。这种划分明确了学习算法能够改变的是命令选择规则，而不是任意改变物理后果。到达停靠区可以得到正奖励，碰撞或耗时可以产生代价；这些评分怎样共同评价任务，还需要另行规定。
+
+\begin{definition}[智能体、环境与一步经验]
+  \label{def:rl-overview-interface}
+  智能体是在决策时选择动作的主体，环境是在动作给定后产生后续状态和奖励的过程。离散时刻从$t=0$起计。本章采用完全可观测（fully observable）设定，即智能体可以直接读取描述当前环境的状态$s_t$。智能体取得$s_t$后选择动作$a_t$，环境再返回奖励$r_t$和下一状态$s_{t+1}$。一条一步经验为
+  \[
+    (s_t,a_t,r_t,s_{t+1}).
+  \]
+  $r_t$按动作发生的时刻编号，表示执行$a_t$之后得到的反馈。
+\end{definition}
+
+要记录这条经验，需先规定状态包含哪些信息。状态（state）是用于预测后续变化的环境描述，记为$s_t$；机器人的位置、朝向和障碍物位置可以共同组成一个状态。\term{状态空间}（state space）$\mathcal S$收集任务中所有可能的状态，也就是这些信息在任务内允许出现的组合。动作$a_t$表示一次具体命令，\term{动作空间}（action space）$\mathcal A$则收集所有命令形式。命令可能只在某些状态下可执行，状态$s$下允许的命令组成$\mathcal A(s)\subseteq\mathcal A$。
+
+环境的描述与智能体实际收到的信息未必相同。观测（observation）是传感器或接口交给智能体的信息，记为$o_t$：机器人的位置可以属于状态，相机拍到的局部图像则是观测。一张图像可能遮住了影响运动的障碍，因而不足以预测下一步。本章先假设智能体能够读取状态，以便集中讨论行动与后果；不完整观测下如何使用历史$h_t$，即截至当前取得的观测、动作和反馈，由第~\ref{chap:rl-information}章处理。
+
+我们用网格位置作为状态，把上述接口缩小到一个可以手算的任务。网格宽$4$、高$3$，坐标为$x=1,\ldots,4$、$y=1,\ldots,3$；起点为$(1,1)$，终点为$(4,3)$，障碍$(2,2)$不可进入。到达终点的那一步得$1$，其余非终止步得$-0.04$。这些数值是教学假设，不是实验测量。方向命令可能因滑移而执行偏离，因此下面三条记录可以依次发生：
+\[
+\begin{aligned}
+ &((1,1),\text{右},-0.04,(2,1)),\\
+ &((2,1),\text{右},-0.04,(2,1)),\\
+ &((2,1),\text{右},-0.04,(3,1)).
+\end{aligned}
+\]
+第二条记录中，命令仍是向右，位置却没有改变。这可以由滑向障碍或边界造成，不能据此把动作改记为“停留”。经验同时保留命令和结果，才能区分选择规则与执行误差。
+
+记录经验以后，学习器才有材料调整决策规则。图~\ref{fig:rl-overview-loop}用实线表示每步执行，用虚线表示经验收集和参数更新：采集器可以每步记录，学习器却每积累一批经验才更新一次。部署时也可以固定参数，只保留执行闭环。因此，交互次数与梯度更新次数需要分别计算。
+
+改变规则后，机器人可能进入此前很少经过的区域，新经验的分布也会改变。常见的固定数据监督学习分析把样本分布视为给定，强化学习还需处理行为改变数据来源的关系。监督学习方法也可以用于这样的闭环；这里区分的是问题设定，而不是把两类技术割裂开来\scite{sutton2018}
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-loop}
+  \caption{交互与学习的接口。实线是每步执行的动作和反馈，虚线是经验收集及按训练协议发生的参数更新。部署时可移除虚线部分而保留执行闭环。}
+  \label{fig:rl-overview-loop}
+\end{figure}
+
+% Outline: 1.1.2
+\subsection{马尔可夫决策过程}
+\label{sec:rl-overview-mdp}
+
+三条经验只告诉我们已经发生了什么，不能单凭它们计算在同一位置改选其他动作的后果。为此，需要一个环境模型，给出每个状态动作下可能的下一状态与奖励及其概率。若当前状态已经包含预测这些后果所需的信息，过去怎样到达这里就不再提供额外预测信息。这一条件称为马尔可夫性（Markov property）；它使我们能够从当前状态开始计算，而不必逐次重放历史。
+
+把这样的转移规律与可选动作结合，得到\term{马尔可夫决策过程}（Markov decision process, MDP）。它描述智能体在哪些状态可以选哪些动作，以及每次选择如何产生后果；决策规则和评价目标仍须指定。在有限网格中，用$p(s',r\mid s,a)$表示给定$s,a$后，下一状态为$s'$且奖励为$r$的联合概率，用$\rho_0$表示起始状态的分布。对同一状态动作下的所有奖励求和可得到下一状态的概率，按各结果的概率加权奖励则得到平均的一步评分。
+
+\begin{definition}[马尔可夫决策过程]
+  \label{def:rl-overview-mdp}
+  马尔可夫决策过程由状态空间$\mathcal S$、动作空间$\mathcal A$、非空可行动作集合$\mathcal A(s)$、联合转移奖励核$p(s',r\mid s,a)$及初始分布$\rho_0$描述，并配以时域和评价目标。对有正概率的历史，马尔可夫性要求
+  \begin{equation}
+    \mathbb P(s_{t+1},r_t\mid s_0,a_0,r_0,\ldots,s_t,a_t)
+    =p(s_{t+1},r_t\mid s_t,a_t).
+    \label{eq:rl-overview-markov}
+  \end{equation}
+  当状态与奖励取值有限或可数时，
+  \begin{equation}
+  \begin{aligned}
+    P(s'\mid s,a)&=\sum_r p(s',r\mid s,a),\\
+    R(s,a)&=\sum_{s',r}p(s',r\mid s,a)r.
+  \end{aligned}
+  \label{eq:rl-overview-kernels}
+  \end{equation}
+  $P$是转移核，给出每种后继状态的概率；$R$是给定状态动作后的条件期望奖励。连续状态或奖励时把相应求和改为积分。
+\end{definition}
+
+将定义用于网格，我们就能补全尚未给出的概率。$\mathcal S$包含除障碍外的$11$个格子，起点固定，故$\rho_0((1,1))=1$。动作名称是上、下、左、右；意图方向会越界或进入障碍的命令不在$\mathcal A(s)$内。合法命令以$0.8$概率沿意图方向移动，以各$0.1$概率向两侧垂直方向滑移。滑移若撞墙或遇到障碍，则留在原位。
+
+终点记为$g=(4,3)$。到达后只保留虚拟动作“停留”，满足$P(g\mid g,\text{停留})=1$，后续奖励为$0$。这种吸收状态（absorbing state）一旦进入就不再离开。它允许我们把终止后的记录补成无限序列，同时不增加任务收益；后续讨论无限折扣目标时将沿用这一约定。
+
+这项任务按实际后果计分，而不是按意图计分。从非终点状态出发，若$s'=g$就返回$1$，否则返回$-0.04$。在$(3,3)$选右时，有$0.8$概率到终点、$0.1$因上方边界留在原位、$0.1$滑到$(3,2)$。要在执行前评价这一步的平均评分，需按这些概率加权，得到
+\[
+  R((3,3),\text{右})=0.8\times1+0.2\times(-0.04)=0.792.
+\]
+其中$0.792$是重复执行时的期望，不是环境每次返回的奖励；一次实际反馈仍是$1$或$-0.04$。一次样本不能确定期望，期望也不能唯一确定全部奖励分布。联合核$p$保留了后继状态与奖励的对应关系，而$P,R$分别汇总其中的状态概率和平均评分。
+
+上述模型把位置当作充分状态，前提是位置相同、动作相同时，历史不会再改变后果分布。若网格新增一扇门，曾经取到钥匙会改变门的通行状态，那么同在门前的两个位置记录就可能对应不同转移。只记$(x,y)$不再充分。把开门状态$b\in\{0,1\}$加入$s=(x,y,b)$，在其余机制固定时，增广状态才可能恢复这种充分性。式~\eqref{eq:rl-overview-markov}约束的是状态表示，并不是说世界没有过去；若$b$无法观测，扩充符号也不能让智能体自动取得这项信息。
+
+MDP还需要说明怎样把不同时刻的奖励合成一个目标。评价当前动作时，可以只累计接下来$H$步的结果；也可以让任务持续运行，用折扣因子（discount factor）$\gamma$控制未来评分的权重，$k$步后的奖励乘$\gamma^k$。本章网格默认采用$\gamma=0.9$的无限时域折扣目标，并会明确标出独立的有限时域算例。表~\ref{tab:rl-overview-horizons}比较常见设定；平均奖励考察长期每步收益，随机最短路累计直到随机到达时刻的收益。这两类只作为边界入口，不能直接继承折扣问题的收敛结论。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    设定 & 终止与时间 & 比较的目标 & 需另行检查的条件\\
+    \midrule
+    有限时域 & $t=0,\ldots,H-1$，$V_H=0$表示末端无后续收益 & $H$步期望奖励总和，可另指定折扣 & 剩余时间影响决策；可并入状态\\
+    折扣无限时域 & 可持续运行；终止后补吸收状态 & $\mathbb E\sum_{t\geq0}\gamma^t r_t$ & $0\leq\gamma<1$；有界奖励使总和有限\\
+    平均奖励 & 通常持续运行，不因目标达成停止 & $\lim_{n\to\infty}n^{-1}\mathbb E\sum_{t=0}^{n-1}r_t$ & 极限需存在；不可约（状态相互可达）或单链（只有一个长期停留且无法离开的互通区域）等条件关系到初始状态依赖\\
+    随机最短路 & 在随机时刻$\tau$到达终点 & $\mathbb E\sum_{t=0}^{\tau-1}r_t$，常用成本形式 & 需检查到达性、期望终止时间与不可终止策略的代价\\
+    \bottomrule
+  \end{tabularx}
+  \caption{同一状态动作接口可搭配不同时间目标。随机最短路中的“最短”可以指累计成本，不限于几何距离；取$\gamma=1$不能自动把折扣定理变成其余三类定理。}
+  \label{tab:rl-overview-horizons}
+\end{table*}
+
+\Needspace{10\baselineskip}
+上述几类MDP的系统性处理可见Puterman的专著\scite{rl1-puterman1994-mdp}
+
+% Outline: 1.2
+\section{动作}
+\label{sec:rl-overview-actions}
+
+% Outline: 1.2.1
+\subsection{动作空间与可行动作}
+\label{sec:rl-overview-action-space}
+
+网格已经规定了方向命令，但真实任务不一定用有限个名称就能描述一次选择。受控机械系统可能需要一个连续的力向量$\bm u\in\mathbb R^m$，其中$m$是控制分量数；推荐列表需要同时选择项目和次序；抓取命令则可能包含离散的抓取方式及连续的位置参数。比较这些动作形式，是为了确定决策规则需要输出什么，以及执行前怎样检查命令是否合法。
+
+合法性首先由当前状态下的允许集合$\mathcal A(s)$决定。若规则用概率分布选择命令，记为$\pi(\cdot\mid s)$，就必须把全部概率放在这个集合内。这个记号只表示在状态$s$如何选动作，其完整类型将在策略一节定义。
+
+\begin{definition}[合法动作与策略支持]
+  \label{def:rl-overview-admissible}
+  $\mathcal A$收集所有动作的可能形式，$\mathcal A(s)\subseteq\mathcal A$是状态$s$下允许执行的动作。对随机决策规则$\pi(\cdot\mid s)$，合法性要求
+  \[
+    \pi(\mathcal A(s)\mid s)=1.
+  \]
+  对离散动作，这等价于$a\notin\mathcal A(s)$时$\pi(a\mid s)=0$，且合法动作的概率和为$1$。确定性规则必须输出$\mathcal A(s)$中的一个元素。
+\end{definition}
+
+在图~\ref{fig:rl-overview-grid-actions}中，$(1,1)$允许上和右；$(3,2)$允许上、下和右，但左边是障碍。这里排除的是\emph{意图方向}非法的命令，不是排除随机执行误差。另一种常见网格建模允许四个方向始终可选，把主动撞墙也规定为原地不动；那会增加可选行为，改变策略空间。本书贯穿网格采用前一种定义，只有随机滑移撞墙才留在原位。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-grid-actions}
+  \caption{基准网格与两个位置的合法命令。实心方格是障碍，$S$和$G$分别表示起点与终点；箭头表示可选择的意图方向，不表示随机滑移的全部后果。}
+  \label{fig:rl-overview-grid-actions}
+\end{figure}
+
+表~\ref{tab:rl-overview-action-types}按一次命令的数学形式列出输出与约束。这里的分类不涉及命令持续多久：一个持续若干步的技能仍可用离散编号或连续参数选择，只是决策时间尺度不同。这一变化由下一小节处理。
+
+命令能够执行，也不等于执行它满足安全要求。执行器只能提供有限大小的力，是动作接口的限制；某个力在硬件上可用，却可能因碰撞风险而被禁用，则是根据行为要求进一步限制动作。两种限制可以同时进入允许集合，但安全条件怎样建立、能保证什么，需由第~\ref{chap:rl-trustworthy}章另行分析。
+
+\begin{table}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{19mm}*{2}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    数学形式 & 策略输出对象 & 约束接口的例子\\
+    \midrule
+    离散 & 一个动作编号或概率向量 & 方向掩码标出可用命令；仅对合法方向归一化\\
+    连续 & 向量$\bm u$或其分布 & 力的上下界、联动约束\\
+    组合 & 子集、排列或多项联合选择 & 推荐列表长度、项目去重、容量限制\\
+    参数化 & 类型$c$及参数$\bm u_c$ & 不同类型有各自维度和参数范围\\
+    \bottomrule
+  \end{tabularx}
+  \caption{动作的分类对象是一次命令的数学形式。执行器噪声属于转移机制，不会把离散命令自动变成连续动作。}
+  \label{tab:rl-overview-action-types}
+\end{table}
+
+% Outline: 1.2.2
+\subsection{动作后果与时间尺度}
+\label{sec:rl-overview-time-scale}
+
+在起点提交同一个向右命令，改变执行机制就会改变后果。表~\ref{tab:rl-overview-transition}固定$s=(1,1)$和命令，只对照确定移动与基准滑移。两者即时奖励都为$-0.04$，但确定移动总到$(2,1)$，随机移动还可能进入左侧竖向通道或留在起点。只看这一步的评分，就看不到后续可达区域的变化。确定移动仅是本表的对照条件，其余网格计算仍保留滑移。
+
+\begin{table}[htbp]
+  \centering\small
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    向右的后继状态 & 确定移动概率 & 基准概率 & 奖励\\
+    \midrule
+    $(2,1)$ & $1$ & $0.8$ & $-0.04$\\
+    $(1,2)$ & $0$ & $0.1$ & $-0.04$\\
+    $(1,1)$ & $0$ & $0.1$ & $-0.04$\\
+    \bottomrule
+  \end{tabular}
+  \caption{同一向右命令在两种转移机制下的结果。基准的向下滑移越界，因此留在原位；零概率行仅用于对齐比较。}
+  \label{tab:rl-overview-transition}
+\end{table}
+
+即使不改变机制，不同动作也可能具有相同即时奖励。在$(3,2)$选择上或下，当步都不可能到达终点，所以期望奖励同为$-0.04$。向上大概率到$(3,3)$，下一步即可尝试进入目标；向下大概率回到$(3,1)$，还需多次行动。一步评分无法表现这项差别。这里尚不声称某个动作必然最优，因为后续策略及随机转移也影响累计结果；它说明了为何需要一个跨越多步的评价对象。
+
+多步后果也需要与记录时刻区分。图~\ref{fig:rl-overview-timeline}上行沿一条可发生的轨迹标出每次命令与反馈：执行$a_t$后得到$r_t$，数步后到达终点的奖励则记录在到达那一步。学习时可以用晚到的结果评价早先选择，这称为信用分配（credit assignment），也就是判断哪些早先行动应对后来的收益或失败承担作用。它改变评价方式，不改变奖励实际发生的顺序。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-timeline}
+  \caption{同一条五步到达轨迹的时间标记。上行每步决策，最后一个动作返回$r_4=1$；下行只在$t=0,2,4$重新决策。下行跨两步的箭头表示持有或执行内部命令的区间，不能仍用上行的一步核和单步奖励表示。}
+  \label{fig:rl-overview-timeline}
+\end{figure*}
+
+图的下行改为每两步重新决策一次。这不只是少记录几个时刻：新接口的一次动作跨过两次原始转移，必须描述两步后的状态分布，并累计期间的评分。若命令持续$k$个原始步，在原始折扣$\gamma$下，区间内收益为$\sum_{j=0}^{k-1}\gamma^j r_{t+j}$，区间外的回报再乘$\gamma^k$。例如两个非终止步贡献$-0.04+0.9(-0.04)=-0.076$，不能仍记为一个$-0.04$。若持续时间随机，它也须作为动作后果的一部分。
+
+连续时间控制进一步以物理时间而非固定步号描述运动，用微分动力学或跳变机制表示变化，奖励常是单位时间的收益率。离散化时，状态变化和区间收益必须一起调整，不能只改变决策频率。本章保留这些接口区别，不把其目标混入固定步长MDP；跨步递归将在第~\ref{chap:rl-learning}章的时间抽象中展开。
+
+% Outline: 1.3
+\section{策略}
+\label{sec:rl-overview-policies}
+
+% Outline: 1.3.1
+\subsection{策略及其类型}
+\label{sec:rl-overview-policy-types}
+
+若网格移动没有误差，从起点依次执行“上、上、右、右、右”就能沿上路到达终点。基准网格有滑移，一次偏离却可能使余下命令不再适合当前位置。因此，我们需要在每次取得状态后重新决定，而不只是预先写下一个动作序列。\term{策略}（policy）就是根据当前可用信息选择行动的规则。此前的$\pi(\cdot\mid s)$描述了它在状态$s$的动作分布；一次实际选出的$a_t$只是这条规则的一次结果。
+
+规则可以始终相同，也可以随剩余时间改变。平稳策略（stationary policy）在同一状态使用相同的动作分布；非平稳策略（nonstationary policy）允许这份分布随时刻变化。若每次只指定一个动作，称为确定性策略（deterministic policy）；若按分布抽样，称为随机策略（stochastic policy）。这些区别需要分别记录，不能从是否抽样推断是否依赖时间。
+
+\begin{definition}[马尔可夫策略]
+  \label{def:rl-overview-policy}
+  一个马尔可夫策略序列为$\pi=(\pi_0,\pi_1,\ldots)$，其中$\pi_t(a\mid s)$是在时刻$t$、状态$s$选择动作$a$的条件概率，并满足定义~\ref{def:rl-overview-admissible}的支持条件。这里的马尔可夫策略在给定$t$后只使用当前状态，不再依赖此前历史。若规则不显式依赖$t$，记为$\pi(a\mid s)$，称为\term{平稳策略}；否则称为非平稳策略。若每个状态只输出一个合法动作$f_t(s)$，则为确定性策略，对应退化分布$\pi_t(a\mid s)=\mathbf 1\{a=f_t(s)\}$。
+\end{definition}
+
+更一般的策略可以依赖全部可用历史，写成$\pi_t(a\mid h_t)$。本章完全可观测的主线使用上述马尔可夫策略，但不据此宣称在任何约束或信息条件下当前状态都足够。表~\ref{tab:rl-overview-policy-types}展示抽样与时间依赖的四种组合：固定概率抽样可以是平稳的，每次确定地选择动作也可以随剩余时间改变。
+
+\begin{table}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{21mm}*{2}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    & 确定性 & 随机性\\
+    \midrule
+    平稳 & 在起点总选上 & 在起点始终以$0.7$选上、$0.3$选右\\
+    非平稳 & 根据剩余步数改选近路或远路 & 剩余时间多时以$0.7$选上，少时改为$0.2$\\
+    \bottomrule
+  \end{tabularx}
+  \caption{两种互不等同的策略属性。表中的概率是教学规则，不是估计结果；各状态仍须满足各自的动作合法性。}
+  \label{tab:rl-overview-policy-types}
+\end{table}
+
+有限时域为何可能需要时间？考虑一个从导航任务简化出的独立岔路例：取消滑移和步成本，近路只需一步即以$0.4$概率得到终点奖励$1$，否则以奖励$0$终止；绕路需要两步，必得$1$。在不折扣且到时终止的规则下，只剩一步时近路期望为$0.4$、绕路为$0$；还剩两步时两者为$0.4$和$1$。同一岔路的选择随剩余时间改变。把剩余时间加入状态可以重新用平稳形式书写，但这相对于增广状态而言，并没有消除实际的时间依赖。
+
+图~\ref{fig:rl-overview-policy-randomness}在基准起点画出两份动作概率。一份以$1$的概率选择上，另一份以$0.7$选上、$0.3$选右。即使采用第一份规则，下一状态仍以$0.8$概率为$(1,2)$、$0.1$为$(2,1)$、$0.1$留在起点。策略确定只能消除选动作时的随机性，不能消除转移随机性。有限折扣MDP何时存在最优确定性平稳策略，是第~\ref{chap:rl-planning}章要证明的结论，不是策略一词本身的含义。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-policy-randomness}
+  \caption{同一网格起点的两种动作分布。左边确定性策略仍有随机后继；右边额外引入动作选择的随机性。图只显示起点附近，未画出的位置沿用基准网格。}
+  \label{fig:rl-overview-policy-randomness}
+\end{figure}
+
+% Outline: 1.3.2
+\subsection{策略诱导的数据}
+\label{sec:rl-overview-occupancy}
+
+起点选上与选右，会把机器人带向不同区域。要计算某份策略会产生哪些训练记录，我们先求一段记录出现的概率。把包含$H$步的有限轨迹记为$\tau_H=(s_0,a_0,r_0,\ldots,s_{H-1},a_{H-1},r_{H-1},s_H)$。概率链式法则按发生顺序展开联合概率；马尔可夫性把每步环境条件缩减为当前状态动作，马尔可夫策略则给出该时刻的动作概率。因此，
+\begin{equation}
+  \mathbb P_\pi(\tau_H)
+  =\rho_0(s_0)\prod_{t=0}^{H-1}
+    \pi_t(a_t\mid s_t)\,p(s_{t+1},r_t\mid s_t,a_t).
+  \label{eq:rl-overview-trajectory}
+\end{equation}
+初始位置来自$\rho_0$，动作来自$\pi_t$，反馈来自环境核$p$。若只关心状态动作轨迹，对奖励求和后便得到含$P(s_{t+1}\mid s_t,a_t)$的乘积；不能直接把$p$替换为“奖励恒等于$R(s,a)$”。若策略依赖历史，链式分解依然成立，但动作项须改写为$\pi_t(a_t\mid h_t)$。
+
+沿用第~\ref{sec:rl-overview-interaction}节的三步记录，若在$(1,1)$与$(2,1)$都必选右，其概率为$0.8\times0.2\times0.8=0.128$。中间的$0.2$是两种被阻挡的滑移概率之和。只把起点改为以$0.3$概率选右，保持后两次必选右，同一记录的概率就变为$0.0384$。环境核没有改变，训练记录的分布却随策略改变了。
+
+完整轨迹的种类很多，比较数据覆盖时往往只需知道各时刻在哪些状态采取哪些动作。逐时分布（time-marginal distribution）记录固定时刻的这些概率。若还要汇总无限多个时刻，就需约定它们各占多大权重。折扣目标让较早后果权重更大，我们相应地用$\gamma^t$加权逐时分布，并乘$1-\gamma$使权重之和为$1$。得到的\term{折扣占用度量}（discounted occupancy measure）是一份状态动作分布，描述按这些时间权重抽样时会看到什么。
+
+\begin{definition}[逐时分布与折扣占用度量]
+  \label{def:rl-overview-occupancy}
+  逐时状态分布为$q_t^\pi(s)=\mathbb P_\pi(s_t=s)$，状态动作分布为$q_t^\pi(s,a)=q_t^\pi(s)\pi_t(a\mid s)$。对$0\leq\gamma<1$，归一化的折扣占用度量定义为
+  \begin{equation}
+    d^\pi(s,a)=(1-\gamma)\sum_{t=0}^{\infty}
+      \gamma^t q_t^\pi(s,a),\qquad
+    d^\pi(s)=\sum_a d^\pi(s,a).
+    \label{eq:rl-overview-occupancy}
+  \end{equation}
+\end{definition}
+
+我们可以把这种加权写成一次抽样：取独立于轨迹的时刻$T$，满足$\mathbb P(T=t)=(1-\gamma)\gamma^t$，则$\mathbb P_\pi(s_T=s,a_T=a)=d^\pi(s,a)$。它不是一条轨迹中“至少到访一次”的概率，反复到访与晚到访都会影响加权结果。要核对$d^\pi$确实归一化，可利用各项非负交换求和次序，再用每一时刻的概率质量为$1$：
+\[
+  \sum_{s,a}d^\pi(s,a)
+  =(1-\gamma)\sum_{t=0}^{\infty}\gamma^t
+    \underbrace{\sum_{s,a}q_t^\pi(s,a)}_{1}=1.
+\]
+终止后必须保留吸收状态及其虚拟动作，以上质量才仍然为$1$；若把终止后的时刻全部删除，得到的是非终止占用，其总质量一般小于$1$。吸收状态的占用高也不表示在那里继续取得奖励，因为其奖励为零。
+
+平稳策略还满足$d^\pi(s,a)=d^\pi(s)\pi(a\mid s)$，因为每个时刻在$s$的动作分布相同。非平稳策略的占用仍由式~\eqref{eq:rl-overview-occupancy}定义，但不能把随时间变化的$\pi_t$直接提出求和号。这一区别在后续利用占用度量恢复平稳策略时会用到。
+
+图~\ref{fig:rl-overview-occupancy}把加权分布用于比较两份完整的确定性策略。箭头给出每个非终点格的唯一意图方向，深浅及数字表示$d^\pi(s)$，不是价值。计算时先从$q_0=\rho_0$出发，对当前状态概率、动作概率和后继概率逐层加权，将分布传播到下一步：
+\[
+ q_{t+1}^\pi(s')=\sum_s q_t^\pi(s)
+                    \sum_a\pi(a\mid s)P(s'\mid s,a)
+\]
+再按式~\eqref{eq:rl-overview-occupancy}累加各时刻分布。保留$400$个时刻时，总质量尾差为$0.9^{400}<5\times10^{-19}$。两幅图采用同一色标：上路策略在左侧通道的占用较大，下路策略则更多到访底边。因此，即使时间采样权重和采样预算相同，两份策略也会给不同区域提供不同数量的证据。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-occupancy}
+  \caption{基准随机网格中两份策略的归一化折扣状态占用，$\rho_0$集中于起点，$\gamma=0.9$。箭头是确定性策略，滑移仍为$0.8/0.1/0.1$；数字四舍五入至三位小数，障碍不是零概率的可用状态。}
+  \label{fig:rl-overview-occupancy}
+\end{figure*}
+
+这种数据来源差异在“用旧规则的经验评价新规则”时尤其重要。实际收集数据的规则称为\term{行为策略}（behavior policy），记为$\mu$，它决定日志怎样产生；希望评价或改进的规则称为\term{目标策略}（target policy），记为$\pi$，它决定我们想知道谁的后果。两者相同称为同策略（on-policy）问题，不同称为离策略（off-policy）问题。这一划分比较的是两份规则，与能否新增数据的在线、离线划分不同。
+
+用$\mu$的记录推断$\pi$，需要检查记录是否包含目标规则所需的状态动作后果。若行为分布从不给某个必要动作正概率，已有样本的重新加权不能生成该动作的后果。这是覆盖（coverage）问题：数据来源必须为待推断的行为提供足够支持，而不只是拥有很多条记录。
+
+在$(2,1)$，合法动作是左、右，两侧滑移都只会停留。若$\mu$在此永远选左，日志就没有从该格主动向右的样本，尽管$\pi$可能需要向右。另一种情况是$\mu$允许进入左侧通道，但某份有限日志恰好没到过那里。前者是行为分布本身不支持必要动作，后者可能只是有限抽样遗漏，二者不能混为同一结论。
+
+跨位置推断可以借助函数逼近（function approximation），也就是让不同位置的预测共享参数；其可靠性仍需结构假设和数据证据。网络能输出一个未尝试动作的预测，不等于该预测已被验证。占用的流守恒及由占用恢复策略将在第~\ref{chap:rl-planning}章展开，离策略覆盖的后果则由第~\ref{chap:rl-information}章进一步分析。
+
+% Outline: 1.4
+\section{奖励}
+\label{sec:rl-overview-rewards}
+
+% Outline: 1.4.1
+\subsection{奖励与累计回报}
+\label{sec:rl-overview-return}
+
+策略决定怎样行动，奖励规则则决定怎样给行动后果计分。基准网格每个非终止步付出$0.04$，到达终点得到$1$，同时表达了到达目标与避免拖延的偏好。远离终点时，大多数动作的即时奖励同为$-0.04$；只比较这个数值，就无法区分它们将机器人带向哪里。因此，我们需要把后续奖励一起纳入评价。\term{回报}（return）就是按指定时间规则累计的奖励，它将一串反馈合成一个数值。
+
+沿用前面的折扣因子，折扣回报以$\gamma^k$加权$k$步后的奖励。选择$0\leq\gamma<1$，意味着越远的收益对当前判断权重越小。对随机策略和随机转移，一份策略可能产生许多条轨迹；本章按期望回报比较它们，即比较同一初始分布下长期评分的平均值，而不是要求每条轨迹都最好。
+
+\begin{definition}[回报与策略目标]
+  \label{def:rl-overview-return}
+  奖励样本$r_t$是一次交互返回的数值，$R(s,a)=\mathbb E[r_t\mid s_t=s,a_t=a]$是环境的条件期望奖励。回报是从某时刻起按指定时间目标累计的奖励。折扣情形为
+  \begin{equation}
+    G_t=\sum_{k=0}^{\infty}\gamma^k r_{t+k},
+    \qquad 0\leq\gamma<1.
+    \label{eq:rl-overview-return}
+  \end{equation}
+  相对于给定初始分布$\rho_0$，策略目标为$J(\pi)=\mathbb E_\pi[G_0]$。它是未归一化的期望折扣回报，不是单条轨迹的实现值。
+\end{definition}
+
+若任务只计入时刻$t$至$H-1$的奖励，且没有额外终端收益，累计范围就缩为剩余的$H-t$步：
+\[
+  G_{t,H}=\sum_{k=0}^{H-t-1}\gamma^k r_{t+k}.
+\]
+有限和允许$\gamma=1$，这时每一步权重相同。若任务持续运行，关心的是长期每步取得多少收益，则可以把前$n$步总收益除以$n$，再考察$n$增大后的极限。从状态$s$启动、遵从策略$\pi$的期望时间平均为
+\[
+  g^\pi(s)=\lim_{n\to\infty}\frac{1}{n}
+    \mathbb E_\pi\left[\sum_{t=0}^{n-1}r_t\,\middle|\,s_0=s\right],
+\]
+这里须假设极限存在。该式先对随机轨迹取期望，再取时间极限；它与沿某条轨迹计算平均后得到的样本路径结论不同，本章不默认二者相等。表~\ref{tab:rl-overview-returns}比较三种累计口径，尤其要观察终止后的零奖励：它不改变奖励总和，却会被持续计入时间平均的分母。
+
+\begin{table}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{23mm}*{2}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    累计方式 & 权重与归一化 & 终止后怎样处理\\
+    \midrule
+    有限回报 & $H-t$项；$\gamma=1$时为总和而非步均值 & $H$之后不计收益；另有终端收益须显式给出\\
+    折扣回报 & 权重$\gamma^k$；本书$J$不乘$1-\gamma$ & 吸收状态的零奖励不改变回报\\
+    期望时间平均 & 总和除以$n$后取极限 & 若终止后永远零奖励且总收益可积，平均值为零\\
+    \bottomrule
+  \end{tabularx}
+  \caption{回报的累计口径。对一个只产生有限总收益的到达任务使用无限时间平均，会失去区分路径的能力；这不是折扣回报的另一种写法。}
+  \label{tab:rl-overview-returns}
+\end{table}
+
+\begin{example}[同一网格上的两条到达轨迹]
+  \label{ex:rl-overview-path-returns}
+  路径甲共五步，依次经过
+  \[
+    (1,1)\to(1,2)\to(1,3)\to(2,3)\to(3,3)\to(4,3).
+  \]
+  路径乙先从$(1,1)$到$(2,1)$再回起点，然后沿甲前进，共七步。这是两段可发生的实际轨迹，不是两种策略的全部可能结果。甲的奖励为$(-0.04,-0.04,-0.04,-0.04,1)$，乙比甲多两个前置的$-0.04$。我们固定这两串奖励，分别比较是否折扣对累计结果的影响。
+
+  不折扣时，两者回报分别为$1-4(0.04)=0.84$和$1-6(0.04)=0.76$。取$\gamma=0.9$时，每个奖励再乘它发生时刻对应的权重：
+  \[
+  \begin{aligned}
+    G_0^{\text{甲}}&=-0.04(1+0.9+0.9^2+0.9^3)+0.9^4\\
+                  &=0.51854,\\
+    G_0^{\text{乙}}&=-0.04\sum_{k=0}^{5}0.9^k+0.9^6
+                    =0.3440174.
+  \end{aligned}
+  \]
+\end{example}
+
+绕路的回报较小，不只是因为多付了两步成本；折扣还降低了晚到的终点奖励权重。两条已发生轨迹的比较说明了累计规则，却不能直接比较两份随机策略的期望。
+
+即时评分与累计评分甚至可以给出相反排序。另设一个确定性教学岔路：近路一步得$0.4$后终止，远路前两步得$0$、第三步得$1$，没有其他奖励。取$\gamma=0.9$，近路当前得分较高，累计回报却只有$0.4$，小于远路的$0.81$。该例取消了滑移并改变了奖励，不是原网格的计算；下一小节将保持这两条路径不变，考察折扣因子改变时排序如何变化。
+
+有限轨迹可以直接相加，无限回报则需确认总和存在。计算时也不可能逐项累加到无穷，我们还需要控制只保留前$H$步造成的误差。若每步奖励的绝对值不超过统一上界$R_{\max}$，就可以用奖励界乘几何权重之和，同时回答存在性和截断误差两个问题。
+
+\begin{theorem}[有界折扣回报与截断误差]
+  \label{thm:rl-overview-tail}
+  设对所有$t$几乎处处有$|r_t|\leq R_{\max}<\infty$，且$0\leq\gamma<1$。则折扣级数绝对收敛，并对任意$t$及整数$H\geq1$满足
+  \begin{equation}
+  \begin{aligned}
+    |G_t|&\leq\frac{R_{\max}}{1-\gamma},\\
+    \left|G_t-\sum_{k=0}^{H-1}\gamma^k r_{t+k}\right|
+      &\leq\frac{\gamma^H R_{\max}}{1-\gamma}.
+  \end{aligned}
+  \label{eq:rl-overview-tail}
+  \end{equation}
+  对这些量取任意条件期望，同样的绝对误差界仍成立。
+\end{theorem}
+
+\begin{proof}
+  先把每个奖励的大小用$R_{\max}$控制。对任意有限整数$n$，三角不等式与奖励界给出
+  \[
+    \sum_{k=0}^{n}\left|\gamma^k r_{t+k}\right|
+      \leq R_{\max}\sum_{k=0}^{n}\gamma^k
+      =R_{\max}\frac{1-\gamma^{n+1}}{1-\gamma}
+      \leq\frac{R_{\max}}{1-\gamma}.
+  \]
+  绝对值部分和单调且有上界，因而极限有限，原级数绝对收敛。再对整个和使用三角不等式，就得到第一式。截断只删去$k\geq H$的项；对这段尾项使用相同的奖励界，得到
+  \[
+    \left|\sum_{k=H}^{\infty}\gamma^k r_{t+k}\right|
+    \leq R_{\max}\sum_{k=H}^{\infty}\gamma^k
+    =\frac{\gamma^H R_{\max}}{1-\gamma}.
+  \]
+  若$\gamma=0$，回报只保留$r_t$，任意$H\geq1$的尾项均为零，结论仍成立。对任意给定信息$\mathcal F$，由
+  $|\mathbb E[X\mid\mathcal F]|\leq\mathbb E[|X|\mid\mathcal F]$，
+  对逐轨迹的确定上界取条件期望就得到所述期望界。
+\end{proof}
+
+基准网格可取$R_{\max}=1$。只保留前$50$步时，通用尾界为$10(0.9)^{50}\approx0.05154$；这是所有满足奖励界的轨迹都适用的保守控制，不是网格的实际误差。若预先允许的误差为$\varepsilon>0$，可以反过来选择截断长度。对于$0<\gamma<1$和$R_{\max}>0$，解$\gamma^H R_{\max}/(1-\gamma)\leq\varepsilon$可得
+$H\geq\log(\varepsilon(1-\gamma)/R_{\max})/\log\gamma$，
+再取满足条件的正整数；分母为负，解不等式时必须改变方向。若$R_{\max}=0$，所有奖励及截断误差均为零。这些结论依赖折扣，不能用于$\gamma=1$的无限任务。
+
+% Outline: 1.4.2
+\subsection{时间目标与奖励边界}
+\label{sec:rl-overview-reward-boundaries}
+
+在前一小节的确定性岔路中，$\gamma=0.9$时远路回报更高。若更重视眼前收益，这个排序还会保持吗？我们固定近路$(0.4)$和远路$(0,0,1)$两串奖励，只改变折扣因子。该例仍没有滑移和步成本。按奖励发生的时刻加权，两条路径的回报为
+\[
+  G^{\text{近}}(\gamma)=0.4,\qquad
+  G^{\text{远}}(\gamma)=\gamma^2.
+\]
+两条路径回报相等时，$0.4=\gamma^2$，故交点为$\gamma_*=\sqrt{0.4}\approx0.63246$。在这两条候选路径中，$\gamma<\gamma_*$时近路回报较高，$\gamma>\gamma_*$时远路较高，交点处相等。图~\ref{fig:rl-overview-discount}绘出的是解析函数，不是学习曲线，也没有实验误差带。把$\gamma$从$0.5$换成$0.9$后选择翻转，是目标改变的结果，不能据此判断求解算法失效。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-discount}
+  \caption{独立确定性岔路算例的折扣偏好。横轴为$\gamma$，纵轴为起点回报；近路奖励序列为$(0.4)$，远路为$(0,0,1)$，无其他奖励。交点由解析等式求出。}
+  \label{fig:rl-overview-discount}
+\end{figure}
+
+累计范围也可能因为时间上限而改变，但要先判断上限来自任务还是采集器。若任务规定“十步内到达才得分”，第十步之后的奖励不属于目标，剩余步数应进入决策信息，终端价值按规则设为零。若任务持续运行，只是采集器最多记录十步，$s_{10}$之后的回报并未消失。我们可以用未来价值估计补齐未记录部分，这称为自举（bootstrapping），即用已有预测代替尚未观测的后果；也可以不补齐，但需承担式~\eqref{eq:rl-overview-tail}给出的截断误差。自举不能应用于本来就不计入目标的未来。区分真正终止与采样截断，要依据任务规则，而不能只看一个含混的结束标记。
+
+即使累计方式明确，奖励也可能鼓励我们不希望看到的行为。另设一个确定性导航任务，保留$\gamma=0.9$、原步成本和终点奖励，但增加一条两步循环。起点可以沿五步路径到达终点，也可以不断循环；到达路径不经过奖励路标，循环每步却都因经过路标多得$0.2$。循环每步净得$0.16$，无限循环的回报为$0.16/(1-0.9)=1.6$，超过五步到达的$0.51854$。这个算例取消了滑移并新增了循环，不是基准网格的精确解。选择循环可能完全符合给定奖励，却违背到达目标的意图。辅助奖励要在促进学习的同时保持最优策略不变，需要额外条件，第~\ref{chap:rl-reward}章再讨论。
+
+奖励符合收益意图后，按期望比较仍有边界。设一个策略的回报必为$1$，另一个以各一半概率得$3$或$-1$；二者期望相同，后者却有一半概率出现负结果。平均数不能恢复失败概率、极端损失或不可违反的条件。第~\ref{chap:rl-trustworthy}章将分别讨论怎样评价回报分布、允许环境发生哪些扰动，以及行为必须满足哪些安全约束；把惩罚系数调大，不能自动给出这些保证。
+
+% Outline: 1.5
+\section{价值}
+\label{sec:rl-overview-values}
+
+% Outline: 1.5.1
+\subsection{状态价值、动作价值与优势}
+\label{sec:rl-overview-value-functions}
+
+前面的轨迹算例在奖励串给定后计算回报，决策时却尚不知道会发生哪条轨迹。我们需要在动作发生前比较可能的长期结果。\term{价值函数}（value function）用条件期望回答这个问题：固定环境、目标和后续策略，平均会得到多少回报。状态价值（state value）$V^\pi(s)$让当前动作也按策略$\pi$选择；动作价值（action value）$Q^\pi(s,a)$先固定当前动作$a$，此后才遵从$\pi$。两者的差称为\term{优势}（advantage），衡量这一个动作相对当前策略在该状态的平均行为多得或少得多少回报。
+
+\begin{definition}[状态价值、动作价值与优势]
+  \label{def:rl-overview-values}
+  对固定平稳策略$\pi$，折扣状态价值与动作价值分别为
+  \begin{equation}
+  \begin{aligned}
+    V^\pi(s)&=\mathbb E_\pi[G_t\mid s_t=s],\\
+    Q^\pi(s,a)&=\mathbb E_\pi[G_t\mid s_t=s,a_t=a].
+  \end{aligned}
+  \label{eq:rl-overview-values}
+  \end{equation}
+  条件事件有正概率时，以上采用通常的条件期望。对任意状态$s$，第一式按从$s$启动并遵从$\pi$定义；对任意合法动作$a$，第二式按从$s$启动、强制执行$a$、随后遵从$\pi$定义。因此，状态不必在原初始分布下可达，动作也不必满足$\pi(a\mid s)>0$。优势定义为
+  $A^\pi(s,a)=Q^\pi(s,a)-V^\pi(s)$。
+  有限时域或非平稳策略需要保留$V_t^\pi,Q_t^\pi,A_t^\pi$的时间下标。
+\end{definition}
+
+要从各动作的价值恢复策略在该状态的价值，需要把当前动作选择也平均进去。候选动作来自$\mathcal A(s)$，权重由固定策略$\pi(a\mid s)$给出，而不是在这里挑选最大值。由全期望公式，
+\begin{equation}
+  V^\pi(s)=\sum_{a\in\mathcal A(s)}\pi(a\mid s)Q^\pi(s,a).
+  \label{eq:rl-overview-vq}
+\end{equation}
+优势用$V^\pi(s)$作共同基线。将其定义代入这个动作平均，再利用合法动作的概率和为$1$，得到
+\[
+  \sum_a\pi(a\mid s)A^\pi(s,a)
+  =\sum_a\pi(a\mid s)Q^\pi(s,a)-V^\pi(s)=0.
+\]
+正优势表示相对于\emph{当前策略在该状态的平均行为}更好，并不表示相对于最优行为已经足够好，也不表示每次执行都会成功。
+
+\begin{example}[随机网格中的两步价值]
+  \label{ex:rl-overview-values}
+  为了手算一次行动前的比较，保留基准网格全部转移与奖励，只将目标改为两步有限时域$H=2$，$\gamma=0.9$，$V_2=0$。从$c=(3,3)$开始，时刻$1$在$c$选右，在$(3,2)$选上，在$(2,3)$选右；其他状态任选合法动作，不影响以下计算。时刻$1$只剩一步，因此各处价值就是该步的期望奖励：
+  \[
+  \begin{aligned}
+    V_1^\pi(c)&=0.792,& V_1^\pi((3,2))&=-0.04,\\
+    V_1^\pi(g)&=0,& V_1^\pi((2,3))&=-0.04.
+  \end{aligned}
+  \]
+  当前选右，以$0.8$到终点，以$0.1$留在$c$，以$0.1$到$(3,2)$。第一步期望奖励为$0.792$；第二步的期望回报按后继概率平均，再折扣一次，故
+  \[
+    Q_0^\pi(c,\text{右})
+     =0.792+0.9[0.1(0.792)+0.1(-0.04)]=0.85968.
+  \]
+  当前选左或下时，按各自后继分布同样相加：
+  \[
+  \begin{aligned}
+    Q_0^\pi(c,\text{左})
+      &=-0.04+0.9[0.8(-0.04)+0.1(0.792)+0.1(-0.04)]\\
+      &=-0.00112,\\
+    Q_0^\pi(c,\text{下})
+      &=0.1(1)+0.9(-0.04)+0.9[0.8(-0.04)+0.1(-0.04)]\\
+      &=0.03160.
+  \end{aligned}
+  \]
+  向下也可能因侧滑进入终点，所以其即时期望是$0.064$，不能误写成$-0.04$。若$\pi_0$以$0.5$选右、$0.25$选左、$0.25$选下，则
+  \[
+    V_0^\pi(c)=0.5(0.85968)+0.25(-0.00112)+0.25(0.03160)
+              =0.43746.
+  \]
+  三个动作的优势依次为$0.42222,-0.43858,-0.40586$，按这些概率加权恰好为零。
+\end{example}
+
+图~\ref{fig:rl-overview-values}将这组数值放回格点，中心是当前策略的平均价值，箭头旁则是固定首动作的价值及其相对基线。只把$\pi_0$改为必选右，后续规则不变，三个$Q_0$也不变，但$V_0$变为$0.85968$。再把时刻$1$在$c$的选择改为左，就有$V_1(c)=-0.04$，当前向右的价值也变为$0.792+0.9[0.1(-0.04)+0.1(-0.04)]=0.7848$。这个对照分别改变了当前动作分布和后续策略，说明价值取决于环境、时间目标与策略，不是格子固有的属性。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-values}
+  \caption{两步算例在$c=(3,3)$的价值分解。中心为$V_0^\pi$，三个合法意图方向标出$Q_0^\pi$与$A_0^\pi$；上方越界，因而没有上动作。全部数值对应示例~\ref{ex:rl-overview-values}，不是无限时域最优价值。}
+  \label{fig:rl-overview-values}
+\end{figure}
+
+同一个$J(\pi)$还可以从数据分布来计算。逐时分布$q_t^\pi(s,a)$告诉我们时刻$t$遇到每种状态动作的概率，$R(s,a)$给出对应的平均奖励；两者相乘再求和，就是该时刻的期望评分。对时刻加折扣权重，便恢复总目标。有界奖励使级数绝对可和，允许交换期望与求和，得到
+\begin{equation}
+\begin{aligned}
+  J(\pi)
+   &=\mathbb E_{s_0\sim\rho_0}V^\pi(s_0)
+     =\sum_{t\geq0}\gamma^t\sum_{s,a}q_t^\pi(s,a)R(s,a)\\
+   &=\frac{1}{1-\gamma}\sum_{s,a}d^\pi(s,a)R(s,a).
+\end{aligned}
+\label{eq:rl-overview-objective-occupancy}
+\end{equation}
+最后一行用$d^\pi$汇总时间权重，但它比原来的折扣和多乘了$1-\gamma$，所以恢复$J$时必须除以这一系数。这把“策略去哪里、做什么”与“那些行为得到多少奖励”联系起来；后续占用分布的梯度和误差界须沿用同一归一化约定。
+
+% Outline: 1.5.2
+\subsection{回报的递归关系}
+\label{sec:rl-overview-bellman}
+
+两步算例先计算最后一步，再把它带回当前一步。能否用同样的分解处理更长的未来，而不逐条枚举轨迹？折扣回报的第一项是$r_t$，剩余各项都含一个共同的$\gamma$。对绝对收敛级数提取这个因子，得到
+\begin{equation}
+  G_t=r_t+\gamma G_{t+1}.
+  \label{eq:rl-overview-return-recursion}
+\end{equation}
+对有限时域也有同样关系，只是末端为$G_{H,H}=0$。这种分解没有近似；难点是把右边尚未发生的随机量转换成可计算的条件期望。
+
+当前固定$s_t=s,a_t=a$后，下一步奖励和状态仍然随机。先对可能的$r_t,s_{t+1}$分情况，再评价从后继状态继续行动的回报：马尔可夫性使环境未来只依赖$s_{t+1}$，平稳策略使未来选择也只依赖后续状态。因此，
+$\mathbb E_\pi[G_{t+1}\mid s_t,a_t,r_t,s_{t+1}]=V^\pi(s_{t+1})$。
+由条件期望的塔式法则，
+\begin{equation}
+  Q^\pi(s,a)=\sum_{s',r}p(s',r\mid s,a)
+                         [r+\gamma V^\pi(s')].
+  \label{eq:rl-overview-bellman-qv}
+\end{equation}
+该式把当前动作的价值变成一步反馈与后继状态价值的平均。用式~\eqref{eq:rl-overview-vq}平均当前动作，可得到$V^\pi$的递推；用同一式替换后继$V^\pi$，可得到$Q^\pi$的递推。两式称为\term{Bellman期望关系}（Bellman expectation equations），它们都在评价固定策略，平均权重来自策略与环境，而不是对动作求最优：
+\begin{align}
+ V^\pi(s)
+  &=\sum_a\pi(a\mid s)
+        \left[R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)V^\pi(s')\right],
+        \label{eq:rl-overview-bellman-v}\\
+ Q^\pi(s,a)
+  &=R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)
+          \sum_{a'}\pi(a'\mid s')Q^\pi(s',a').
+        \label{eq:rl-overview-bellman-q}
+\end{align}
+从联合核改写成$P,R$时，分别平均$r_t$和后继价值，只使用了期望的线性性，不要求二者独立。网格奖励恰好由后继状态决定，仍可使用这两式。递推现在给出了计算关系，但还需核对它计算的确实是原来定义的回报期望。有限时域可以从零终端值逐步往前验证；无限时域则需用尾项界控制有限截断与完整回报的差。
+
+\begin{theorem}[回报期望与递推一致]
+  \label{thm:rl-overview-recursion}
+  对有限状态动作MDP，给定马尔可夫策略序列$\pi$，若有限时域各步奖励可积、终端价值为零，按$V_H^\pi=0$及
+  \begin{equation}
+    V_t^\pi(s)=\sum_a\pi_t(a\mid s)\sum_{s',r}
+      p_t(s',r\mid s,a)[r+\gamma V_{t+1}^\pi(s')]
+    \label{eq:rl-overview-finite-recursion}
+  \end{equation}
+  反向计算，得到的量等于$\mathbb E_\pi[G_{t,H}\mid s_t=s]$。这里允许环境核$p_t$随时刻变化；时间齐次时$p_t=p$。
+  对时间齐次模型、固定平稳策略、有界奖励与$0\leq\gamma<1$，无限折扣回报的条件期望满足式~\eqref{eq:rl-overview-bellman-v}和式~\eqref{eq:rl-overview-bellman-q}。
+\end{theorem}
+
+\begin{proof}
+  与价值定义相同，零概率条件事件处采用从指定状态启动的含义。有限时域在$t=H$无剩余奖励，两边都为零。假设时刻$t+1$的递推值已经等于剩余回报的条件期望。将$G_{t,H}=r_t+\gamma G_{t+1,H}$代入，再按动作、奖励和后继状态逐层取条件期望，得到
+  \[
+  \begin{aligned}
+   &\mathbb E_\pi[G_{t,H}\mid s_t=s]\\
+   &\quad=\sum_a\pi_t(a\mid s)\sum_{s',r}p_t(s',r\mid s,a)\\
+   &\qquad\qquad{}\times
+      \bigl[r+\gamma\mathbb E_\pi[G_{t+1,H}\mid s_{t+1}=s']\bigr].
+  \end{aligned}
+  \]
+  内层条件期望只需$s_{t+1}$，是因为模型在给定时刻满足马尔可夫性，未来采用指定的策略序列。代入归纳假设就得到式~\eqref{eq:rl-overview-finite-recursion}。由$t=H-1$逐次归纳到$t=0$，有限结论成立。固定当前动作而不平均$\pi_t$，同一论证给出有限时域的$Q_t^\pi$关系。
+
+  对无限折扣情形，令$V^{\pi,[n]}(s)$为从$s$开始只累加前$n$步的回报期望，方括号表示截断长度而非更新迭代。由已经证明的有限结论，
+  \[
+    V^{\pi,[n]}(s)=\sum_a\pi(a\mid s)
+       \left[R(s,a)+\gamma\sum_{s'}P(s'\mid s,a)
+                                       V^{\pi,[n-1]}(s')\right].
+  \]
+  定理~\ref{thm:rl-overview-tail}给出对所有$s$一致的界
+  $|V^{\pi,[n]}(s)-V^\pi(s)|\leq\gamma^nR_{\max}/(1-\gamma)$，
+  因而左边收敛到$V^\pi(s)$。右边加权平均的差至多为
+  $\gamma\cdot\gamma^{n-1}R_{\max}/(1-\gamma)$，也趋于零，故极限满足式~\eqref{eq:rl-overview-bellman-v}。对固定首动作的截断回报重复同样步骤，得到式~\eqref{eq:rl-overview-bellman-qv}；再用动作平均关系替换其中的$V^\pi$，即得到式~\eqref{eq:rl-overview-bellman-q}。
+\end{proof}
+
+证明从回报定义出发，先验证有限递推，再用尾项界过渡到无限回报，因此没有用递推本身假定价值存在。但“价值满足这些式子”还不能反过来说明只有这一个函数满足它们，也不能说明反复计算右侧会收敛。固定点唯一性与计算误差由第~\ref{chap:rl-planning}章补足。
+
+图~\ref{fig:rl-overview-backup}将式中的两层平均分开：先按策略选择动作，再按环境生成后继。若不再按当前策略平均，而是在合法动作中选择期望累计回报最大的一个，问题就从评价这份策略转为改进行为。最大值的候选集合是$\mathcal A(s)$，比较指标是动作的期望回报；这一新的求解问题也由规划章展开。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-backup}
+  \caption{Bellman期望备份的两层随机性。圆节点表示状态，方节点表示动作；第一层以$\pi(a\mid s)$平均，第二层以$P(s'\mid s,a)$平均后继价值。给定状态动作的即时奖励平均为$R(s,a)$；若按后继分支同时计入奖励，需保留奖励与后继状态的条件关系。}
+  \label{fig:rl-overview-backup}
+\end{figure}
+
+% Outline: 1.6
+\section{强化学习的研究内容}
+\label{sec:rl-overview-research}
+
+网格的行为规则和长期目标已经明确，仍有不同的研究任务：我们可能只想评价上路策略，也可能想找一份新策略，还可能需要决定到哪里收集经验。定位这些任务，要分别说明求什么、能取得什么数据、用什么证据判断结果。下面三个小节按这三个方面展开，而不是把算法分成互斥类别；一个算法可以同时估计价值、改进策略和学习环境模型。
+
+% Outline: 1.6.1
+\subsection{核心研究问题}
+\label{sec:rl-overview-questions}
+
+给定图~\ref{fig:rl-overview-occupancy}中的上路策略，我们可以先问它从起点出发的期望折扣回报是多少。\term{策略评价}（policy evaluation）保持规则不变，求出这份规则的长期后果。若问题改为能否找到回报更高的合法策略，就进入\term{控制}（control），即选择或改进决策规则。转移未知时，回答这两个问题还需要数据。\term{探索}（exploration）决定去哪些状态尝试哪些动作，以取得区分行为后果所需的信息。一次探索绕行可能降低当次收益，却帮助以后选择，因而不能只按当次即时得分判断它的作用。
+
+这些任务的输出不同：评价可以给出价值估计$\widehat V$，控制给出策略$\widehat\pi$，探索改变经验的采集规则。还可以估计转移与奖励，得到$\widehat P,\widehat R$，用于预测行动后果并规划，但预测误差也会进入求解过程。基于模型（model-based）方法显式使用这类环境预测模型求解行为；无模型（model-free）方法不经过这一步，而直接估计价值或调整策略。这里的“模型”指环境后果模型，不是泛指神经网络；价值网络本身不使方法成为基于模型的方法。
+
+图~\ref{fig:rl-overview-research-flow}把这些输出放回经验闭环。真实反馈与对应预测的差可以提供学习信号，价值可以指导策略更新，新策略又改变下一批经验。图中的通路可以组合，不要求每个算法经过全部通路。信用分配研究晚到反馈怎样关联早先行动；表示学习（representation learning）寻找适合预测和控制的状态特征；收敛分析检查更新序列是否趋于目标及其条件。它们研究的是多条通路共有的困难，不是与价值方法互斥的算法家族。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-research-flow}
+  \caption{研究对象之间可能的信息流。实线为真实经验、预测监督及价值驱动的策略更新；虚线为使用学习模型生成的规划信息或模拟经验。模型预测与真实环境始终是不同对象。}
+  \label{fig:rl-overview-research-flow}
+\end{figure}
+
+输出不同，验证方式也不同。表~\ref{tab:rl-overview-questions}中，价值估计对应估计误差，策略则对应相对允许策略类中最优规则的回报差，称为策略损失（policy performance loss）。若价值误差只在常去的状态很小，关键岔路上的动作排序仍可能出错，就不能据此保证策略损失小。持续学习还要计算相对指定基准的累计收益损失，通常称为遗憾（regret）；它计入学习期间的代价，与最终检查点的回报不同。完整更新过程及统计条件由第~\ref{chap:rl-learning}章展开。
+
+\begin{table}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{17mm}*{2}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    问题 & 主要输出 & 与问题相符的证据\\
+    \midrule
+    评价 & $\widehat V,\widehat Q,\widehat J$ & 指定分布下误差、置信范围或一致性\\
+    控制 & 一份策略$\widehat\pi$ & $J(\pi^*)-J(\widehat\pi)$，其中$\pi^*$为允许策略类中的最优策略\\
+    探索 & 采样规则与交互历史 & 达到误差要求的交互数；学习期间相对固定基准的累计收益损失\\
+    模型学习 & $\widehat P,\widehat R$或潜在动态 & 覆盖区域内预测误差，以及误差对真实策略回报的影响\\
+    \bottomrule
+  \end{tabularx}
+  \caption{研究对象及证据类型。持续交互的累计收益损失常称遗憾，其基准、时间目标和是否按回合计算必须另外定义，不能混用不同口径。}
+  \label{tab:rl-overview-questions}
+\end{table}
+
+% Outline: 1.6.2
+\subsection{问题边界与变体}
+\label{sec:rl-overview-protocols}
+
+要评价$(3,3)$向右的后果，真实机器人通常须先走到那里，仿真器却可能允许直接指定这个位置，固定日志则只能提供已经记录的样本。三者可以对应同一份MDP，但允许取得数据的方式不同。能从指定合法$(s,a)$反复随机采样后果的接口称为\term{生成模型}（generative model）：它是一项查询能力，不特指神经网络生成模型。查询返回随机样本，也不同于直接读出全部转移概率并计算精确期望。表~\ref{tab:rl-overview-access}固定网格任务，对照重置、查询点与新增经验三项权限。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{23mm}*{4}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    访问协议 & 能否重置 & 能否指定查询点 & 能否增加经验 & 网格中的实际含义\\
+    \midrule
+    在线轨迹 & 只按环境规定，常在回合开始重置 & 不能默认；通常先走到该格 & 可以，需付真实交互代价 & 到达$(3,3)$以后才能测试向右\\
+    生成模型 & 可把查询起点设为给定状态 & 可以指定合法$(s,a)$ & 可以取得模型样本 & 无须从起点走来就可测试$(3,3)$\\
+    固定日志 & 无交互接口 & 不能，只能筛选已有记录 & 不可以 & 没记录的岔路不能主动补采\\
+    有限批次交互 & 按每批采集协议 & 不能由“批次”一词推出 & 只在规定的轮次和预算内 & 收集一批后更新，再申请下一批\\
+    \bottomrule
+  \end{tabularx}
+  \caption{固定任务下的数据访问差异。仿真样本与真实交互应分别计费；在线并不保证任意重置，批次交互也不自动提供生成模型能力。}
+  \label{tab:rl-overview-access}
+\end{table*}
+
+访问权限之外，任务本身的条件也可以改变。先固定状态、动作与奖励规则：模型已知时求解是规划，模型未知时要从经验学习后果，分别对应第~\ref{chap:rl-planning}、\ref{chap:rl-learning}章。若相机无法辨认位置，改变的是决策时的观测条件；若训练只能用旧日志，改变的是学习时的经验获取条件，第~\ref{chap:rl-information}章分别处理二者。奖励样本可见但期望未知，仍属于标准学习；若连可信的标量评分也无法取得，才需要从示范、偏好或检查行为结果的验证器构造目标，进入第~\ref{chap:rl-reward}章。
+
+目标格、摩擦或观测界面跨任务变化，要求复用经验并适应新任务，对应第~\ref{chap:rl-transfer}章。多个机器人共同挤占通道时，其他参与者的策略影响转移及收益，对应第~\ref{chap:rl-multi-agent}章。若要求碰撞概率受控、动力学扰动下仍有效或永不进入禁止区域，则还需第~\ref{chap:rl-trustworthy}章的行为要求与保证。这五章从共同的规划与学习基础出发，分别考察信息、反馈、任务、参与者和行为要求，不是必须依次执行的算法步骤。现实任务可以同时具有多项限制；分别固定其他条件，有助于辨认每种方法补足了什么能力。
+
+一个具体反例可以检验两类“信息不足”的区别。日志完整记录了每个位置，却从未包含$(2,1)$处向右的后果，这是数据覆盖不足；机器人有充足交互机会，但摄像头把两个走廊拍得完全相同，这是当前观测无法分辨状态。前者不能仅靠增加记忆解决，后者可能需要历史线索或主动探测，而非重复使用同一条无区分力的观测。更大的网络可以表达更复杂的假设，却不能无条件创造缺失信息。同一个方法能回答哪些问题，取决于它实际获得的信息与访问权限。
+
+% Outline: 1.6.3
+\subsection{评价与研究证据}
+\label{sec:rl-overview-evidence}
+
+在同一网格中，方案甲可以每收集一步经验就多做模型内计算，方案乙则立即继续行动。甲可能用更少真实数据达到某个回报，却花更多训练时间。这说明“算法更好”必须落实到具体指标：最终回报、达到目标所需的交互数、训练时间或失败概率。若环境采样便宜而规划昂贵，用计算换数据未必节省墙钟时间，即从开始到结束实际经过的时间。比较时须同时固定任务目标、预算和计数单位。
+
+评价最终行为时，应冻结训练后的策略，在固定测试初始分布和时间目标下，用独立测试回合估计$\mathbb E[G_0]$。训练中最好的一条轨迹不能代替这个平均。评价样本效率（sample efficiency）时，可以预先设定回报阈值，再统计达到阈值所需的真实转移数；未达到的运行也须保留并说明处理方式，不能从平均中删除。
+
+表~\ref{tab:rl-overview-metrics}列出各指标必须固定的量。尤其要区分同一策略的测试波动与训练过程的波动：多个测试回合考察一份训练结果，独立训练种子则还改变初始化、采样和更新过程。不能用前者代替后者来说明跨种子稳定性。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm}*{2}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    指标 & 必须固定的量 & 分母、预算或评价分布\\
+    \midrule
+    最终回报 & 冻结的检查点、动作采样规则、奖励尺度 & 测试初始分布上的每回合回报，报告回合数\\
+    真实样本效率 & 性能阈值及何时检查；失败运行的处理 & 真实环境转移数，不把模型内样本混入\\
+    训练计算 & 硬件、并行度、模型规模、调参范围 & 总墙钟时间及设备时，包含规划和数据处理\\
+    决策计算 & 相同硬件与任务负载 & 每次动作的平均及尾部延迟，单位毫秒\\
+    跨种子稳定性 & 独立训练种子、相同预算 & 种子级成绩分布及不确定区间\\
+    任务外泛化 & 训练任务与未见测试任务的划分 & 每个测试任务；另列适应交互及更新预算\\
+    约束违反 & 禁止事件及观察时段 & 每回合违反概率或每步频率，二者分别报告\\
+    \bottomrule
+  \end{tabularx}
+  \caption{评价指标的定义边界。同一个数字只有在分母、目标与评价分布相同的条件下才能比较；约束违反不能用高平均回报掩盖。}
+  \label{tab:rl-overview-metrics}
+\end{table*}
+
+将小节开头的比较具体化，可以让方案甲每收集一步真实经验做$100$次模型内备份，即按价值递推更新预测，方案乙做$1$次直接价值更新。两者都只允许$10^4$步真实交互，在相同真实步数处测量测试回报，同时累计训练耗时、模型查询数和决策延迟。再另设相同墙钟预算，比较该预算结束时的测试回报。$100$与$10^4$只是教学协议，不是测得的性能。第一种比较若支持甲，说明甲在指定真实数据预算下回报更高；只有时间预算比较也支持，才能声称它在该设置下用时更省。
+
+复核还需要环境版本、动作重复频率、结束规则、奖励预处理、训练与测试种子、超参数搜索次数以及检查点选择规则。调参使用的验证任务与最终测试任务应分开，否则任务外泛化混入了选择偏差。多任务平均分也应保留各任务成绩，避免少数高分任务遮住失败任务。
+
+这些协议也限定了证据能支持什么结论。定理给出假设内的普遍关系，却不保证机器人或推荐系统满足假设。受控消融（controlled ablation）固定其他条件、移除某个部件，考察该部件在当前设置中的影响，不能直接证明它是所有任务成功的原因。跨基准结果增加测试任务，却仍受共同实现、数据和选择协议限制。三类证据互相补充，回答的并非同一个问题。第~\ref{chap:rl-learning}章进一步讨论统计报告，第~\ref{chap:rl-trustworthy}章处理有限证据能支持多强的部署保证。
+
+% Outline: 1.7
+\section{强化学习的研究历史}
+\label{sec:rl-overview-history}
+
+前面用一个网格把行为、回报与价值连在一起，历史上这些认识却来自不同问题。行为研究问结果怎样改变以后的选择，控制与运筹学问已知动态时怎样优化多阶段行动，预测学习问怎样从连续经验修正长期估计。现代强化学习逐步将它们接入共同接口，再扩展表示规模和问题条件。以下沿思想来源、框架形成、规模扩展与边界变化梳理代表工作；年代用于定位研究，不用于推断因果影响或方法优劣。
+
+% Outline: 1.7.1
+\subsection{强化学习的思想源流}
+\label{sec:rl-overview-origins}
+
+一种行为得到某种结果后，以后还会不会再被选择？试错学习从这个现象出发，关注后果怎样改变行为倾向。Thorndike在早期行为研究及1911年的专著中讨论效果律（law of effect），将情境、行为与后果联系起来。这为“根据结果调整行为”提供了问题意识，却没有给出本章的状态空间、折扣目标和Bellman方程。现代概念可以帮助我们说明两者的联系，不能据此把现代MDP定义当作早期研究者的原话\scite{rl1-thorndike1911-learning}
+
+控制论与运筹学面对的是另一项长期决策问题：系统动态和目标已知时，怎样选择一系列控制使总收益最大或总成本最小？Bellman的动态规划（dynamic programming）把长问题分成后继子问题，用子问题的价值计算当前选择，避免直接穷举全部行动序列。价值递归与最优性原理支撑这种分解，不要求先从未知环境学习转移。本章推导的是固定策略的Bellman期望关系；对动作进行优化的部分将在规划章展开\scite{rl1-bellman1957-dp}
+
+预测学习还有一条重要线索：终局结果很晚才出现，能否用相邻时刻的预测差来修正当前预测？Samuel在跳棋程序中研究了从经验改善局面评价的方法，后续时序差分文献将这类思想与连续预测误差联系起来。这里的任务接口包含棋局规则与搜索，不应把它等同于一个不知道任何规则的现代在线基准\scite{samuel1959}
+
+Sutton在1988年的工作中系统讨论\term{时序差分}（temporal difference, TD）预测，即不必等到最终结果，而用“一步反馈加下一次预测”修正当前预测。这一思路把价值递归变成了可由经验近似的学习关系。它与试错控制的联系需要再加入行为改进环节，预测本身不会自动改变动作\scite{rl1-sutton1988-td}
+
+图~\ref{fig:rl-overview-history}将三条线索并排呈现。行为改进提供“根据结果改变选择”的认识，动态规划提供“长期结果可以递归分解”的认识，TD提供“相邻预测之间的误差可以驱动学习”的认识。三者能够在现代闭环中组合，却并非每条线索先完成以后下一条才开始；图中的平行时间带正是为了区分这些认识。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-history}
+  \caption{三条思想线索的代表节点。各带从左到右按年代阅读，节点间距不按年份等比例缩放；平行线表示研究线索，不表示一种思想取代另一种。节点作者与年份对应附近正文的原始来源。}
+  \label{fig:rl-overview-history}
+\end{figure*}
+
+% Outline: 1.7.2
+\subsection{现代强化学习框架的形成}
+\label{sec:rl-overview-modern}
+
+在网格中，已知$p$可以计算价值，只有一步经验则需要估计价值。MDP将动作、转移、奖励与价值放进共同模型，使这两种条件能够明确区分。Howard在1960年的专著中系统发展了MDP的动态规划与策略迭代（policy iteration），即交替计算当前策略的价值、据此改进策略。它提供已知模型下的求解基准，并不声称一个新动作的奖励样本就能揭示所有后果\scite{rl1-howard1960-dp}
+
+模型未知时，可以运行固定策略至回合结束，将实际回报作为价值样本并反复平均。这称为蒙特卡罗评价（Monte Carlo evaluation），用采样回报估计长期期望。TD不必等到完整回报，而用一步奖励加后继预测构造目标；这减少等待，却也使目标依赖当前预测。为表示目标与当前预测的差，令$\widehat V^{(k)}$为第$k$次更新时的价值估计，对经验$(s_t,a_t,r_t,s_{t+1})$定义误差$\delta_t$：
+\[
+  \delta_t=r_t+\gamma\widehat V^{(k)}(s_{t+1})
+                    -\widehat V^{(k)}(s_t).
+\]
+式中$r_t+\gamma\widehat V^{(k)}(s_{t+1})$是这次经验给出的目标，减去$\widehat V^{(k)}(s_t)$才得到预测误差。蒙特卡罗改用完整样本回报作为目标。二者估计同一个长期对象，但等待时间、抽样波动和预测误差进入目标的方式不同。
+
+预测还需影响后续选择，才能从评价进入控制。\term{行动者—评论家}（actor--critic）用两个部件完成这一联系：行动者给出动作分布，评论家估计行为后果，并向行动者提供更新信号。Barto、Sutton与Anderson在1983年的学习控制工作中研究了这种配合结构\scite{rl1-barto1983-control}
+其控制实验用失败反馈改进平衡行为，将行为评价与行为调整连起来；学习能否稳定，仍需分析两个部件的相互影响，不能由各有一个网络推断。
+
+另一条控制路线直接学习最优动作价值。Q-learning（Q学习）用实际一步后继构造目标，并在该后继状态的合法动作中取价值估计的最大值，以表达后续选择更高回报动作的目标。Watkins的1989年博士论文提出该方法，Watkins与Dayan在1992年的论文中给出详细收敛证明。证明依赖表格表示、重复访问和步长条件；更新含最大值并不表示一次采样就已找到最优策略\scite{rl1-watkins1992-qlearning}
+
+表~\ref{tab:rl-overview-modern}按更新对象与数据条件对照这些方法。Q-learning与固定策略TD的区别已经可以从目标看出：前者使用
+$r_t+\gamma\max_{a'}\widehat Q^{(k)}(s_{t+1},a')$，
+其中$a'$只遍历$s_{t+1}$的合法动作；后者评价固定策略的后续行为，不在目标中寻找另一份规则。这里的公式用于辨认求解对象，完整算法、收敛条件和实践偏差由第~\ref{chap:rl-learning}章展开。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{31mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    文献或方法 & 问题设定与更新对象 & 数据或模型来源 & 历史贡献的限定表述\\
+    \midrule
+    Bellman（1957）、Howard（1960） & 给定模型，价值与策略 & 可计算转移期望和奖励 & 建立递归求解与策略改进基准\\
+    蒙特卡罗评价 & 固定策略，估计回报期望 & 完整轨迹的实际回报 & 用随机样本平均替代枚举全部轨迹\\
+    Barto等（1983） & 学习控制，评价部件与行动部件 & 与受控系统交互的反馈 & 联结预测误差与行为调整\\
+    Sutton（1988） & 连续预测，更新价值估计 & 一步经验与已有预测 & 系统分析时序差分预测\\
+    Watkins、Dayan（1992） & 表格控制，估计最优$Q$ & 重复访问状态动作的经验 & 证明限定条件下Q-learning收敛\\
+    \bottomrule
+  \end{tabularx}
+  \caption{统一框架的形成与具体方法的贡献。蒙特卡罗行是教材中的方法类别，不用一个任意年份代替其更广泛的模拟历史；其余行对应正文给出的原始文献。}
+  \label{tab:rl-overview-modern}
+\end{table*}
+
+图~\ref{fig:rl-overview-modern-loop}收拢这个闭环：一条经验可以改变预测，也可以经由预测误差改变以后采取同类行动的概率。执行与更新仍是不同过程，某些方法按回合更新，另一些按步或批次更新。现代框架统一的是问题接口与长期目标，不是要求所有方法拥有同一个训练时钟。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-modern-loop}
+  \caption{从一次经验到预测与行动的更新。箭头表示信息依赖；误差并非新的环境奖励，更新后的策略只影响未来的数据收集。}
+  \label{fig:rl-overview-modern-loop}
+\end{figure}
+
+% Outline: 1.7.3
+\subsection{函数逼近与规模扩展}
+\label{sec:rl-overview-approximation}
+
+网格只有$11$个状态，可以为每个状态保存一个价值。若状态包含连续位置、速度和关节角，就不能为每种取值单独开表项；即使每个维度离散成$m$格，$d$个维度也产生$m^d$个组合。此前用于解释跨位置推断的函数逼近，在这里用一组共享参数计算不同状态的价值或动作分布，代替逐个保存表项。减少表项的代价是不同状态的预测开始相互影响。
+
+线性价值逼近用特征的加权和计算价值，写为$\widehat V_{\bm\theta}(s)=\bm\phi(s)^\top\bm\theta$；特征向量$\bm\phi(s)$与待估参数$\bm\theta$维数相同。神经网络则可同时学习非线性表示与输出。表示受限后，原来的价值可能无法精确写出，近似动态规划（approximate dynamic programming）研究如何仍用这种表示计算价值并改进行为。Bertsekas与Tsitsiklis的神经动态规划专著系统连接了动态规划、仿真与函数逼近的计算问题\scite{rl1-bertsekas1996-ndp}
+
+我们用两个状态观察这种相互影响。设教学特征为$\bm\phi(u)=(1,0)^\top$、$\bm\phi(v)=(1,1)^\top$，初始$\bm\theta=(0,0)^\top$，只在$u$得到目标$1$。用平方损失$\tfrac12(\widehat V_{\bm\theta}(u)-1)^2$衡量预测与目标的差，其初始梯度为$(-1,0)^\top$。步长$0.1$的一次梯度下降得到$\bm\theta=(0.1,0)^\top$，两处预测都从$0$变为$0.1$。表格更新则只会改变$u$的数值，图~\ref{fig:rl-overview-approximation}对照了这两种结果。若$v$的正确目标也接近$1$，共享可能有益；若$v$应接近$-1$，同一次更新就在$v$增大了误差。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-approximation}
+  \caption{表格与共享参数的局部更新。仅在$u$观察到目标$1$、步长为$0.1$；表格中$v$不变，线性逼近中两个状态都依赖$\theta_1$，因而预测同时变化。数值来自正文的两特征教学例。}
+  \label{fig:rl-overview-approximation}
+\end{figure}
+
+共享参数也可以直接表示策略，而不只是价值。策略梯度（policy gradient）按期望回报对策略参数的变化率调整行为。Williams在1992年研究的REINFORCE用采样回报估计这项梯度，后续方法进一步结合价值估计以控制抽样方差。它使连续或随机行为的改进能够写成参数优化，但仍需说明数据来自哪份策略、梯度波动多大，以及目标回报怎样定义。策略网络可微并不要求环境动态可微，也不能据此推断环境可微\scite{rl1-williams1992-reinforce}
+
+这种共享并不总能与原来的更新规则兼容。函数逼近、自举和离策略采样组合时存在发散反例：参数更新会改变后继预测，自举又将改变后的预测放入下一轮目标；行为数据的权重还可能与目标策略的状态分布不同。存在反例不等于所有逼近都发散，却足以说明表格收敛证明不能直接用于任意网络。第~\ref{chap:rl-learning}章将区分有保证的线性条件、反例与深度方法的稳定化设计。共享缓解了存储及逐状态取样的压力，同时引入状态间干扰，这是规模扩展新增的困难。
+
+% Outline: 1.7.4
+\subsection{深度强化学习的兴起}
+\label{sec:rl-overview-deep}
+
+当决策输入变为游戏画面时，固定特征设计本身就需要处理高维信息。深度Q网络（deep Q-network, DQN）结合卷积表示与动作价值学习，从堆叠画面估计各离散动作的长期价值。画面堆叠提供短时变化信息，不保证任意任务中的状态充分性。经验回放（experience replay）保存交互记录并重新抽样，复用数据、降低连续样本的相关性；目标网络（target network）在一段更新内固定目标预测的参数，减缓自举目标变化。表示与目标稳定化共同参与学习，不只是将价值表替换成大网络。2015年论文在49个Atari游戏上报告结果，证据对应原文的画面预处理、动作重复和交互预算，不能扩大到任意真实环境\scite{mnih2015}
+
+连续力矩还有另一项障碍：不能逐一枚举所有动作并比较价值。深度确定性策略梯度（deep deterministic policy gradient, DDPG）用确定性行动者直接输出连续动作，评论家估计动作价值，再用价值对动作的梯度指导行动者更新。它保留经验回放和目标网络，并在交互时加入探索噪声。原工作比较模拟物理控制中的低维状态与部分像素输入条件；模拟结果提供这些条件下的证据，不构成真实机器人可靠控制的无条件保证\scite{rl1-lillicrap2016-ddpg}
+
+围棋也有大量后继，但规则已知，可以直接生成候选落子的结果。AlphaGo的2016年系统用策略网络指导搜索、价值网络评估局面，并结合蒙特卡罗树搜索（Monte Carlo tree search），即用模拟对局结果逐步分配搜索预算\scite{silver2016}
+训练既使用人类棋谱的监督信号，也使用自我对弈（self-play），让系统通过与自身对局产生经验。搜索不需要从图像学习棋子怎样移动，而是查询已知规则。DQN、DDPG和AlphaGo都使用深度网络，数据与模型访问条件却不能视为相同。
+
+表~\ref{tab:rl-overview-deep}按组件职责而非年份归组。DQN的成功不证明回放适用于每种数据条件，AlphaGo的成功也不证明一个可查询规则的游戏与不可安全重置的机器人同样容易。神经网络、稳定化设计、搜索与规模计算共同扩大了能够求解的任务范围，但如何在分布变化和失败代价下建立可靠性证据仍是独立问题。
+
+\begin{table*}[t]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{18mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    组件 & DQN & DDPG & AlphaGo（2016）\\
+    \midrule
+    表示与输出 & 卷积网络输出离散动作$Q$ & 行动者输出连续动作，评论家输出$Q$ & 棋盘表示上的策略概率和局面价值\\
+    回放与目标 & 回放复用交互，目标网络缓慢刷新 & 回放与平滑目标更新 & 不能把其棋谱、自我对弈数据误记成DQN回放流程\\
+    行为改进 & 由动作价值选择动作 & 通过评论家优化行动者 & 监督策略训练、自我对弈改进及搜索\\
+    搜索与模型 & 不用显式转移模型做前瞻 & 不依赖已知动力学规划 & 依赖已知围棋规则进行树搜索\\
+    计算与证据 & 大量模拟交互及网络训练 & 模拟连续控制、训练与执行成本分开 & 网络训练与比赛时搜索都消耗资源\\
+    \bottomrule
+  \end{tabularx}
+  \caption{代表性深度系统的计算需求与组件作用。表格不把特定系统中没有采用的组件判为无用，也不把不同任务分数放在一个性能排序中。}
+  \label{tab:rl-overview-deep}
+\end{table*}
+
+% Outline: 1.7.5
+\subsection{研究范围的拓展}
+\label{sec:rl-overview-expansion}
+
+研究内容一节已经区分观测、数据、反馈与任务等条件，扩大网络并不能消除这些限制。仓储机器人可能看不见完整状态，不能安全试错，或者到了一个与训练时不同的仓库。这些问题也并非都在深度强化学习之后出现。部分可观测决策已有长期规划研究，Kaelbling、Littman与Cassandra在1998年的工作系统讨论了利用历史信息规划和行动的框架。神经记忆可以改变历史的表示方式，仍需判断哪些隐状态与观测相符\scite{rl1-kaelbling1998-pomdp}
+
+固定数据研究关注另一个限制：日志很多，不等于可以继续试验。旧行为没有尝试的后果不能直接从日志识别，离线评价与保守改进因此需显式处理覆盖边界。所谓保守改进，是在证据不足处限制对新行为的信任，而不是默认它更安全。
+
+示范与人类反馈改变的则是目标来源。专家可以展示动作，也可以给出偏好，即指出两个行为结果中更愿接受哪一个，学习者需把这些信号转为可优化目标。Christiano等2017年的工作用人类对短轨迹片段的偏好训练奖励预测，再与策略学习形成反馈环。标量奖励由另一个学习过程取得，也因此受反馈覆盖和奖励失配影响\scite{christiano2017}
+
+多个决策者共同影响后果时，环境也会随其他参与者的策略变化。Shapley在1953年研究随机博弈（stochastic game），将状态转移与多个参与者的共同决策联系起来；单智能体固定环境中的最优策略不能直接推广到共同学习的参与者。增加行为要求则可采用约束MDP（constrained MDP），除收益目标外另设成本限制，表达期望资源或风险预算，Altman的专著系统处理了这些问题。独立约束指定了必须满足的预算，与在奖励中选一个很大的负数不同\scite{rl1-shapley1953-games,rl1-altman1999-cmdp}
+
+表~\ref{tab:rl-overview-expansion}将范围扩展与后文章节连接。多任务与迁移不仅问能否在多种训练任务上拟合成功，还问改变目标或动力学以后可以复用什么、必须重新识别什么。安全研究也不只问平均回报是否提高，而要说明失败和约束如何定义、在什么信息条件下保证成立。这些方向长期交叉发展，表格按改变的条件分类，不主张它们构成严格的年代阶段。
+
+\begin{table*}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{29mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{32mm}@{}}
+    \toprule
+    改变的条件 & 标准问题之外的困难 & 承接位置\\
+    \midrule
+    状态不完全可见 & 同一观测可对应不同状态，动作也可能用于获取信息 & 第~\ref{chap:rl-information}章\\
+    训练经验固定 & 目标策略所需后果没有覆盖，不能随意补采 & 第~\ref{chap:rl-information}章\\
+    奖励来自示范或偏好 & 行为意图未被直接观测，奖励可能不唯一或失配 & 第~\ref{chap:rl-reward}章\\
+    任务不再固定 & 目标、动力学或观测变化，经验复用可能产生负迁移 & 第~\ref{chap:rl-transfer}章\\
+    多个参与者 & 回报与转移取决于共同选择和互相适应 & 第~\ref{chap:rl-multi-agent}章\\
+    增加行为要求 & 期望收益不足以控制尾部失败、模型扰动或约束违反 & 第~\ref{chap:rl-trustworthy}章\\
+    \bottomrule
+  \end{tabularx}
+  \caption{范围扩展改变的是标准设定中的条件，不只是网络结构。每行可以与其他行组合；按章分开讲解是为了辨认各条件造成的困难。}
+  \label{tab:rl-overview-expansion}
+\end{table*}
+
+例如仓储机器人可能只看到局部货架，只能先用旧仓库日志训练，到新仓库后还会遇到新的摩擦系数和协作机器人，同时必须避免碰撞。部分观测、离线数据、迁移、多智能体和安全约束在此叠加。一套标准在线控制算法即使在仿真中表现良好，也没有逐项回答这些限制。下面的前沿方向正是在已有能力与这些尚未覆盖的条件之间寻找新的连接。
+
+% Outline: 1.7.6
+\subsection{前沿研究方向}
+\label{sec:rl-overview-frontiers}
+
+在一台机器人上学会选择动作，不意味着能将相同编号直接交给另一台机器人；编号可能对应不同关节，观测含义和奖励尺度也可能不同。跨任务预训练（cross-task pretraining）先利用多项任务的数据学习共享参数，再将其用于目标任务。为使共享有意义，需要对齐动作与观测接口，让同一网络处理不同模态的信息，并检查离线覆盖和新任务的适应条件。图像、语言与动作可以编码成统一词元，即序列中的输入输出单元，但编码形式相同不表示控制含义可以互换。
+
+Gato用统一序列组织多模态、多任务数据，由同一网络预测后续动作或词元，展示共享参数处理多种接口的可行性。其主要目标是拟合数据中的目标输出，属于监督式序列训练；样本来自轨迹不使它自动成为按奖励改进策略的方法。该工作已有2022年TMLR正式发表版本，结果须按训练任务、少量示范后的适应与未见任务泛化分别理解\scite{rl1-reed2022-gato}
+
+参数共享之外，还可以让新任务经验直接进入网络输入。上下文强化学习（in-context reinforcement learning）在参数固定时，把这些经验放入上下文，用输入变化改变行为。发表于ICLR 2026的S-ICQL结合任务上下文中的价值估计与策略提取，也就是根据该估计产生动作规则。Vintix II把决策预训练扩展到多领域，并分别考察在线与离线推断。表~\ref{tab:rl-overview-pretraining}固定比较的维度为数据、接口与测试协议；在线推断可收集新反馈，离线推断只能使用给定上下文，任务数量不能代替信息预算的比较\scite{rl1-liu2026-sicql}
+
+\begin{table*}[t]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{23mm}*{3}{>{\raggedright\arraybackslash}X}@{}}
+    \toprule
+    代表工作 & 训练任务与数据 & 可用动作与接口 & 测试时必须区分什么\\
+    \midrule
+    Gato & 游戏、控制、机器人及语言视觉数据；主要为监督式序列拟合 & 不同动作和文本经各自编码进入统一序列 & 训练任务、新对象或任务、提示示范与参数微调\\
+    S-ICQL & 含次优历史数据的多任务预训练，结合价值学习 & 离散及连续任务；任务上下文与当前输入 & 已见与未见任务；在线反馈与固定日志提示\\
+    Vintix II & 数百项多领域任务上的决策预训练 & 多种连续控制接口，经任务相关编码对齐 & 留出任务划分；在线累积反馈或离线给定示范\\
+    \bottomrule
+  \end{tabularx}
+  \caption{跨任务决策工作的比较口径。表中描述各原工作采用的接口，不表示一个模型无需适配就能执行任意新动作；预训练规模、测试交互和参数更新预算应分别报告。}
+  \label{tab:rl-overview-pretraining}
+\end{table*}
+
+同样发表于ICLR 2026的Vintix II报告了其留出任务集上的在线和离线推断结果。这些结果支持在所测任务族中研究上下文适应，不能推出任意任务上的保证。可复用结构、任务推断以及新任务需要多少交互，仍须在明确任务分布下讨论，第~\ref{chap:rl-transfer}章将展开相关机制\scite{rl1-polubarov2026-vintix}
+
+跨任务方法需要复用决策知识，另一类方法则尝试先学习可供决策的环境预测。看起来连贯的视频不能直接回答“此刻改选另一动作会怎样”。\term{世界模型}（world model）在这里指从观测学习的环境动态表示与预测机制，用它预测动作之后的变化。要支持控制，还需预测任务反馈，并处理模型滚动：把一次预测作为下次预测的输入，连续模拟未来。旧行为数据中的预测准确，不保证优化器主动寻找的新动作序列也预测准确。
+
+DreamerV3在内部表示上学习动态，用模型生成想象轨迹，即未经真实环境执行的预测轨迹，并在其中训练行动者和评论家。其正式版本于2025年发表于Nature，题名为\emph{Mastering diverse control tasks through world models}。比较条件是使用同一套超参数在多个领域分别训练，不是一个冻结策略解决所有未见领域。像素与低维输入、训练预算及各基准设置仍须按原文区分\scite{rl1-hafner2025-dreamerv3}
+
+TD-MPC2在学习模型内进行局部轨迹优化，即每次决策先比较一段候选未来，再执行当前动作。其ICLR 2024正式记录包含单任务在线控制及多任务模型实验。DreamerV3主要在想象轨迹中训练可执行的策略，TD-MPC2则在真实决策时继续规划，两者的计算支出位置不同。它们都面对模型误差，却不能因共用世界模型就视为相同接口\scite{rl1-hansen2024-tdmpc2}
+
+图~\ref{fig:rl-overview-world-loop}将模型内求解接回真实环境，用虚线单独标出校准路径。在线协议允许用新经验修正模型；纯离线协议不能追加真实训练数据，真实执行只用于评价。若继续用评价数据训练，就改变了访问协议。
+
+Dreamer 4的2025年原始预印本（arXiv:2509.24527v1）研究从离线数据学习可交互世界模型，在模型内训练行为，再在Minecraft中评价。它的特定任务结果属于前沿证据，不能据此断言视频模型能可靠回答一般物理反事实，即同一情境下未执行动作会产生什么结果，也不能据此证明真实机器人部署安全\scite{rl1-hafner2025-dreamer4}
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/07-reinforcement-learning/01-problems-and-solving/tikz/rl-overview-world-loop}
+  \caption{可供决策使用的世界模型闭环。实线是训练与真实评价的信息依赖；虚线返回边只在协议允许新增真实训练数据时存在。模型内高回报必须在真实环境上检验，不能由视频逼真度代替。}
+  \label{fig:rl-overview-world-loop}
+\end{figure}
+
+工具使用也形成长期交互，但它的动作与时间单位需重新指定。设任务是修复一段程序并通过测试：智能体读文件、运行测试、修改代码、观察失败，必要时回退重试。语言输出可能只是工具参数，一次工具调用才是环境动作，完整修复任务是一个回合。若改以词元为动作，就须在更细尺度解释奖励归属；若以整次调用为动作，则须记录执行后的状态变化、耗时与反馈。两种设定仍可使用行动与回报的区分，但步数的单位已变，不能直接比较样本效率。
+
+此类交互还要求记忆已做过什么、识别外部反馈是否可信，以及在错误改变环境之后恢复。最终测试通过只提供一个稀疏信号，无法直接说明哪次修改有益；工具输出只是局部观测，也不保证整个软件环境可见。Agent Lightning的2025年预印本尝试把智能体执行与强化学习训练解耦，以统一经验接口处理复杂工作流中的信用分配\scite{rl1-luo2025-lightning}
+它在文本到SQL、检索增强生成与数学工具任务上的报告应绑定原文协议，不能把框架名称中的“ANY”当作所有智能体上的验证结论。
+
+2026年的后续预印本Agent Lightning v1.0把部署时管理工具、上下文与控制流的运行框架进一步纳入训练，并讨论重分词、样本合并与优势计算。这些处理分别涉及词元划分、执行记录的组装与动作相对基线的评分，影响学习数据与实际工作流怎样对应。评价长期任务智能体时，须固定工具权限、可访问文件、调用预算、上下文长度、重试次数与重置方式，否则成功率提高可能只来自更多信息或计算。系统工程细节由系统卷承接，本部分用信用分配、部分观测和反馈构造解释学习条件\scite{rl1-he2026-lightning}
+
+行为模型的预测还面临一个识别问题：日志中的关联能否确定强制改变动作后的结果？因果机制学习（causal mechanism learning）尝试描述变量怎样产生结果，以回答这类干预问题。我们用一个二元教学例检验所需信息。动作$A$和结果$Y$均取$0$或$1$，隐藏变量$U$以各一半概率取$0$或$1$。机制甲为$A=U,Y=A$，机制乙为$A=U,Y=U$。两者观察日志都满足$\mathbb P(A=Y)=1$，但强制令$A=1$时，甲总有$Y=1$，乙仍以一半概率得$Y=0$。相同观察分布因此不能确定干预后的结果。
+
+干预分布之外，反事实还问同一个体在另一动作下会怎样。即使各动作的转移分布已知，这些潜在结果如何共享随机因素，也未必由MDP核唯一确定；这种共同随机关系称为耦合（coupling）。Oberst与Sontag用Gumbel-Max结构因果模型构造反事实轨迹，通过指定变量生成关系与耦合来回答问题。所得解释依赖这些假设，不是从任意离线日志无条件识别全部反事实的定理\scite{rl1-oberst2019-counterfactual}
+
+若希望复用机制，还须说明任务间哪些生成关系不变、哪些变量可被干预、数据覆盖哪些情况，以及这些假设是否足以确定目标量，这就是可识别性（identifiability）要求。组合泛化（compositional generalization）将已学组成用于未见组合；若新任务拼接了从未共同出现的机制，还需验证原转移关系是否在拼接后保持。世界模型预测、预训练规模与工具执行能力各自提供不同能力，不能自动补齐识别条件。后续各章将在具体信息与访问条件下讨论能够学到什么。
+
+% Outline: 1.8
+\section{本章小结}
+\label{sec:rl-overview-summary}
+
+回到网格任务，决策问题现在有了可核算的说明。状态是除障碍外的格子，合法命令按意图方向确定，环境以$0.8/0.1/0.1$执行或滑移；起点、终点吸收与奖励规则固定。给出一份策略，就能由动作概率与环境核计算轨迹概率，再用占用度量汇总折扣时间中的状态动作分布。回报给这些轨迹计长期总分，价值则在行动前按可能后果取平均。策略改变的既是长期回报，也是后续经验的来源。
+
+章首的机器人因此不能只按当前距离选择动作：距离变小，并不能保证整段行动到达目标，更不能保证安全。比较行动需指定后继分布、长期评分和后续规则；从经验作出比较，还需检查数据是否支持待选行为。本章给出了描述和评价这些关系的对象，尚未求出仓储任务的最优安全路线。表~\ref{tab:rl-overview-distinctions}用三个具体判断收拢易混对象，便于继续检查求解方法与实验结论。
+
+\begin{table}[htbp]
+  \centering\small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{25mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    区别 & 可用于检验理解的具体判断\\
+    \midrule
+    状态与观测 & 相同照片可能对应门已开或未开；照片不一定是充分状态。见第~\ref{sec:rl-overview-mdp}节。\\
+    奖励样本与长期价值 & $(3,3)$向右的一次奖励是$1$或$-0.04$；两步$Q_0^\pi=0.85968$是多种未来的平均。见第~\ref{sec:rl-overview-value-functions}节。\\
+    行为与目标策略 & 日志始终向左，不代表待评价策略也应向左；右行的后果仍可能缺证据。见第~\ref{sec:rl-overview-occupancy}节。\\
+    \bottomrule
+  \end{tabularx}
+  \caption{对象不同，能够回答的问题也不同。数值判断沿用本章明确给出的两步算例，不能移作无限时域结论。}
+  \label{tab:rl-overview-distinctions}
+\end{table}
+
+有界奖励与$0\leq\gamma<1$保证了折扣回报存在，也给出截断尾项界；有限时域和无限折扣下的条件期望论证则说明价值满足递推。价值存在和满足递推，还不意味着已经有可承受的求解方法，也不意味着有限数据能估计得足够准。第~\ref{chap:rl-planning}章先在模型可访问时建立规划与计算误差基准，区分精确期望和指定查询点的随机采样；第~\ref{chap:rl-learning}章再处理未知环境中的经验收集、估计与策略改进。历史和前沿中的方法虽然扩展了表示与接口，结论仍须绑定目标、信息和访问条件，因为行动始终同时改变结果与学习证据。

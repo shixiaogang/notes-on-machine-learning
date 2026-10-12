@@ -8,7 +8,7 @@ previous=json.loads((review/'measurements.json').read_text())
 records=[]
 for old in previous['figures']:
     name=old['figure']
-    folder=root/'figures/02-foundations/03-trustworthiness/generated'/name
+    folder=root/'figures/03-foundations/03-trustworthiness/generated'/name
     font_record=json.loads((folder/'typesetting-20261011.json').read_text())
     bg=folder/font_record['background']
     a=np.array(Image.open(bg).convert('RGB'))

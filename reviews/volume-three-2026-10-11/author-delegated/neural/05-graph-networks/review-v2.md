@@ -1,6 +1,6 @@
 # NN05 图神经网络：固定 v2 新稿 C/P/W 自查
 
-范围是本章全部正文与图注、表格、公式、数值例子及其说明；不认证外部史料、图像像素或 PDF 版式。基线 snapshot-before/tex/03-models/02-neural-network-models/05-graph-networks.tex 的 SHA 为 9ff5a0fe221c2c5a48cd814f67cdc6caab27256d93edf8288d1b550dedefe09a。初稿 after.tex 的 SHA 为 f890a2409dcd9b6ab823e0a0b3235c0760b41c98cd90a5562d995026716f9a6d。固定受审 after-v2.tex 的 SHA 为 5b87019b3f52e5a194d779b4031513e026b5c67df1c61d4bd069f927ccc5160d；单位地址采用 units-v2.json。句号出现在展示式内时按数学与实际正文合读；scite 自动输出句号，含此宏的行政 W 另按 a/b 实际句界审读。
+范围是本章全部正文与图注、表格、公式、数值例子及其说明；不认证外部史料、图像像素或 PDF 版式。基线 snapshot-before/tex/05-neural-network-models/05-graph-networks.tex 的 SHA 为 9ff5a0fe221c2c5a48cd814f67cdc6caab27256d93edf8288d1b550dedefe09a。初稿 after.tex 的 SHA 为 f890a2409dcd9b6ab823e0a0b3235c0760b41c98cd90a5562d995026716f9a6d。固定受审 after-v2.tex 的 SHA 为 5b87019b3f52e5a194d779b4031513e026b5c67df1c61d4bd069f927ccc5160d；单位地址采用 units-v2.json。句号出现在展示式内时按数学与实际正文合读；scite 自动输出句号，含此宏的行政 W 另按 a/b 实际句界审读。
 
 ## C：连续整章阅读
 

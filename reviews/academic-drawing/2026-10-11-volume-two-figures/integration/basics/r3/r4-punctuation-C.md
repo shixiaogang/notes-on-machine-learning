@@ -2,7 +2,7 @@
 
 2026-10-12，先实际读取根范式章四处所在小节的前后上下文，再检查此候选在章内的职责。范围限这四处，不重新宣称整章独立评审；本章由审查者参与改写，属于自查。原整章 C 记录保留，本轮增加引用界面的局部 C 复读。
 
-原章快照在 `source-snapshots/tex/02-foundations/01-basics/03-machine-learning-paradigms.tex`，SHA256 `46bf509a8a1ff811de2a554671f6f827ef241f378d28766eb1bbbc75fce10972`。实际接口核验：根 `tex/styles/references.tex:104` 的 `\scite` 是 `{m t。}`，输出不可断行的中文句号，并吸收紧跟源码的中文句号。因此四处源码的分号/逗号会使实际成品出现句号再分号/逗号；源码改句号能得到一处正常句号。
+原章快照在 `source-snapshots/tex/03-foundations/01-basics/03-machine-learning-paradigms.tex`，SHA256 `46bf509a8a1ff811de2a554671f6f827ef241f378d28766eb1bbbc75fce10972`。实际接口核验：根 `tex/styles/references.tex:104` 的 `\scite` 是 `{m t。}`，输出不可断行的中文句号，并吸收紧跟源码的中文句号。因此四处源码的分号/逗号会使实际成品出现句号再分号/逗号；源码改句号能得到一处正常句号。
 
 ## PUNC-01 / zhu2003 / 半监督学习
 

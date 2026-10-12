@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c04`
 - 分支：`codex/v2-skill-fix-c04`
 - 基线：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文：`tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex`
+- 正文：`tex/03-foundations/02-learning-theory/01-statistical-learning-framework.tex`
 - 基线正文 Git blob：`efc58ffdcb6506289a439895b19279d654e7a1a3`
 - 基线正文 SHA-256：`7ebb70231f3f84c3769ad5931e07b52b146f2abe780dabb83730343d4b65984d`
 - 修订正文 Git blob：`22881bfb7a7f593298d9466082150967e5efca77`
@@ -180,7 +180,7 @@ E1--E12 在可编辑正文中均未留下失败项。图源的字体与上下标
 
 R1-03 不能通过修改正文撤销。正文 NFL 定理、证明及图注一致使用
 `\mathcal P_0,\mathcal P_1`。同一基线中的
-`figures/02-foundations/02-learning-theory/generated/learning-theory-no-free-lunch/labels.json`
+`figures/03-foundations/02-learning-theory/generated/learning-theory-no-free-lunch/labels.json`
 却把两处来源拆成普通 `"P"` 与 `"0"`/`"1"`，且数字标签 `dy=-10`，视觉结果为上标。
 这不是花体下标的等价渲染，而会被读作幂或另一套记号。
 

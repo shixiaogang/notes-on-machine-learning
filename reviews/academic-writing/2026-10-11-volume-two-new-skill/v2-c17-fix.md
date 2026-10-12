@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c17`。
 - 分支：`codex/v2-skill-fix-c17`。
 - 共同基线提交：`65de1f9ae4eacde76fdb27a832e1214f386623d5`。
-- 正文：`tex/02-foundations/03-trustworthiness/08-adversarial-security.tex`。
+- 正文：`tex/03-foundations/03-trustworthiness/08-adversarial-security.tex`。
 - 输入报告：`v2-c17-r1.md`、`v2-c17-r2.md`、`v2-c17-r3.md`，均完整读取。
 - 允许范围：只修订上述正文并创建本记录；没有改动其他正文、图像、计划、脚本、参考文献或构建产物。
 - 实际组成范围：修订后正文550行、75676字节；文件没有递归正文输入。覆盖章首、3个主体`\section`、独立`\section{本章小结}`、全部小节与段落、6幅图的引介和图注、1个四步枚举、1个`example`、7个编号公式、1个无编号展示公式及行内数学单元。

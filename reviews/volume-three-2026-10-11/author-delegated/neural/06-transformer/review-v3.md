@@ -1,6 +1,6 @@
 # NN06 Transformer：固定 v3 全章 C/P/W 自查
 
-受审文件 after-v3.tex，SHA 4895cced0b8990f81fb541f05c579deb03e6fbd4d9c5759ace0a2ec605e3b0b2；地址 units-v3.json 共 236 单元。基线 snapshot-before/tex/03-models/02-neural-network-models/06-transformer.tex，SHA 1af41fd9ea08bc8f0481bdce8c1fc15210c7901afe3bbc51a2abbd0c91950e06。保留初稿 after.tex（bba37e0f2846a39b251a5bee5bafc5f309c5b920037152f93135f6b255978414）与 v2（7c35e5abc0180ed56de071203181ab5b63fdbc242c53d6dbf5deb21c8077566a）。原稿完整连续阅读后手工实质重写 193 片段；v2 修 13 处，v3 修病句和重复解释。记录由实际阅读手写，地址脚本仅保留引用与行政编号。scite 渲染句界在相关 W 内用 a/b 补充；公式内句号与后续结束括号合读，不把括号视为正文句子。
+受审文件 after-v3.tex，SHA 4895cced0b8990f81fb541f05c579deb03e6fbd4d9c5759ace0a2ec605e3b0b2；地址 units-v3.json 共 236 单元。基线 snapshot-before/tex/05-neural-network-models/06-transformer.tex，SHA 1af41fd9ea08bc8f0481bdce8c1fc15210c7901afe3bbc51a2abbd0c91950e06。保留初稿 after.tex（bba37e0f2846a39b251a5bee5bafc5f309c5b920037152f93135f6b255978414）与 v2（7c35e5abc0180ed56de071203181ab5b63fdbc242c53d6dbf5deb21c8077566a）。原稿完整连续阅读后手工实质重写 193 片段；v2 修 13 处，v3 修病句和重复解释。记录由实际阅读手写，地址脚本仅保留引用与行政编号。scite 渲染句界在相关 W 内用 a/b 补充；公式内句号与后续结束括号合读，不把括号视为正文句子。
 
 ## C：全章连续阅读
 

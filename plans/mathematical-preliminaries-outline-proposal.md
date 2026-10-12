@@ -1,6 +1,6 @@
-# 第一卷“数学准备”新大纲（讨论稿）
+# 数学准备选材与展开说明
 
-版本：2026-10-11。本稿保存本次重构采用的大纲。正文已按这些章节重排并完成改写；章、段、句三级独立审查及发现修复已完成，成品已完成构建、实际代表页核验与一致性检查。现行标题、源文件及补充段题同步记录在[阅读结构](mathematical-preliminaries-reading-structure.md)与[章目映射](mathematical-preliminaries-chapter-map.md)中。
+本文件保留数学准备的选材与展开说明；其中1—17为历史审计序号，正式编号与源文件以[两卷阅读结构](mathematical-preliminaries-reading-structure.md)和[章目映射](mathematical-preliminaries-chapter-map.md)为准。卷一9章、卷二8章，各设三部分。
 
 六个部分、17章保持不变。第5—7、12、14—16章沿用现行细目；第1—4章局部改名；第8—11、13、17章重排。第11章已改名为“概率分布”，第13章已改名为“动力系统”。
 

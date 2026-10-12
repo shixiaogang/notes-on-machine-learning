@@ -37,7 +37,7 @@ assert all(not x['requires_actual_review'] or any(n['png']==x['png'] for n in ma
 for filename in ['r4-punctuation-candidates.json','r4-punctuation-C.md','r4-punctuation-P.md','r4-punctuation-W.md','r4-scite-interface.json','pagination-QA-01.json','pagination-QA-01.patch']:
     d=OUT/'local-review';d.mkdir(exist_ok=True)
     shutil.copy2(BASE/filename,d/filename)
-for rel in ['tex/02-foundations/01-basics/01-introduction.tex','tex/02-foundations/01-basics/02-machine-learning-models.tex','tex/02-foundations/01-basics/03-machine-learning-paradigms.tex']:
+for rel in ['tex/03-foundations/01-basics/01-introduction.tex','tex/03-foundations/01-basics/02-machine-learning-models.tex','tex/03-foundations/01-basics/03-machine-learning-paradigms.tex']:
     dest=OUT/'source-snapshots'/rel;dest.parent.mkdir(parents=True,exist_ok=True)
     shutil.copy2(ROOT/rel,dest)
     before=OUT/'before-source-snapshots'/rel;before.parent.mkdir(parents=True,exist_ok=True)
@@ -46,7 +46,7 @@ for filename in ['render-r4.py','supplement-r4.py','finalize-r4.py']:
     shutil.copy2(BASE/filename,OUT/filename)
 actual_source=json.loads((OUT/'actual-source-manifest.json').read_text())
 if not any(x['source'].endswith('01-introduction.tex') for x in actual_source['snapshots']):
-    rel='tex/02-foundations/01-basics/01-introduction.tex'
+    rel='tex/03-foundations/01-basics/01-introduction.tex'
     actual_source['snapshots'].insert(0,{'source':rel,'sha256':sha(ROOT/rel),'snapshot':'source-snapshots/'+rel,'snapshot_sha256':sha(OUT/'source-snapshots'/rel)})
 closure=[]
 targets=json.loads((OUT/'diagnostic-targets.json').read_text())

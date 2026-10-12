@@ -72,13 +72,13 @@ def main():
         dst.write_bytes(p.read_bytes())
         manifest['source_files'].append(entry(p) | {'snapshot': str(dst.relative_to(OUT))})
     common = [
-        'figures/02-foundations/00-shared/academic-drawing/preamble.tex',
-        'figures/02-foundations/00-shared/academic-drawing/palette.tex',
-        'figures/02-foundations/00-shared/academic-drawing/plot_style.py',
-        'figures/02-foundations/00-shared/generated/replay_labels.py',
-        'figures/02-foundations/00-shared/generated/typeset_common.py',
-        'figures/02-foundations/00-shared/matplotlib/redraw/charts.py',
-        'figures/02-foundations/00-shared/matplotlib/redraw/quantitative-redraw-functions.py',
+        'figures/03-foundations/00-shared/academic-drawing/preamble.tex',
+        'figures/03-foundations/00-shared/academic-drawing/palette.tex',
+        'figures/03-foundations/00-shared/academic-drawing/plot_style.py',
+        'figures/03-foundations/00-shared/generated/replay_labels.py',
+        'figures/03-foundations/00-shared/generated/typeset_common.py',
+        'figures/03-foundations/00-shared/matplotlib/redraw/charts.py',
+        'figures/03-foundations/00-shared/matplotlib/redraw/quantitative-redraw-functions.py',
     ]
     manifest['shared_source_files'] = [entry(ROOT / p) for p in common if (ROOT / p).exists()]
     for f in figures:

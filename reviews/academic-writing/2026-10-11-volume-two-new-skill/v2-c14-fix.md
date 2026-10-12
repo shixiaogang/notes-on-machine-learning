@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c14`
 - 分支：`codex/v2-skill-fix-c14`
 - 共同基线：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 受审与修订正文：`tex/02-foundations/03-trustworthiness/05-alignment.tex`
+- 受审与修订正文：`tex/03-foundations/03-trustworthiness/05-alignment.tex`
 - 实际组成范围：修订前第 1--526 行，修订后第 1--535 行；文件没有 `\input` 或 `\include` 正文片段。本章包含章首、四个主体节、独立“本章小结”、七个编号公式、三个无编号展示公式、两个 `example`、四个 `figure`、一组四项列表和延伸阅读。
 - 不存在的特殊单元：正式 `definition`、`theorem`、`lemma`、`proof`、`table`、`algorithm`、`\footnote`、`\sidenote` 环境。行文定义和证明性论证仍按特殊单元核查。
 - 目标读者：已读本卷可信性基础、公平与风险要求，并具备概率、期望、策略、损失和基本监督学习知识，但首次系统学习目标对齐、行为监督与干预。
@@ -31,7 +31,7 @@
 
 ### 共同基线正文
 
-- 可恢复位置：`65de1f9ae4eacde76fdb27a832e1214f386623d5:tex/02-foundations/03-trustworthiness/05-alignment.tex`
+- 可恢复位置：`65de1f9ae4eacde76fdb27a832e1214f386623d5:tex/03-foundations/03-trustworthiness/05-alignment.tex`
 - Git blob：`a0a7811f8901f8c5ee06923b8af423b2b72ddf0c`
 - SHA-256：`65868da87b7233d6ece21e9ec03ffd8935b30703fd45cabfd676da51077a723b`
 - 行数：526

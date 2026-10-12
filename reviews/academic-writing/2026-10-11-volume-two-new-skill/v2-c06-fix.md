@@ -7,7 +7,7 @@
 - 角色：第4名汇总修订者；独立核验 R1、R2、R3 后修改正文并自查
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c06`
 - 分支与基线：`codex/v2-skill-fix-c06`，`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文：`tex/02-foundations/02-learning-theory/03-multiclass-classification.tex`
+- 正文：`tex/03-foundations/02-learning-theory/03-multiclass-classification.tex`
 - 基线正文 blob：`09607bef2516c15ac22792baf28a64a7fbd838f7`
 - 修订正文 blob：`f589f6c06cc5761afe4bc25d7f8b2c8303e5f6f9`
 - 实际组成范围：单一正文文件，共903行；没有递归 `\input` 或 `\include`

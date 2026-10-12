@@ -5,7 +5,7 @@ import pymupdf as fitz
 from PIL import Image
 ROOT=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists())
 OUT=Path(__file__).resolve().parent
-SOURCES=ROOT/'tex/02-foundations/03-trustworthiness'
+SOURCES=ROOT/'tex/03-foundations/03-trustworthiness'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 records=[];texts=[]
 for chapter in sorted(SOURCES.glob('0[1-6]-*.tex')):

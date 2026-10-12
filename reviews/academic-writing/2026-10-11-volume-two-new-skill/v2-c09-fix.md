@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c09`
 - 分支：`codex/v2-skill-fix-c09`
 - 指定基线：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 正文：`tex/02-foundations/02-learning-theory/06-transfer-learning-theory.tex`
+- 正文：`tex/03-foundations/02-learning-theory/06-transfer-learning-theory.tex`
 - 输入报告：`v2-c09-r1.md`、`v2-c09-r2.md`、`v2-c09-r3.md`
 - 实际组成范围：单一章节文件，不再 `\input` 或 `\include` 其他正文片段
 - 允许修改范围：上述章稿与本记录；未修改其他章节、计划、图像、索引或构建产物

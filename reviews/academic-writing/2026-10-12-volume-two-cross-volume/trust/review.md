@@ -6,7 +6,7 @@
 
 ## 对象、版本与范围
 
-- 原信任性终稿：55c3d011acf981a6a1efc11f984b58d5413c3bcb中tex/02-foundations/03-trustworthiness的01–06章。
+- 原信任性终稿：55c3d011acf981a6a1efc11f984b58d5413c3bcb中tex/03-foundations/03-trustworthiness的01–06章。
 - 参照卷一：实际root的tex/01-mathematical-preliminaries，25文件冻结，字节均等于确认main fbb26aecb18253a599c41e167dd27b11612d1fc8；最终再次核对root仍一致。
 - root只读路径：/Users/robbieshi/Library/Mobile Documents/com~apple~CloudDocs/writings/Notes/Machine Learning/.worktrees/volume-two-figures。
 - 报告写入自己的worktree：/Users/robbieshi/Library/Mobile Documents/com~apple~CloudDocs/writings/Notes/Machine Learning/.worktrees/volume-two-figures-trust，分支codex/volume-two-figures-trust；仅build/cross-volume-trust/忽略目录，无正文改动或提交。

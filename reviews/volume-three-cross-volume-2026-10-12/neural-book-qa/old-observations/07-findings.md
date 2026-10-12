@@ -5,7 +5,7 @@
 ## NNQA-F001 — 图9.20的正文/图注方位与实际图不同
 
 - 实际地址：PDF437，印刷421；图`fig:cnn-encoder-decoder`。原180dpi像素文件`details-180dpi/page-0437.png`，1530×1980。
-- 原源：`tex/03-models/02-neural-network-models/03-convolutional-networks.tex`，SHA`350f9dda000841e2cb29291b925e7e722b79220763f78ed399e4bd5f58cabc05`；当地段落以“图~\\ref{fig:cnn-encoder-decoder}将一个三尺度例子…”开头。
+- 原源：`tex/05-neural-network-models/03-convolutional-networks.tex`，SHA`350f9dda000841e2cb29291b925e7e722b79220763f78ed399e4bd5f58cabc05`；当地段落以“图~\\ref{fig:cnn-encoder-decoder}将一个三尺度例子…”开头。
 - 实际观察：正文称“编码、解码主路径排成一行，上方保留同尺度的跳跃连接”，但图按三个尺度画成三行U形主链。两条跳跃连接水平从左编码框进入右侧拼接框，图注“上方旁路”也指向不准确。此问题由实际书页阅读发现，联系表缩略图未替代当地句子核对。
 - 局部最小修法：正文改“编码、解码主路径按尺度分层排列，横向保留同尺度的跳跃连接”；图注改“横向旁路均接入拼接节点”。仅改方位说明，不动科学对象、图源、尺寸、标签或引文。
 - 图本身无需修改：192→64和96→32通道恢复、末端q类输出，箭头均进入正确模块；Ronneberger21边注完整。

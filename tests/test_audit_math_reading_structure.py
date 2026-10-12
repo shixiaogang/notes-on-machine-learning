@@ -47,7 +47,7 @@ class Chapter17RetirementTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         (self.root / "plans").mkdir()
-        self.source = "tex/01-mathematical-preliminaries/06-mathematics-and-machine-learning/01-mathematics-and-future-research.tex"
+        self.source = "tex/02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning/01-mathematics-and-future-research.tex"
         self.revision = "a" * 40
         self.baseline = {
             "eq:old": str(AUDIT.CHAPTER17_BASELINE_SOURCE),
@@ -72,7 +72,7 @@ class Chapter17RetirementTests(unittest.TestCase):
         (self.root / AUDIT.RETIRED_LABELS).write_text(json.dumps(self.manifest))
         return AUDIT.audit_retired_chapter17_labels(
             self.root, self.revision, self.baseline, self.source,
-            locations or {}, {Path("tex/02-foundations/active.tex"): body},
+            locations or {}, {Path("tex/03-foundations/active.tex"): body},
         )
 
     def kinds(self, result):

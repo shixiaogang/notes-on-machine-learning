@@ -21,7 +21,7 @@ def render(source, output_dir=None):
     driver = work / "figure.tex"
     theme = ""
     if str(relative).startswith("figures/03-models/"):
-        theme = "\\input{figures/03-models/00-shared/muted-theme.tex}\n"
+        theme = "\\input{figures/00-shared/model-generators/muted-theme.tex}\n"
     driver.write_text(PREAMBLE + theme + r"\input{" + str(relative) + "}\n\\end{document}\n")
     with (work / "compile.log").open("w") as log:
         subprocess.run(["xelatex", "-no-pdf", "-interaction=nonstopmode", "-halt-on-error",
@@ -46,7 +46,7 @@ def render(source, output_dir=None):
                   "raster_images_embedded":len(page.get_images()),"math":"Actual FiraMath-Regular.otf via unicode-math",
                   "exports":["PDF","SVG paths","PNG 300 dpi"],"status":"rendered; scientific and visual review required"}
         if theme:
-            theme_path = ROOT / "figures/03-models/00-shared/muted-theme.tex"
+            theme_path = ROOT / "figures/00-shared/model-generators/muted-theme.tex"
             report.update(volume_theme=str(theme_path.relative_to(ROOT)),theme_sha256=hashlib.sha256(theme_path.read_bytes()).hexdigest())
     out.with_suffix(".render.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n")
     return report

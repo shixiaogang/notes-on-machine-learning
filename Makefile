@@ -19,10 +19,10 @@ all:
 	./build.sh all
 
 watch:
-	./build.sh watch
+	./build.sh watch $(VOLUME)
 
 release:
-	./build.sh release
+	./build.sh release $(VOLUME)
 
 clean:
 	./build.sh clean

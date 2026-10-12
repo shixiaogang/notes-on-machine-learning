@@ -1,6 +1,6 @@
 # 第21章基于团树传播的精确推断：固定稿写作自查
 
-前稿为 snapshot-before/tex/03-models/03-probabilistic-graphical-models/06-junction-tree.tex，SHA256 82d22c0b2dfcde686b248e297c0ef6e0830b56f22251f2392646c352b4817104。完整初改真实保存于 draft-before-review.tex，SHA256 9d171bb0592ffdc3be90d8906214e3ab26e8e325519f7f89be83bf1194e10c0b。复读后修六项条件表述，并按 root 核实修正文中未定义K_i的定位问题。最终 after.tex 的SHA256为090333a3b3e201da9639fd36861d64e38d468da3f43355a35bca8ce572657784，以下三遍覆盖针对此固定稿。
+前稿为 snapshot-before/tex/06-probabilistic-graphical-models/02-inference/02-junction-tree.tex，SHA256 82d22c0b2dfcde686b248e297c0ef6e0830b56f22251f2392646c352b4817104。完整初改真实保存于 draft-before-review.tex，SHA256 9d171bb0592ffdc3be90d8906214e3ab26e8e325519f7f89be83bf1194e10c0b。复读后修六项条件表述，并按 root 核实修正文中未定义K_i的定位问题。最终 after.tex 的SHA256为090333a3b3e201da9639fd36861d64e38d468da3f43355a35bca8ce572657784，以下三遍覆盖针对此固定稿。
 
 units.json提供142个文字单元地址，含5图注、4表注、例子、正式定义/定理条件及公式连接语。math.json的M01–37逐个完整显示数学单元；A1为完整和积校准算法，T1–4为四张表。源码公式环境内的标点与公式整体合读；scite末尾按实际语义句号审读。地址、hash和结构比较由机械脚本生成，语义判断为手写。全章20个层级标题、60标签、5图路径/宽度、5引用调用、37显示公式、1算法、4表格核心与前稿相同。
 

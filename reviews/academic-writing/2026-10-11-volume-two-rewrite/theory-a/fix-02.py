@@ -11,7 +11,7 @@ b[110]=r'''单个分类器会出错，将多个分类器的回答结合起来能
 b[131]=b[131].replace('在$m$个有序输入上只有$m+1$种预测','在$m$个互异且有序的输入上恰有$m+1$种预测')
 b[139]=b[139].replace('所有轮次有优势的概率便至少','全部实际调用轮次都取得优势的概率便至少')
 b[55]=b[55].replace('若VC维有限，Sauer--Shelah引理限制合并样本上的不同预测数；对称化把这种计数变成\n式~\\eqref{eq:vc-uniform-bound}的一致收敛界。在一致收敛事件上，ERM输出与任意比较\n假设的经验风险之差不大于零，而两者的经验风险与期望风险各相差至多$\\eta$，因此输出\n假设的期望风险至多比$\\inf_{h\\in\\mathcal H}R_{\\mathcal P}(h)$高$2\\eta$。令$\\eta=\\varepsilon/2$，\n便得到不可知PAC可学习；不可知保证覆盖可实现分布，因而也推出可实现PAC可学习。','有限VC维先经Sauer--Shelah限制合并样本的预测数，再由对称化得到式~\\eqref{eq:vc-uniform-bound}，所以推出一致收敛。固定一致收敛成功事件，ERM的经验风险不超过任意参照；将输出和参照各用一个$\\eta$连接到总体风险，得超额风险至多$2\\eta$。取$\\eta=\\varepsilon/2$便得到不可知PAC；它覆盖可实现来源，也给出可实现PAC。')
-f=Path('tex/02-foundations/02-learning-theory/02-binary-classification.tex');f.write_text('\n\n'.join(s.rstrip() for s in b))
+f=Path('tex/03-foundations/02-learning-theory/02-binary-classification.tex');f.write_text('\n\n'.join(s.rstrip() for s in b))
 (r/'02-v2.tex').write_text(f.read_text());(r/'02-v2-blocks.json').write_text(json.dumps([{'id':f'02-P{i+1:03}','text':s.rstrip()} for i,s in enumerate(b)],ensure_ascii=False,indent=2))
 print('v2 sha',hashlib.sha256(f.read_bytes()).hexdigest())
 for lo,hi in [(7,17),(54,60),(69,79),(109,119),(130,151)]:
