@@ -14,7 +14,7 @@ Native-detail pages: 681, 685, 692, 694, 712, 736, 737, 762, 773, 781, 790, 802,
 
 ### PGM-PDF-F01 - PDF 736 (printed 720) - figure 19.1
 
-Source address in pre-repair text: tex/03-models/03-probabilistic-graphical-models/04-representations.tex lines 28, 32.
+Source address in pre-repair text: tex/06-probabilistic-graphical-models/01-representation/04-representations.tex lines 28, 32.
 
 Claim: 对应图中的点线和$\times$；虚线及“补$H-S$”表示这条新增边；检测分离时删除红色且标有“给定”的条件节点$A$；带“补”标签的虚线表示新增的边
 
@@ -26,7 +26,7 @@ Status: reported to root; pending text repair/new PDF review.
 
 ### PGM-PDF-F02 - PDF 737 (printed 721) - figure 19.2
 
-Source address in pre-repair text: tex/03-models/03-probabilistic-graphical-models/04-representations.tex lines 48.
+Source address in pre-repair text: tex/06-probabilistic-graphical-models/01-representation/04-representations.tex lines 48.
 
 Claim: 上方规则说明$\operatorname{elim}(X_k)$要使剩余邻居成团。
 
@@ -38,7 +38,7 @@ Status: reported to root; pending text repair/new PDF review.
 
 ### PGM-PDF-F03 - PDF 901 (printed 885) - figure 25.3
 
-Source address in pre-repair text: tex/03-models/03-probabilistic-graphical-models/10-structure-learning.tex lines 586.
+Source address in pre-repair text: tex/06-probabilistic-graphical-models/03-learning/02-structure-learning.tex lines 586.
 
 Claim: 右侧概率框以同色箭头与结构对应。
 
@@ -50,7 +50,7 @@ Status: reported to root; pending text repair/new PDF review.
 
 ### PGM-PDF-F04 - PDF 962 (printed 946) - figure 28.3
 
-Source address in pre-repair text: tex/03-models/03-probabilistic-graphical-models/13-dynamic.tex lines 425.
+Source address in pre-repair text: tex/06-probabilistic-graphical-models/04-models/03-dynamic.tex lines 425.
 
 Claim: 引线对应各曲线。
 

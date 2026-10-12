@@ -1,5 +1,5 @@
 from pathlib import Path
-root=Path('tex/02-foundations/02-learning-theory')
+root=Path('tex/03-foundations/02-learning-theory')
 fixes={
 '04-convex-learning-and-stability.tex':[
 ('继续使用$[0,1]$上的样本均值','继续使用$z_i\\in[0,1]$的样本均值'),

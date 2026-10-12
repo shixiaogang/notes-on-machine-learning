@@ -4,7 +4,7 @@
 
 - 记录编号：`AW-2026-10-11-V2-C01-FOLLOWUP-TASKS`
 - 角色：AI修订与自查，不作为独立复核。
-- 正文：`tex/02-foundations/01-basics/01-introduction.tex`
+- 正文：`tex/03-foundations/01-basics/01-introduction.tex`
 - 基线：`f596613cc3fc0c5d6dc957b3c62e5aef0591a4e3`及本任务此前已恢复的审查修订。
 - 修订后SHA-256：`c0862783752d4c3b65097e0acdf2c0272a934353003262574a3e3837d3602485`
 - 修订后规模：1003行，74012字节。

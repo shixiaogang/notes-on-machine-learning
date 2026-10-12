@@ -2,7 +2,7 @@
 
 作者 transformer_audit；2026-10-11。范围为实际 part.tex 接入的本章全文，含正文、图注、两表、直接算法和所有数学说明。保留用户冻结的标题、顺序、labels/input、公式、引文键、图路径与宽度。不重新认证外部史料或证明，不编译；图资产已由根代理此前核验，本轮仅审文字说明。
 
-原稿：../../snapshot-before/tex/03-models/02-neural-network-models/03-convolutional-networks.tex，SHA256 4b72cf9604e7f761a280ddbeadb7fd68abbe9bef3b671bf6240d6b0954ac12b0。
+原稿：../../snapshot-before/tex/05-neural-network-models/03-convolutional-networks.tex，SHA256 4b72cf9604e7f761a280ddbeadb7fd68abbe9bef3b671bf6240d6b0954ac12b0。
 初改固定稿 after.tex，SHA256 f07d328037e3576d840ee99fe439f64dc376b94fa72fbde3942479ee16da4252。
 受审新稿 after-v2.tex，SHA256 121c3f3d43b00fad1ed10836914d5884487c329734d5ebef6fd25b3495b66d07。地址 units-v2.json；仅生成地址/引句，没有生成以下语义理由。首次完整原稿顺读后改102个正文或图注片段，固定初稿全章复读，再修连续分号、术语及小结重复，v2改变段落再次逐句读。
 

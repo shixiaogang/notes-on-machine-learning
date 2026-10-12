@@ -1,4 +1,4 @@
-### tex/02-foundations/02-learning-theory/03-multiclass-classification.tex:38–99
+### tex/03-foundations/02-learning-theory/03-multiclass-classification.tex:38–99
 0038 \[
 0039  R_{\mathcal P}(\tilde h)\leq\sum_{j=1}^L e_j.
 0040 \]
@@ -62,7 +62,7 @@
 0098 设$(X,\mathcal X)$为可测空间，离散标签空间$Y$满足
 0099 $2\leq|Y|=K<\infty$，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，
 
-### tex/02-foundations/02-learning-theory/03-multiclass-classification.tex:195–217
+### tex/03-foundations/02-learning-theory/03-multiclass-classification.tex:195–217
 0195 \[
 0196  (a,u),\ (b,u),\ (b,v),\ (c,v),\ (c,w),\ (a,w),
 0197 \]
@@ -72,7 +72,7 @@
 0201 
 0202 \begin{figure}[htbp]
 0203   \centering
-0204   \includegraphics[width=93.405mm]{figures/02-foundations/02-learning-theory/tikz/learning-theory-ds-neighbors/figure.pdf}
+0204   \includegraphics[width=93.405mm]{figures/03-foundations/02-learning-theory/tikz/learning-theory-ds-neighbors/figure.pdf}
 0205   \caption{六种预测的坐标邻接环。顶点为上文的六个向量，蓝色实线仅改变第一坐标，绿色虚线仅改变第二坐标；边没有方向。每个顶点在两个坐标上分别有邻居，却不存在固定两对标签的完整四种组合。因而这个两输入函数类的Natarajan维为1，后文分析的DS维为2；它仍是可学习的有限类，不能单独证明不可学习性。}
 0206   \label{fig:learning-theory-ds-neighbors}
 0207 \end{figure}
@@ -87,7 +87,7 @@
 0216 \begin{enumerate}
 0217  \item $d_N(V_m)=1$；
 
-### tex/02-foundations/02-learning-theory/03-multiclass-classification.tex:258–282
+### tex/03-foundations/02-learning-theory/03-multiclass-classification.tex:258–282
 0258 
 0259 \section{图维、DS维与一般标签空间}
 0260 \label{sec:general-multiclass-dimensions}
@@ -114,7 +114,7 @@
 0281 \]
 0282 则$\operatorname{VC}(\mathcal L_{\mathcal H})=d_G(\mathcal H)$。
 
-### tex/02-foundations/02-learning-theory/03-multiclass-classification.tex:374–408
+### tex/03-foundations/02-learning-theory/03-multiclass-classification.tex:374–408
 0374 让另一ERM在$n$条全$\star$记录时故意选$h_{A_S}$，其中$A_S=\{1,\ldots,2n\}\setminus\{x_1,\ldots,x_n\}$；其他可实现样本从集合标签恢复目标，不可实现样本则按固定顺序取前述有限候选的经验最小者。全$\star$样本上它零经验错，但目标为空、输入均匀于$\{1,\ldots,2n\}$时，至少$n$个未见输入被误判，风险至少$1/2$。任意$n$都有这样的来源，这个ERM不能分布无关PAC学习。
 0375 \end{proof}
 0376 
@@ -151,7 +151,7 @@
 0407 （允许内部随机性，并允许输出$\mathcal H$之外的可测分类器），都存在
 0408 $X\times Y$上的联合分布$\mathcal P$及$h^\star\in\mathcal H$，使
 
-### tex/02-foundations/02-learning-theory/03-multiclass-classification.tex:527–549
+### tex/03-foundations/02-learning-theory/03-multiclass-classification.tex:527–549
 0527  \item $\mathcal H$不可知PAC可学习。
 0528 \end{enumerate}
 0529 此外，$d_G(\mathcal H)<\infty$当且仅当零一损失满足分布无关的一致收敛；
@@ -176,7 +176,7 @@
 0548 取$X=\mathbb N$，沿用定义~\ref{def:binary-computable-pac}的程序要求，但须先给标签和假设有效表示：标签编码可计算、相等可判定，有限标签全集可枚举，允许假设及输出由预定可递归枚举表示提供。不可知学习器对每份有限样本停机，返回一个对每输入停机输出$Y$标签的程序，并对所有允许来源和所有足量$n$满足
 0549 \[
 
-### tex/02-foundations/02-learning-theory/03-multiclass-classification.tex:572–594
+### tex/03-foundations/02-learning-theory/03-multiclass-classification.tex:572–594
 0572  R_{\mathcal P}(A(S))
 0573  \leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon
 0574  \right\}\geq1-\delta.

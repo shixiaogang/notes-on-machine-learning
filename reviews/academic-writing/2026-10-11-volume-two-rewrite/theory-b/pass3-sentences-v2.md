@@ -413,7 +413,7 @@ SHA256 `1cde4106ae35e487b8c0432c8572d841638afe9d78951fd9f886d20e3875618e`。
 
 ### 04-P061（源第 381 行）
 
-覆盖：04-P061-S01、04-P061-S02、04-P061-S03、04-P061-S04。短引：`\begin{figure*}[t] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/lear`。
+覆盖：04-P061-S01、04-P061-S02、04-P061-S03、04-P061-S04。短引：`\begin{figure*}[t] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/lear`。
 
 合并实际意思与判断依据：图注解释一项替换、同算法两个输出、同测试点绝对损失差，均匀要求全相邻/全测试；明确画的是损失而非参数距离。〔W1/W2/W4/G2：图角色与定义一致；四句共同定义图实验〕。
 
@@ -900,7 +900,7 @@ SHA256 `1cde4106ae35e487b8c0432c8572d841638afe9d78951fd9f886d20e3875618e`。
 
 ### 04-P139（源第 1270 行）
 
-覆盖：04-P139-S01、04-P139-S02、04-P139-S03、04-P139-S04。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/l`。
+覆盖：04-P139-S01、04-P139-S02、04-P139-S03、04-P139-S04。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/l`。
 
 合并实际意思与判断依据：图注双观测每列0/1、B=(1,0,1)选择三训练点、独立U，信息已知全6点看输出泄露选择；不是新B独立的替代过程。〔W2/W3/W4/G3：四句共同说明抽样构造〕。
 
@@ -1000,7 +1000,7 @@ SHA256 `1cde4106ae35e487b8c0432c8572d841638afe9d78951fd9f886d20e3875618e`。
 
 ### 04-P155（源第 1438 行）
 
-覆盖：04-P155-S01、04-P155-S02、04-P155-S03。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/l`。
+覆盖：04-P155-S01、04-P155-S02、04-P155-S03。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/l`。
 
 合并实际意思与判断依据：图注左全W与右输出平均泛化各需经验最优；右β仅泛指所选定理代价，非声称所有稳定同定义。〔W2/W4/G2〕。
 
@@ -1259,7 +1259,7 @@ SHA256 `1cde4106ae35e487b8c0432c8572d841638afe9d78951fd9f886d20e3875618e`。
 
 ### 04-P196（源第 1823 行）
 
-覆盖：04-P196-S01、04-P196-S02、04-P196-S03、04-P196-S04、04-P196-S05、04-P196-S06。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/tikz/learni`。
+覆盖：04-P196-S01、04-P196-S02、04-P196-S03、04-P196-S04、04-P196-S05、04-P196-S06。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/tikz/learni`。
 
 合并实际意思与判断依据：图固定尺度两点距离2及η=.5，二次更新D+=3/2/1为精确教学值；一般凸步长≤2/M非扩张、强凸≤1/M收缩、仅光滑可扩张条件分列。〔W4/W5/G2：六句共同解释曲率实验〕。
 
@@ -1552,7 +1552,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P018（源第 85 行）
 
-覆盖：05-P018-S01、05-P018-S02、05-P018-S03、05-P018-S04。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/l`。
+覆盖：05-P018-S01、05-P018-S02、05-P018-S03、05-P018-S04。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/l`。
 
 合并实际意思与判断依据：图注外H内当样本插值集与算法点，虚/实线各指约束/算法流，选择参与因素明列，形状不数值、插值非所有算法/非总体小。〔W2/W4/W5/G2：四句解释同一选择图〕。
 
@@ -1592,7 +1592,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P024（源第 105 行）
 
-覆盖：05-P024-S01、05-P024-S02、05-P024-S03、05-P024-S04。短引：`\begin{figure}[!htb] \centering \includegraphics[width=\linewidth]{figures/02-foundations/02-learning-theory/matplotlib/`。
+覆盖：05-P024-S01、05-P024-S02、05-P024-S03、05-P024-S04。短引：`\begin{figure}[!htb] \centering \includegraphics[width=\linewidth]{figures/03-foundations/02-learning-theory/matplotlib/`。
 
 合并实际意思与判断依据：图注虚经验实一种总体，定性非实验/非所有网络第二降，插值后由选解影响；与正文可能性一致。〔W2/W4/W5/G2〕。
 
@@ -1760,7 +1760,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P051（源第 250 行）
 
-覆盖：05-P051-S01、05-P051-S02、05-P051-S03、05-P051-S04。短引：`\begin{figure}[!htb] \centering \includegraphics[width=\linewidth]{figures/02-foundations/02-learning-theory/tikz/learni`。
+覆盖：05-P051-S01、05-P051-S02、05-P051-S03、05-P051-S04。短引：`\begin{figure}[!htb] \centering \includegraphics[width=\linewidth]{figures/03-foundations/02-learning-theory/tikz/learni`。
 
 合并实际意思与判断依据：图注各层s与激活a逐次放大，末线性且1-L时只谱乘积；明确传播界仍非完整泛化复杂度。〔W2/W3/W5/G6：四句共同读乘积图〕。
 
@@ -1871,7 +1871,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P069（源第 429 行）
 
-覆盖：05-P069-S01、05-P069-S02、05-P069-S03、05-P069-S04、05-P069-S05、05-P069-S06、05-P069-S07。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/matplotlib/`。
+覆盖：05-P069-S01、05-P069-S02、05-P069-S03、05-P069-S04、05-P069-S05、05-P069-S06、05-P069-S07。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/matplotlib/`。
 
 合并实际意思与判断依据：图注给a tanh bx、初1/1、单样本1/.9、半平方、η.3及六更新七点；同轨真实/一阶/绝对余项各坐标不能纸高比，末余项.00152标近似非零；雅可比切空间/梯度核与有限例不能证核固定/新输入误差。〔W2/W3/W4/W5/G2/G6：完整教学计算口径；未重运行图源〕。
 
@@ -1906,7 +1906,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P075（源第 466 行）
 
-覆盖：05-P075-S01、05-P075-S02、05-P075-S03、05-P075-S04、05-P075-S05、05-P075-S06。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/l`。
+覆盖：05-P075-S01、05-P075-S02、05-P075-S03、05-P075-S04、05-P075-S05、05-P075-S06。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/l`。
 
 合并实际意思与判断依据：固定初始梯度特征训练导数ai给Δv再另一输入梯度内积给Δf，K正两响应内积；虚线角色区分，条示意维数不限定，有限真网络另需误差控制。〔W2/W3/W4/W5/G2：六句同一个更新传递动作〕。
 
@@ -2138,7 +2138,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P112（源第 740 行）
 
-覆盖：05-P112-S01、05-P112-S02、05-P112-S03、05-P112-S04。短引：`\begin{figure}[htbp] \centering \includegraphics[width=88.854mm]{figures/02-foundations/02-learning-theory/tikz/learning`。
+覆盖：05-P112-S01、05-P112-S02、05-P112-S03、05-P112-S04。短引：`\begin{figure}[htbp] \centering \includegraphics[width=88.854mm]{figures/03-foundations/02-learning-theory/tikz/learning`。
 
 合并实际意思与判断依据：图注单输入(1,1)插值A/B/C，新输入(1,0)三预测；零初半平方η1/4前三步趋B、等范弧最近点；教学无新标签不保泛化。〔W2/W4/W5/G2：四句同一选解图操作〕。
 
@@ -2406,7 +2406,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P157（源第 1119 行）
 
-覆盖：05-P157-S01、05-P157-S02、05-P157-S03。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/p`。
+覆盖：05-P157-S01、05-P157-S02、05-P157-S03。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/p`。
 
 合并实际意思与判断依据：图注ρ单元贡献积分是同确定网络不同表述非完整网络集成；Q完整向量一次抽预测，底层元素具体分开。〔W2/W3/G3：三句共同比较随机单位〕。
 
@@ -2570,7 +2570,7 @@ SHA256 `3659af49d971a98994c3c6e198031742b1b1170fb2f85640064132bab7658118`。
 
 ### 05-P184（源第 1312 行）
 
-覆盖：05-P184-S01、05-P184-S02、05-P184-S03、05-P184-S04、05-P184-S05、05-P184-S06。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/l`。
+覆盖：05-P184-S01、05-P184-S02、05-P184-S03、05-P184-S04、05-P184-S05、05-P184-S06。短引：`\begin{figure*}[htbp] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/l`。
 
 合并实际意思与判断依据：图注固定参数化方向位移单位、相同轴尺度，两教学二次0.1+.45s²/.08s²在s.6增.162/.0288可算；上示意无数值、需随机经验+先验KL、宽度非风险不变量。〔W2/W4/W5/G2：六句共同说明扰动两代价图〕。
 
@@ -2889,7 +2889,7 @@ SHA256 `5e011ba19f4892de298be692ee8050cf067db1a6783b16862aa6ce32e48eb881`。
 
 ### 06-P024（源第 86 行）
 
-覆盖：06-P024-S01、06-P024-S02、06-P024-S03、06-P024-S04、06-P024-S05。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/matplotlib/`。
+覆盖：06-P024-S01、06-P024-S02、06-P024-S03、06-P024-S04、06-P024-S05。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/matplotlib/`。
 
 合并实际意思与判断依据：同尺度源[1,4]/3目标三长度2区间/2，缺源目标概率0/.5/.95从区间长度可算；线/底色角色及只有a覆盖、教学非实测均明列。〔W2/W4/W5/G2：五句共同覆盖比较〕。
 
@@ -2907,7 +2907,7 @@ SHA256 `5e011ba19f4892de298be692ee8050cf067db1a6783b16862aa6ce32e48eb881`。
 
 ### 06-P027（源第 98 行）
 
-覆盖：06-P027-S01、06-P027-S02、06-P027-S03、06-P027-S04、06-P027-S05、06-P027-S06、06-P027-S07。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/l`。
+覆盖：06-P027-S01、06-P027-S02、06-P027-S03、06-P027-S04、06-P027-S05、06-P027-S06、06-P027-S07。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/l`。
 
 合并实际意思与判断依据：同可观输入0/1均半、源y=x、目标两个相反，固定U同输出；h=x源风险0目标0/1，任意二类风险和1，所以输入对齐不识标签，需标或结构。〔W1/W4/W5/G2：七句单不可识别构造〕。
 
@@ -3036,7 +3036,7 @@ SHA256 `5e011ba19f4892de298be692ee8050cf067db1a6783b16862aa6ce32e48eb881`。
 
 ### 06-P048（源第 265 行）
 
-覆盖：06-P048-S01、06-P048-S02、06-P048-S03、06-P048-S04、06-P048-S05。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=113.404mm]{figures/02-foundations/02-learning-theory/tikz/learni`。
+覆盖：06-P048-S01、06-P048-S02、06-P048-S03、06-P048-S04、06-P048-S05。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=113.404mm]{figures/03-foundations/02-learning-theory/tikz/learni`。
 
 合并实际意思与判断依据：平移δ方形均匀输入、双向阈值和常函数H、G=H△H；左独源带用异或阈值判，重叠只能半错，域最佳(1-δ)/2及散度2δ可算；任务另含源风险λ，点教学非采样实证。〔W2/W3/W4/W5/G2〕。
 
@@ -3060,7 +3060,7 @@ SHA256 `5e011ba19f4892de298be692ee8050cf067db1a6783b16862aa6ce32e48eb881`。
 
 ### 06-P052（源第 288 行）
 
-覆盖：06-P052-S01、06-P052-S02、06-P052-S03、06-P052-S04、06-P052-S05。短引：`\begin{figure}[htbp] \centering \includegraphics[width=\linewidth]{figures/02-foundations/02-learning-theory/matplotlib/`。
+覆盖：06-P052-S01、06-P052-S02、06-P052-S03、06-P052-S04、06-P052-S05。短引：`\begin{figure}[htbp] \centering \includegraphics[width=\linewidth]{figures/03-foundations/02-learning-theory/matplotlib/`。
 
 合并实际意思与判断依据：规范化均匀源与目标2x给w2x，五人工位置权0.2/.6/1/1.4/1.8；点面积权重非局部个数，风险恒等须覆盖共标签。〔W2/W4/W5/G2：同重权图动作〕。
 
@@ -3454,7 +3454,7 @@ SHA256 `5e011ba19f4892de298be692ee8050cf067db1a6783b16862aa6ce32e48eb881`。
 
 ### 06-P118（源第 820 行）
 
-覆盖：06-P118-S01、06-P118-S02、06-P118-S03、06-P118-S04、06-P118-S05。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/02-foundations/02-learning-theory/generated/l`。
+覆盖：06-P118-S01、06-P118-S02、06-P118-S03、06-P118-S04、06-P118-S05。短引：`\begin{figure*}[!htb] \centering \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/generated/l`。
 
 合并实际意思与判断依据：图注每行一环境每点一观测，初3×3，中3×6，右6×3；同18点仅右增独环境，来源Q共同独抽且教学数量非实测。〔W2/W4/W5/G2：五句共同比较抽样层〕。
 

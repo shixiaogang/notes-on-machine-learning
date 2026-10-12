@@ -2,7 +2,7 @@
 
 2026-10-11；reviewer：transformer_audit（改写者，非独立审稿）。范围为本章实际接入全文及 part.tex 阅读指引。读者已知特征、参数、函数复合和损失，首次接触网络表示与生物启发。未重做文献级事实核验、算法实验或 PDF 编排；不据此宣称科学审稿、出版验收或独立复核通过。
 
-原稿：`../../snapshot-before/tex/03-models/02-neural-network-models/01-overview.tex`，SHA256 `35f71b70cb5b9dbcc72c526019a01e999e409f4910cf2db5a8b6e17683d2dd48`。
+原稿：`../../snapshot-before/tex/05-neural-network-models/01-overview.tex`，SHA256 `35f71b70cb5b9dbcc72c526019a01e999e409f4910cf2db5a8b6e17683d2dd48`。
 固定新稿：本目录 `after.tex`，SHA256 `b02c5de3d292850d571335066f2de27488dfcdcb732ccbeb522bd81dfa2c5ff6`。
 地址表：`units.json` 和 `inventory.md` 仅由工具提取位置、短引和句号边界，以下意义及接受依据由我逐项写出。U 是空行分块地址，M/F/T 是特殊单元；数学换行中的句号归入同一推理步骤。W 以下均列明所覆盖的连续句编号，跨单元的关系在 P 记录中说明。
 

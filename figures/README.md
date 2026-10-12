@@ -6,14 +6,17 @@
 
 ## 现有资源
 
-- `01-mathematical-preliminaries/`：六个部分的数学示意图与分析曲线；跨部分生成器位于 `00-shared/`。
-- `02-foundations/`：机器学习基础、学习理论、可信性三部分的 TikZ、Matplotlib 与生成式素材。
-- `03-models/`：经典模型、神经网络、概率图模型三部分的图源与插画。
-- 第四至第六卷目前没有独立图像资源；新增时按实际使用的卷、部分建立目录，不创建空占位目录。
+- `01-mathematical-preliminaries-upper/` 与 `02-mathematical-preliminaries-lower/`：数学两卷图源，各三部分。
+- `03-foundations/`：基础、理论与可信性三部分资源。
+- `04-classic-models/` 与 `05-neural-network-models/`：不设部分，按制作方式归档。
+- `06-probabilistic-graphical-models/`：表示、推断、学习与典型模型四部分。
+- `07-reinforcement-learning/` 与 `08-knowledge-learning/`：对应正文分部的 TikZ 图源及记录。
+- 卷九至十二尚无独立图像；新增时按实际章节建立目录。
+- `00-shared/mathematical-generators/` 与 `00-shared/model-generators/`：跨卷共用生成器与图组记录。
 
 ## 使用与追溯
 
 - 以正文实际的 `\input`、`\includegraphics` 和数据路径确认图的用途；所有路径相对项目根目录。
-- `generated/` 保留大模型生成素材、提示词、模型信息及修改记录。旧文件名中的 `volume1`、`v1rN` 指旧五卷版本的基础卷，现归第二卷，不是当前数学卷的编号。
+- `generated/` 保留大模型生成素材、提示词、模型信息及修改记录。旧文件名中的 `volume1`、`v1rN` 指旧五卷版本的基础卷，现归卷三，不是当前数学卷的编号。
 - `records/` 中的阶段图号、页码、日期与哈希只描述记录时的版本。迁移后文件路径已更新，历史校验值不代表当前源文件；当前验收使用完整构建和成品清单。
 - 当前图的源文件、数据、导出预览和提示词随图保留。已替换的历史素材由 Git 追溯；清理前必须检查生成器、组合图与其他正文是否仍依赖，不能只根据本轮正文调用删除；历史记录中的旧素材链接指向清理前的 Git 版本，可在那里追溯。新增资源遵循 `specs/figures.md`。

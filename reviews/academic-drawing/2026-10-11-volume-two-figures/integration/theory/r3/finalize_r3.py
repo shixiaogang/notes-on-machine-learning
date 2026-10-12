@@ -31,7 +31,7 @@ m['mechanical_counts']={'figures':25,'components':sum(len(f['assets']) for f in 
 t=json.loads((B/'text-page-binding.json').read_text())
 for x in t:
  assert sha(B/x['proof_png'])==x['proof_sha256']
- assert sha(B/'inputs-r3/tex/02-foundations/02-learning-theory'/x['source_name'])==x['source_sha256']
+ assert sha(B/'inputs-r3/tex/03-foundations/02-learning-theory'/x['source_name'])==x['source_sha256']
  x['actual_review_status']='r3实际书页已看'
  if x['id'].startswith('OV-'):x['actual_observation']=manual['overfull_observations'][x['id']]
  else:x['actual_observation']='实际PDF已确认原数量/句末宏标点问题，候选待根改后源与r4 PDF复读'

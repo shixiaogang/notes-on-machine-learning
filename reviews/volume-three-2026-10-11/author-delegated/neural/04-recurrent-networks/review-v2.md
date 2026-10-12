@@ -1,6 +1,6 @@
 # NN04 循环神经网络：固定新稿审查
 
-范围：本章所有正文、图注、表注、示例与公式解释；不认证图像像素、外部史料或编译结果。受审基线为 snapshot-before/tex/03-models/02-neural-network-models/04-recurrent-networks.tex，SHA 238e77bb02287dd002fcd69d908b5393e54dead05514744cb9205d6cf20bf72b。初稿 after.tex 的 SHA 为 04d58fd5986d9cc0178f18b14c37aecb760a2950016b4fce29dbfd97ccf0fbff。固定 v2 after-v2.tex 的 SHA 为 c1ff29c89df4d0a0b1739c7393a9ad18f5554138abfb9f3cb698e69978bb2a00。单位地址以 units-v2.json 为准；源码公式内的句号也产生行政 W，实际读句时不把 TeX 闭合符当正文。scite 宏输出句号，含此宏的 W 按 a/b 子句补审。
+范围：本章所有正文、图注、表注、示例与公式解释；不认证图像像素、外部史料或编译结果。受审基线为 snapshot-before/tex/05-neural-network-models/04-recurrent-networks.tex，SHA 238e77bb02287dd002fcd69d908b5393e54dead05514744cb9205d6cf20bf72b。初稿 after.tex 的 SHA 为 04d58fd5986d9cc0178f18b14c37aecb760a2950016b4fce29dbfd97ccf0fbff。固定 v2 after-v2.tex 的 SHA 为 c1ff29c89df4d0a0b1739c7393a9ad18f5554138abfb9f3cb698e69978bb2a00。单位地址以 units-v2.json 为准；源码公式内的句号也产生行政 W，实际读句时不把 TeX 闭合符当正文。scite 宏输出句号，含此宏的 W 按 a/b 子句补审。
 
 ## C：整章连续阅读
 

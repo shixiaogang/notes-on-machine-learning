@@ -53,7 +53,7 @@ D07 candidate SHA 9fa5ad81f51f273c0631515b97961603bdd9a50366edc133d1fc1d7a7291cb
 ## A9-F01：独立评价不能只排除拟合
 
 发现地址：14-generative.tex:846；同章177允许按验证指标决定停止。旧句“训练找到的候选分布还需在未参与拟合的观测上评价”可能包含已经用于配置/停止选择的验证观测，使所谓新观测评价缺少选择隔离。
-实际来源：a9 的 tex/02-foundations/01-basics/01-introduction.tex，完整 SHA 3f9c25f7e135c84e711f753f709f587e40cef50d4da30f1ca76524ff15acdedc；547–570、尤其550–567区分训练/验证/测试使用。
+实际来源：a9 的 tex/03-foundations/01-basics/01-introduction.tex，完整 SHA 3f9c25f7e135c84e711f753f709f587e40cef50d4da30f1ca76524ff15acdedc；547–570、尤其550–567区分训练/验证/测试使用。
 
 可恢复改前候选：snapshots/candidate-before-A9-F01-14-generative.tex，SHA c9e515878c5f4e205307c09ef6331f3d9ecaa90a0fefb55cbce8729d141f8a2a。
 固定改后 candidate/.../14-generative.tex，SHA 7c41ca6d0834795c156ef34e9c88ed655242d5ab7f49abb7e4a710757261ac28。

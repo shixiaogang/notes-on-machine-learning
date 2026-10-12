@@ -111,7 +111,7 @@ save(FOLLOW / 'final-page-bindings.json', {
 })
 
 closure = json.loads((FOLLOW / 'mechanical-closure.json').read_text())
-actual01 = ROOT / 'tex/02-foundations/03-trustworthiness/01-foundations.tex'
+actual01 = ROOT / 'tex/03-foundations/03-trustworthiness/01-foundations.tex'
 assert sha(actual01) == closure['actual_root_sha256'] == closure['candidate_sha256']
 assert sha(FOLLOW / '01-foundations-root-applied.tex') == sha(actual01)
 assert sha(ROOT / 'tex/styles/references.tex') == closure['macro_sha256']

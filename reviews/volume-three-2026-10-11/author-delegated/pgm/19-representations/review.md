@@ -1,6 +1,6 @@
 # 第19章图表示的转换与因子图：固定稿写作自查
 
-受审前稿来自 snapshot-before/tex/03-models/03-probabilistic-graphical-models/04-representations.tex，SHA256 098bc52c3c049db38aa5966418cf262b8d95eb9731130295e4fefb9d27dadf19。保留真实中间稿 draft-9a251535.tex，SHA256 9a2515358bcde9f1ce89706985e6f59e308af73161a9d3e27a61ed821f061769，用于常数作用域边界修正的前稿证据。最终 after.tex 的SHA256为 93bd1373d31a4b41f633435580ca9c9baa10b23e632e7bd80be1776828c7c613；C/P/W均针对完成边界修正后的同一稿，不将机械清单当作语义判断。
+受审前稿来自 snapshot-before/tex/06-probabilistic-graphical-models/01-representation/04-representations.tex，SHA256 098bc52c3c049db38aa5966418cf262b8d95eb9731130295e4fefb9d27dadf19。保留真实中间稿 draft-9a251535.tex，SHA256 9a2515358bcde9f1ce89706985e6f59e308af73161a9d3e27a61ed821f061769，用于常数作用域边界修正的前稿证据。最终 after.tex 的SHA256为 93bd1373d31a4b41f633435580ca9c9baa10b23e632e7bd80be1776828c7c613；C/P/W均针对完成边界修正后的同一稿，不将机械清单当作语义判断。
 
 units.json 按实际接入正文定位161个文字单元 U001–U161，含5图注、1表注和定义/引理/定理/证明文字。U064含枚举两项间的连接文字，W在该单元内分句覆盖，不把第二项遗漏。独立显示公式 M01–M49按源码次序编号，公式标点与所在推理合读。scite隐含中文句号按语义句界处理。没有独立算法环境；U107–113、U148–156的操作说明仍按特殊计算单元审查。
 

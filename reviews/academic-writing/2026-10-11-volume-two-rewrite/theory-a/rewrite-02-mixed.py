@@ -133,6 +133,6 @@ b[179]=r'''\begin{proof}
 b[185]=r'''\paragraph{延伸阅读}
 Bartlett与Mendelson的论文继续推导依赖样本的Rademacher与高斯风险界，并研究组合函数类怎样继承基函数类的复杂度，适合接着线性得分和集成部分阅读\scite{bartlettmendelson2002}。'''
 b[6]=b[6].replace('总可','几乎必然可')
-f=Path('tex/02-foundations/02-learning-theory/02-binary-classification.tex'); f.write_text('\n\n'.join(b))
+f=Path('tex/03-foundations/02-learning-theory/02-binary-classification.tex'); f.write_text('\n\n'.join(b))
 (r/'02-v1.tex').write_text(f.read_text()); (r/'02-v1-blocks.json').write_text(json.dumps([{'id':f'02-P{i+1:03}','text':v} for i,v in enumerate(b)],ensure_ascii=False,indent=2))
 print('rewritten',sum(x['text']!=y for x,y in zip(json.loads((r/'02-blocks.json').read_text()),b)))

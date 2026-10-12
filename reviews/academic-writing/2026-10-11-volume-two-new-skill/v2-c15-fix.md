@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c15`
 - 分支：`codex/v2-skill-fix-c15`
 - 共同基线提交：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 允许修改的正文：`tex/02-foundations/03-trustworthiness/06-interpretability.tex`
+- 允许修改的正文：`tex/03-foundations/03-trustworthiness/06-interpretability.tex`
 - 允许创建的记录：`reviews/academic-writing/2026-10-11-volume-two-new-skill/v2-c15-fix.md`
 - 实际组成范围：单一章节文件，不含 `\input`、`\include` 或其他正文嵌入；修订后含6个 `section`、17个 `subsection`、3个 `example`、6个图环境、11个编号公式环境和11组无编号展示公式。
 - 目标读者：已掌握本书前置机器学习、概率、微积分、优化及可信机器学习基础，首次系统学习模型解释及其证据边界的读者。
@@ -20,7 +20,7 @@
 
 - Git blob：`c00542c93a768df6c53615c84ebe0407902b0666`
 - SHA-256：`a73b09070ae872c34c93533a04d5a304a27f7d2c90e41015f7c9fc4b0edda429`
-- 可恢复位置：提交 `65de1f9ae4eacde76fdb27a832e1214f386623d5` 中的 `tex/02-foundations/03-trustworthiness/06-interpretability.tex`
+- 可恢复位置：提交 `65de1f9ae4eacde76fdb27a832e1214f386623d5` 中的 `tex/03-foundations/03-trustworthiness/06-interpretability.tex`
 - 基线规模：602行。
 
 ### 修订后正文

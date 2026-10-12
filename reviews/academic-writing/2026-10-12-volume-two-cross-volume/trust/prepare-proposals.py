@@ -3,8 +3,8 @@ import json, difflib, hashlib
 
 # 人工写出的建议文本；程序只定位旧行、保存old/new、产生diff，不作语义判断。
 OUT=Path(__file__).resolve().parent
-SRC=OUT/'snapshots/tex/02-foundations/03-trustworthiness'
-PROPOSED=OUT/'proposed-sources/tex/02-foundations/03-trustworthiness'
+SRC=OUT/'snapshots/tex/03-foundations/03-trustworthiness'
+PROPOSED=OUT/'proposed-sources/tex/03-foundations/03-trustworthiness'
 changes=[]
 def change(f,a,b,new,ids):
     old='\n'.join((SRC/f).read_text().splitlines()[a-1:b])
@@ -51,7 +51,7 @@ for f in sorted({c['file'] for c in changes}):
         assert new.count(c['old'])==1,(f,c['lines'])
         new=new.replace(c['old'],c['new'],1)
     dest=PROPOSED/f;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_text(new)
-    repo='tex/02-foundations/03-trustworthiness/'+f
+    repo='tex/03-foundations/03-trustworthiness/'+f
     patch+=list(difflib.unified_diff(old.splitlines(True),new.splitlines(True),fromfile='a/'+repo,tofile='b/'+repo))
     hashes.append(dict(file=f,old_sha256=hashlib.sha256(old.encode()).hexdigest(),proposal_sha256=hashlib.sha256(new.encode()).hexdigest()))
 (OUT/'old-new-proposals.json').write_text(json.dumps(changes,ensure_ascii=False,indent=2)+'\n')

@@ -3,7 +3,7 @@ import json
 base=Path('reviews/academic-writing/2026-10-11-volume-two-rewrite/theory-b')
 original=json.loads((base/'v0-units.json').read_text())
 def apply(name,changes):
- p=Path('tex/02-foundations/02-learning-theory')/name
+ p=Path('tex/03-foundations/02-learning-theory')/name
  text=p.read_text()
  for num,replacement in changes.items():
   block=original[name]['blocks'][num-1]['text']

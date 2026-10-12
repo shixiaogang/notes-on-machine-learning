@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import pymupdf as fitz
+from book_catalog import volumes
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -18,11 +19,14 @@ def main():
     p.add_argument('--extra',nargs='*',default=[])
     p.add_argument('--between',nargs=2,action='append',default=[],metavar=('FROM_LABEL','TO_LABEL'))
     p.add_argument('--dpi',type=int,default=180)
+    p.add_argument('--volume', type=int, choices=range(1, 13), default=1)
     a=p.parse_args();root=a.root.resolve();out=a.output.resolve()
-    pdf=root/'target/vol1-mathematical-preliminaries.pdf'
-    aux=root/'build/01-mathematical-preliminaries.aux'
+    volume = next(v for v in volumes(root) if v["number"] == a.volume)
+    pdf=root/'target'/volume["pdf"]
+    aux=root/'build'/(volume["slug"] + ".aux")
     registry=root/'figures/00-shared/academic-drawing/integration-manifest.json'
-    rows=[x for x in json.loads(registry.read_text())['records'] if x['volume']==1]
+    rows=[x for x in json.loads(registry.read_text())['records']
+          if x["owner"].startswith("tex/" + volume["slug"] + "/")]
     if a.labels:rows=[x for x in rows if x['label'] in a.labels]
     rows += [{'label':label,'kind':'table'} for label in a.extra]
     labels={label:(num,page) for label,num,page in re.findall(

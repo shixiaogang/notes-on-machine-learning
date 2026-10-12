@@ -1,7 +1,7 @@
 from pathlib import Path
 import re, hashlib
 r=Path(__file__).parent
-base=Path('tex/02-foundations/02-learning-theory')
+base=Path('tex/03-foundations/02-learning-theory')
 changes={
 '02':{
 2:[('前章的阈值','第~\\ref{chap:statistical-learning-framework}章的阈值')],

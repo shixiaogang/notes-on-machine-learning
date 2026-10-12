@@ -87,7 +87,7 @@ p(120,r'''标签数不影响近似ERM的三次比较。若输出$A(S)\in\mathcal
 b[124]=r'''\begin{proof}
 $h$分对样本数为$\sum_{x=1}^pN_{x,h(x)}$，逐行选最大计数即使总和最大，也就使经验风险最小。初始化$pK$计数器、扫描$n$观测、再逐行比较，操作数为$O(n+pK)$。有限类大小$K^p$与Hoeffding并集使偏差超过$\varepsilon/2$的概率至多$2K^pe^{-n\varepsilon^2/2}$，令其至多$\delta$再用ERM两次比较，得到风险保证。
 \end{proof}'''
-f=Path('tex/02-foundations/02-learning-theory/03-multiclass-classification.tex');f.write_text('\n\n'.join(s.rstrip() for s in b));(r/'03-v1.tex').write_text(f.read_text());(r/'03-v1-blocks.json').write_text(json.dumps([{'id':f'03-P{i+1:03}','text':s.rstrip()} for i,s in enumerate(b)],ensure_ascii=False,indent=2))
+f=Path('tex/03-foundations/02-learning-theory/03-multiclass-classification.tex');f.write_text('\n\n'.join(s.rstrip() for s in b));(r/'03-v1.tex').write_text(f.read_text());(r/'03-v1-blocks.json').write_text(json.dumps([{'id':f'03-P{i+1:03}','text':s.rstrip()} for i,s in enumerate(b)],ensure_ascii=False,indent=2))
 (r/'03-read-v1.txt').write_text('\n\n'.join(f'03-P{i+1:03}\n'+s.rstrip() for i,s in enumerate(b)))
 print('sha',hashlib.sha256(f.read_bytes()).hexdigest());print('changed',sum(x['text']!=y for x,y in zip(json.loads((r/'03-blocks.json').read_text()),b)))
 for pattern in [r'\\label\{[^}]+\}',r'\\(?:chapter|section|subsection|subsubsection|paragraph)\{[^}]+\}',pat,r'\\scite\{[^}]+\}']:

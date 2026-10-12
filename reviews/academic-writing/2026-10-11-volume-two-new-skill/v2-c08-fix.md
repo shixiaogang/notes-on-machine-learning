@@ -8,7 +8,7 @@
 - 工作区：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c08`
 - 分支：`codex/v2-skill-fix-c08`
 - 基线提交：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 受审及修订正文：`tex/02-foundations/02-learning-theory/05-deep-learning-theory.tex`
+- 受审及修订正文：`tex/03-foundations/02-learning-theory/05-deep-learning-theory.tex`
 - 实际组成范围：修订后正文第1--1674行；该章没有 `\input` 或 `\include` 其他正文
 - 允许修改边界：上述章稿与本记录；未修改其他章节、计划、图像、共享索引或构建产物
 - 汇总输入：`v2-c08-r1.md`、`v2-c08-r2.md`、`v2-c08-r3.md`
@@ -23,7 +23,7 @@
 | 修订后 | 1674 | `fa729b8d20523d73d873a2370486d9fb31a60c3bfeca45a6926ffcd75ed036aa` | `121ed5c8282ec718c81d757669c0ed9c4bb68a6c` |
 
 基线可由
-`git show 65de1f9ae4eacde76fdb27a832e1214f386623d5:tex/02-foundations/02-learning-theory/05-deep-learning-theory.tex`
+`git show 65de1f9ae4eacde76fdb27a832e1214f386623d5:tex/03-foundations/02-learning-theory/05-deep-learning-theory.tex`
 恢复。修订后版本尚未提交，以本表两种内容指纹固定。
 
 ## 汇总方法与结论
@@ -66,7 +66,7 @@
 - 来源：汇总者独立发现，三份报告均未提出。
 - 基线：第41--43行声称第三卷把 `$L_{\mathrm h}$` 专用于隐藏层数。
 - 裁决：成立。静态核对
-  `tex/03-models/02-neural-network-models/02-feedforward-networks.tex` 第64行，第三卷实际直接用 `$L$` 表示隐藏层数。
+  `tex/05-neural-network-models/02-feedforward-networks.tex` 第64行，第三卷实际直接用 `$L$` 表示隐藏层数。
 - 修订：修订后第42--44行说明第三卷直接用 `$L$`，只在本章换算时临时记为 `$L_{\mathrm h}$`，于是 `$L=L_{\mathrm h}+1$`。
 - 复读：本章总线性变换层数与第三卷隐藏层数的换算不再伪造第三卷原记号。
 - 状态：复读通过，待主代理独立复核。

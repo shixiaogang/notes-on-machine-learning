@@ -15,7 +15,7 @@
 | 修订正文状态 | 未提交工作树快照 |
 | 修订正文 Git blob | `60a203bfa58774008f3695a53382ce83d599a759` |
 | 修订正文 SHA-256 | `648bdcbcb0614a930b44347a193cf20d1dce082b340ec9408054e879d41a8988` |
-| 正文路径 | `tex/02-foundations/03-trustworthiness/03-robustness.tex` |
+| 正文路径 | `tex/03-foundations/03-trustworthiness/03-robustness.tex` |
 | 实际组成范围 | 修订后第1--337行完整章节；无 `\input` 或 `\include` 正文片段 |
 | 目标读者 | 已掌握监督学习、损失与风险、概率和基础优化，并读过本卷可信性、可靠性与分布变化前置内容的读者 |
 | 允许修改 | 上述正文与本报告 |

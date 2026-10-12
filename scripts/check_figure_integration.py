@@ -23,7 +23,7 @@ def figure_blocks(text):
     return result
 
 
-def check(registry):
+def check(registry, check_review_bindings=True):
     records = registry['records']
     labels = set()
     errors = []
@@ -57,9 +57,9 @@ def check(registry):
         digest = hashlib.sha256(graphic.read_bytes()).hexdigest()
         if item.get('sha256') != digest:
             errors.append(f'Changed asset since registry: {asset}')
-        if item.get('current_body_sha256') and item['current_body_sha256'] != hashlib.sha256(source.read_bytes()).hexdigest():
+        if check_review_bindings and item.get('current_body_sha256') and item['current_body_sha256'] != hashlib.sha256(source.read_bytes()).hexdigest():
             errors.append(f'Changed body since current review binding: {owner}')
-        for path, expected_digest in item.get('current_source_sha256', {}).items():
+        for path, expected_digest in (item.get('current_source_sha256', {}).items() if check_review_bindings else []):
             dependency = ROOT / path
             if not dependency.is_file() or hashlib.sha256(dependency.read_bytes()).hexdigest() != expected_digest:
                 errors.append(f'Changed source since current review binding: {path}')
@@ -82,7 +82,9 @@ def check(registry):
     # Cover both ordinary floating figures and explicitly numbered inline
     # figures; the latter must not disappear from the inventory.
     active = set()
-    for slug in ['01-mathematical-preliminaries', '02-foundations', '03-models']:
+    for slug in ['01-mathematical-preliminaries-upper', '02-mathematical-preliminaries-lower',
+                 '03-foundations', '04-classic-models', '05-neural-network-models',
+                 '06-probabilistic-graphical-models']:
         for path in (ROOT / 'tex' / slug).rglob('*.tex'):
             for _, _, block_labels in figure_blocks(path.read_text()):
                 if block_labels:
@@ -91,15 +93,18 @@ def check(registry):
         errors.append(f'Body/registry mismatch: missing={sorted(active-labels)}, unused={sorted(labels-active)}')
     return {'figures': len(records), 'counts': counts, 'errors': errors,
             'checks': ['unique labels', 'caption and body asset', 'asset SHA-256',
-                       'complete three-volume coverage', 'addition references',
+                       'complete migrated six-volume coverage', 'addition references',
                        'current source and body bindings when recorded']}
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--report', type=Path)
+    parser.add_argument('--assets-only', action='store_true',
+                        help='Check current assets and coverage without claiming historical text review')
     args = parser.parse_args()
-    result = check(json.loads(REGISTRY.read_text()))
+    result = check(json.loads(REGISTRY.read_text()), not args.assets_only)
+    result["historical_review_bindings_checked"] = not args.assets_only
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')

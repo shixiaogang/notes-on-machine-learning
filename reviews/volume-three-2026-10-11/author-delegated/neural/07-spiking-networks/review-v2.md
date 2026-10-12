@@ -1,6 +1,6 @@
 # NN07 脉冲神经网络：固定 v2 全章 C/P/W 自查
 
-受审 after-v2.tex SHA 9ffa4f6f174cba13a3c65ba7d8a557346678fe9ac9d41355b1e38a3a58168543；地址 units-v2.json 共78单元。基线 snapshot-before/tex/03-models/02-neural-network-models/07-spiking-networks.tex SHA bbc58b47cc105b752d56abc2e4de3f31cb825cf108999c5614df2d86ced1cc19。初稿 after.tex SHA 2da2d6856dfe62caf8b7eebd68ca50e2f5fdb8f505051dd4e82433af1091aaa2 保存不覆盖。原稿396行连续读完后重写71片段，新稿连续阅读后修7处重复、句界及发放范围；本记录对固定新稿，包含全部正文、表格、图注、例子、算法与数学。scite句号按真实渲染合读，展示式中的句号后括号不独立判句。
+受审 after-v2.tex SHA 9ffa4f6f174cba13a3c65ba7d8a557346678fe9ac9d41355b1e38a3a58168543；地址 units-v2.json 共78单元。基线 snapshot-before/tex/05-neural-network-models/07-spiking-networks.tex SHA bbc58b47cc105b752d56abc2e4de3f31cb825cf108999c5614df2d86ced1cc19。初稿 after.tex SHA 2da2d6856dfe62caf8b7eebd68ca50e2f5fdb8f505051dd4e82433af1091aaa2 保存不覆盖。原稿396行连续读完后重写71片段，新稿连续阅读后修7处重复、句界及发放范围；本记录对固定新稿，包含全部正文、表格、图注、例子、算法与数学。scite句号按真实渲染合读，展示式中的句号后括号不独立判句。
 
 ## C：连续整章阅读
 

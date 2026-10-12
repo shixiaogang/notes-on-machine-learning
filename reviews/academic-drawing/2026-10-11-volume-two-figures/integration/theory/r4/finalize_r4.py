@@ -168,7 +168,7 @@ write('final-page-bindings.json',{'schema':'final-page-bindings/1','date':'2026-
 
 closed=[]
 for e in edits:
-    source=B/'inputs-r4/tex/02-foundations/02-learning-theory'/e['source_name']
+    source=B/'inputs-r4/tex/03-foundations/02-learning-theory'/e['source_name']
     content=source.read_text()
     assert content.count(e['candidate_paragraph'])==1
     v=next(q for q in m['text_pages'] if text_to_issue.get(q['id'])==e['id'])

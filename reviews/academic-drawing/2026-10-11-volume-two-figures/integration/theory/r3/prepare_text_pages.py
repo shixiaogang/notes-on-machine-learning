@@ -35,7 +35,7 @@ for key, query, name, lines, overflow in queries:
  for b in p.get_text('dict')['blocks']:
   for ln in b.get('lines',[]):
    line_data.append({'text': ''.join(s['text'] for s in ln['spans']), 'bbox':ln['bbox']})
- src=B/'inputs-r3/tex/02-foundations/02-learning-theory'/name
+ src=B/'inputs-r3/tex/03-foundations/02-learning-theory'/name
  source_lines=src.read_text().splitlines()
  rows.append({'id':key,'query':query,'source_name':name,'source_sha256':sha(src),'source_line_range':lines,'source_text':'\n'.join(source_lines[lines[0]-1:lines[1]]),'reported_overfull_pt':overflow,'physical_page':i+1,'printed_page':p.get_label(),'pdf_sha256':sha(PDF),'proof_png':str(out.relative_to(B)),'proof_sha256':sha(out),'pdf_page_size_pt':list(p.rect),'page_text':p.get_text(),'pdf_lines':line_data,'actual_review_status':'awaiting_actual_review'})
 (B/'text-page-binding.json').write_text(json.dumps(rows,ensure_ascii=False,indent=2)+'\n')

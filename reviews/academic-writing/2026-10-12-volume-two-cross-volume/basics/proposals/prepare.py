@@ -25,7 +25,7 @@ def change(source, file, ident, old, new):
                   'new_sha256': hashlib.sha256(new.encode()).hexdigest()})
     return source.replace(old, new)
 
-file = 'tex/02-foundations/01-basics/02-machine-learning-models.tex'
+file = 'tex/03-foundations/01-basics/02-machine-learning-models.tex'
 original = (snapshot / file).read_text()
 s = original
 old = para(s, '两个分类器可能给出相同标签')
@@ -76,7 +76,7 @@ s = change(s, file, 'M-P10', old, new)
 (draft / file).write_text(s)
 model_diff = ''.join(difflib.unified_diff(original.splitlines(True), s.splitlines(True), fromfile='a/'+file, tofile='b/'+file))
 
-file = 'tex/02-foundations/01-basics/03-machine-learning-paradigms.tex'
+file = 'tex/03-foundations/01-basics/03-machine-learning-paradigms.tex'
 original = (snapshot / file).read_text()
 s = original
 old = para(s, '建立基准时，我们先固定任务与单个智能体')

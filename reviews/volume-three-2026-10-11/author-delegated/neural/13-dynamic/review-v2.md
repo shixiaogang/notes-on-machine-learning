@@ -1,6 +1,6 @@
 # 动态模型章完整改写与固定稿 C / P / W 自查
 
-本记录由同一改写作者完成，不充作独立审稿。源文件为 tex/03-models/03-probabilistic-graphical-models/13-dynamic.tex。原稿来自 root TASK 当前文本并复制冻结，本次只写该章及子工作区 build 行政记录，不编辑其他 PGM 章、图源、共享宏或文献。
+本记录由同一改写作者完成，不充作独立审稿。源文件为 tex/06-probabilistic-graphical-models/04-models/03-dynamic.tex。原稿来自 root TASK 当前文本并复制冻结，本次只写该章及子工作区 build 行政记录，不编辑其他 PGM 章、图源、共享宏或文献。
 
 - 原稿 before.tex：8f4685aa305bae636cbd65e43daa98baa8a1b148db4276ebd5a3c40771abf272。
 - 连续改写 v1 after-v1.tex：87badd76fb532eb0a937ec82983e2f921d8e712fa75d0b9133d0df053e2b1bf2。

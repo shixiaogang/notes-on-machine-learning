@@ -2,7 +2,7 @@
 
 日期2026-10-11；审查者/root/transformer_audit。未参与第29章14-generative.tex正文或作者记录改写，作者为classic代理；但本代理改写过本章引用的神经网络训练/泛化及PGM第28章动态模型。涉及这些被引上下文的充分性判断存在参与关联，故本轮称技术表述与首次阅读复核，不能声称对所有相关上下文完全独立。只凭当前位置已有解释判断第29章，引用内容不借作者聊天补足。
 
-固定根正文tex/03-models/03-probabilistic-graphical-models/14-generative.tex，SHA5cee06782bf5cd1ccde8531eeae1785656045e2250a23c954af55da4430597e4，889行，可恢复快照source-5cee0678.tex。本章无input子正文；实际正文、例子、显示/内联公式、图/表注、完整表格与算法全部范围。只读root，记录保存本child build，不改源、不渲染/编译、不提交。NN及28保持冻结。
+固定根正文tex/06-probabilistic-graphical-models/04-models/04-generative.tex，SHA5cee06782bf5cd1ccde8531eeae1785656045e2250a23c954af55da4430597e4，889行，可恢复快照source-5cee0678.tex。本章无input子正文；实际正文、例子、显示/内联公式、图/表注、完整表格与算法全部范围。只读root，记录保存本child build，不改源、不渲染/编译、不提交。NN及28保持冻结。
 
 目标读者已经理解概率密度/条件概率、线性代数、微积分、潜变量/ELBO和图模型推断。本章Brownian/SDE/概率流等新对象仍需就地讲清，不假定读者已知逆时间符号。本轮验证可直接推导的小规模概率/代数/方差/score关系，不能替代随机反演定理全证明认证。外部论文史料、实现程序、图资产像素与最终PDF不在本轮范围。
 

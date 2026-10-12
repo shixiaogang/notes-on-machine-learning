@@ -1,6 +1,6 @@
 # NN08 神经网络的训练：固定 v3 全章 C/P/W 自查
 
-基线 snapshot-before/tex/03-models/02-neural-network-models/08-training.tex SHA e793c4b77a142e3b67dc1fb3b728a70bebff8c4f23a94b98bac687f02553caa3。after.tex 是第一次地址整理误存的未改写基线，不算新稿；实际改写145片段的 after-v2.tex SHA 55edbb2c8054e3fd6309c6b36b3ff2db518f3bf2fe7aa71072bb867790041c96；连续新稿复读修15处后 after-v3.tex SHA 5f8fa40c7dca36ba42c798adaadc89fa54954120fbef4d6ceb52f98537785676。地址 units-v3.json 共194单元。以下为单作者写作自查，包括正文、列表、公式、例子、全部表格/图注及被地址工具覆盖的图前段；不是独立审稿、外部史料/收敛证明或PDF验收。scite自动句号按实际句界拆a/b，展示式句末的闭括号不误当独立句。
+基线 snapshot-before/tex/05-neural-network-models/08-training.tex SHA e793c4b77a142e3b67dc1fb3b728a70bebff8c4f23a94b98bac687f02553caa3。after.tex 是第一次地址整理误存的未改写基线，不算新稿；实际改写145片段的 after-v2.tex SHA 55edbb2c8054e3fd6309c6b36b3ff2db518f3bf2fe7aa71072bb867790041c96；连续新稿复读修15处后 after-v3.tex SHA 5f8fa40c7dca36ba42c798adaadc89fa54954120fbef4d6ceb52f98537785676。地址 units-v3.json 共194单元。以下为单作者写作自查，包括正文、列表、公式、例子、全部表格/图注及被地址工具覆盖的图前段；不是独立审稿、外部史料/收敛证明或PDF验收。scite自动句号按实际句界拆a/b，展示式句末的闭括号不误当独立句。
 
 ## C：固定新稿连续整章阅读
 

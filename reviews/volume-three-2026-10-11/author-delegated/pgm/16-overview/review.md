@@ -2,7 +2,7 @@
 
 范围：01-overview.tex 全文，41 个正文段落、4 个图注、1 个以术语宏开头的推断段，共 46 个语义单元；3 个独立公式另列。无表格、算法或定理环境。U029A 是 L106 的精确/近似推断段；其他 U 编号按 after.tex 中段落与图注出现顺序排列。句号划句，段末冒号的公式引入句单列，TeX 的右花括号不是句子。
 
-改前：snapshot-before/tex/03-models/03-probabilistic-graphical-models/01-overview.tex，SHA256 e70233c1a5fc8d8e39269368b0bca17bbebc15bc3c36b3f347019a1a74f5ce50。
+改前：snapshot-before/tex/06-probabilistic-graphical-models/01-representation/01-overview.tex，SHA256 e70233c1a5fc8d8e39269368b0bca17bbebc15bc3c36b3f347019a1a74f5ce50。
 固定新稿：本目录 after.tex，SHA256 c89ecc97688cff31112b5a60f9a743f227d22e372dc90095f755a754362b7dbe。生产文件与固定快照相同。自查对象是该新稿，改前文本只用于追踪发现。未编译，未作新稿 PDF 验收；等待独立交叉复核。
 
 ## C：连续通读

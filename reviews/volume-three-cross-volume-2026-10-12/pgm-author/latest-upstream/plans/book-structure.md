@@ -10,11 +10,11 @@
 | --- | --- | --- |
 | 全集 | `tex/main.tex` | `target/machine-learning-notes.pdf` |
 | 第一卷“数学准备” | `tex/01-mathematical-preliminaries/main.tex` | `target/vol1-mathematical-preliminaries.pdf` |
-| 第二卷“基础、理论和可信性” | `tex/02-foundations/main.tex` | `target/vol2-foundations.pdf` |
+| 第二卷“基础、理论和可信性” | `tex/03-foundations/main.tex` | `target/vol2-foundations.pdf` |
 | 第三卷“模型” | `tex/03-models/main.tex` | `target/vol3-models.pdf` |
 | 第四卷“范式” | `tex/04-paradigms/main.tex` | `target/vol4-paradigms.pdf` |
 | 第五卷“应用” | `tex/05-applications/main.tex` | `target/vol5-applications.pdf` |
-| 第六卷“系统” | `tex/06-systems/main.tex` | `target/vol6-systems.pdf` |
+| 第六卷“系统” | `tex/12-systems/main.tex` | `target/vol6-systems.pdf` |
 
 全集保留卷首页和卷级目录，卷、部分和章在六卷范围内连续编号。单卷省略卷首页和卷级目录，
 部分、章和正文页码均从 1 开始。跨卷引用在全集中显示连续编号，在单卷中改用卷名、章名或公式说明，
@@ -31,25 +31,25 @@
 
 | 卷 | 部分 | 入口目录 |
 | --- | --- | --- |
-| 第一卷：数学准备 | 第一部分：计数、分析与优化 | `tex/01-mathematical-preliminaries/01-mathematical-language-combinatorics-analysis-optimization/` |
-| 第一卷：数学准备 | 第二部分：空间与几何 | `tex/01-mathematical-preliminaries/02-linear-algebra-and-geometry/` |
-| 第一卷：数学准备 | 第三部分：信号与图 | `tex/01-mathematical-preliminaries/03-graphs-and-signals/` |
-| 第一卷：数学准备 | 第四部分：随机变量、分布与因果响应 | `tex/01-mathematical-preliminaries/04-random-variables-distributions-and-causality/` |
-| 第一卷：数学准备 | 第五部分：演化、控制、决策与博弈 | `tex/01-mathematical-preliminaries/05-dynamical-systems-control-decision-and-games/` |
-| 第一卷：数学准备 | 第六部分：数学与机器学习 | `tex/01-mathematical-preliminaries/06-mathematics-and-machine-learning/` |
-| 第二卷：基础、理论和可信性 | 第七部分：机器学习基础 | `tex/02-foundations/01-basics/` |
-| 第二卷：基础、理论和可信性 | 第八部分：机器学习理论 | `tex/02-foundations/02-learning-theory/` |
-| 第二卷：基础、理论和可信性 | 第九部分：机器学习可信性 | `tex/02-foundations/03-trustworthiness/` |
+| 第一卷：数学准备 | 第一部分：计数、分析与优化 | `tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/` |
+| 第一卷：数学准备 | 第二部分：空间与几何 | `tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/` |
+| 第一卷：数学准备 | 第三部分：信号与图 | `tex/01-mathematical-preliminaries-upper/03-graphs-and-signals/` |
+| 第一卷：数学准备 | 第四部分：随机变量、分布与因果响应 | `tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/` |
+| 第一卷：数学准备 | 第五部分：演化、控制、决策与博弈 | `tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/` |
+| 第一卷：数学准备 | 第六部分：数学与机器学习 | `tex/02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning/` |
+| 第二卷：基础、理论和可信性 | 第七部分：机器学习基础 | `tex/03-foundations/01-basics/` |
+| 第二卷：基础、理论和可信性 | 第八部分：机器学习理论 | `tex/03-foundations/02-learning-theory/` |
+| 第二卷：基础、理论和可信性 | 第九部分：机器学习可信性 | `tex/03-foundations/03-trustworthiness/` |
 | 第三卷：模型 | 第十部分：经典模型 | `tex/03-models/01-classic-models/` |
 | 第三卷：模型 | 第十一部分：神经网络模型 | `tex/03-models/02-neural-network-models/` |
 | 第三卷：模型 | 第十二部分：概率图模型 | `tex/03-models/03-probabilistic-graphical-models/` |
 | 第四卷：范式 | 第十三部分：强化学习 | `tex/04-paradigms/01-reinforcement-learning/` |
 | 第四卷：范式 | 第十四部分：知识的获取 | `tex/04-paradigms/02-efficient-knowledge-use/` |
 | 第四卷：范式 | 第十五部分：知识的演进与迁移 | `tex/04-paradigms/03-knowledge-evolution-and-transfer/` |
-| 第五卷：应用 | 第十六部分：自然语言处理 | `tex/05-applications/01-natural-language-processing/` |
-| 第五卷：应用 | 第十七部分：图像处理 | `tex/05-applications/02-image-processing/` |
-| 第五卷：应用 | 第十八部分：推荐与搜索 | `tex/05-applications/03-recommendation-and-search/` |
-| 第六卷：系统 | 第十九部分：机器学习系统 | `tex/06-systems/01-machine-learning-systems/` |
+| 第五卷：应用 | 第十六部分：自然语言处理 | `tex/09-natural-language-processing/` |
+| 第五卷：应用 | 第十七部分：图像处理 | `tex/10-image-and-multimodal-processing/` |
+| 第五卷：应用 | 第十八部分：推荐与搜索 | `tex/11-recommendation-search-advertising/` |
+| 第六卷：系统 | 第十九部分：机器学习系统 | `tex/12-systems/01-machine-learning-systems/` |
 
 数学准备卷按[阅读结构](mathematical-preliminaries-reading-structure.md)组织为17章，分为六个部分。第一部分为“数学对象与逻辑”“计数与计算”“测度与分析”“最优化”；第二部分为“线性空间”“非线性空间与流形”“函数空间”；第三部分为“信号”“图的表示与计算”；第四部分为“随机变量”“概率分布”“因果响应”；第五部分为“动力系统”“策略的实现与轨迹控制”“策略的价值与优化”“多方策略的响应与演化”；第六部分仅含“数学基础与后续研究”。阅读结构与正文统一使用现行17章编号；[章目映射](mathematical-preliminaries-chapter-map.md)记录章节与源文件的对应。每个部分首页后设置一页无编号的阅读指引，只说明本部分内容与章节组织，不进入目录。
 

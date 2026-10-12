@@ -6,9 +6,9 @@
 - 日期：2026-10-11
 - 角色：第4名汇总修订者；负责回到实际正文核验R1、R2、R3，归并根因并修改正文。本记录属于AI自查，不是独立复核。
 - 基线：提交`65de1f9ae4eacde76fdb27a832e1214f386623d5`。
-- 基线正文：`tex/02-foundations/01-basics/02-machine-learning-models.tex`；Git blob `bc2b4d0029abe65fa48b1e2c5854a417b562110d`；SHA-256 `5276d60d7e664a3802955118bfc6fc87b99bf680af37e9d551b1927890aa88e8`。
+- 基线正文：`tex/03-foundations/01-basics/02-machine-learning-models.tex`；Git blob `bc2b4d0029abe65fa48b1e2c5854a417b562110d`；SHA-256 `5276d60d7e664a3802955118bfc6fc87b99bf680af37e9d551b1927890aa88e8`。
 - 修订后正文：Git blob `9056384bbdc08c5b0c23f55848e5ffaa87f96225`；SHA-256 `96baa8633765b502091ae670257f5511731357c94eb3ba59d2796f9b096677f7`；1191行。
-- 可恢复位置：基线可由`git show 65de1f9:tex/02-foundations/01-basics/02-machine-learning-models.tex`恢复；终稿保留在分支`codex/v2-skill-fix-c02`的未提交工作区。
+- 可恢复位置：基线可由`git show 65de1f9:tex/03-foundations/01-basics/02-machine-learning-models.tex`恢复；终稿保留在分支`codex/v2-skill-fix-c02`的未提交工作区。
 - 实际组成范围：本章没有递归`\input`或`\include`正文，受审范围为该文件全文，包含7幅图的正文引入与图注、3张表、公式及独立的`\section{本章小结}`。
 - 目标读者：已读本部分阅读指引、卷二第1章及第一卷相关数学内容，首次系统比较模型设定的读者。
 - 已读取依据：最新版`academic-writing/SKILL.md`、`review.md`、`review-records.md`、`grammar-and-style.md`；按疑点完整读取`structure.md`、`content.md`；项目开发、LaTeX、写作与设计规范；计划索引、全书结构、本章与前章大纲；本部分阅读指引和前章全文。

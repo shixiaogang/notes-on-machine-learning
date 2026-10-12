@@ -65,7 +65,7 @@ for n,v in cap.items():
   pos+=1
  blocks[n-1]=b[:st]+v+b[pos-1:]
 # 正式定义及定理条件不作无意义的同义改写；保持它们独立、可逐项核对。
-f=Path('tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex')
+f=Path('tex/03-foundations/02-learning-theory/01-statistical-learning-framework.tex')
 f.write_text('\n\n'.join(blocks))
 (root/'01-v1.tex').write_text(f.read_text())
 (root/'01-v1-blocks.json').write_text(json.dumps([{'id':f'01-P{i+1:03}','text':b} for i,b in enumerate(blocks)],ensure_ascii=False,indent=2))

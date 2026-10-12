@@ -1,6 +1,6 @@
 # 第二章《模型简介》大纲
 
-正文：`tex/02-foundations/01-basics/02-machine-learning-models.tex`。
+正文：`tex/03-foundations/01-basics/02-machine-learning-models.tex`。
 
 状态：正文已按五个维度完成展开，包含模型族、模型与参数的定义，参数化、非参数化与半参数化的区分，概率模型、结构、输出和优化目标的比较，以及模型维度的交叉与组合。正文含7幅图、3张表；分类与聚类对照表分别覆盖9种与7种具体设定。分卷重排后的页码以自动目录为准。
 

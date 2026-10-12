@@ -8,7 +8,7 @@
 - worktree：`/Users/bytedance/Projects/notes_on_machine_learning/.worktrees/v2-skill-fix-c03`
 - 分支：`codex/v2-skill-fix-c03`
 - 基线：`65de1f9ae4eacde76fdb27a832e1214f386623d5`
-- 受审正文：`tex/02-foundations/01-basics/03-machine-learning-paradigms.tex`
+- 受审正文：`tex/03-foundations/01-basics/03-machine-learning-paradigms.tex`
 - 基线正文 SHA-256：`02189c9150e7902c8c94f935e25ac1445e6765aca075d3c74f529acba58a45cd`
 - 修订后未提交快照 SHA-256：`99eb5092b4f01d0a7e344d3e22917ea7d4c17c7b4c4bb3ec965d80f897b0bc4b`
 - 修订后 Git blob：`00b885f3d513a3bd648730d960bcb6f51a10e31b`

@@ -1,7 +1,7 @@
 from pathlib import Path
 from PIL import Image
 import json,numpy as np,hashlib
-r=Path.cwd();p=r/'figures/02-foundations/03-trustworthiness/generated';out={}
+r=Path.cwd();p=r/'figures/03-foundations/03-trustworthiness/generated';out={}
 targets={'Blue':'#7188A3','Green':'#829C8B','Yellow':'#B4A16F','Red':'#A7787D','Purple':'#9588A5'}
 rois={
 'membership-inference':{'Blue':(80,49,650,56),'Yellow':(870,48,1150,58),'Purple':(80,607,650,615),'Green':(915,283,1110,291),'Red':(865,628,1150,636)},

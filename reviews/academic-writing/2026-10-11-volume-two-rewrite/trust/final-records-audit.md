@@ -2,7 +2,7 @@
 
 2026-10-11。核对者为参与正文改写及原审查的同一 AI 代理。本次是记录、版本与覆盖核对，不是独立学术复核，也不增加一轮 C/P/W 全文自查。首轮只读集成工作区的正文、冻结快照与记录，并在本代理 worktree 新增本文件；随后依主代理的明确指令，仅修正本代理原记录中的三处勘误并更新本文件的闭环。全程不修改正文、不构建、不复制目录。
 
-受核集成工作区：`/Users/robbieshi/Library/Mobile Documents/com~apple~CloudDocs/writings/Notes/Machine Learning/.worktrees/volume-two-adjustments`。范围为该工作区 `reviews/academic-writing/2026-10-11-volume-two-rewrite/trust/` 中的 05 与 guide 各五份审查记录、相关 coverage 和快照，以及实际 `tex/02-foundations/03-trustworthiness/05-alignment.tex`、`reading-guide.tex`。
+受核集成工作区：`/Users/robbieshi/Library/Mobile Documents/com~apple~CloudDocs/writings/Notes/Machine Learning/.worktrees/volume-two-adjustments`。范围为该工作区 `reviews/academic-writing/2026-10-11-volume-two-rewrite/trust/` 中的 05 与 guide 各五份审查记录、相关 coverage 和快照，以及实际 `tex/03-foundations/03-trustworthiness/05-alignment.tex`、`reading-guide.tex`。
 
 ## 正文与冻结快照
 

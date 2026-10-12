@@ -1,105 +1,129 @@
 import importlib.util
-import hashlib
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import fitz
 
 SPEC = importlib.util.spec_from_file_location(
-    'target_pdfs', Path(__file__).resolve().parents[1] / 'scripts/check_target_pdfs.py')
+    "target_pdfs", Path(__file__).resolve().parents[1] / "scripts/check_target_pdfs.py")
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
 class TargetPdfTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
-        for name in ['tex', 'figures', 'fonts', 'target', 'scripts']:
-            (self.root / name).mkdir()
-        for name in ['build.sh', '.latexmkrc', '.gitattributes', 'scripts/check_target_pdfs.py', 'tex/main.tex']:
-            (self.root / name).write_text('initial source')
-        for name in MODULE.PDFS:
-            (self.root / 'target' / name).write_bytes(b'%PDF-1.7\nfixture\n%%EOF\n')
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        for name in ["tex", "figures/00-shared", "fonts", "target", "scripts"]:
+            (self.root / name).mkdir(parents=True)
+        for name in ["build.sh", ".latexmkrc", ".gitattributes",
+                     "scripts/check_target_pdfs.py", "scripts/book_catalog.py", "scripts/publish_volume.py"]:
+            (self.root / name).write_text("initial")
+        (self.root / "fonts/font.otf").write_bytes(b"fixed font")
+        (self.root / "tex/references.bib").write_text(
+            "@book{used,title={Used}}\n@book{unused,title={Unused}}\n")
+        (self.root / "tex/index-terms").mkdir()
+        (self.root / "tex/index-terms/01-first.tex").write_text(
+            "\\DeclareBookIndexTerm{使用}{used}\n\\DeclareBookIndexTerm{闲置}{unused}\n")
+        catalog = {"volumes": []}
+        for number, slug in [(1, "01-first"), (2, "02-second")]:
+            catalog["volumes"].append({"number": number, "slug": slug, "title": slug})
+            path = self.root / "tex" / slug
+            path.mkdir()
+            (path / "main.tex").write_text(f"\\input{{tex/{slug}/volume}}")
+            (path / "volume.tex").write_text(
+                "\\chapter{Source}\\label{chap:%s}\\term{使用}\\cite{used}" % slug)
+            document = fitz.open()
+            document.new_page()
+            document.save(self.root / "target" / f"vol{number}-{slug[3:]}.pdf")
+            document.close()
+        (self.root / "tex/volumes.json").write_text(json.dumps(catalog))
         self.addCleanup(patch.stopall)
-        patch.object(MODULE, 'ROOT', self.root).start()
-        self.snapshot = self.root / 'snapshot.json'
+        patch.object(MODULE, "ROOT", self.root).start()
+        self.snapshot = self.root / "snapshot.json"
         self.snapshot.write_text(json.dumps(MODULE.inputs()))
-        self.run_command('record', '--snapshot', str(self.snapshot))
+        self.run_command("record", "--snapshot", str(self.snapshot))
 
     def run_command(self, *args):
-        with patch('sys.argv', ['check_target_pdfs.py', *args]):
+        with patch("sys.argv", ["check_target_pdfs.py", *args]):
             MODULE.main()
 
-    def test_accepts_matching_pdfs_and_sources(self):
-        self.run_command('check')
+    def changed(self):
+        return MODULE.affected(MODULE.inputs(), MODULE.manifest())
 
-    def test_rejects_source_change_even_with_unchanged_timestamp(self):
-        source = self.root / 'tex/main.tex'
-        previous = source.stat()
-        source.write_text('revised source')
-        os.utime(source, ns=(previous.st_atime_ns, previous.st_mtime_ns))
-        with self.assertRaisesRegex(ValueError, '输入已过期'):
-            self.run_command('check')
+    def test_accepts_current_pdfs(self):
+        self.run_command("check")
 
-    def test_rejects_pdf_changed_after_build(self):
-        (self.root / 'target' / MODULE.PDFS[0]).write_bytes(b'%PDF-1.7\nchanged\n%%EOF\n')
-        with self.assertRaisesRegex(ValueError, '构建记录不同'):
-            self.run_command('check')
+    def test_local_change_only_rebuilds_its_volume(self):
+        with (self.root / "tex/01-first/volume.tex").open("a") as stream:
+            stream.write(" revised prose")
+        self.assertEqual(self.changed(), ["01-first"])
+        self.snapshot.write_text(json.dumps(MODULE.inputs()))
+        self.run_command("record", "--volume", "01-first", "--snapshot", str(self.snapshot))
+        self.run_command("check")
 
-    def test_rejects_missing_volume(self):
-        (self.root / 'target' / MODULE.PDFS[-1]).unlink()
-        with self.assertRaisesRegex(ValueError, '不完整'):
-            self.run_command('check')
+    def test_unused_bibliography_does_not_rebuild_volumes(self):
+        source = self.root / "tex/references.bib"
+        source.write_text(source.read_text().replace("Unused", "Revised unused"))
+        self.assertEqual(self.changed(), [])
 
-    def test_rejects_source_change_during_build(self):
-        (self.root / 'tex/main.tex').write_text('changed during build')
-        with self.assertRaisesRegex(ValueError, '构建过程中'):
-            self.run_command('record', '--snapshot', str(self.snapshot))
+    def test_used_bibliography_rebuilds_users(self):
+        source = self.root / "tex/references.bib"
+        source.write_text(source.read_text().replace("Used", "Revised used"))
+        self.assertEqual(self.changed(), ["01-first", "02-second"])
 
-    def test_rejects_staged_pdf_different_from_worktree(self):
-        def staged(*args):
-            if args[0] == 'ls-files':
-                return '\0'.join(MODULE.inputs()).encode() + b'\0'
-            name = args[1][1:]
-            if name == 'target/' + MODULE.PDFS[0]:
-                return b'old staged PDF'
-            return (self.root / name).read_bytes()
-        with patch.object(MODULE, 'git', side_effect=staged):
-            with self.assertRaisesRegex(ValueError, '暂存版本已过期'):
-                self.run_command('check', '--staged')
+    def test_unused_index_record_does_not_rebuild(self):
+        source = self.root / "tex/index-terms/01-first.tex"
+        source.write_text(source.read_text().replace("{unused}", "{other unused}"))
+        self.assertEqual(self.changed(), [])
 
-    def check_lfs_pointer(self, oid=None, size=None, tracked=True):
-        name = 'target/' + MODULE.PDFS[0]
+    def test_shared_font_rebuilds_all(self):
+        (self.root / "fonts/font.otf").write_bytes(b"revised font")
+        self.assertEqual(self.changed(), ["01-first", "02-second"])
+
+    def test_moved_reference_changes_referencing_volume(self):
+        source = self.root / "tex/02-second/volume.tex"
+        source.write_text(source.read_text() + "\\BookChapterRef{chap:01-first}{source}")
+        self.snapshot.write_text(json.dumps(MODULE.inputs()))
+        self.run_command("record", "--snapshot", str(self.snapshot))
+        first = self.root / "tex/01-first/volume.tex"
+        first.write_text("\\chapter{Inserted}" + first.read_text())
+        self.assertEqual(self.changed(), ["01-first", "02-second"])
+
+    def test_changes_during_build_are_rejected(self):
+        (self.root / "tex/01-first/volume.tex").write_text("\\chapter{changed}")
+        with self.assertRaisesRegex(ValueError, "构建过程中"):
+            self.run_command("record", "--volume", "01-first", "--snapshot", str(self.snapshot))
+
+    def test_extra_or_missing_pdfs_are_rejected(self):
+        (self.root / "target/old.pdf").write_bytes(b"%PDF-1.7\n%%EOF\n")
+        with self.assertRaisesRegex(ValueError, "不完整"):
+            self.run_command("check")
+
+    def test_rejects_over_600_pages(self):
+        path = self.root / "target/vol1-first.pdf"
+        document = fitz.open()
+        for _ in range(601):
+            document.new_page()
+        document.save(path)
+        document.close()
+        with self.assertRaisesRegex(ValueError, "超过600页"):
+            MODULE.pdf_record(MODULE.volumes(self.root)[0])
+
+    def test_lfs_checks_hash_size_and_attribute(self):
+        name = "target/vol1-first.pdf"
         data = (self.root / name).read_bytes()
-        oid = oid or hashlib.sha256(data).hexdigest()
-        size = len(data) if size is None else size
-        pointer = (f'version https://git-lfs.github.com/spec/v1\n'
-                   f'oid sha256:{oid}\nsize {size}\n').encode()
-        def staged(*args):
-            if args[0] == 'ls-files':
-                return '\0'.join(MODULE.inputs()).encode() + b'\0'
-            if args[0] == 'check-attr':
-                return (name + ': filter: ' + ('lfs' if tracked else 'unspecified') + '\n').encode()
-            path = args[1][1:]
-            return pointer if path == name else (self.root / path).read_bytes()
-        with patch.object(MODULE, 'git', side_effect=staged):
-            self.run_command('check', '--staged')
-
-    def test_accepts_lfs_pointer_matching_pdf_hash_and_size(self):
-        self.check_lfs_pointer()
-
-    def test_rejects_lfs_pointer_with_wrong_hash(self):
-        with self.assertRaisesRegex(ValueError, '暂存版本已过期'):
-            self.check_lfs_pointer(oid='0' * 64)
-
-    def test_rejects_lfs_pointer_with_wrong_size(self):
-        with self.assertRaisesRegex(ValueError, '暂存版本已过期'):
-            self.check_lfs_pointer(size=1)
-
-    def test_rejects_pointer_without_staged_lfs_attribute(self):
-        with self.assertRaisesRegex(ValueError, '暂存版本已过期'):
-            self.check_lfs_pointer(tracked=False)
+        pointer = ("version https://git-lfs.github.com/spec/v1\n"
+                   f"oid sha256:{MODULE.digest(data)}\nsize {len(data)}\n").encode()
+        with patch.object(MODULE, "git", side_effect=[
+                pointer, (name + ": filter: lfs\n").encode()]):
+            self.assertTrue(MODULE.staged_matches(name, data))
+        with patch.object(MODULE, "git", side_effect=[
+                pointer, (name + ": filter: unspecified\n").encode()]):
+            self.assertFalse(MODULE.staged_matches(name, data))
+        with patch.object(MODULE, "git", side_effect=[
+                pointer.replace(str(len(data)).encode(), b"1"), (name + ": filter: lfs\n").encode()]):
+            self.assertFalse(MODULE.staged_matches(name, data))

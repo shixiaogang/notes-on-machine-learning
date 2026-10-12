@@ -1,6 +1,6 @@
 # 对抗安全章重写与三遍自查
 
-记录身份：SEC-C1/P1/W1/W2/K1/R2，2026-10-11，theory_second_half，AI作者自查。完整正文tex/02-foundations/03-trustworthiness/08-adversarial-security.tex；工作区为volume-two-rewrite-theory-b，分支codex/volume-two-rewrite-theory-b，基线17b2ded。该章由根代理追加分配，编辑范围只在本章及本审查目录；没有构建或提交。
+记录身份：SEC-C1/P1/W1/W2/K1/R2，2026-10-11，theory_second_half，AI作者自查。完整正文tex/03-foundations/03-trustworthiness/08-adversarial-security.tex；工作区为volume-two-rewrite-theory-b，分支codex/volume-two-rewrite-theory-b，基线17b2ded。该章由根代理追加分配，编辑范围只在本章及本审查目录；没有构建或提交。
 
 受审版本及恢复：snapshots/v0原稿，v1整章重写初稿，v2最终修复；全部SHA256在snapshot-manifest.json。最终SHA256为`0b3a44c2555bc03e368aa5df0fa814a40c1b41f33ebfe73cabfd4662bc94d215`。三个版本稳定180个P；v1/v2为531个中文句/标题片段，其中34标题只作结构元数据核查。所有图注、程序、例子及公式段均覆盖，未把排版命令伪装成语义判断。
 

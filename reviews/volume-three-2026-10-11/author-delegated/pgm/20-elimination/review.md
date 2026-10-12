@@ -1,6 +1,6 @@
 # 第20章基于变量消除的精确推断：固定稿写作自查
 
-受审前稿为 snapshot-before/tex/03-models/03-probabilistic-graphical-models/05-elimination.tex，SHA256 e978c23160d80d18bc1c4674d0c8b71f281694bfe9dae5df5b273872f43f55b1。全文初改后保留真实 draft-before-review.tex，SHA256 15401b88a7115c92f62cf2ee65818f018fbdb3b25e1d4d31c3beff38731708e5。最终 after.tex 固定SHA256 1dca419ac5045065eaae26e82c2da2f408f9776328d571621d410f01a9c29474。诊断中稿之后改了“较小函数”的无条件承诺、“大模型”词义、非二次积分的过强概括、证明第二行分配律的方向、精确等式与浮点误差的表述，以及有限最大值下指数缩放的范围；以下C/P/W针对最终稿。
+受审前稿为 snapshot-before/tex/06-probabilistic-graphical-models/02-inference/01-elimination.tex，SHA256 e978c23160d80d18bc1c4674d0c8b71f281694bfe9dae5df5b273872f43f55b1。全文初改后保留真实 draft-before-review.tex，SHA256 15401b88a7115c92f62cf2ee65818f018fbdb3b25e1d4d31c3beff38731708e5。最终 after.tex 固定SHA256 1dca419ac5045065eaae26e82c2da2f408f9776328d571621d410f01a9c29474。诊断中稿之后改了“较小函数”的无条件承诺、“大模型”词义、非二次积分的过强概括、证明第二行分配律的方向、精确等式与浮点误差的表述，以及有限最大值下指数缩放的范围；以下C/P/W针对最终稿。
 
 机械文字清单 units.json 有142个文字单元U001–142，含3图注、4表注、例子及正式定理/定义条件。两算法环境作为A1/A2单列逐步覆盖。显示公式M01–52按源码次序编号，公式连接短语与其合读。数学内部标点不拆成独立文字；scite自动句号按语义句界处理。机械检查不生成接受理由。
 

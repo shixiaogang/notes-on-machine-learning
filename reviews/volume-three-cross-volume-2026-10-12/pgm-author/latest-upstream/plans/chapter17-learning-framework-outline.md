@@ -1,6 +1,6 @@
 # 第17章：数学基础与后续研究
 
-正文入口：[01-mathematics-and-future-research.tex](../tex/01-mathematical-preliminaries/06-mathematics-and-machine-learning/01-mathematics-and-future-research.tex)。本文件记录更新大纲落地后的章节职责；讨论定位号与实施章号均为17。
+正文入口：[01-mathematics-and-future-research.tex](../tex/02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning/01-mathematics-and-future-research.tex)。本文件记录更新大纲落地后的章节职责；讨论定位号与实施章号均为17。
 
 读者已具备前16章的数学语言。本章用温度预测、越限报警与自动散热连接学习任务，保留两层对应：17.2从机器学习任务确定数学对象与问题，17.3正式表述六类分析关系，17.4再把同一问题编号接到前文工具及其成立条件。不同任务可以调用多类分析；章节按所求关系组织，数学对象类型留在交叉对应表中。
 

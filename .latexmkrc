@@ -19,9 +19,13 @@ $ENV{'T1FONTS'} = './fonts/stix2-type1/type1//:' . ($ENV{'T1FONTS'} // '');
 $ENV{'TFMFONTS'} = './fonts/stix2-type1/tfm//:' . ($ENV{'TFMFONTS'} // '');
 $ENV{'ENCFONTS'} = './fonts/stix2-type1/enc//:' . ($ENV{'ENCFONTS'} // '');
 
-# watch publishes after each successful latexmk cycle.
-if (defined $ENV{'BOOK_TARGET_PDF'}) {
-    $success_cmd = 'cp build/main.pdf target/machine-learning-notes.pdf.tmp && mv target/machine-learning-notes.pdf.tmp target/machine-learning-notes.pdf';
+# watch refreshes source-derived locations before compiling, then publishes
+# only this volume after latexmk's successful bibliography/index cycle.
+if (defined $ENV{'BOOK_WATCH_SLUG'}) {
+    my $slug = $ENV{'BOOK_WATCH_SLUG'};
+    die "Invalid volume slug\n" unless $slug =~ /\A[0-9]{2}-[a-z-]+\z/;
+    $xelatex = "python3 scripts/book_catalog.py references $slug && python3 scripts/check_target_pdfs.py snapshot > build/$slug-inputs.json && xelatex %O %S";
+    $success_cmd = "python3 scripts/publish_volume.py $slug";
 }
 
 1;

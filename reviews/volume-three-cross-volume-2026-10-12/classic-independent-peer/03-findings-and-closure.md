@@ -5,7 +5,7 @@
 - 受审r4：classification/05-ensemble.tex L24，SHA 6c68240f45874089e38434c1046360defa6c474bae92aab7e0d258f91490cafd。短引“投票风险的理想下降需要…独立性和统一条件优势”。
 - 问题：条件错误独立+统一优势给Hoeffding指数上界，是充分条件；“需要”容易让读者误认为所有投票风险下降都须独立，原句也未恢复奇数二分类/等权票/训练随机性平均对象。
 - 最小动作：用具体多数票的“若…则…”充分条件，恢复此定理的随机性与风险指标；AdaBoost的另一带权保证保持分开。
-- 修订r5：incremental-r5/tex/03-models/01-classic-models/classification/05-ensemble.tex，SHA f572233a87b69b1c9161604dd7905c3727c9d15491d10ad1f9aac1c3ffe7f598，短引“对于奇数个二分类成员的等权多数投票，若…平均训练随机性后的投票风险…指数下降的上界”。candidate-r5.patch SHA 9e44ad36e44ebef193159d618e9082143cf5205f73b42cf4aa27a0b135256cac。
+- 修订r5：incremental-r5/tex/04-classic-models/classification/05-ensemble.tex，SHA f572233a87b69b1c9161604dd7905c3727c9d15491d10ad1f9aac1c3ffe7f598，短引“对于奇数个二分类成员的等权多数投票，若…平均训练随机性后的投票风险…指数下降的上界”。candidate-r5.patch SHA 9e44ad36e44ebef193159d618e9082143cf5205f73b42cf4aa27a0b135256cac。
 - 独立复读顺序：先r4 C/P/W全scope；收到r5后，C读分类集成整节1–24行含完整五方法表并恢复分类任务职责；P读L20–24表注→整体评价段；W逐句重读L24五句，随后重新读actual a9 binary720–774完整多数票theorem/proof（737–754）核条件与随机性。此前未看作者r5接受理由。
 
 ### 增量C

@@ -18,6 +18,10 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 VOLUME = Path("tex/01-mathematical-preliminaries")
+CURRENT_VOLUMES = (
+    Path("tex/01-mathematical-preliminaries-upper"),
+    Path("tex/02-mathematical-preliminaries-lower"),
+)
 OUTLINE = Path("plans/mathematical-preliminaries-reading-structure.md")
 CONTRACT = Path("plans/mathematical-preliminaries-chapter-map.md")
 RETIRED_LABELS = Path("plans/chapter17-retired-labels.json")
@@ -70,6 +74,14 @@ def normalize(title: str) -> str:
 
 def assignments(root: Path) -> list[dict]:
     rows = []
+    modern = list(re.finditer(
+        r"^\| (\d+) \| ([12]) \| (\d+) \| ([^|]+) \| ([^|]+\.tex) \|$",
+        (root / CONTRACT).read_text(), re.M,
+    ))
+    for match in modern:
+        number, volume, local, title, path = match.groups()
+        rows.append({"chapter": int(number), "volume": int(volume), "local_chapter": int(local),
+                     "title": title.strip(), "path": path.strip()})
     for match in re.finditer(
         r"^\| (\d+) \| ([^|]+) \| ([^|]+\.tex) \|$",
         (root / CONTRACT).read_text(), re.M,
@@ -77,7 +89,7 @@ def assignments(root: Path) -> list[dict]:
         number, title, path = match.groups()
         rows.append({
             "chapter": int(number),
-            "title": title.strip(), "path": str(VOLUME / path.strip()),
+            "title": title.strip(), "path": path.strip() if path.strip().startswith("tex/") else str(VOLUME / path.strip()),
         })
     if len(rows) != 17:
         raise ValueError(f"Expected 17 assignments, found {len(rows)}")
@@ -90,11 +102,14 @@ def assignments(root: Path) -> list[dict]:
 
 def outline_headings(text: str) -> dict[int, list[dict]]:
     result: dict[int, list[dict]] = {}
+    offset = 0
     current = None
     for line_no, line in enumerate(text.splitlines(), 1):
+        if line.startswith("## 卷二"):
+            offset = 9
         chapter = re.match(r"## 第(\d+)章 (.+)$", line)
         if chapter:
-            current = int(chapter[1])
+            current = int(chapter[1]) + offset
             result[current] = [{
                 "number": str(current), "level": 1,
                 "title": chapter[2], "outline_line": line_no,
@@ -109,7 +124,7 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
             match = re.match(r"\s*- \*\*(\d+(?:\.\d+)+) (.+?)\*\*", line)
         if not match:
             match = re.match(r"\s*- (\d+(?:\.\d+)+) ([^：]+)$", line)
-        if match and int(match[1].split(".")[0]) == current:
+        if match and int(match[1].split(".")[0]) + offset == current:
             result[current].append({
                 "number": match[1], "level": len(match[1].split(".")),
                 "title": match[2], "outline_line": line_no,
@@ -146,7 +161,7 @@ def source_stats(text: str) -> dict:
 
 def audit_part_guides(root: Path) -> list[dict]:
     reports = []
-    for path in sorted((root / VOLUME).glob("*/part.tex")):
+    for path in sorted(p for volume in CURRENT_VOLUMES for p in (root / volume).glob("*/part.tex")):
         text = uncomment(path.read_text())
         matches = list(re.finditer(r"\\BookPartGuide\s*\{", text))
         issues = []
@@ -175,7 +190,7 @@ def audit_part_guides(root: Path) -> list[dict]:
 
 
 def active_body_sources(root: Path) -> tuple[dict[Path, str], list[str]]:
-    """Follow all six volume entries, excluding obsolete unreferenced chapters."""
+    """Follow all twelve volume entries, excluding obsolete unreferenced chapters."""
     sources: dict[Path, str] = {}
     missing: set[str] = set()
 
@@ -196,7 +211,7 @@ def active_body_sources(root: Path) -> tuple[dict[Path, str], list[str]]:
                 child = child.with_suffix(".tex")
             walk(child, (*stack, path))
 
-    for entry in sorted((root / "tex").glob("0[1-6]-*/volume.tex")):
+    for entry in sorted((root / "tex").glob("[0-9][0-9]-*/volume.tex")):
         walk(entry.relative_to(root))
     return sources, sorted(missing)
 
@@ -350,7 +365,7 @@ def audit_retired_chapter17_labels(
     if undeclared:
         issues.append({"kind": "unrecorded_chapter17_label_removal", "labels": sorted(undeclared)})
     report["pre_rewrite_label_count"] = len(inventory)
-    report["active_reference_scope"] = "All active body inputs in the six volumes."
+    report["active_reference_scope"] = "All active body inputs in the twelve volumes."
     if not issues:
         report["approved_baseline_retirements"] = sorted(set(retired) & eligible)
     return report
@@ -504,7 +519,7 @@ def main() -> int:
             if reference["label"] not in all_locations
         ],
         "active_source": Path(chapter17_source) in body_sources,
-        "resolution_scope": "All active body inputs in the six volumes.",
+        "resolution_scope": "All active body inputs in the twelve volumes.",
     }
     missing = {
         label: path for label, path in missing_before_retirements.items()
@@ -521,7 +536,7 @@ def main() -> int:
         "chapter17_label_retirements": retirements,
         "chapter17_cross_references": chapter17_reference_audit,
         "missing_baseline_labels": missing, "duplicate_labels": duplicate,
-        "duplicate_label_scope": "All active body inputs in the six volumes.",
+        "duplicate_label_scope": "All active body inputs in the twelve volumes.",
         "missing_body_inputs": missing_inputs,
     }
     if args.json:

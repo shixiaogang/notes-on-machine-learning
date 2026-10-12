@@ -12,7 +12,7 @@
 
 核对发生在 root 已集成导航和词条恢复、正文冻结后。下表每个 SHA 与右侧文件逐字节相同，不仅是文件名对应。后续正文若改变，本表和相关接受项需重新核对。
 
-| 正文（相对 tex/02-foundations） | SHA256 | 对应最终快照（相对记录根） |
+| 正文（相对 tex/03-foundations） | SHA256 | 对应最终快照（相对记录根） |
 |---|---|---|
 | `01-basics/01-introduction.tex` | `5cdd1533edc3d5e40f137b42099622f65b9969248d64947a28dc22ec9791d387` | `basics/r2/01-introduction.tex` |
 | `01-basics/02-machine-learning-models.tex` | `8f44de71bed9d61a2ade3f9c04efb8c54a2778ccc1d2a45ced07cf890ffb9346` | `basics/r4/02-machine-learning-models.tex` |

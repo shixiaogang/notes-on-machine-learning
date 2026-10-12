@@ -37,7 +37,7 @@ base=(r/'07-privacy-v0.tex').read_text()
 for name,pat in [('labels',r'\\label\{[^}]+\}'),('heads',r'\\(?:chapter|section|subsection|subsubsection|paragraph)\{[^}]+\}'),('refs',r'\\(?:ref|eqref|Book\w*Ref)\{[^}]+\}'),('cites',r'\\(?:scite|cite\w*)\{[^}]+\}')]:
  a=collections.Counter(re.sub(r'\s+','',x) for x in re.findall(pat,base));b=collections.Counter(re.sub(r'\s+','',x) for x in re.findall(pat,out));print(name,sum(a.values()),a==b,a-b,b-a);assert a==b,name
 assert [re.sub(r'\s+','',m[0]) for m in math.finditer(base)]==[re.sub(r'\s+','',m[0]) for m in math.finditer(out)]
-f=Path('tex/02-foundations/03-trustworthiness/07-privacy.tex');f.write_text(out)
+f=Path('tex/03-foundations/03-trustworthiness/07-privacy.tex');f.write_text(out)
 (r/'07-privacy-v1.tex').write_text(out);(r/'07-privacy-v1-blocks.json').write_text(json.dumps(blocks,ensure_ascii=False,indent=2))
 print('rewrite blocks',len(maps),'all blocks',len(blocks),'hash',hashlib.sha256(out.encode()).hexdigest())
 (r/'07-privacy-read-v1.txt').write_text('\n\n'.join(p['id']+'\n'+p['text'] for p in blocks))

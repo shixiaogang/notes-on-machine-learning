@@ -8,12 +8,12 @@
 
 | 次序 | 章名 | 本章要解决的问题 | 正文文件 |
 | --- | --- | --- | --- |
-| 1 | 机器学习理论基础 | 什么叫学会，学习理论研究哪些问题，这些问题怎样发展而来？ | `tex/02-foundations/02-learning-theory/01-statistical-learning-framework.tex` |
-| 2 | 二分类学习的可学习性 | 哪些二分类问题可学习，需要多少样本，还需满足什么计算条件？ | `tex/02-foundations/02-learning-theory/02-binary-classification.tex` |
-| 3 | 多分类学习的可学习性 | 标签空间扩大后，容量、一致收敛与可学习性怎样分化？ | `tex/02-foundations/02-learning-theory/03-multiclass-classification.tex` |
-| 4 | 一般学习的可学习性 | 超出零一分类以后，函数复杂度和算法稳定性怎样支持泛化？ | `tex/02-foundations/02-learning-theory/04-convex-learning-and-stability.tex` |
-| 5 | 深度学习的可学习性 | 怎样从参数大小、梯度和参数分布分析网络的选解与泛化？ | `tex/02-foundations/02-learning-theory/05-deep-learning-theory.tex` |
-| 6 | 迁移学习的可学习性 | 训练与使用分布不同时，哪些信息和条件能够支持目标域预测？ | `tex/02-foundations/02-learning-theory/06-transfer-learning-theory.tex` |
+| 1 | 机器学习理论基础 | 什么叫学会，学习理论研究哪些问题，这些问题怎样发展而来？ | `tex/03-foundations/02-learning-theory/01-statistical-learning-framework.tex` |
+| 2 | 二分类学习的可学习性 | 哪些二分类问题可学习，需要多少样本，还需满足什么计算条件？ | `tex/03-foundations/02-learning-theory/02-binary-classification.tex` |
+| 3 | 多分类学习的可学习性 | 标签空间扩大后，容量、一致收敛与可学习性怎样分化？ | `tex/03-foundations/02-learning-theory/03-multiclass-classification.tex` |
+| 4 | 一般学习的可学习性 | 超出零一分类以后，函数复杂度和算法稳定性怎样支持泛化？ | `tex/03-foundations/02-learning-theory/04-convex-learning-and-stability.tex` |
+| 5 | 深度学习的可学习性 | 怎样从参数大小、梯度和参数分布分析网络的选解与泛化？ | `tex/03-foundations/02-learning-theory/05-deep-learning-theory.tex` |
+| 6 | 迁移学习的可学习性 | 训练与使用分布不同时，哪些信息和条件能够支持目标域预测？ | `tex/03-foundations/02-learning-theory/06-transfer-learning-theory.tex` |
 
 第一章建立共同语言、研究地图、历史脉络和成功标准；第二章完整展开二分类中的容量、样本和计算分析；第三章说明多分类中一致收敛与可学习性不再由同一个维度统一刻画。第四章把讨论扩展到一般损失，并比较整个决策空间的复杂度与算法输出的稳定性。第五章将这些工具用于神经网络，第六章进一步改变训练与评价之间的分布关系。
 

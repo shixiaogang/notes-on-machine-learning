@@ -1,4 +1,4 @@
-### tex/02-foundations/02-learning-theory/02-binary-classification.tex:94–126
+### tex/03-foundations/02-learning-theory/02-binary-classification.tex:94–126
 0094 图中的竖线表示各候选的估计偏差。固定容限$\eta$，四个阈值的风险差都不超过它，才算这份样本同时估得准。我们要找一个统一邮件数，使独立抽样得到这种共同事件的概率至少$1-\delta$，而不按未知邮件与标签分布另定样本量。下面正式定义这个要求。
 0095 
 0096 \paragraph{可测性与可分性约定}
@@ -33,7 +33,7 @@
 0125 \[
 0126  R_{\mathcal P}(h)=\mathbb P_{(x,y)\sim\mathcal P}\{h(x)\neq y\},\qquad
 
-### tex/02-foundations/02-learning-theory/02-binary-classification.tex:219–266
+### tex/03-foundations/02-learning-theory/02-binary-classification.tex:219–266
 0219 失败预算还可以按空间的描述长度分配。给序号$k$预定一个二进制编码，并要求任一编码都不是另一个的开头，得到前缀编码，例如$0,10,11$标记三个空间。设编码长为$L_k$。在足够长的二进制串中，以该编码开头者占$2^{-L_k}$，不同前缀对应的串互不重叠，任意有限组的比例和便不超过1。由此全部编码也满足$\sum_k2^{-L_k}\leq1$，可以取$\delta_k=\delta2^{-L_k}$。由于$\log(1/\delta_k)=\log(1/\delta)+L_k\log2$，较长空间描述带来较小预算与较大$p_k$。这里编码只描述选哪个空间，作用是有效分配失败概率，并非PAC定义另加的必要条件。
 0220 
 0221 \section{无限假设空间}
@@ -83,7 +83,7 @@
 0265 双样本只涉及$2n$个输入，同预测的函数给出相同经验风险，故至多需要区分$\Pi_{\mathcal H}(2n)$种结果。再让每对$(z_i,z_i')$独立公平交换或保持原位。iid使联合分布不变，固定预测的差贡献则随机变号，可以应用集中不等式。将各预测的尾概率相加，就控制了任意候选产生大差的概率。副样本与随机交换构成\term{对称化}（symmetrization），作用是把总体比较转成有限计数及随机符号比较。
 0266 
 
-### tex/02-foundations/02-learning-theory/02-binary-classification.tex:402–436
+### tex/03-foundations/02-learning-theory/02-binary-classification.tex:402–436
 0402 
 0403 \section{估计期望风险}
 0404 \label{sec:rademacher-complexity}
@@ -120,7 +120,7 @@
 0435  \label{eq:linear-rademacher-bound}
 0436 \end{align}
 
-### tex/02-foundations/02-learning-theory/02-binary-classification.tex:489–511
+### tex/03-foundations/02-learning-theory/02-binary-classification.tex:489–511
 0489 \[
 0490  \mathfrak R_n(\mathcal G)
 0491  \leq\widehat{\mathfrak R}_S(\mathcal G)
@@ -145,7 +145,7 @@
 0510 它在错分时为1，在正确但间隔小于$\rho$时仍为正，取值于$[0,1]$、关于得分为$1/\rho$-Lipschitz，且支配零一损失。若$\|\bm w\|_2\leq B$、$\|\bm x\|_2\leq r$几乎处处成立，收缩引理将式~\eqref{eq:linear-rademacher-bound}转为损失复杂度$Br/(\rho\sqrt n)$。风险上界因而以至少$1-\delta$的概率同时覆盖所有这些线性得分：
 0511 \begin{equation}
 
-### tex/02-foundations/02-learning-theory/02-binary-classification.tex:528–550
+### tex/03-foundations/02-learning-theory/02-binary-classification.tex:528–550
 0528 \begin{equation}
 0529  R_{\mathcal P}(\hat h)-\inf_{h\in\mathcal H}R_{\mathcal P}(h)
 0530  \leq4\mathfrak R_n(\mathcal G)
@@ -170,7 +170,7 @@
 0549 设$(Z,\mathcal A)$为可测空间，$\mathcal P$为$Z$上的概率分布，$n\geq1$，
 0550 $S=(z_1,\ldots,z_n)\sim\mathcal P^n$。令
 
-### tex/02-foundations/02-learning-theory/02-binary-classification.tex:908–937
+### tex/03-foundations/02-learning-theory/02-binary-classification.tex:908–937
 0908 \end{proof}
 0909 
 0910 这项构造可处理无限基空间，依靠的是有限VC与全可实现分布上的统一弱优势。有限VC并不单独保证能够弱学任意目标空间$\mathcal H$，优势条件须另证；各轮错误也没有被假定独立\scite{shalevshwartz2014}。

@@ -1,6 +1,6 @@
 # NN09 神经网络的泛化：固定 v3 全章 C/P/W 自查
 
-基线 snapshot-before/tex/03-models/02-neural-network-models/09-generalization.tex SHA 081c207679bda543f5ca2e059884e16eff727e61705eabc5eef79e533d8b5e84。原稿全章连续读后改85片段，after.tex SHA f8463fb7fa8b58cf579e3937a951eed9998a6fee23fadfdac2e770568d0df803；复读修4处形成 after-v2.tex SHA 5e339603fcfb6b1377ebb45273fae8ee3ccdc6f48f6a717385ae2f0f57772bca，再修2处句法/重复形成 after-v3.tex SHA 25f71ed2c9352aa40eed70a154c3052961c3adfbdc7152fd41fe74377f926ddb。本记录固定v3，地址 units-v3.json 共77单元，另5处图表前地址覆盖缺口。本记录为单作者写作自查，不是独立审稿、外部结果证明或PDF版式认证。
+基线 snapshot-before/tex/05-neural-network-models/09-generalization.tex SHA 081c207679bda543f5ca2e059884e16eff727e61705eabc5eef79e533d8b5e84。原稿全章连续读后改85片段，after.tex SHA f8463fb7fa8b58cf579e3937a951eed9998a6fee23fadfdac2e770568d0df803；复读修4处形成 after-v2.tex SHA 5e339603fcfb6b1377ebb45273fae8ee3ccdc6f48f6a717385ae2f0f57772bca，再修2处句法/重复形成 after-v3.tex SHA 25f71ed2c9352aa40eed70a154c3052961c3adfbdc7152fd41fe74377f926ddb。本记录固定v3，地址 units-v3.json 共77单元，另5处图表前地址覆盖缺口。本记录为单作者写作自查，不是独立审稿、外部结果证明或PDF版式认证。
 
 ## C：固定新稿连续阅读
 

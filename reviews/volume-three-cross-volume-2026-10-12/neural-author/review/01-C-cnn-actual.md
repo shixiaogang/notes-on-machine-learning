@@ -1,6 +1,6 @@
 # CNN 真实 rebase 基线：C 遍
 
-记录 NN-A9-CNN-C-r1，2026-10-12，AI 作者自查。实际对象是 `rebased-before/tex/03-models/02-neural-network-models/03-convolutional-networks.tex`，SHA e99e37f93a63ceecae978808e8638fffc47d3c2940a0b28b1482b2c9eaa028fa。该文件与根 33a06c07 冻结文件逐字节相同。先连续读 L1–993，未以准备稿替代实际读稿。相邻接缝另读前馈 L928–962 和 RNN L1–64。入口是单文件，没有章内 input。
+记录 NN-A9-CNN-C-r1，2026-10-12，AI 作者自查。实际对象是 `rebased-before/tex/05-neural-network-models/03-convolutional-networks.tex`，SHA e99e37f93a63ceecae978808e8638fffc47d3c2940a0b28b1482b2c9eaa028fa。该文件与根 33a06c07 冻结文件逐字节相同。先连续读 L1–993，未以准备稿替代实际读稿。相邻接缝另读前馈 L928–962 和 RNN L1–64。入口是单文件，没有章内 input。
 
 C1：开篇问题是图像边缘在多个位置出现时，全连接位置各自的权重没有规定规则复用。前章已经提供定长前馈、非线性及链式求导；本章因此能从局部与共享两项约束进入。开篇同时暴露共享参数梯度汇集、深层路径和位置对应输出三个后续问题。
 
