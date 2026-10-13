@@ -3,13 +3,13 @@ def single(height=75):
     return fig, ax
 
 def training():
-    path = FACTS/'figures/03-foundations/01-basics/tikz/introduction-training-loss.csv'
+    path = FACTS/'figures/02-foundations/01-basics/tikz/introduction-training-loss.csv'
     d = np.genfromtxt(path, delimiter=',', names=True)
     assert len(d)==61 and np.array_equal(d['step'], np.arange(61))
     assert all(np.isfinite(d[name]).all() for name in d.dtype.names)
-    fig,ax=single(68)
-    ax.plot(d['step'],d['train_loss'],color=BLUE,label='训练集')
-    ax.plot(d['step'],d['validation_loss'],color=RED,ls='--',label='验证集')
+    fig,ax=plt.subplots(figsize=(107.95*MM,68*MM),layout='constrained')
+    ax.plot(d['step'],d['train_loss'],color=BLUE,label='训练样本')
+    ax.plot(d['step'],d['validation_loss'],color=RED,ls='--',label='验证样本')
     ax.axvline(20,color=YELLOW,ls=':',lw=1)
     ax.text(21,.277,'选定检查点',color=MUTED,va='bottom')
     ax.set(xlim=(0,60),ylim=(.25,.72),yticks=[.3,.4,.5,.6,.7],xlabel=r'迭代次数 $t$',ylabel='平均交叉熵损失')

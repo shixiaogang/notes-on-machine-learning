@@ -30,6 +30,13 @@ LOOKUP={Path(f['source'][0]).stem:f for f in SCOPE}
 RECORDS=[]
 NAME_MAP={'risk-decomposition':'learning-theory-error-decomposition','double-descent':'learning-theory-double-descent','distribution-shift':'learning-theory-distribution-shift'}
 
+def fact_path(name):
+    path=FACTS/name
+    if not path.exists():
+        path=FACTS/name.replace('figures/03-foundations/','figures/02-foundations/')
+    if not path.exists():raise FileNotFoundError(name)
+    return path
+
 def export(fig,part,name,data,panel=False):
     key=NAME_MAP.get(name,name);dest=destination(key);dest.mkdir(exist_ok=True)
     stem=name if panel else 'figure'
@@ -41,7 +48,7 @@ def export(fig,part,name,data,panel=False):
         labels.append({'text':t.get_text(),'bounds_pixels':list(box.bounds),'size_pt':t.get_fontsize(),'role':getattr(t,'academic_role','body')})
         if box.width and box.height and (box.x0<-.5 or box.y0<-.5 or box.x1>fig.bbox.width+.5 or box.y1>fig.bbox.height+.5):outside.append(t.get_text())
     for ext in ['pdf','svg','png']:fig.savefig(dest/f'{stem}.{ext}',dpi=300,facecolor='white')
-    record={'key':key,'source':LOOKUP[key]['source'],'source_sha256':[hashlib.sha256((FACTS/p).read_bytes()).hexdigest() for p in LOOKUP[key]['source']],
+    record={'key':key,'source':LOOKUP[key]['source'],'source_sha256':[hashlib.sha256(fact_path(p).read_bytes()).hexdigest() for p in LOOKUP[key]['source']],
       'data':data,'style':style_record(),'size_mm':(fig.get_size_inches()/MM).tolist(),
       'processing':{'filtering':'none','missing_values':'none; nonfinite rejected','sampling':'complete finite points or declared analytic grid','random_generation':'none'},
       'origin':'explicit book teaching construction; training CSV retains declared experiment inputs','files':[str((dest/f'{stem}.{e}').relative_to(ROOT)) for e in ['pdf','svg','png']],
