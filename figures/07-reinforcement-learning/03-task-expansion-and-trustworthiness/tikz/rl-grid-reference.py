@@ -94,6 +94,39 @@ def occupancy(policy):
     return distribution
 
 
+def figure_occupancy():
+    """Return the exact policies and values drawn in rl-overview-occupancy.tex."""
+    choices = {
+        "upper": {
+            (1, 1): "up", (2, 1): "left", (3, 1): "up", (4, 1): "up",
+            (1, 2): "up", (3, 2): "up", (4, 2): "up",
+            (1, 3): "right", (2, 3): "right", (3, 3): "right",
+            GOAL: "stop",
+        },
+        "lower": {
+            (1, 1): "right", (2, 1): "right", (3, 1): "right", (4, 1): "up",
+            (1, 2): "down", (3, 2): "right", (4, 2): "up",
+            (1, 3): "right", (2, 3): "right", (3, 3): "right",
+            GOAL: "stop",
+        },
+    }
+    result = {}
+    for name, selected in choices.items():
+        policy = {state: {selected[state]: F(1)} for state in STATES}
+        distribution = occupancy(policy)
+        result[name] = {
+            "actions": {f"{state[0]},{state[1]}": selected[state] for state in STATES},
+            "occupancy": {
+                f"{state[0]},{state[1]}": {
+                    "exact": str(value),
+                    "decimal": float(value),
+                }
+                for state, value in zip(STATES, distribution)
+            },
+        }
+    return result
+
+
 def compute():
     uniform = {state: {a: F(1, len(actions(state))) for a in actions(state)} for state in STATES}
     chosen = {state: actions(state)[0] for state in STATES}
@@ -128,6 +161,7 @@ def compute():
         "gamma": float(GAMMA),
         "policy_iterations": iterations,
         "exact_bellman_and_flow_checks": True,
+        "figure_occupancy": figure_occupancy(),
         "rows": [
             {
                 "state": state,
