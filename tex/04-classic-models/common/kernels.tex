@@ -1,4 +1,12 @@
-图\ref{fig:classification-kernel-map}用一个二维分类例子展示特征映射$\bm{\phi}(\bm{x})=(x_1,x_1^2+x_2^2)^{\top}$。输入空间中的圆$x_1^2+x_2^2=1$，在新坐标中变成直线$\phi_2=1$；同一得分$g(\bm{x})=1-x_1^2-x_2^2$于是可以写成$g(\bm{x})=(0,-1)\bm{\phi}(\bm{x})+1$。改变的是输入的表示，原来位于圆内与圆外的样本不需要改变类别。这幅图给定了一条可行边界，用于解释几何对应，不把它当作训练后的最大间隔解。
+\subsubsection{用核技巧学习非线性关系}
+\label{sec:classic-overview-kernel-trick}
+\label{sec:classification-svm-kernel-trick}
+\label{sec:classic-overview-kernel-validity}
+\label{sec:classification-svm-mercer}
+
+原始坐标的加权和只能产生直线或超平面边界。若类别由“到原点的距离是否小于1”决定，一条直线就无法把整个圆内区域与圆外区域分开。困难来自得分的形式：它只包含$x_1$、$x_2$的一次项，而判断半径需要$x_1^2+x_2^2$。我们可以先把这个量作为新特征，再继续使用线性得分。
+
+图\ref{fig:classification-kernel-map}采用特征映射$\bm{\phi}(\bm{x})=(x_1,x_1^2+x_2^2)^{\top}$。原坐标中的圆$x_1^2+x_2^2=1$，在新坐标中对应直线$\phi_2=1$。同一得分$g(\bm{x})=1-x_1^2-x_2^2$于是可以写成$g(\bm{x})=(0,-1)\bm{\phi}(\bm{x})+1$：它对原坐标是非线性的，对新特征却是线性的。样本的类别保持不变，改变的是描述样本的坐标。图中的边界是为说明这种对应而给定的，并非训练得到的最大间隔解。
 
 \begin{figure}[htbp]
   \centering
@@ -7,27 +15,25 @@
   \label{fig:classification-kernel-map}
 \end{figure}
 
-\subsubsection{特征映射与核技巧}
-\label{sec:classic-overview-kernel-trick}
-\label{sec:classification-svm-kernel-trick}
+这个例子只需计算一个新的半径平方特征，直接计算即可。若要加入很多坐标的平方项、交互项乃至更高次项，显式列出所有新坐标就会变得昂贵。此时可以检查算法是否真的需要每个坐标，还是只需要特征之间的内积。
 
-圆形边界的例子显式增加了一个平方特征；当特征更多时，逐一构造坐标可能成为计算负担。设特征映射$\bm\phi:\mathbb R^d\to\mathcal H$把输入送到带内积的特征空间，在那里使用线性预测器$f(\bm x)=\langle\bm w,\bm\phi(\bm x)\rangle+b$。若学习过程得到的权重可以写为$\bm w=\sum_{i=1}^n a_i\bm\phi(\bm x_i)$，代入预测式后，每个训练样本只通过一个特征内积参与计算：
+设映射$\bm\phi:\mathbb R^d\to\mathcal H$把输入送到带内积的特征空间，在那里使用线性预测器$f(\bm x)=\langle\bm w,\bm\phi(\bm x)\rangle+b$。若学得的权重可以写为$\bm w=\sum_{i=1}^n a_i\bm\phi(\bm x_i)$，将它代入预测式并利用内积的线性性，得到
 \begin{equation}
   f(\bm x)=\sum_{i=1}^{n}a_iK(\bm x_i,\bm x)+b,
   \qquad K(\bm x,\bm z)=\langle\bm\phi(\bm x),\bm\phi(\bm z)\rangle_{\mathcal H}.
   \label{eq:classic-overview-kernel}
 \end{equation}
-这里$a_i$由具体学习目标确定，核$K$直接返回两份特征的内积。用核值替换特征内积的做法称为\term{核技巧}（kernel trick）。它不改变分类、回归或降维的目标，而是让这些目标在新的几何中计算；$K$对原输入可以非线性，预测也就能够具有非线性边界。只有计算可以写成这些内积时，才可直接作这种替换。
+这里$a_i$由具体学习目标确定，$K$返回两个输入映射后的特征内积。只要能直接算出$K(\bm x,\bm z)$，就能计算预测，无需先把$\bm\phi(\bm x)$的全部坐标存下来。用核值完成这类特征内积计算，称为\term{核技巧}（kernel trick）。任务仍然可以是分类、回归或降维，候选函数及其几何结构则随特征表示改变；当$K$对原输入非线性时，线性特征得分也可以对应原空间中的非线性关系。
+
+训练也需要写成内积计算，才能省去显式特征。例如，用平方损失加上正系数的权重范数平方作为目标时，可以把任意权重分成训练特征张成空间中的部分$\bm w_{\parallel}$与正交余量$\bm w_{\perp}$。后者与每个训练特征都正交，对训练预测没有影响；但由于$\lVert\bm w\rVert^2=\lVert\bm w_{\parallel}\rVert^2+\lVert\bm w_{\perp}\rVert^2$，保留它只会增加惩罚。因此求最优解时可以令$\bm w_{\perp}=0$，把权重写成$\sum_i a_i\bm\phi(\bm x_i)$。代回训练损失和范数，两者便都能用训练样本的特征内积计算。有限样本表示定理把这一理由推广到相应的损失与范数惩罚，条件见\BookTheoremRef{thm:functional-representer-theorem}{卷1《数学准备：计算、分析与几何》第7章“函数空间”第7.4.2节“有限观测下的函数拟合”}。
 
 例如$K(\bm x,\bm z)=(\bm x^\top\bm z)^2$隐含平方项与交互项。训练时可以计算$n\times n$的核矩阵，再按具体目标求系数；预测时计算新输入与训练输入的核值，并按式\eqref{eq:classic-overview-kernel}加权。这省去了二次特征的显式展开，却将计算与存储转到了样本之间的关系上。无限维映射也可以用这种形式计算，其代价同样取决于需要访问多少训练样本（特征空间的背景参考\BookChapterRef{chap:functional-analysis-and-approximation}{卷1《数学准备：计算、分析与几何》第7章“函数空间”}）。
 
-\subsubsection{用正定核构造非线性特征空间}
-\label{sec:classic-overview-kernel-validity}
-\label{sec:classification-svm-mercer}
-
-用函数$K$替代内积以后，还需要确认这个替代保持了内积的几何性质。特征向量线性组合的范数平方应当非负，因此对任意有限输入与实系数都必须有$\sum_{i,j}a_i a_jK(\bm x_i,\bm x_j)\geq0$；内积的对称性还要求$K$对称。这些条件使任意有限Gram矩阵半正定，也保证能在某个Hilbert空间中构造出相应特征内积。由此可以直接设计$K$，而不必先列出全部特征坐标（构造依据参考\BookTheoremRef{thm:functional-moore-aronszajn-construction}{卷1《数学准备：计算、分析与几何》第7章“函数空间”第7.3.2节“函数的标量读取”}）。
+如果从一个相似性公式直接设计$K$，还需要确认它能够表示特征内积。内积应当对称；特征向量线性组合的范数平方还应非负，所以对任意有限输入与实系数都要有$\sum_{i,j}a_i a_jK(\bm x_i,\bm x_j)\geq0$。满足这些条件，任意有限Gram矩阵便是半正定的，也能在某个Hilbert空间中构造相应的特征内积。我们因此可以先设计核，而不必先列出特征坐标；构造依据见\BookTheoremRef{thm:functional-moore-aronszajn-construction}{卷1《数学准备：计算、分析与几何》第7章“函数空间”第7.3.2节“函数的标量读取”}。
 
 本书的“正定核”允许Gram矩阵奇异；需要排除互异输入下的退化时，才要求严格正定。半正定回答的是能否构造特征内积。核矩阵的可逆性、目标的求解难度和表示对任务的适合程度，则分别取决于数据、学习目标与核的选择。正则化和选解规则处理求解中的退化，核尺度等超参数通过独立验证选择。
+
+实际训练时，我们先按任务确定损失，再选择核与范数约束，计算训练Gram矩阵并求系数；预测则计算新输入与训练输入的核值，按式\eqref{eq:classic-overview-kernel}加权。核决定允许表达哪些关系，损失评价预测误差，范数约束限制函数的复杂程度。下面介绍的常用核给出了不同的表示选择，选择时仍要在同一预测任务上比较它们的样本外误差。
 
 非负加权和、核的乘积及逐点有限极限可以构造新核，分别对应特征直和、张量积及有限二次型极限。这些规则可以把多个信息来源组合成一个合法内积。某份训练集的矩阵通过检查，只认证这一组点；预测还会遇到新输入，因此核应在整个预期定义域上具有构造依据。在非空紧度量输入域上，若核连续，并使用有限、全支撑的Borel测度，可用Mercer展开得到显式谱坐标（参考\BookTheoremRef{thm:functional-mercer}{卷1《数学准备：计算、分析与几何》第7章“函数空间”第7.3.3节“函数的积分变换”}）。核技巧本身不要求先求出谱展开。
 

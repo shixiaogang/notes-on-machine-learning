@@ -15,11 +15,17 @@ Bagging、Boosting和Stacking先回答怎样形成组合。部署时，多成员
 \subsection{静态成员选择}
 \label{sec:ensemble-static-selection}
 
-\term{静态成员选择}（static ensemble selection）给定已经训练好的候选池$\{h_1,\ldots,h_M\}$，选择一个对所有未来输入都相同的子集$S\subseteq\{1,\ldots,M\}$。若$\mathcal{L}_{\mathrm{val}}(S)$表示该子集按指定规则组合后的验证损失，可以写成
+\subsubsection{模型结构}
+
+部署时若只能保留部分成员，我们需要选择在预算内预测效果合适的组合。单模型评分还不足以作出选择：几份预测近乎相同的强成员可能互相重复，加入一个单独误差稍大、但能纠正它们共同错误的成员，反而可能得到更好的组合。\term{静态成员选择}（static ensemble selection）从已经训练好的候选池$\{h_1,\ldots,h_M\}$中，选择一个对所有未来输入都相同的非空子集$S\subseteq\{1,\ldots,M\}$，评价对象是整个子集的组合预测。
+
+\subsubsection{参数学习}
+
+若$\mathcal{L}_{\mathrm{val}}(S)$表示该组合的平均验证损失，可以用损失与部署成本共同选择子集：
 \begin{equation}
   \widehat{S}
   \in
-  \argmin_{S\subseteq\{1,\ldots,M\}}
+  \argmin_{\varnothing\neq S\subseteq\{1,\ldots,M\}}
   \mathcal{L}_{\mathrm{val}}(S)
   +\lambda_1|S|
   +\lambda_2 C(S),
@@ -31,12 +37,14 @@ Bagging、Boosting和Stacking先回答怎样形成组合。部署时，多成员
 
 式\eqref{eq:ensemble-static-selection}的搜索对象为固定池中的成员子集，成员预测已经形成。若同时改变基学习算法、特征处理和超参数，搜索范围已经扩展为完整模型开发流程。候选池越大，验证集上偶然出现有利组合的机会也越多；最终测试需在该子集及其组合规则固定后进行。
 
-分歧和误差协方差可以诊断预测关系，组合选择则以任务损失为直接依据。一个与其他成员高度不同但经常出错的模型，可能增加分歧而降低组合质量。静态选择应直接评价选定组合的输出，并在相同成员数或资源预算下与完整集成及单模型基线比较。
-
 \subsection{动态成员选择}
 \label{sec:ensemble-dynamic-selection}
 
-静态方案让所有输入使用相同子集；若成员能力随输入区域改变，可将邻近记录上的预测结果用于当前选择。\term{动态分类器选择}（dynamic classifier selection, DCS）为每个输入选择一个成员；\term{动态集成选择}（dynamic ensemble selection, DES）选择一个成员子集或给出输入相关权重。
+\subsubsection{模型结构}
+
+静态方案让所有输入使用相同子集，却可能遗漏成员能力随输入改变的情况。假设一个文本分类器在体育报道附近的预测可靠，另一个在科技报道附近更可靠，用全体文档上的平均正确率排序，就可能忽略这种局部差别。我们可以在独立数据中寻找与当前输入邻近的记录，比较成员在这些记录上的表现，再决定调用谁。\term{动态分类器选择}（dynamic classifier selection, DCS）为每个输入选择一个成员；\term{动态集成选择}（dynamic ensemble selection, DES）选择一个成员子集或给出输入相关权重。
+
+\subsubsection{参数学习}
 
 一种基本构造是准备独立的能力估计数据。对查询输入$\bm{x}$，在该数据中寻找非空邻域$\mathcal{N}(\bm{x})$，再以成员$m$在邻域内的正确率估计
 \begin{equation}
@@ -56,7 +64,11 @@ DCS可以选择$\widehat{c}_m(\bm{x})$最大的成员，DES则保留超过阈值
 \subsection{从集成模型到紧凑模型}
 \label{sec:ensemble-compression}
 
+\subsubsection{模型结构}
+
 若原成员的最小可用子集仍超预算，可以另外训练一个新的\term{紧凑模型}（compact model），使其逼近完整集成的输入输出映射。早期模型压缩工作已经用大型集成的输出训练较小模型；知识蒸馏随后把这种教师到学生的传递扩展为常用训练形式\scite{bucilua2006compression,hinton2015distilling}。
+
+\subsubsection{参数学习}
 
 设完整集成为教师$H$，紧凑模型为学生$s_{\bm{\theta}}$。对回归，可以组合真实响应损失与教师拟合损失：
 \begin{equation}
@@ -72,5 +84,3 @@ DCS可以选择$\widehat{c}_m(\bm{x})$最大的成员，DES则保留超过阈值
 其中$\alpha\in[0,1]$控制真实标签与教师输出的作用。分类时可以拟合教师的完整类别分布；温度缩放会使非最大类别之间的相对关系更容易进入训练信号，但温度、损失权重与部署概率仍须分别选择和校准。
 
 学生训练输入可以来自原训练集、额外未标注样本或经过说明的合成样本。教师在所选输入上提供训练目标；覆盖不足的区域缺少这种监督，学生在这些区域仍可能偏离教师。学生容量过小会产生逼近误差，容量很大则可能无法达到预期资源节省。
-
-紧凑化同时改变预测器与资源开销，可从四方面评价。预测一致性衡量学生是否复现教师输出；任务性能检查学生面对真实标签的风险；概率评价检查蒸馏后的得分是否仍可解释；资源测量确认模型大小、内存和延迟是否实际下降。训练输入上的一致性只描述局部逼近，新样本任务损失另外检查未来预测。真实标签、正则或额外数据也可使学生在部分区域改进教师预测。学生采用不同模型和训练过程，其解释、诊断及理论条件需按新模型建立。

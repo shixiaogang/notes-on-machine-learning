@@ -31,54 +31,127 @@
 \label{sec:pgm-overview-representation}
 \label{sec:pgm-overview-basic-concepts}
 
-为具体描述设备诊断，引入四个二值随机变量：故障$F$、过热$H$、报警$A$和传感器失灵$S$，取值$1$表示相应事件发生，取值$0$表示未发生。小写字母表示这些变量的取值，因此$p(f,h,a,s)$给出四个状态同时成立的联合概率。
+设备诊断需要同时记录故障、过热、报警和传感器状态。画成图以后，读者不仅要知道哪些状态有关，还要分清哪些量已经观测、哪些量需要推断，以及哪些数值只是模型给定的参数。本节参考PRML第8章的图表示约定，用同一个设备例子说明节点、连线和重复框的含义\scite{bishop2006}。
 
-有向图、因子图、团树和缺失数据图分别突出变量依赖、乘积分解、消息传递和观测状态，图~\ref{fig:pgm-overview-visual-conventions}汇总它们使用的视觉符号。节点的外形和填色区分变量、局部函数与给定量，连线的含义则由图中所描述的对象决定。尤其是虚线，可能表示辅助对应、证据读入或分隔边界，其具体作用会在相应图内或图注中说明。
-\begin{figure*}[htbp]
+\paragraph{随机变量与观测状态}
+为设备的四种状态分别引入二值随机变量：故障$F$、过热$H$、报警$A$和传感器失灵$S$。每个变量取值$1$表示相应事件发生，取值$0$表示未发生。大写字母表示随机变量，小写$f,h,a,s\in\{0,1\}$表示它们的具体取值；因此$p(f,h,a,s)$是$F=f,H=h,A=a,S=s$同时成立的概率。
+
+圆圈表示随机变量，圈内写变量名称。节点也可以代表一个随机向量，例如把四种状态合为$\bm V=(F,H,A,S)$，图中便可只画一个标有$\bm V$的圆圈。图~\ref{fig:pgm-overview-node-granularity}比较这两种粒度：圆圈的数量并不一定等于标量分量的数量。对于当前尚未取得取值的变量，节点保持空心；已经观测到的变量则给圆圈填色。只有报警记录$A=1$时，$A$画成填色圆圈，$F,H,S$仍为空心。若随后测得过热状态，$H$也改为填色，但模型中的依赖关系不必因此改变。图~\ref{fig:pgm-overview-visual-conventions}对照这两个观测条件，连线保持不变，变化的是节点的填色。
+
+\begin{figure}[!htb]
   \centering
-  \includegraphics[width=164.747mm]{figures/06-probabilistic-graphical-models/01-representation/tikz/pgm-overview-visual-conventions/figure.pdf}
-  \caption{本部分图示的默认视觉符号。空心、填色和实点区分潜变量、观测变量与给定量；方框表示局部因子，浅色填充与绿色轮廓强调团树分隔集或共享接口，红色标出非法或需警示的对象。实线箭头可以表示概率分解或计算流，虚线用于辅助表达，具体含义由各图的标注和图注确定。}
+  \includegraphics[width=77.646mm]{figures/06-probabilistic-graphical-models/01-representation/tikz/pgm-overview-visual-conventions/figure.pdf}
+  \caption{观测信息改变节点填色。(a)仅知报警$A=1$；(b)又测得过热$H=1$。两图使用相同的变量与连线，故障和传感器状态仍未观测；填色表示已有取值，不表示删除随机变量。}
   \label{fig:pgm-overview-visual-conventions}
-\end{figure*}
+\end{figure}
+\FloatBarrier
 
-报警记录只给出$A$，而故障判断涉及$F$；过热和传感器状态仍然未知。先对$H,S$的所有取值求和，得到$F,A$的边缘分布，再固定报警取值并归一化，就得到所需条件分布：
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=64.703mm]{figures/06-probabilistic-graphical-models/01-representation/tikz/pgm-overview-node-granularity/figure.pdf}
+  \caption{圆圈可以表示不同粒度的随机量。(a)一个故障状态$F$；(b)由四种状态组成的随机向量$\bm V$。向量节点并没有把四个分量变成同一个标量，也不表明各分量独立。}
+  \label{fig:pgm-overview-node-granularity}
+\end{figure}
+\FloatBarrier
+
+填色说明这次查询已知什么，不改变变量原本的随机性。空心也不专指模型主动引入的潜变量：尚未观测的故障是当前诊断目标，未来尚未产生的报警也可以是预测目标。对当前记录，模型引入而没有直接观测的内部状态称为潜变量；哪些节点已知、哪些未知，应结合观测条件来读。
+
+只有报警已知而要判断故障时，必须先汇总过热和传感器失灵的可能取值，再按报警概率归一化：
 \begin{equation}
   p(f,a)=\sum_{h,s}p(f,h,a,s),
   \qquad
   p(f\mid a)=\frac{p(f,a)}{p(a)},\quad p(a)>0.
   \label{eq:pgm-overview-marginal-conditional}
 \end{equation}
-第一式汇总了每一种未知状态组合，第二式以证据概率$p(a)$为分母，使给定报警后各个故障取值的概率之和为$1$。连续变量通过相应积分消去（参见\BookSectionRef{sec:rv-conditional-distribution}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.2.2.2节“条件信息下的分布关系”}）。
+这里$\sum_{h,s}$遍历$h,s\in\{0,1\}$的四种组合，$p(a)=\sum_f p(f,a)$；竖线右侧的$a$是已经给定的报警取值。第一式得到故障与报警的边缘概率，第二式使给定报警后故障两种取值的概率之和为$1$。连续变量用相应积分消去，条件分布的基本约定见\BookSectionRef{sec:rv-conditional-distribution}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.2.2.2节“条件信息下的分布关系”}。
 
-上述局部假设用条件独立记号$X\perp Y\mid Z$表达：给定$Z$以后，$Y$不再为$X$的分布提供额外信息。对于一般随机变量，相关条件分布等式按$Z$的分布几乎处处成立（参见\BookSectionRef{sec:probability-moments-independence}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.2.3节“随机变量的独立关系”}）。这里关注这些约束怎样通过图组织起来，并用于简化联合表示和推断。
+\paragraph{有向边与局部条件分布}
+节点说明模型包含哪些量，连线则组织这些量之间的关系。先不省略任何条件，链式法则给出
+\[
+  p(f,s,h,a)=p(f)p(s\mid f)p(h\mid f,s)p(a\mid f,s,h).
+\]
+每一项都保留之前变量的全部取值，因此这种写法并没有减少完整联合表所需的参数。只有进一步指定条件独立关系，才能删去不需要的条件。
 
-从完整联合分布出发，链式法则给出$p(f,s,h,a)=p(f)p(s\mid f)p(h\mid f,s)p(a\mid f,s,h)$。右侧仍保留每个变量之前的全部条件，因此所需参数与完整联合表相同。条件独立假设进一步确定哪些条件可以省去，才产生较小的局部函数。
+条件独立记为$X\perp Y\mid W$，其中$X,Y,W$是随机变量，$x,y,w$是它们各自的取值：给定$W$后，再知道$Y$不会改变$X$的条件分布。对本节的离散变量，在$p(y,w)>0$时可写为$p(x\mid y,w)=p(x\mid w)$；一般条件分布的等式按条件变量的分布几乎处处成立。当前需要的是这些关系怎样简化局部函数，通用独立性约定可参考\BookSectionRef{sec:probability-moments-independence}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.2.3节“随机变量的独立关系”}。
 
-设备模型采用如下假设：故障$F$与传感器失灵$S$独立，过热$H$只直接依赖故障，报警$A$只直接依赖过热和传感器状态。将这些假设代入链式分解，可以分别简化传感器、过热与报警的条件，得到
+设备模型假设故障与传感器失灵独立，过热在给定故障后不再依赖传感器状态，报警在给定过热与传感器状态后不再依赖故障。由此将链式分解中的相应条件删去，得到
 \begin{equation}
   p(f,h,a,s)=p(f)p(s)p(h\mid f)p(a\mid h,s).
   \label{eq:pgm-overview-device-joint}
 \end{equation}
-每个局部条件分布对其输出变量归一化，便能保证上述乘积定义一个完整联合分布。二值根变量$F,S$各需一个参数；$H$在$F$的两个取值下各需一个参数；$A$在$(H,S)$的四种组合下各需一个参数。总计$8$个自由参数，而完整联合表需要$15$个；节省来自模型所采用的独立性假设。
+每个局部条件分布对输出变量归一化，这个乘积就定义了完整联合分布。二值根变量$F,S$各需一个参数；$H$在$F$的两个取值下各需一个参数；$A$在$(H,S)$的四种组合下各需一个参数。总计$8$个自由参数，而完整联合表需要$15$个；减少的参数来自这里采用的独立性假设。
 
-式~\eqref{eq:pgm-overview-device-joint}还可以画成图~\ref{fig:pgm-overview-device-graph}：每个节点对应一个随机变量，进入该节点的箭头来自它的局部条件分布所依赖的变量。例如，$H\to A\leftarrow S$把$p(a\mid h,s)$的两个条件显式画出。这些箭头首先具有概率分解的含义；赋予它们因果含义还需要额外的建模假设。
+\term{有向图模型}（directed graphical model）用箭头指定局部条件分布使用哪些父变量。进入$A$的两条边$H\to A\leftarrow S$对应$p(a\mid h,s)$；$F\to H$对应$p(h\mid f)$；没有进入$F,S$的边，所以它们分别使用$p(f),p(s)$。图~\ref{fig:pgm-overview-device-graph}画出这一对应。箭头先表示概率分解中的条件关系，因果解释需要额外假设；它也不表示算法必须按箭头方向传递查询信息。第~\ref{chap:pgm-directed}章进一步说明有向分解与条件独立的对应。
 
-\begin{figure}[htbp]
+
+
+\begin{figure}[!htb]
   \centering
   \includegraphics[width=94.590mm]{figures/06-probabilistic-graphical-models/01-representation/tikz/pgm-overview-device-graph/figure.pdf}
   \caption{设备诊断的有向表示。节点表示随机变量，进入节点的箭头指定其局部条件分布所依赖的变量，例如$H\to A\leftarrow S$对应$p(a\mid h,s)$。这里的箭头记录概率分解，因果解释需要另行给出假设。}
   \label{fig:pgm-overview-device-graph}
 \end{figure}
 
-图和局部函数共同确定模型。设备图规定报警概率以$H,S$为条件，局部表$p(a\mid h,s)$则给出每种状态组合下报警的具体概率。同一个图可以配上不同的数值表，从而给出不同的诊断结果；图结构组织依赖，局部函数决定这些依赖的数值。
+\FloatBarrier
 
-设备模型属于\term{有向图模型}（directed graphical model），它由图中的父子方向组织局部条件分布的乘积。第~\ref{chap:pgm-directed}章将进一步说明这种分解与图上的条件独立关系怎样对应。
+\paragraph{固定量与参数节点}
+图规定局部函数可以使用哪些变量，函数中的数值还需另外指定。例如，令$\bm\theta_A$收集四种$(h,s)$组合下的报警概率$p(A=1\mid H=h,S=s)$。查询故障时，若这张概率表已经给定，$\bm\theta_A$就是固定量，可以画成小实点，再连到使用它的报警节点。图~\ref{fig:pgm-overview-parameter-roles}(a)只保留报警与其固定参数，显示小实点的作用。
 
-邻近部件之间的对称相互作用则可以用\term{无向图模型}（undirected graphical model）表示。它把局部关系写为非负函数$\psi_c(\bm x_c)\geq0$，并将乘积归一化，得到$p(\bm x)=Z^{-1}\prod_c\psi_c(\bm x_c)$，其中$Z=\sum_{\bm x}\prod_c\psi_c(\bm x_c)$，连续情形用积分。局部势函数描述配置之间的相对权重，全局常数$Z$负责归一化；$0<Z<\infty$时，才得到合法概率分布。第~\ref{chap:pgm-undirected}章将解释无向边、势函数和条件独立之间的关系。
+填色大圆圈与小实点承担不同职责：前者是模型中的随机变量，只是本次已经取得取值；后者在当前概率模型中作为给定量使用，不需要对它建立概率分布。固定输入也可以用小实点表示，例如回归中给定的输入位置。参数是否画成实点取决于建模方式，而不是它被称为“参数”：若要为参数本身指定先验并推断其分布，就应将它画成随机变量圆圈。图~\ref{fig:pgm-overview-parameter-roles}(b)用$\bm\Theta_A$表示随机参数，$\bm\theta_A$仍表示它的一种取值。具体参数学习方式由第~\ref{chap:pgm-parameter-learning}章介绍。
 
-计算局部乘积时，还可以使用\term{因子图}（factor graph）。它将随机变量和局部函数分别画成两类节点，函数涉及哪个变量，就在两者之间连边。设备模型中的$p(a\mid h,s)$因子因而连接$A,H,S$，清楚显示该项参与了哪些变量的计算。
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=67.165mm]{figures/06-probabilistic-graphical-models/01-representation/tikz/pgm-overview-parameter-roles/figure.pdf}
+  \caption{同一参数的两种建模方式。左图将报警表作为固定量，右图为参数$\bm\Theta_A$指定先验，使用随机变量圆圈。两图都观测报警$A$，均省略$H,S$及其入$A$的箭头；实点与填色圆圈不是同一类对象。}
+  \label{fig:pgm-overview-parameter-roles}
+\end{figure}
+\FloatBarrier
 
-有向模型的条件概率乘积和无向模型的势函数乘积都能转换为因子图。转换保留选定的乘积分解，而原有父子方向需要由函数含义补充说明。因此，因子图主要提供局部计算的组织方式，第~\ref{chap:pgm-representations}章将比较不同表示保留的结构信息。PRML第8章也从概率分解出发介绍这些图表示\scite{bishop2006}。
+同一张图配上不同的局部概率表，会给出不同的诊断结果。图结构组织允许的依赖，参数与局部函数确定具体概率；为保持图简洁，已经在正文说明的固定参数可以不全部画出。
+
+\paragraph{重复框与共享参数}
+多台设备采用相同诊断模型时，每条记录都有自己的$F_i,H_i,A_i,S_i$。若逐条画出，节点和连接会大量重复。\term{板表示法}（plate notation）用一个框圈住代表性节点及其连接，再用$N$标出重复次数；下标$i=1,\ldots,N$说明框内变量按记录复制。图~\ref{fig:pgm-overview-plate-expansion}取$N=3$对照展开图和板框图，只保留过热、传感器失灵与报警这三个节点；省略的故障节点也随记录复制。框外的$\bm\theta_A$不复制，而是由每套报警节点共同使用。
+
+\begin{figure*}[!htb]
+  \centering
+  \includegraphics[width=128.926mm]{figures/06-probabilistic-graphical-models/01-representation/tikz/pgm-overview-plate-expansion/figure.pdf}
+  \caption{重复框与展开图，取三条记录作图示。左图有三个过热、三个传感器和三个报警变量，三组报警共用一个固定参数；右图用$N=3$的板框压缩这些副本。两图均省略故障变量及相关箭头，框外参数不随记录复制。}
+  \label{fig:pgm-overview-plate-expansion}
+\end{figure*}
+\FloatBarrier
+
+若各记录在给定整组固定参数$\bm\theta$后相互独立，用$p_{\bm\theta}$表示采用这组参数的分布，则重复图对应的联合概率为
+\begin{equation}
+  p_{\bm\theta}(f_{1:N},h_{1:N},a_{1:N},s_{1:N})
+    =\prod_{i=1}^{N}p_{\bm\theta}(f_i,h_i,a_i,s_i).
+  \label{eq:pgm-overview-plate-product}
+\end{equation}
+$\bm\theta$包含四类局部概率表的全部参数，$f_{1:N}$表示$f_1,\ldots,f_N$，其余下标同理。每条记录使用相同的函数形式和参数，但保留自己的状态取值。框本身只表示重复，不单独保证记录独立；若副本之间另有连接，或共享的随机量被边缘化，就要按展开后的依赖关系计算联合分布。
+
+\paragraph{无向边与因子节点}
+若重点是邻近部件状态之间的对称相互作用，可以使用\term{无向图模型}（undirected graphical model）。无向边没有箭头，不指定哪个端点作为另一个端点的条件；局部关系由非负势函数评价配置的相对权重。令$\bm x$为全部变量的取值，$c$为局部作用范围的索引，$\bm x_c$为该范围内的取值子向量，则
+\[
+  p(\bm x)=\frac{1}{Z}\prod_c\psi_c(\bm x_c),
+  \qquad
+  Z=\sum_{\bm x}\prod_c\psi_c(\bm x_c).
+\]
+$\psi_c\geq0$是局部势，$Z$是对全部候选配置求和的归一化常数。离散情形下$p(\bm x)$表示联合概率，连续情形下表示密度；连续状态改用积分，且须满足$0<Z<\infty$。无向边表示模型允许的局部相互作用，不等同于两个变量的边缘相关系数。其条件独立语义在第~\ref{chap:pgm-undirected}章展开。
+
+局部函数也可以单独画出来。\term{因子图}（factor graph）用圆圈表示变量、方框表示因子，连接线说明函数用到了哪些变量。例如，令$g_A(a,h,s)=p(a\mid h,s)$，相应的$g_A$方框连接$A,H,S$。这三条无箭头连线表示函数的三个自变量，并不是新增三条随机变量之间的无向边；$g_A$也不需要被观测或赋予一个随机取值。图~\ref{fig:pgm-overview-edge-types}进一步对照无向变量边和一个三变量因子的连线：左图直接连接变量，右图把局部函数单独画出。
+
+\begin{figure}[!htb]
+  \centering
+  \includegraphics[width=92.135mm]{figures/06-probabilistic-graphical-models/01-representation/tikz/pgm-overview-edge-types/figure.pdf}
+  \caption{无向边与变量—因子连线的对象不同。左图允许$H,S,A$组成一个三变量局部作用范围，右图将该范围的势函数$\psi(h,s,a)$显式画成方框。右图的每条线连接一个变量和一个函数，不能读成新增的变量之间连线；两图均不标注观测证据。}
+  \label{fig:pgm-overview-edge-types}
+\end{figure}
+\FloatBarrier
+
+有向模型的条件概率乘积和无向模型的势函数乘积都能画成因子图。圆圈与方框的区别使每个乘积项的作用范围显式可见；原来的父子方向则要由局部函数的含义说明。因此，因子图提供的是乘积分解的计算表示，第~\ref{chap:pgm-representations}章将比较不同表示保留的信息。
+
+算法图中的消息箭头、辅助虚线、分隔集色框和警示颜色由相应图注说明；它们不属于上述概率图节点与边的通用语义，不能只凭颜色或线型判断模型含义。
+
+\FloatBarrier
 
 \section{图模型上的推断与学习}
 \label{sec:pgm-overview-inference-learning}
@@ -114,13 +187,19 @@
 \section{概率图模型的历史}
 \label{sec:pgm-overview-history}
 
-局部相互作用如何组成整体分布，观测如何改变未知状态的概率，未知参数又如何从数据中估计，这些问题推动了概率图模型的发展。图~\ref{fig:pgm-overview-history}将代表工作放在同一条历史线上，以下结合各自处理的计算与建模问题说明它们的联系。
+局部相互作用如何组成整体分布，观测如何改变未知状态的概率，未知参数又如何从数据中估计，这些问题推动了概率图模型的发展。图~\ref{fig:pgm-overview-history}与图~\ref{fig:pgm-overview-history-recent}按时间展示代表工作，以下结合各自处理的计算与建模问题说明它们的联系。
 
 \begin{figure*}[p]
 \centering
-\includegraphics[width=157.406mm]{figures/06-probabilistic-graphical-models/04-models/tikz/pgm-models-history/figure.pdf}
-\caption{概率图模型发展的代表工作。局部随机模型组织联合分布，图结构表达独立性，推断与学习算法处理未知状态和参数，神经参数化扩展局部函数与生成路径。2008年标出变分理论的系统整合工作；各年份对应图中所列代表文献，节点间距仅用于排版。}
+\includegraphics[width=157.406mm,height=.88\textheight,keepaspectratio]{figures/06-probabilistic-graphical-models/04-models/generated/pgm-models-history/figure.png}
+\caption{概率图模型发展的代表工作（1925—1996）。沿虚线路线从上向下阅读：局部相互作用组织联合分布，随机更新估计难以直接计算的查询，潜变量学习处理缺失状态，图语义与消息计算联系独立性和推断。1988年Pearl的节点对应系统论述，而非概率网络的首次提出；节点间距不按时间比例绘制。}
   \label{fig:pgm-overview-history}
+\end{figure*}
+\begin{figure*}[p]
+\centering
+\includegraphics[width=157.406mm,height=.88\textheight,keepaspectratio]{figures/06-probabilistic-graphical-models/01-representation/generated/pgm-models-history-recent/figure.png}
+\caption{概率图模型发展的代表工作（2001—2022），承接图~\ref{fig:pgm-overview-history}。因子图组织局部函数与消息，变分理论统一近似推断的优化表述，神经参数化进一步扩展后验近似和生成路径。2008年对应理论整合工作，2015年的规范化流对应流式变分推断；年份采用代表文献的首次公开或发表时间，不表示各类方法的统一起点。}
+  \label{fig:pgm-overview-history-recent}
 \end{figure*}
 
 \subsection{从局部随机规律到图结构语义}
@@ -131,6 +210,8 @@
 
 1988年Pearl对概率网络的系统论述将条件独立与有向分解联系起来。同年Lauritzen与Spiegelhalter通过图变换组织局部消息，形成一般网络上的精确计算方法；1996年Lauritzen进一步系统整理图模型理论。这些工作分别为概率分解的合法性和查询的计算方式提供依据，而具体查询的开销仍由图结构决定\scite{pgm-pearl1988,pgm-overview-lauritzen1988,pgm-lauritzen1996}。
 
+% 保留小节标题与首段，避免两页历史插画夹断近似推断的说明。
+\Needspace{10\baselineskip}
 \subsection{学习、近似推断与神经参数化}
 
 大规模模型中的后验计算促使近似推断进一步发展。变分方法在可计算的分布族中优化后验近似，误差与所选分布族及优化结果有关；采样方法通过随机轨迹估计查询，有限时间内的误差与链的探索和混合行为有关。Wainwright与Jordan在2008年的综述系统联系了指数族、变分原理和图上计算\scite{pgm-wainwright2008}。
@@ -141,16 +222,16 @@
 
 复杂观测数据需要灵活的分布，同时也需要可承受的后验计算。一类研究设计便于计算的分解，或学习由观测直接给出后验近似的摊销方法，并评价近似误差与校准。另一类研究面向高维条件生成，考察潜变量、可逆变换、扩散和连续流分别怎样表示条件分布、怎样生成样本。流匹配通过拟合条件向量场学习连续生成路径，是其中的代表方法\scite{lipman2023flowmatching}。
 
-对于不完整、多模态或受领域约束的数据，模型还需明确哪些依赖能由现有观测识别，以及这些依赖是否支持所需查询。生成样本的质量只反映一部分结果：所选分布族对目标依赖的刻画、训练算法取得的参数、有限数据下预测概率的可靠程度，分别涉及表达能力、收敛性和泛化性，需要各自的评价依据。
+对于不完整、多模态或受领域约束的数据，还需检查模型假设的依赖能否由观测识别。除生成样本的质量外，也应分别评价分布表示的准确程度、参数学习的收敛性和预测概率的可靠程度。
 
 \section{本章小结}
 \label{sec:pgm-overview-summary}
 
-设备诊断既需要一个判断，也需要知道不同状态的概率。预测分布保留了点预测省略的信息，而多个状态的联合分布又带来参数数量和状态汇总的增长。概率图模型以符合问题的条件独立假设组织局部依赖，再由局部概率函数构成联合分布，从而在这些假设允许的范围内减少表示与计算。
+设备诊断既要判断状态，也要估计状态的概率。联合分布保留了状态间的依赖，却增加了参数和计算量。概率图模型用条件独立假设组织局部函数，并据此简化分布表示与查询计算。
 
-有向图以局部条件分布组织联合概率，无向图以势函数乘积及全局归一化组织联合概率，因子图则显式呈现选定的局部乘积。完整配置的概率可以逐项评价，后验查询还需消去未观测状态，其开销取决于计算所能利用的结构。推断在给定模型下回答概率查询，参数学习与结构学习则根据数据确定模型；潜变量使这些任务在实际算法中相互联系。
+有向图通过局部条件分布分解联合概率，无向图通过势函数乘积与全局归一化表示联合概率，因子图则呈现选定的局部乘积。推断在给定模型下计算概率查询，开销取决于图结构；参数学习与结构学习根据数据确定模型，潜变量使学习与推断相互联系。
 
-历史上的局部随机模型、独立性语义、精确与近似推断以及神经参数化，分别扩展了分布表示和计算的工具。它们仍可根据变量类型、结构与查询预算共同使用。下一章从有向图出发，建立图结构、条件独立和联合分解之间的严格关系。
+下一章从有向图出发，说明条件独立与联合分解的关系。
 
 \paragraph{扩展阅读}
-Bishop的PRML第8章从局部概率分解引出图表示，适合进一步理解图与条件独立的对应。Koller与Friedman的教材系统展开表示、推断和学习，并在给定模型与查询后分析计算所利用的结构。两者为本章的设备诊断问题提供了从概率分解到查询算法的完整背景\scite{bishop2006,pgm-koller2009}。
+Bishop的PRML第8章解释概率分解与图表示的对应；Koller与Friedman的教材进一步展开表示、推断和学习及其计算结构\scite{bishop2006,pgm-koller2009}。
