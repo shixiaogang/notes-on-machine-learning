@@ -12,7 +12,7 @@
 八章正文从旧 `tex/04-paradigms/01-reinforcement-learning/` 迁入
 `tex/07-reinforcement-learning/` 的三个部分。将当前图源路径还原为审查时路径，
 并还原十二卷迁移所需的两处跨卷显示文字后，八章分别与 rebase 前终审稿逐字节
-一致。标题、层级、顺序和标签没有因迁移改变。
+一致。标题、层级、顺序和标签没有因 rebase 迁移改变。
 
 图源迁入 `figures/07-reinforcement-learning/` 的对应部分；生成式场景图元数据
 位于同一图的 `generated/` 目录。主题词映射归入
@@ -30,10 +30,14 @@
 | `bash tests/check-book-editions.sh` | 十二卷、85章、卷内编号、无部分卷和标签唯一性通过 |
 | 卷七日志 | 无致命错误、未定义引用/文献、重复标签、缺字或overfull |
 | 非审查归档 `git diff --check` | 通过 |
+| 第1章目录层级 | 用户后续要求的1.1.3–1.1.6及后续1.2–1.4编号通过 |
 
 卷七 PDF：`target/vol7-reinforcement-learning.pdf`，SHA-256
-`9e9c1e202a386b4c4a03af7ee669676cfffe293d15a3c80262a2a1f36f8794e4`，
-大小3284904字节。
+`153af2d67954eaf19f7aa03ccc432a64735444a49c1ae9f27ff5a08c59b9f1ed`，
+大小3284704字节。
+
+rebase 后，用户另行要求将原第1.2至1.5节放到第1.1节下。正文段落和句子未改，
+12个标题命令下沉一级；复读证据见 `../ch01/structure-adjustment-v1.md`。
 
 ## 状态
 
