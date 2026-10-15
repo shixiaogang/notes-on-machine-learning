@@ -892,7 +892,7 @@
 1. 一般共轭之前先反解Bernoulli均值$0<\tau<1$：$A(\eta)=\log(1+e^\eta)$给出$\eta=\log\{\tau/(1-\tau)\}$，代入得到负熵。再讨论一般指数族的均值参数、最小表示，以及有限配置上包含边界的最大熵对偶。
 2. 命题（有限配置上的配分函数与最大熵对偶）：设$D$为有限非空配置集，$\boldsymbol T:D\to\mathbb R^m$，基准权重恒为$1$。定义$A(\boldsymbol\theta)=\log\sum_{z\in D}e^{\langle\boldsymbol\theta,\boldsymbol T(z)\rangle}, \qquad\mathcal M=\operatorname{conv}\{\boldsymbol T(z):z\in D\}$对$\boldsymbol\mu\in\mathcal M$，令$H^\star(\boldsymbol\mu)=\max_{q:\,\mathbb E_q\boldsymbol T=\boldsymbol\mu}H(q),$其中$q$遍历$D$上的全部概率质量函数。则在整个$\mathcal M$上有$A^\star(\boldsymbol\mu)=-H^\star(\boldsymbol\mu)$，在外部有$A^\star=+\infty$，且$A(\boldsymbol\theta)=\max_{\boldsymbol\mu\in\mathcal M} \{\langle\boldsymbol\theta,\boldsymbol\mu\rangle+H^\star(\boldsymbol\mu)\}$。
 3. 推导：有限概率单纯形紧；给定可行均值后的约束闭且非空，熵在单纯形上连续，因此每个$H^\star(\boldsymbol\mu)$都能达到。对任意质量函数$q$，展开有限KL得到$\langle\boldsymbol\theta,\mathbb E_q\boldsymbol T\rangle+H(q) =A(\boldsymbol\theta)-D_{\mathrm{KL}}(q\Vert p_{\boldsymbol\theta}) \leq A(\boldsymbol\theta),$且在$q=p_{\boldsymbol\theta}$处取等号。
-4. 在$\{0,1,2\}$上要求$\mathbb EX=1/2$时，最大熵分布为$p_j=t^j/(1+t+t^2)$。
+4. 在$\{0,1,2\}$上要求$\mathbb EX=1/2$时，最大熵分布为$p_j=t^j/(1+t+t^2)$。以六面骰子为对照：无矩信息时等概率熵为$\log6\approx1.792$ nat；已知均值为$4.5$时最大熵解形如$p_k\propto e^{\lambda k}$，$\lambda\approx0.371$，概率自$1$到$6$依次约为$0.054,0.079,0.114,0.165,0.240,0.347$，熵降至约$1.614$ nat，说明约束如何把质量推向高点并降低熵，也说明最大熵是“不作更多假设”而不是对真实分布的断言。
 
 #### 2.5.2 表示约束下的分布逼近
 
