@@ -27,7 +27,7 @@
 论证与表述逻辑：
 
 1. 若同一室温下，不同墙体蓄热会导致不同的下一步温度，室温一个坐标就不再足够，需要加入墙体温度。传感器滞后同样可能需要独立的内部状态。
-2. 初始条件规定轨迹从哪里开始，输入规定沿途施加什么作用，演化规律规定这些作用怎样改变状态。输出则是模型对外显示的量。
+2. 把温度递推继续算出$x_4$至$x_6$，并由$x_{t+1}-2=0.8(x_t-2)$说明与平衡值的差距每步乘$0.8$，因此平衡位置由输入决定、收敛速度由系数决定；改变系数或输入会分别改变两者，只报最终温度不足以描述轨迹。初始条件规定轨迹从哪里开始，输入规定沿途施加什么作用，演化规律规定这些作用怎样改变状态。输出则是模型对外显示的量。
 
 #### 4.1.2 离散时间下的状态更新
 
@@ -534,7 +534,7 @@
 
 1. 命题（有限时域RTS平滑）：在有限时域Kalman条件及每个$\boldsymbol P_{t+1\mid t}$可逆条件下，从终点$(\boldsymbol m_{T\mid T},\boldsymbol P_{T\mid T})$向后递推$\boldsymbol m_{t\mid T} &=\boldsymbol m_{t\mid t}+\boldsymbol J_t(\boldsymbol m_{t+1\mid T}-\boldsymbol m_{t+1\mid t}), \\ \boldsymbol P_{t\mid T} &=\boldsymbol P_{t\mid t} +\boldsymbol J_t(\boldsymbol P_{t+1\mid T}-\boldsymbol P_{t+1\mid t})\boldsymbol J_t^\top,$精确给出$\boldsymbol x_t\mid\mathcal Y_T$的高斯均值与协方差。
 2. 推导：给定$\boldsymbol x_{t+1}$后，未来状态和观测与更早状态条件独立，因此$P(\mathrm d\boldsymbol x_t\mid\boldsymbol x_{t+1},\mathcal Y_T) =P(\mathrm d\boldsymbol x_t\mid\boldsymbol x_{t+1},\mathcal Y_t)$。全概率公式给出后向因子化$P(\mathrm d\boldsymbol x_t\mid\mathcal Y_T) =\int P(\mathrm d\boldsymbol x_t\mid\boldsymbol x_{t+1},\mathcal Y_t) P(\mathrm d\boldsymbol x_{t+1}\mid\mathcal Y_T)$将一步条件均值对$\boldsymbol x_{t+1}\mid\mathcal Y_T$取期望，塔式性质得到平滑均值公式。全协方差公式分成两项：条件内协方差为$\boldsymbol P_{t\mid t}-\boldsymbol J_t\boldsymbol P_{t+1\mid t}\boldsymbol J_t^\top$，条件均值的协方差为$\boldsymbol J_t\boldsymbol P_{t+1\mid T}\boldsymbol J_t^\top$；相加即得平滑协方差。
-3. 沿用上述有限时域线性高斯条件，有$\boldsymbol P_{t\mid T}\preceq\boldsymbol P_{t\mid t}$，即滤波协方差减去平滑协方差是半正定矩阵。
+3. 标量随机游走教学例逐步核对算术：由预测方差$p_{1\mid0}=2$得增益$K_1=3/4$，读数$y_1=2$使滤波均值移到$3/2$、滤波方差降为$1/2$；再用$J_0=1/2$回传一半偏差，得平滑均值$3/4$与平滑方差$5/8<1$，说明关于$x_0$的不确定性被后续读数缩小。三种结果分别对应先验、只用$y_1$与使用完整窗口，平滑结果含有当时尚未获得的读数，不能替代滤波结果。沿用上述有限时域线性高斯条件，有$\boldsymbol P_{t\mid T}\preceq\boldsymbol P_{t\mid t}$，即滤波协方差减去平滑协方差是半正定矩阵。
 
 #### 4.6.5 基于完整观测的联合轨迹推断
 
