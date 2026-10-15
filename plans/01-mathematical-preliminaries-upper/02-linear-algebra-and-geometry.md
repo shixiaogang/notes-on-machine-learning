@@ -133,12 +133,14 @@
 
 #### 5.3.4 对象的联合运算
 
-主要内容：在同一空间内加法与数乘产生新对象。多个数组还可以按元素、成对索引或缩并规则联合计算；先检查轴与形状，再判断固定哪些输入时运算线性。
+主要内容：比较逐元素乘积、张量缩并和Kronecker积所保留或消去的索引，用注意力与卷积窗口说明形状相容、固定输入时的线性及完整运算的非线性。
 
 论证与表述逻辑：
 
-1. 查询数也不必等于键数。
-2. 两组轴分别作用时，Kronecker积（Kronecker product）记录成对索引：$\boldsymbol A\otimes\boldsymbol B =\begin{bmatrix} a_{1,1}\boldsymbol B&\cdots&a_{1,n}\boldsymbol B\\ \vdots&\ddots&\vdots\\ a_{m,1}\boldsymbol B&\cdots&a_{m,n}\boldsymbol B \end{bmatrix}\in\mathbb F^{mp\times nq}, \quad \boldsymbol A\in\mathbb F^{m\times n},\ \boldsymbol B\in\mathbb F^{p\times q}$按成对索引分别求和可得相容乘积的混合规则$(\boldsymbol A\otimes\boldsymbol B)(\boldsymbol C\otimes\boldsymbol D) =(\boldsymbol A\boldsymbol C)\otimes(\boldsymbol B\boldsymbol D)$对$\boldsymbol A\in\mathbb F^{p\times m}$、$\boldsymbol X\in\mathbb F^{m\times n}$、$\boldsymbol B\in\mathbb F^{n\times q}$，按列向量化给出$\operatorname{vec}(\boldsymbol A\boldsymbol X\boldsymbol B) =(\boldsymbol B^\top\otimes\boldsymbol A)\operatorname{vec}(\boldsymbol X)$证明只需看输出索引$i+(j-1)p$：两侧该元素均为$\sum_{\ell=1}^m\sum_{k=1}^n a_{i,\ell}x_{\ell,k}b_{k,j}$。
+1. 固定掩码的逐元素乘积对数组线性，却不对两个可变因子联合线性；数值例子对比它与普通矩阵乘法，再以多轴缩并明确哪些索引被求和、哪些轴留在输出中。
+2. 注意力先消去查询与键的特征轴形成配对分数，再归一化并汇总值的位置轴。固定权重时对值线性，完整注意力通常非线性；两个查询与三个键的例子说明需匹配特征维数而非位置数，近共线值矩阵又区分列差与行加权组合。非负且行和为一表示加权平均，概率解释仍需另有随机对象。
+3. 卷积窗口按空间位置和输入通道缩并，固定核后对窗口线性；教学双通道例分别保留共同水平和提取局部差异。核复用不免除边界、步幅与翻转约定，同向索引在此是模型中常称卷积的互相关。
+4. Kronecker积保留成对索引，由逐项求和验证混合乘积规则及按列向量化恒等式；后者使用普通转置，即使复数域也不加共轭。固定两侧矩阵后对中间未知量线性，实际逐侧乘法通常比形成大Kronecker矩阵省存储。
 
 #### 5.3.5 对象的分解与投影
 
@@ -162,13 +164,15 @@
 
 #### 5.3.7 方阵的幂、指数和平方根
 
-主要内容：固定一个方阵$\boldsymbol A$以后，可以反复复合它，并叠加不同次数的作用。这定义矩阵多项式$p(\boldsymbol A)=\sum_{j=0}^k a_j\boldsymbol A^j$，其中$\boldsymbol A^0=\boldsymbol I$。
+主要内容：把反复复合和幂级数定义为矩阵函数，再用谱表示解释有限次作用、非正规短时放大及矩阵函数的定义域。
 
 论证与表述逻辑：
 
-1. 命题（自伴矩阵的谱定理）：若$\boldsymbol A\in\mathbb R^{d\times d}$满足$\boldsymbol A^\top=\boldsymbol A$，则全部特征值为实数，并存在正交矩阵$\boldsymbol Q$及实对角矩阵$\boldsymbol\Lambda$使$\boldsymbol A=\boldsymbol Q\boldsymbol\Lambda\boldsymbol Q^\top$复Hermitian矩阵$\boldsymbol A^*=\boldsymbol A$同样有实特征值及酉分解$\boldsymbol A=\boldsymbol Q\boldsymbol\Lambda\boldsymbol Q^*$。
-2. 推导：先在复数域取特征对。由$\boldsymbol v^*\boldsymbol A\boldsymbol v=\lambda\boldsymbol v^*\boldsymbol v$，左侧为实数且$\boldsymbol v^*\boldsymbol v>0$，知$\lambda$为实数。实对称时，把$\boldsymbol v$拆成实部和虚部，至少一个给出非零实特征向量。
-3. 作为与可对角化例的比较，取$\boldsymbol J=\left[\begin{smallmatrix}0.8&1\\0&0.8\end{smallmatrix}\right]$。
+1. 方阵才能与自身反复复合；矩阵多项式和矩阵指数区别于逐元素函数。诱导范数控制幂级数的绝对收敛和指数截断误差，非交换例说明指数加法公式须有交换条件，截断界不等于浮点计算误差界。
+2. 从固定二维迭代例引出特征方向、不变子空间、特征多项式与重数；Cayley--Hamilton降低高次幂，足够特征方向给相似对角化，不足时保留Schur三角结构和Jordan幂零耦合。自伴谱定理通过实特征值及不变正交补归纳给出正交或酉基；正规性与非正规性决定是否能消除换基的长度放大。
+3. 对角化使矩阵函数逐特征值作用；Jordan块还需要相应阶数的函数导数。由块幂的多项式因子证明谱半径小于标量收敛半径时矩阵级数收敛；处于边界时不能仅凭谱半径统一判断。
+4. 半正定矩阵的唯一半正定平方根由谱定义，唯一性不扩展到任意平方根；普通负幂及实对数还要求正定。矩阵指数解线性常微分方程，特征值实部全负给连续时间衰减，但这与有限幂的计算任务须区分。
+5. 比较逐次作用、快速幂和谱表达的计算范围。二维例的两个非正交特征分量初始相消、随后衰减速度不同，解释先放大后衰减；Jordan例中的多项式累积不能被只保留特征值的对角近似取代，也不意味着数值实现应显式识别脆弱的精确Jordan块。
 
 ### 5.4 方程与优化
 
@@ -202,22 +206,26 @@
 
 ##### 5.4.1.2 基于Krylov空间的迭代求解
 
-主要内容：大规模稀疏矩阵的分解可能产生过多填充，甚至矩阵本身只以“输入向量，返回乘积”的程序给出。这时迭代法（iterative method）从初值$\boldsymbol x^{(0)}$出发，通过矩阵向量乘法逐渐修正。
+主要内容：矩阵只能通过乘积访问或稀疏分解填充过大时，从残差生成Krylov搜索空间；分别说明正定问题的共轭梯度法与一般方阵的GMRES怎样在该空间中选择更新。
 
 论证与表述逻辑：
 
-1. 为更充分利用已经做过的矩阵作用，可在$\mathcal K_k(\boldsymbol A,\boldsymbol r^{(0)}) =\operatorname{span}\{\boldsymbol r^{(0)},\boldsymbol A\boldsymbol r^{(0)},\ldots, \boldsymbol A^{k-1}\boldsymbol r^{(0)}\}$中寻找校正，这称为Krylov搜索空间。
-2. 第$k$步除一次矩阵作用外，还要与$k$个基向量正交化，成本$O(kd)$，存储全部基为$O(kd)$。重启GMRES每隔固定步数丢弃旧基并重新开始，降低存储，也放弃了旧搜索空间中的方向。
+1. 从平稳迭代的误差传播进入$\mathcal K_k(\boldsymbol A,\boldsymbol r^{(0)})=\operatorname{span}\{\boldsymbol r^{(0)},\boldsymbol A\boldsymbol r^{(0)},\ldots,\boldsymbol A^{k-1}\boldsymbol r^{(0)}\}$，将已有矩阵向量乘积保留下来，用于寻找初值的校正。
+2. 预条件用容易施加的辅助求解器改变搜索空间和残差读取，精确解不变；左、右预条件的变量与残差不同，构造和每步应用成本均须计算，不能因变换系统形式简单就忽略原求解成本。
+3. 对实对称正定矩阵，共轭梯度法在仿射Krylov空间中最小化二次能量。沿当前方向线搜索后，残差与该方向正交；后续方向若与它在$\boldsymbol A$内积下正交，就保留先前的一阶最优条件，因此需要共轭方向而非普通欧氏正交方向。
+4. 同时归纳残差彼此正交、搜索方向彼此共轭以及两组向量张成相应Krylov空间：线搜索给出$\alpha_t$，残差递推保留旧方向的最优条件；非零新残差扩充空间，再由相邻残差关系选取$\beta_t$，使新方向与全部旧方向共轭。正定性使子空间内的一阶条件充分，精确算术下最多$d$步求解；浮点正交性损失使这个步数不能作为实现保证。
+5. 对一般方阵，Arnoldi正交化把GMRES的残差最小化化为小型最小二乘。第$k$步的正交化成本和全部基存储均为$O(kd)$；重启减小存储，同时丢弃旧搜索方向，因而改变后续可利用的空间。
 
 #### 5.4.2 残差约束下的线性方程求解
 
-主要内容：不能精确匹配观测时，可以最小化残差，也可以只要求$\lVert\boldsymbol A\boldsymbol x-\boldsymbol b\rVert\leq\tau$。
+主要内容：目标输出不可达时，先最小化残差或规定残差容差，再在达到同一最优输出的输入中选代表；用两端正交分解建立伪逆，并比较直接分解与梯度求解。
 
 论证与表述逻辑：
 
-1. 命题（最小二乘与最小范数）：给定$\boldsymbol A\in\mathbb F^{m\times d}$和$\boldsymbol b\in\mathbb F^m$，全部最小二乘解为$\boldsymbol A^\dagger\boldsymbol b+\operatorname{null}(\boldsymbol A)$。若方程相容，它就是全部精确解中的最小范数者。
-2. 推导：将$\boldsymbol b=\boldsymbol P_R\boldsymbol b+\boldsymbol b_\perp$，$\boldsymbol x=\boldsymbol x_\perp+\boldsymbol x_N$按两端正交分解，则$\lVert\boldsymbol A\boldsymbol x-\boldsymbol b\rVert_2^2 =\lVert\boldsymbol A\boldsymbol x_\perp-\boldsymbol P_R\boldsymbol b\rVert_2^2 +\lVert\boldsymbol b_\perp\rVert_2^2$第二项不能由输入改变；第一项在且仅在$\boldsymbol x_\perp=(\boldsymbol A|_{N^\perp})^{-1}\boldsymbol P_R\boldsymbol b=\boldsymbol A^\dagger\boldsymbol b$时为零。所以全部最优输入为$\boldsymbol A^\dagger\boldsymbol b+\boldsymbol x_N$。两项正交，得到$\lVert\boldsymbol x\rVert_2^2=\lVert\boldsymbol A^\dagger\boldsymbol b\rVert_2^2+\lVert\boldsymbol x_N\rVert_2^2$，最小值仅在$\boldsymbol x_N=0$时达到。
-3. 满列秩时，正规方程的唯一解给出$\boldsymbol A^\dagger=(\boldsymbol A^*\boldsymbol A)^{-1}\boldsymbol A^*$；满行秩时，$\boldsymbol A^*(\boldsymbol A\boldsymbol A^*)^{-1}\boldsymbol b$既达到$\boldsymbol b$又属于$N^\perp$，故$\boldsymbol A^\dagger=\boldsymbol A^*(\boldsymbol A\boldsymbol A^*)^{-1}$。
+1. 由正规方程和列空间投影确定最近可达输出，再用近共线设计说明精确拟合系数可能随矩阵接近降秩而发散。最近输出不一定确定唯一输入，矩阵$\left[\begin{smallmatrix}1&1\\0&0\end{smallmatrix}\right]$与目标$(2,1)^\top$的例子把两次选择分开：最近输出为$(2,0)^\top$，输入仍可为$(1+t,1-t)^\top$。
+2. 令$N=\operatorname{null}(\boldsymbol A)$、$R=\operatorname{range}(\boldsymbol A)$。限制映射$\boldsymbol A|_{N^\perp}:N^\perp\to R$为双射，故伪逆先投影到$R$，再由限制逆选取$N^\perp$中的输入；它没有使不相容方程变得可解，也没有恢复被消去的信息。
+3. 将输入和输出分别正交分解，证明全部最小二乘解组成$\boldsymbol A^\dagger\boldsymbol b+N$，其中$\boldsymbol A^\dagger\boldsymbol b$是唯一的最小欧氏范数者；相容时同一向量也是全部精确解的最小范数者。例中输入平方范数为$2+2t^2$，因此选$(1,1)^\top$，残差$(0,1)^\top$仍不可消除。
+4. 满列秩和满行秩分别给出相应Gram矩阵公式，但一般求解仍应利用矩阵分解或乘积作用；后续子节分别展开保持欧氏长度的QR路线和把输出残差经伴随搬回输入端的梯度路线。
 
 ##### 5.4.2.1 基于矩阵分解的直接求解
 
@@ -290,13 +298,17 @@
 
 #### 5.5.4 秩约束下的矩阵逼近
 
-主要内容：一个$m\times n$稠密矩阵需要存储$mn$个数，每次作用需要$O(mn)$次运算。若能以$k$个输入输出方向的配对近似它，存储和作用成本便可降到$O((m+n)k)$。
+主要内容：以存储和作用成本为动机，用两端奇异方向表示一般矩阵，证明固定秩下的最优误差，再反求误差预算所需的最小秩；区分截断、范数惩罚与连续规模指标。
 
 论证与表述逻辑：
 
-1. 推导：对非零$\boldsymbol A$，写紧致SVD为$\boldsymbol P\boldsymbol\Sigma\boldsymbol Q^\top$。取$\boldsymbol L=\boldsymbol P\boldsymbol\Sigma^{1/2}$、$\boldsymbol R=\boldsymbol Q\boldsymbol\Sigma^{1/2}$，$q>r$时补零列，则乘积为$\boldsymbol A$，两侧平方范数均为$\sum_i\sigma_i$，所以右侧最小值不超过核范数。反过来，令$\boldsymbol C=\boldsymbol P\boldsymbol Q^\top$，则$\lVert\boldsymbol C\rVert_2=1$。
-2. 定义（稳定秩）：非零矩阵$\boldsymbol A$的稳定秩（stable rank）为$r_{\mathrm{stable}}(\boldsymbol A) =\frac{\lVert\boldsymbol A\rVert_{\mathrm F}^2}{\lVert\boldsymbol A\rVert_2^2} =\frac{\sum_i\sigma_i^2}{\sigma_1^2}$零矩阵另约定为零。
-3. 各层变换还满足$\lVert\boldsymbol A_L\cdots\boldsymbol A_1\rVert_2\leq\prod_{\ell=1}^L\lVert\boldsymbol A_\ell\rVert_2$，但逐层最强方向未必能对齐，上界可能宽松；稳定秩不能按同一方式简单相乘。
+1. 压缩需要比较各输入方向造成的输出，允许输入、输出维数不同，因而不能只依赖同空间特征方向。对$\boldsymbol A^*\boldsymbol A$作谱分解，构造非零输入输出方向的配对与缩放，并把零输入方向映为零，得到完整、经济型和紧致SVD；三者此时都精确表示原矩阵。
+2. 用近共线设计追踪输出转换$T\boldsymbol z=(\boldsymbol c_1^\top\boldsymbol z/3,\boldsymbol q^\top\boldsymbol z/\sqrt6)^\top$：设计与响应须一起变换，输入系数不变。原响应变为$(1,\sqrt{2/3}\delta)^\top$，后面另选的$(2,0)^\top$用于单独观察弱方向扰动，不能把两个试验的响应混同。Gram谱给出最小奇异值的渐近尺度，同时提醒不要用形成Gram矩阵和相近数相减作为稳定计算方法。
+3. 将伪逆写成非零奇异值倒数，说明弱方向反求会放大误差；继而建立规范极分解、酉不变范数与Schatten配对界，区分规范部分等距因子的唯一性和零方向延拓的任意性，也区分范数与$p<1$时的拟范数。
+4. 从Rayleigh商的特征值凸组合进入Rayleigh--Ritz、Courant--Fischer和正交列约束下的迹极值。加权成本矩阵正定时，通过Cholesky换元得到广义特征问题；半正定或不定成本不能直接沿用这些最值结论。
+5. 对任意秩至多$k$的候选，分别用零空间交维数和保留能量界证明截断SVD达到谱误差$\sigma_{k+1}$及Frobenius尾平方和误差。两种误差的意义和唯一性条件不同，其他加权误差也不自动共享最优性。中心化数据的PCA由同一迹极值给出当前样本的最佳平方重构，不能直接推出预测价值或总体统计保证。
+6. 核范数的因子表达由平衡SVD因子给上界、Frobenius配对给下界；联合因子优化仍非凸。核范数惩罚产生奇异值收缩，固定秩约束则保留原奇异值，这两种任务不能互换。
+7. 反用最优误差下界得到给定阈值下的最小整数秩，并用谱$(8,3,1,0.2)$说明同一阈值在两种误差下需要不同秩。最后比较代数秩、含容差的数值秩、稳定秩与熵形式的有效秩，说明连续规模指标不等于误差预算下的最优整数秩，也不等于核有效维度；因子存储收益还须连同求分解成本、噪声尺度和方向可辨认性判断。
 
 ### 5.6 扰动与稳定性
 
@@ -326,8 +338,9 @@
 论证与表述逻辑：
 
 1. 定义（可逆矩阵的条件数）：对同一向量范数诱导的矩阵范数，可逆方阵$\boldsymbol A$的条件数（condition number）为$\kappa(\boldsymbol A)=\lVert\boldsymbol A\rVert\lVert\boldsymbol A^{-1}\rVert$。
-2. 定义（线性系统的范数型相对后向误差）：对$\boldsymbol A\in\mathbb R^{m\times n}$、$\boldsymbol b\in\mathbb R^m$与候选$\widehat{\boldsymbol x}$，令$\eta_2(\widehat{\boldsymbol x};\boldsymbol A,\boldsymbol b) =\min\left\{\epsilon\geq0: \begin{array}{l} (\boldsymbol A+\Delta\boldsymbol A)\widehat{\boldsymbol x}=\boldsymbol b+\Delta\boldsymbol b,\\ \lVert\Delta\boldsymbol A\rVert_2\leq\epsilon\lVert\boldsymbol A\rVert_2,\quad \lVert\Delta\boldsymbol b\rVert_2\leq\epsilon\lVert\boldsymbol b\rVert_2 \end{array}\right\},$其中最小化也遍历满足条件的$\Delta\boldsymbol A,\Delta\boldsymbol b$，不另要求结构保持。
-3. 需要整个逆的许多元素时，可以从稳定分解计算并检验逆；若只需要$\boldsymbol A^{-1}\boldsymbol b$、$\boldsymbol b^\top\boldsymbol A^{-1}\boldsymbol b$或$\boldsymbol A^{-1}\boldsymbol U$，应用求解器通常已足够。
+2. 近共线例沿用前面已经转换的设计，但按已声明的扰动试验改取响应$(2,0)^\top$，把系数敏感与拟合敏感分开。另以$\operatorname{diag}(1,\epsilon)$说明小残差仍可伴随固定大小的解误差：弱方向正向压缩$\epsilon$倍，反求时再放大。残差读取方程尚未满足的量，解误差比较候选与目标解，后向误差则比较使候选成为精确解所需的数据扰动。
+3. 定义（线性系统的范数型相对后向误差）：对$\boldsymbol A\in\mathbb R^{m\times n}$、$\boldsymbol b\in\mathbb R^m$与候选$\widehat{\boldsymbol x}$，令$\eta_2(\widehat{\boldsymbol x};\boldsymbol A,\boldsymbol b) =\min\left\{\epsilon\geq0: \begin{array}{l} (\boldsymbol A+\Delta\boldsymbol A)\widehat{\boldsymbol x}=\boldsymbol b+\Delta\boldsymbol b,\\ \lVert\Delta\boldsymbol A\rVert_2\leq\epsilon\lVert\boldsymbol A\rVert_2,\quad \lVert\Delta\boldsymbol b\rVert_2\leq\epsilon\lVert\boldsymbol b\rVert_2 \end{array}\right\},$其中最小化也遍历满足条件的$\Delta\boldsymbol A,\Delta\boldsymbol b$，不另要求结构保持。
+4. 需要整个逆的许多元素时，可以从稳定分解计算并检验逆；若只需要$\boldsymbol A^{-1}\boldsymbol b$、$\boldsymbol b^\top\boldsymbol A^{-1}\boldsymbol b$或$\boldsymbol A^{-1}\boldsymbol U$，应用求解器通常已足够。
 
 #### 5.6.3 谱分解的稳定性
 
@@ -374,11 +387,12 @@
 
 #### 6.1.1 对象与空间的界定
 
-主要内容：圆上两个点的和通常不在圆上，所以可行位置不能直接组成上一章的向量空间。本章改用局部有限自由度描述可行集合。
+主要内容：从圆上加法不再封闭的困难进入非线性可行集合，用二维开带及一维中心线区分连续对象、局部自由度和带误差观测。
 
 论证与表述逻辑：
 
-1. 从这个连续模型采样时，潜在点（latent point）$\boldsymbol p_i=\Phi(s_i,u_i)$指误差发生前的真实位置，$\boldsymbol x_i=\boldsymbol p_i+\boldsymbol\epsilon_i$才是观测。
+1. 用参数化$\Phi(s,u)$记录中心线位置与横向偏移，分别得到不含端点的二维开带和一维中心线，再以同胚说明它们的连续关系。这里坐标线弯曲不意味着内在曲率非零：开带仍是平面的开集，采用欧氏长度时局部几何仍与平面相同。
+2. 采样前的$\boldsymbol p_i=\Phi(s_i,u_i)$是潜在位置，加入误差后的$\boldsymbol x_i=\boldsymbol p_i+\boldsymbol\epsilon_i$才是观测；不能由有限坐标记录直接认定潜在对象及其维数。
 
 #### 6.1.2 对象的局部坐标表示
 
@@ -413,13 +427,14 @@
 
 #### 6.2.1 对象的邻域关系
 
-主要内容：在嵌入模型中，$\mathcal M\cap O$（$O$为环境开集）给出相对开集。包含一个含有该点的相对开集的集合，称为该点的邻域。
+主要内容：先以相对开集、邻域与路径连通描述连续集合，再以有限单纯复形记录点、边与填充关系，为后面的拓扑近似建立对象。
 
 论证与表述逻辑：
 
-1. 推导：$k=1$时由$\partial_0=0$成立。对$k\geq2$，固定$i<j$，两次删除$v_i,v_j$后得到相同的$(k-2)$维面。先删$i$再删原来的$j$，系数为$(-1)^i(-1)^{j-1}$；先删$j$再删$i$，系数为$(-1)^j(-1)^i$，两者相反。
-2. 定义（闭链、边界与同调空间）：满足$\partial_kc=0$的链称为闭链（cycle），能写成$c=\partial_{k+1}b$的链称为边界（boundary）。实系数同调空间（homology space）及其维数定义为$H_k(\mathcal K;\mathbb R)=\ker\partial_k/\operatorname{im}\partial_{k+1}, \qquad \beta_k=\dim H_k(\mathcal K;\mathbb R)$$\beta_k$称为第$k$个Betti数（Betti number）。
-3. 若$N_k$是$k$维单纯形数，Euler示性数$\chi=\sum_k(-1)^kN_k$是更粗的摘要：空心三角形为$3-3=0$，填充三角形为$3-3+1=1$。
+1. 嵌入模型中的相对拓扑继承环境邻域；是否连通、能否沿路径到达是集合的整体关系，不能由一张有限点图的外观直接推出。
+2. 抽象单纯复形是一族向下封闭的非空顶点子集，三条边围成一圈与加入三角面是不同组合。把顶点放到标准单位向量处、把单纯形取为相应凸包，再取所有面的并及继承拓扑，得到几何实现$|\mathcal K|$；这些坐标记录粘合关系，无须等于原观测点位置，后文的连续路径与同伦比较作用于这个拓扑空间。
+3. 给定顶点定向后建立链群和交错边界映射。两次删除任意两顶点的系数相反，证明$\partial_{k-1}\partial_k=0$，从而边界必是闭链，可以定义商空间$H_k=\ker\partial_k/\operatorname{im}\partial_{k+1}$及Betti数。
+4. 通过空心与填充三角形比较未被填充的环，再用Euler示性数给更粗的摘要；有限组合描述与未知连续对象的拓扑恢复仍是不同层次的问题。
 
 #### 6.2.2 对象的位置与方向关系
 
@@ -433,13 +448,13 @@
 
 #### 6.2.3 对象的距离关系
 
-主要内容：切空间说明方向可不可行，却没有规定一单位坐标变化有多长。点带外侧与内侧相同的$\mathrm ds$对应不同弧长，因而内积必须按位置指定。
+主要内容：切空间给出可行瞬时方向，Riemann度量进一步把方向读成长度；由路径积分建立距离，同时保留最短路径是否存在的问题。
 
 论证与表述逻辑：
 
-1. 嵌入流形可以限制环境欧氏内积，得到诱导度量：$\boldsymbol G(\boldsymbol z)=\boldsymbol J_\varphi(\boldsymbol z)^\top\boldsymbol J_\varphi(\boldsymbol z)$对非零$\boldsymbol a$，满列秩保证$\boldsymbol a^\top\boldsymbol G\boldsymbol a=\lVert\boldsymbol J_\varphi\boldsymbol a\rVert_2^2>0$。
-2. 定义（测地距离）：在Riemann流形$(\mathcal M,g)$的同一路径连通分支内，定义测地距离（geodesic distance）为连接两点的全部分段光滑路径长度的下确界：$d_g(\boldsymbol p,\boldsymbol q)= \inf_{\substack{\gamma(a)=\boldsymbol p\\\gamma(b)=\boldsymbol q}}L_g(\gamma)$若无连接路径，约定值为$+\infty$；在可能不连通的整个空间上，它是扩展距离。
-3. 定义使用下确界是有意保留存在性问题。在穿孔平面$\mathbb R^2\setminus\{\boldsymbol0\}$中，$(-1,0)^\top$与$(1,0)^\top$之间可沿以被删原点为中心、半径任意小的半圆绕行，路径长度趋于$2$，却没有长度恰为$2$的允许路径。
+1. 为每点切空间指定光滑正定内积，嵌入模型可取诱导度量$\boldsymbol G=\boldsymbol J_\varphi^\top\boldsymbol J_\varphi$，满列秩保证正定。坐标转换时分量和度量须一起变换，才能保留同一个内积。
+2. 沿中心线比较角坐标与弧长：位置由$\theta=s/R$记录，速度分量满足$\dot s=R\dot\theta$，同一速度长度分别为$R|\dot\theta|$和$|\dot s|$。由此区分位置坐标、切向变化和长度规则；三者还没有规定有限位置更新。点带度量随横向位置变化仍可只是平面欧氏度量的坐标写法，不能据系数变化推断非零内在曲率。
+3. 对分段光滑路径积分速度长度，在同一路径连通分支内取所有允许路径长度的下确界，得到测地距离；无连接路径时约定为$+\infty$。穿孔平面中绕原点的路径长度趋于$2$却无法取到$2$，说明距离的下确界不保证由某条路径达到。
 
 #### 6.2.4 对象的等价关系
 
@@ -493,31 +508,34 @@
 
 #### 6.3.4 切向量的映射
 
-主要内容：例如圆上的点在移动时，其横坐标也随之变化；给定点的瞬时速度，就应能计算读数的瞬时变化。因此，除了点映射本身，还要建立它对切向速度的作用。
+主要内容：由点映射沿曲线的变化定义微分，使输入切向速度映到输出切空间；标量微分则属于余切空间，尚不是依赖度量的最陡方向。
 
 论证与表述逻辑：
 
-1. 对标量函数$f:\mathcal M\to\mathbb R$，微分读取速度引起的一阶数值变化。有限维向量空间上的全部线性读取组成其对偶空间（dual space）；所以$\mathrm df_{\boldsymbol p}\in T_{\boldsymbol p}^*\mathcal M$，不是一个切向量。
+1. 用输入、输出两端坐标的Jacobian组合证明输出速度只依赖初速度，与实现它的曲线无关，且对初速度线性。坐标转换的Jacobian由链式法则抵消，因此微分是几何映射，矩阵仅是记录，复合微分仍满足链式法则。
+2. 标量函数的微分是切向量上的线性读取，组成余切空间；坐标对偶基读取速度分量，圆上横坐标的例子给出角速度引起的数值变化。把读取表示成梯度还须指定度量，不能直接把微分当成切向量。
 
 #### 6.3.5 切向量的搬运
 
-主要内容：沿路径计算长度时，每个位置只输出一个标量。若要问速度有没有转弯，或相邻两点的方向是否一致，就必须比较不同切空间中的向量。
+主要内容：不同位置的切向量不能直接相减，需以联络定义沿路径的变化；在指定Levi--Civita联络后建立平行移动，并区分坐标基变化、外在弯曲与内在曲率。
 
 论证与表述逻辑：
 
-1. 把圆周上的单位切向速度画在每个位置，得到一个向量场。沿圆周求它的环境导数会出现法向分量，但流形内的方向变化应仍是切向的。
-2. 定义（截面曲率）：若$\boldsymbol u,\boldsymbol v\in T_{\boldsymbol p}\mathcal M$线性无关，定义它们张成平面的截面曲率（sectional curvature）为$K_{\boldsymbol p}(\boldsymbol u,\boldsymbol v) =\frac{g(R(\boldsymbol u,\boldsymbol v)\boldsymbol v,\boldsymbol u)} {g(\boldsymbol u,\boldsymbol u)g(\boldsymbol v,\boldsymbol v)-g(\boldsymbol u,\boldsymbol v)^2}$分母是该平行四边形的平方面积，正定性保证它为正。
-3. 圆的一维方向沿环境空间转动，产生二阶法向偏离，但其内在Riemann曲率为零；圆柱也有法向弯曲而内在平坦。局部曲率也不替代拓扑：平面与圆柱局部同样平坦，整体的环却不同；局部零曲率本身不保证任意全局闭路上的搬运都平凡。
+1. 圆周上的单位切向量在环境中转动，环境导数可以含法向分量；嵌入度量下取切向投影，得到流形内的变化。联络须满足对方向的线性和对向量场的Leibniz规则，度量相容且无挠条件选定Levi--Civita联络。
+2. 坐标基变化由Christoffel系数记录。欧氏正半轴改用$x=e^u$后，$\Gamma^x_{x,x}=0$而$\Gamma^u_{u,u}=1$；同一常向量场在新基中的分量导数与联络修正相抵，协变导数仍为零。沿一般路径还要乘运动速度，说明修正项是为了比较同一几何向量场，而不是另加物理转向。
+3. 协变导数为零定义沿指定路径的平行移动，它比较各点切空间并保持内积；在圆上保持环境向量不变反而可能离开切空间。继而通过绕小闭路的搬运比较引出曲率张量及截面曲率，说明它们测量内在几何的路径依赖。
+4. 圆和圆柱可以在环境中弯曲而内在平坦；平面与圆柱的局部平坦性也不消除整体拓扑差异，局部零曲率本身不能保证任意全局闭路搬运都平凡。
 
 #### 6.3.6 对象的位置更新
 
-主要内容：给定当前位置和一个切向步，直接沿环境直线前进通常会离开流形。让速度沿自身路径平行移动，在初值解存在的时间内，就能在保持初始速度大小的同时产生流形内的新位置。
+主要内容：以零协变加速度产生流形内的测地运动，再把初速度映到有限时间后的新位置；精确运动成本较高时，以一阶相容的回缩代替。
 
 论证与表述逻辑：
 
-1. 度量相容进一步给出$\frac{\mathrm d}{\mathrm dt}\lVert\dot\gamma\rVert_g^2 =2g(D\dot\gamma/\mathrm dt,\dot\gamma)=0$，因此速度大小恒定。
-2. 定义（回缩）：对每个$\boldsymbol p$，在$T_{\boldsymbol p}\mathcal M$的零向量邻域中给定$\mathcal R_{\boldsymbol p}(\boldsymbol v)\in\mathcal M$，并使其光滑依赖$(\boldsymbol p,\boldsymbol v)$。若$\mathcal R_{\boldsymbol p}(\boldsymbol0)=\boldsymbol p,\qquad \mathrm d(\mathcal R_{\boldsymbol p})_{\boldsymbol0}[\boldsymbol v]=\boldsymbol v,$则称这一族映射为回缩（retraction）。
-3. 指数映射是一种局部回缩，其他回缩可有不同的高阶误差。
+1. 采用仿射参数的测地线满足速度沿自身路径平行移动，度量相容使速度大小恒定；环境加速度仍可为法向。仿射重参数化保留方程，一般非匀速重参数化则增加加速度项。
+2. 由度量相容与无挠联络的坐标关系求Christoffel表达，得到测地二阶方程；回看正半轴的换坐标例，说明这些系数不是张量，系数与基变化组合后的协变加速度才是几何对象。
+3. 光滑系数只保证初值的局部唯一解。指数映射将存在至时间一的初速度映到终点，零点处微分为恒等，故局部可逆；开球有限时间离开可行域与球面各方向到达对跖点分别说明全局定义域和全局单射都不能默认。
+4. 回缩保留起点及初速度，可比精确指数映射更易计算，但只保证局部一阶相容，不承诺任意大步长、精确测地运动或整个优化序列收敛。
 
 #### 6.3.7 区域的体积计算
 
@@ -542,13 +560,13 @@
 
 #### 6.4.1 距离信息下的坐标重构
 
-主要内容：设点数$n$为正整数，且只知道这些点之间的距离，能否给它们安排欧氏坐标，并精确保留这些距离？先从反方向计算。
+主要内容：从已知平方距离矩阵反求欧氏坐标，以双重中心化的半正定性判定是否可精确重构，并明确有限重构维数与潜在流形维数的区别。
 
 论证与表述逻辑：
 
-1. 命题（有限距离的欧氏坐标重构）：设$\boldsymbol\Delta\in\mathbb R^{n\times n}$对称且对角元为零，并令$\boldsymbol B=-\boldsymbol J\boldsymbol\Delta\boldsymbol J/2$。矩阵$\boldsymbol\Delta$是某组欧氏点的平方距离矩阵，当且仅当$\boldsymbol B$半正定。精确保留全部距离所需的最小欧氏维数为$r=\operatorname{rank}(\boldsymbol B)$。
-2. 推导：反过来，半正定性和谱定理给出紧谱分解$\boldsymbol B=\boldsymbol Q_r\boldsymbol\Lambda_r\boldsymbol Q_r^\top$，其中$\boldsymbol\Lambda_r$含$r$个正特征值。又因$\boldsymbol B\boldsymbol1=\boldsymbol0$，$\lVert\boldsymbol Y^\top\boldsymbol1\rVert_2^2=\boldsymbol1^\top\boldsymbol B\boldsymbol1=0$，坐标已中心化。$\boldsymbol\Delta'$与$\boldsymbol\Delta$的双重中心化均为$\boldsymbol B$，两者之差对称、对角为零且双重中心化为零。
-3. 有限坐标重构也不证明潜在集合是一张光滑曲面。即使点落在圆上，输入欧氏距离记录的仍是弦长，不能把保弦长的坐标自动解释为沿圆排列的一维坐标。
+1. 先从中心化坐标计算距离，得到$\boldsymbol B=-\boldsymbol J\boldsymbol\Delta\boldsymbol J/2$。证明对称且对角为零的$\boldsymbol\Delta$可由欧氏点的平方距离产生，当且仅当$\boldsymbol B\succeq0$；正谱分解构造坐标，最小欧氏重构维数为$\operatorname{rank}(\boldsymbol B)$。
+2. 在三点例中核对坐标与弦长；正谱截断给半正定低秩近似，舍弃负谱的意义仍需与测量误差比较。所有点重合时不使用除以总谱量的比值准则。
+3. 圆上的三个点精确保留弦长需要二维欧氏坐标，圆在局部却只需一个角度参数。前者描述有限距离矩阵的重构要求，后者描述连续模型的局部自由度；有限重构本身不证明潜在集合是一张光滑流形，还要判断局部方向、沿模型距离与邻域粘合。
 
 #### 6.4.2 初值条件下的测地轨迹求解
 
@@ -560,13 +578,13 @@
 
 #### 6.4.3 端点约束下的最短路径求解
 
-主要内容：固定时间区间$[a,b]$，定义$E(\gamma)=\frac12\int_a^b\lVert\dot\gamma\rVert_g^2\,\mathrm dt$由Cauchy--Schwarz不等式，$L_g(\gamma)^2\leq2(b-a)E(\gamma)$，等号恰对应几乎处处恒定的速度大小。
+主要内容：固定端点时比较全部允许路径的长度，以能量的一阶变分得到测地线方程，并说明测地运动、距离下确界和达到下确界的最短路之间的差别。
 
 论证与表述逻辑：
 
-1. 在局部坐标中，Lagrange函数为$\mathscr L(\boldsymbol z,\dot{\boldsymbol z})=\frac12\sum_{i,j}g_{i,j}(\boldsymbol z)\dot z^i\dot z^j$。
-2. 命题（Hopf--Rinow定理的最短路存在性结论）：设$(\mathcal M,g)$为有限维、连通、无边界的光滑Riemann流形。若它关于$d_g$完备，则任意两点之间存在长度最短测地线。此时任意初速度的测地运动也可以延拓到所有实数时间。
-3. 穿孔平面给出省略完备性的反例。用欧氏诱导度量连接$(-1,0)^\top$和$(1,0)^\top$，沿横轴走到$(-\varepsilon,0)^\top$，绕半径$\varepsilon$的半圆，再沿横轴到终点，长度为$(1-\varepsilon)+\pi\varepsilon+(1-\varepsilon) =2+(\pi-2)\varepsilon\longrightarrow2$环境距离给出下界$2$，所以$d_g=2$。
+1. 固定时间区间后，Cauchy--Schwarz给出$L_g(\gamma)^2\leq2(b-a)E(\gamma)$，恒速时取等号。对能量的局部坐标表达作Euler--Lagrange变分得到测地线方程，但驻定只给必要条件，不自动得到全局最短路线。
+2. 完整圆上的长弧与短弧都可具有零协变加速度，只有短弧达到两端距离；两者初速度不同，所以局部初值解唯一也不代替端点间的全局长度比较。测地线规定局部运动，距离比较所有允许路线，最短路还要求某条路线实际达到下确界。
+3. 引用Hopf--Rinow的存在性结论：有限维、连通、无边界的光滑Riemann流形若关于$d_g$完备，任意两点间存在最短测地线，测地初值解也能全时间延拓。正文在此使用定理而不展开其证明；穿孔平面的绕行长度趋于$2$却不能达到，说明省略完备性可能失败。
 
 #### 6.4.4 流形约束下的点优化
 
@@ -654,13 +672,13 @@
 
 #### 6.5.6 有限采样下的拓扑逼近
 
-主要内容：固定同一组点和尺度，可以按共同覆盖或成对接近构造复形。
+主要内容：在同一点集和尺度上分别以共同覆盖与成对接近构造Čech和Rips复形，说明复形代表球并集拓扑所需的覆盖条件及潜在对象恢复的额外要求。
 
 论证与表述逻辑：
 
-1. 定义（Čech复形与Vietoris--Rips复形）：给定欧氏点集$\{\boldsymbol x_i\}$及$\varepsilon>0$，以$B(\boldsymbol x_i,\varepsilon/2)$表示开球。Čech复形（Čech complex）$\mathcal C_\varepsilon$纳入所有满足$\bigcap_{i\in\sigma}B(\boldsymbol x_i,\varepsilon/2)\neq\varnothing$的非空顶点集$\sigma$。Vietoris--Rips复形（Vietoris--Rips complex）$\mathcal R_\varepsilon$纳入所有满足$\lVert\boldsymbol x_i-\boldsymbol x_j\rVert_2\leq\varepsilon$对任意$i,j\in\sigma$成立的非空顶点集。
-2. 复形何时能代表球并集的拓扑，还依赖覆盖条件。良好覆盖（good cover）要求每个非空有限交集都可连续收缩到一点；有限欧氏开球的交集为凸集，满足这项要求。
-3. 低维图像中的分离簇或孔洞还可能受邻居数、尺度、初始化与优化误差影响。拓扑方法不能修复错误的局部输入：跨折捷径会被忠实组合，完全漏采的区域也无法凭空恢复。
+1. 对半径$\varepsilon/2$的欧氏开球，Čech复形纳入共同交集非空的顶点集，Rips复形则按所有成对距离不超过$\varepsilon$纳入单纯形；开闭边界与尺度约定必须一起保留，不能只凭边相近就声称同一个填充关系。
+2. 良好覆盖要求每个非空有限交集可收缩到一点，有限欧氏开球的交集为凸集因而满足条件。神经引理在这一条件下比较的是Čech复形的几何实现$|\mathcal C_\varepsilon|$与球并集，给出相互连续映射且复合可变形到恒等映射的同伦等价；它弱于同胚，正文不在此展开引理证明。
+3. 球并集与复形等价仍不意味着恢复了未知潜在流形；采样覆盖、噪声和尺度均须另查。错误局部邻接会被组合结构忠实保留，完全漏采区域也不能由拓扑方法凭空补回。
 
 ### 6.6 扰动与稳定性
 
@@ -696,11 +714,13 @@
 
 #### 6.6.3 坐标重构的稳定性
 
-主要内容：设平方距离矩阵由$\boldsymbol\Delta$变成$\boldsymbol\Delta+\boldsymbol E$。
+主要内容：把平方距离误差传到双重中心化的Gram矩阵，再在谱隙、正谱下界和坐标对齐条件下讨论重构响应。
 
 论证与表述逻辑：
 
-1. 比较坐标前应先消去平移，再允许整体正交对齐，因为距离本来就不识别这些变换。若点标签也改变，还须先建立点对应。
+1. 中心化矩阵是正交投影，故距离扰动$\boldsymbol E$带来的Gram扰动为$-\boldsymbol J\boldsymbol E\boldsymbol J/2$，算子范数至多$\lVert\boldsymbol E\rVert_2/2$；再应用线性代数章的谱扰动结论。
+2. 前$d$维与后续模态间的谱隙控制所选子空间，正特征值远离零才使开平方稳定；近零模态可能改变保留维数，重复特征值允许子空间内部旋转。
+3. 比较坐标前须去平移并允许整体正交对齐，标签变化还需点对应。距离的小扰动不能保证优化器返回相同朝向的数值坐标，稳定性结论须带着上述尺度和识别条件使用。
 
 #### 6.6.4 拓扑重构的稳定性
 
@@ -714,11 +734,12 @@
 
 #### 6.6.5 路径解的稳定性
 
-主要内容：初值问题同时更新位置与速度。设另一方程为$\widetilde{\boldsymbol y}'=\widetilde A(\widetilde{\boldsymbol y})$。
+主要内容：将测地初值问题写成位置与速度的联合一阶系统，在共同受控区域内估计轨迹扰动；再说明固定端点最短路另有唯一性和退化边界。
 
 论证与表述逻辑：
 
-1. 固定端点的最短路有不同边界：距离作为最小代价可能连续，达到它的路线却未必唯一。球面上到对跖点的最短路有多条；终点向不同方向稍微偏离，会选出不同的大圆弧。
+1. 若两条初值解留在同一紧区域，原向量场有统一Lipschitz常数$L$、两向量场差异至多$\eta$，由积分方程和Gronwall不等式得到初始误差的$e^{Lt}$放大项及$\eta$的累积项；离开比较区域后须重新核对图和常数。这比较的是固定时间内的初值轨迹。
+2. 固定端点时，距离作为最小代价可能连续，达到它的路线却可不唯一；球面对跖点的例子说明微小端点变化可选出不同大圆弧。只有局部最短路唯一且避开端点映射退化，才可用指数映射的局部逆控制路线，初值唯一性不替代这些条件。
 
 ### 6.7 本章小结
 
@@ -799,11 +820,12 @@
 
 #### 7.2.3 函数的等价关系
 
-主要内容：积分半范数的零方向是几乎处处为零的可测函数。若另用退化权重，零方向由该加权测度决定，而不是由原测度自动决定。
+主要内容：以积分误差为零识别几乎处处相等的函数，说明得到的商空间何时仍允许读取指定点值。
 
 论证与表述逻辑：
 
-1. 点值读取未必在这个商空间上良定义：改动单点可以不改变等价类却改变读数。具有连续代表且测度全支撑时，连续代表唯一，才可据它读取点值；另一些空间会直接把函数值作为对象的一部分。
+1. 积分半范数的零方向由所用测度决定；退化权重可能额外忽略原测度下可见的区域，不能把两种等价关系混用。
+2. 对可测的零质量单点，改动点值不改变等价类，故该点读取未必在商空间上良定义。若连续代表存在且测度全支撑，连续代表唯一，可据它读取；读取是否有界仍须检查相应范数，不能从代表唯一直接推出稳定性。
 
 ### 7.3 运算与映射
 
@@ -829,33 +851,37 @@
 
 #### 7.3.2 函数的标量读取
 
-主要内容：为计算变换后函数的读数，先说明整函数之间的线性作用。映射$A:\mathcal V\to\mathcal W$称为算子；本节主要研究线性算子，即$A(af+bg)=aAf+bAg$。
+主要内容：从函数之间的线性算子进入标量泛函，依次检查读取的有界性、Riesz方向表示和点值读取条件，再由正定核构造能稳定读取点值的RKHS。
 
 论证与表述逻辑：
 
-1. 推导：先令$\mathcal{V}_0$为核截面符号$K_x$的形式有限线性组合所成的向量空间：$\mathcal{V}_0 = \left\{ \sum_{i=1}^{n}a_iK_{x_i}: n\in\mathbb{N},\ a_i\in\mathbb{R},\ x_i\in\mathcal{X} \right\}$这里的$K_x$暂时只是由$x$索引的形式符号，尚未把不同形式和按逐点函数值识别。对$f=\sum_i a_iK_{x_i}$和$g=\sum_jb_jK_{z_j}$定义$\langle f,g\rangle_0 = \sum_{i,j}a_i b_jK(x_i,z_j)$正定性只保证$\langle f,f\rangle_0\geq0$，还可能有非零形式和的长度为零。令$\mathcal{N} = \{f\in\mathcal{V}_0:\langle f,f\rangle_0=0\}$半内积仍满足Cauchy--Schwarz不等式：对$\langle g,g\rangle_0>0$，最小化非负二次式$\langle f-tg,f-tg\rangle_0$即可得到原来的证明；若$\langle g,g\rangle_0=0$，非负式$\langle f+tg,f+tg\rangle_0=\langle f,f\rangle_0+2t\langle f,g\rangle_0$对所有实数$t$成立，迫使交叉项为零。
-2. 定义（自伴、正与紧算子）：设$T:\mathcal H\to\mathcal H$为实Hilbert空间上的有界线性算子。若对所有$f,g\in\mathcal H$有$\langle Tf,g\rangle=\langle f,Tg\rangle$，称$T$自伴，即$T^*=T$。若$T$自伴且$\langle Tf,f\rangle\geq0$对每个$f\in\mathcal H$成立，称$T$为正算子。若对每个有界序列$(f_n)$，序列$(Tf_n)$都具有在$\mathcal H$中范数收敛的子列，称$T$为紧算子。
-3. 紧性也可用于$S:\mathcal H\to\mathcal G$，此时要求有界输入序列的像在$\mathcal G$中有范数收敛子列，不要求两个空间相同。
+1. 用统一范数界定义有界线性算子和有界标量读取，积分与正交系数读取给出正例。$L^2(\mu)$在可测零质量单点处没有等价类确定的点值；即使只看连续函数，$[0,1]$上的尖峰$f_n(x)=\max\{1-nx,0\}$满足平方积分$1/(3n)$而$f_n(0)=1$，否定由$L^2$范数给出的统一原点读取界。正质量原子处需按测度另行判断。
+2. 在实Hilbert空间中证明Riesz表示：以有界泛函的闭零空间作正交分解，得到唯一表示方向及范数相等。它表示的是已经有界的读取，不能先把任意点值当成有界泛函。
+3. 因点值预测需要具有确定点值且读取有界的函数，定义RKHS并由Riesz表示得到核截面和再生性质；核对角线给出位置相关的最优读取常数。仿射核例把函数、坐标、核截面和内积具体对应起来。
+4. 反向从正定核的形式有限和构造半内积，先商去零长度方向再完备化，以读取界保证其元素对应确定函数，得到唯一RKHS；这个构造保留半正定时可能存在的冗余。最后定义伴随、自伴、正和紧算子，为积分变换的谱分析准备条件，不能把有界性、正性和紧性混为同一性质。
 
 #### 7.3.3 函数的积分变换
 
-主要内容：有限Gram矩阵只访问有限个位置。要考察核如何作用于整个函数，需要先指定积分测度，再把核值累计成新的函数；这个积分算子的谱才描述全域作用。
+主要内容：指定积分测度后，把核作用于整个函数，以紧自伴谱和Mercer条件连接积分坐标与RKHS坐标；最后用群平均说明积分式变换也可以主动丢弃信息。
 
 论证与表述逻辑：
 
-1. 命题（有限群平均的不变性）：对有限群$G$及任意实函数$h:\mathcal X\to\mathbb R$，定义$\overline h(x)=\frac1{|G|}\sum_{g\in G}h(g\cdot x)$则$\overline h$对给定作用不变。
-2. 推导：固定$a\in G$，由作用的复合条件，$\overline h(a\cdot x)=\frac1{|G|}\sum_{g\in G}h((ga)\cdot x)$映射$g\mapsto ga$是$G$上的双射，其逆为$g\mapsto ga^{-1}$。更换求和索引后右端等于$\overline h(x)$，结论对任意$a,x$成立。
-3. 平均的代价是信息丢失。例如对$\{\boldsymbol I,-\boldsymbol I\}$作用取$h(\boldsymbol x)=x_1$，平均恒为零；它不仅忽略符号，也失去幅度信息。
+1. 在$\sigma$有限测度空间上，对平方可积核定义$T_K$。Fubini与Cauchy--Schwarz保证积分几乎处处存在并给出算子界；以有限矩形指示函数和逼近核，再用算子范数极限证明紧性。核对称时自伴，正性另查，不能把忽略零测集的算子正性与核每个有限Gram矩阵的正定性混同。
+2. 证明紧自伴算子的正交分解：非零特征空间有限维，无穷非零特征值只能趋零，特征方向与零空间共同闭张成整个空间。该定理给出空间范数中的算子展开，还不自动给核在每点的级数展开；后者使用紧度量域、连续正定核和全支撑有限测度等Mercer条件。
+3. 固定$[-1,1]$上的仿射核$K(x,z)=1+xz$，增加均匀测度后比较两种归一化：RKHS基为$1,x$，$L^2(\mu)$基方向为$1,\sqrt3x$，正特征值为$1,1/3$。同一$f=a+bx$的谱系数为$a,b/\sqrt3$，核范数用$\sum_jb_j^2/\mu_j$恢复$a^2+b^2$；小特征值在这里补偿坐标尺度，测度改变会改变积分谱而不改原有核内积。
+4. 对有限群平均，以群乘法的双射重排求和索引证明输出不变；对$\{\boldsymbol I,-\boldsymbol I\}$平均横坐标的例子说明，这一机制也会丢掉幅度等任务可能需要的信息。
 
 #### 7.3.4 函数与场的微分运算
 
-主要内容：经典导数要求逐点极限存在，会排除带尖点但整体仍然规则的函数。为了只保留积分运算真正需要的变化信息，可以反过来要求分部积分恒等式成立：让导数先作用在光滑测试函数上，再检验能否由另一个普通函数表示结果。
+主要内容：以测试函数和积分恒等式建立弱导数及Sobolev空间，再在固定几何和边界条件下定义标量与向量场的微分算子，区分形式表达式和实际算子定义域。
 
 论证与表述逻辑：
 
-1. 证明完备性时，取其中的柯西列$(f_n)$。对每个$|\alpha|\leq m$，序列$(D^\alpha f_n)$在$L^2(U)$中都是柯西列，故收敛到某个$g_\alpha\in L^2(U)$，其中$g_0$记为$f$。
-2. 定义（Laplace--Beltrami算子）：设$f$为二阶连续可微的实函数。将梯度再取散度，得到Laplace--Beltrami算子（Laplace--Beltrami operator）：$\Delta_g f=\operatorname{div}_g(\operatorname{grad}f) =\frac1{\sqrt{\det\boldsymbol G}}\sum_{i,j} \frac{\partial}{\partial z^i} \left(\sqrt{\det\boldsymbol G}\,g^{i,j} \frac{\partial f}{\partial z^j}\right)$其中$g^{i,j}$是逆度量矩阵$\boldsymbol G^{-1}$的第$(i,j)$项。本章取$\Delta_g$为热方程生成元；适当边界条件下，$-\Delta_g$是非负算子。
-3. Green恒等式也联系微分作用与谱，但必须先规定$-\Delta_g$在哪些函数上作用。取能量空间$V$，无边界或齐次Neumann条件下令$V=H^1(\mathcal M)$，齐次Dirichlet条件下令$V=H_0^1(\mathcal M)$。
+1. 紧支撑测试函数把分部积分限制在内部，局部可积性保证积分有意义；以测试函数的区分性质证明弱导数几乎处处唯一。连续尖点$|x|$具有一阶弱导数，阶跃函数却没有局部可积函数意义下的弱导数，说明几乎处处存在经典导数不足以判断Sobolev成员。
+2. 同时累计零阶函数与至整数阶弱导数的平方积分定义$W^{m,2}$。逐项$L^2$极限仍满足弱导数恒等式，由此证明完备；零边界子空间由闭包定义，边界取值解释须另有边界规则性。有限区间$H^1$的绝对连续代表和一维积分界给稳定点值读取，三维缩放尖峰则否定一般$W^{1,2}$的统一点值界，阶数、维数和区域不能省略。
+3. 在无边界或具有Lipschitz边界的紧致光滑Riemann流形上，按函数和梯度能量完备化得到$H^1$；边界迹由有界限制运算延伸，固定与自由边界对应不同允许扰动。这里Lipschitz描述边界形状的规则性，固定或自由描述变分任务的边界要求。需要边界的点带改用截断闭域，不能把原来的开带默认为同一积分任务。
+4. 度量体积密度进入散度，梯度再取散度得到Laplace--Beltrami算子，由散度定理推导Green恒等式并保留边界项。向量场使用联络及形式伴随定义非负号约定的联络拉普拉斯，不能将无界微分作用直接套入有界算子的伴随定理。
+5. 以能量弱形式规定$-\Delta_g$的实际定义域，再使用相应标准椭圆谱结论；正文不证明一般离散谱理论。Green式可证明谱非负，但离散性、完备性还依赖紧致性和椭圆理论；Dirichlet与Neumann的零模不同，圆上高频放大又说明该微分算子通常无界，不能视为有界紧算子谱定理的直接实例。
 
 #### 7.3.5 目标泛函的微分运算
 
@@ -890,13 +916,14 @@
 
 #### 7.4.2 有限观测下的函数拟合
 
-主要内容：有限观测只限制少数读数，候选函数在观测之外仍可能变化。例如不限制次数与系数的多项式既能拟合平滑趋势，也能在观测之间快速振荡。
+主要内容：有限读数不足以确定任意函数，需明确候选空间、拟合项和惩罚；先给凸目标的一阶最优判据，再用读取方向的正交分解将适用目标化为有限表示。
 
 论证与表述逻辑：
 
-1. 命题（有限样本表示定理）：设$\mathcal{H}_K$是$\mathcal{X}$上的RKHS，训练输入为$x_1,\ldots,x_n$，其中$n$为正整数。令$\Phi:\mathbb{R}^n\to(-\infty,\infty]$为任意函数，$\Omega:[0,\infty)\to(-\infty,\infty]$单调不减。
-2. 推导：这是有限维子空间，因而闭。由投影定理，任意$f\in\mathcal{H}_K$都可唯一分解为$f=f_M+f_{\perp},\qquad f_M\in M,\quad f_{\perp}\perp M$对每个训练输入$x_i$，再生性质给出$f(x_i) = \langle f_M,K_{x_i}\rangle + \langle f_{\perp},K_{x_i}\rangle = f_M(x_i)$因此经验项$\Phi$无法区分$f$与$f_M$。另一方面，正交分解给出$\lVert f\rVert_{\mathcal{H}_K}^2 = \lVert f_M\rVert_{\mathcal{H}_K}^2 + \lVert f_{\perp}\rVert_{\mathcal{H}_K}^2,$故$\lVert f_M\rVert\leq\lVert f\rVert$。
-3. 若拟合项为$\Phi(L_1f,\ldots,L_nf)$，其中$L_i$是$\mathcal H$上的有界线性泛函，令$h_i$为各自的Riesz表示元，再取$M=\operatorname{span}\{h_i\}$。
+1. 范数球首先限制指定尺度下的幅度：$L^2$控制整体能量，正整数阶Sobolev范数还控制相应弱导数的平方积分，Lipschitz约束直接比较输入变化；在RKHS中，核对角与核截面距离分别给点值及两点差的控制，输入Lipschitz性还依赖核距离条件。平方读数误差加$\lambda\lVert f\rVert_{\mathcal H}^2$使大范数候选付出更高代价，但它约束整体能量、弱导数能量还是核方向幅度，取决于所选范数；不能仅凭范数惩罚就断言每处点值或导数受到相同控制。附加可行约束也须作为任务条件单独声明。
+2. 在非空凸约束集上，若目标为有限凸函数且在候选点的开邻域内Fréchet可微，方向导数给出全局最优的一阶变分不等式；凸性是从局部方向判据到全局结论的关键条件，判据本身不保证最优解存在。
+3. 有限样本表示定理处理只通过有限训练点读取的经验项与单调不减范数惩罚。把候选分成核截面张成空间$M$中的分量与正交余项，余项在所有训练点读为零；删除它不改变经验项，并降低或保持范数。于是下确界可在$M$中求取，若最优解存在，则至少有一个最优解在$M$中；最优值有限且惩罚严格递增时所有最优解都在其中，定理本身不保证存在或函数唯一。
+4. 一般有界线性读取改用Riesz表示元张成$M$，沿用同一证明。这是删去观测看不见且惩罚不鼓励的方向，并未从有限记录恢复任意未知函数；下级子节再把有限表示落实为Gram矩阵中的参数求解。
 
 ##### 7.4.2.1 基于有限表示的参数求解
 
@@ -917,13 +944,13 @@
 
 ##### 7.4.3.1 基于谱表示的函数求解
 
-主要内容：给定$y\in L^2(\mu)$，紧自伴谱分解将其写为$y=y_0+\sum_{j:\mu_j>0}c_j\psi_j,\qquad y_0\in\ker T_K,\quad \lVert y\rVert_2^2=\lVert y_0\rVert_2^2+\sum_jc_j^2$RKHS中的函数没有$y_0$方向，故这一分量会留下不可消除的误差。
+主要内容：在Mercer条件下，将整体$L^2(\mu)$误差与核范数惩罚写入同一谱坐标，通过逐方向配方并验证可和性，证明正则化解的存在、最优和唯一。
 
 论证与表述逻辑：
 
-1. 附加约束后，配方仍成立，却未必能逐方向独立取极小值。例如要求$\lVert f\rVert_{\mathcal H_K}\leq B$会把所有系数通过$\sum_jb_j^2/\mu_j\leq B^2$耦合；若无约束解超出球，需要重新满足此条件。
-2. 仿射核再次给出有限的核对实例。取$K(x,z)=1+xz$、$\mathrm d\mu(x)=\mathrm dx/2$和目标$y(x)=x^2$。
-3. 蓝、绿线使用$\lambda=0.01$和$0.1$，点标出前$25$个方向；增大正则化后，各方向的保留比例进一步减小。
+1. 分解$y=y_0+\sum_jc_j\psi_j$，其中$y_0\in\ker T_K$不能由RKHS表示，形成不可消除的误差。对$\lambda>0$逐方向配方得$b_j^\star=\mu_jc_j/(\mu_j+\lambda)$，再用$\mu_j/(\mu_j+\lambda)^2\leq1/(4\lambda)$确认$\sum_j(b_j^\star)^2/\mu_j<\infty$，使形式解确实属于核空间。
+2. 小正特征值方向在核范数中计价较高，解因此按$\mu_j/(\mu_j+\lambda)$收缩。仿射核的常数与线性方向分别乘$1/(1+\lambda)$和$1/(1+3\lambda)$，把两种归一化的差别转化为具体收缩比例；$\lambda=0$时可和性可能失效，不能无条件沿用空间内最优解结论。
+3. 范数球或点值等附加约束会耦合谱系数，不能先独立收缩再声称自动可行。取仿射核与目标$x^2$，算得$f^\star=1/[3(1+\lambda)]$及不可消除误差$4/45$，区分表示偏差和惩罚造成的收缩；教学无限谱图再比较两个$\lambda$的保留比例。该总体积分任务与有限训练点表示定理的对象、存在条件不同。
 
 #### 7.4.4 平滑能量下的函数与场优化
 
@@ -959,13 +986,12 @@
 
 #### 7.5.1 函数序列的收敛
 
-主要内容：范数收敛要求$\lVert f_n-f\rVert\to0$；逐点收敛要求每个固定$x$的读数收敛，一致收敛则用同一个误差界控制所有输入。
+主要内容：区分范数、逐点与一致收敛的量词，用同一连续尖峰说明整体积分误差不能代替点值误差，并检查无限维中失去的有限维性质。
 
 论证与表述逻辑：
 
-1. 峰宽分别为$1/5$和$1/25$；蓝、绿线均由解析式生成。整体能量控制不等于稳定的点值控制。
-2. 无限维还使一些有限维中自动成立的性质需要单独检查。有限维子空间仍然总是闭集，但一般无限维子空间未必闭；有限维中的有界序列有收敛子列、线性映射自动连续，在一般无限维空间中也可能失效。
-3. 范数变化也可能改变极限是否存在：连续函数以积分误差趋近阶跃函数，并不说明它们在一致范数下形成柯西列。有限维的任意范数等价与闭有界紧性，在无限维函数范围内须重新验证。
+1. 范数收敛只有在读取有界时才推出相应点值收敛；读取界若对输入统一，才进一步给出一致控制。前面尖峰序列在$L^2$中趋零，原点值却始终为$1$，其余固定正位置最终为零，所以不逐点趋于零，也因一致范数始终为$1$而不一致趋零；逐点极限只是在几乎处处意义上等于零元素。
+2. 比较峰宽与峰高后，说明一般无限维子空间可能不闭、有界序列未必有范数收敛子列、线性映射未必自动连续。连续函数以积分误差趋近阶跃函数，也不保证它们在一致范数下为柯西列；极限和完备性必须连同所选空间与范数判断。
 
 #### 7.5.2 求解和优化下的迭代序列收敛
 
@@ -995,13 +1021,13 @@
 
 ##### 7.5.4.1 基于多项式的函数逼近
 
-主要内容：稠密性是一项表示存在性结论：它允许逼近器依赖目标和精度，却没有说明需要多少参数、怎样找到逼近器，或从有限观测能否识别它。
+主要内容：用Bernstein多项式构造连续函数的一致逼近，再以核中心导数和差分把这一结论传给固定宽度的高斯核截面族，区分稠密性和有限表示规模。
 
 论证与表述逻辑：
 
-1. 命题（Bernstein逼近定理）：对每个$f\in C([0,1])$，$\lVert B_mf-f\rVert_{\infty}\longrightarrow0$因此，多项式在$C([0,1])$的一致范数下稠密。
-2. 推导：连续函数在紧区间上一致连续且有界。给定$\varepsilon>0$，可取$\delta>0$使$|u-x|<\delta$时$|f(u)-f(x)|<\varepsilon/2$。
-3. 固定$k\geq1$后，取$h>0$且$kh\leq1$，差分$h^{-k}\sum_{j=0}^k(-1)^{k-j}\binom kj K_\sigma(x,jh)$只使用域内中心$0,h,\ldots,kh$。
+1. 二项式系数产生非负且和为一的网格权重；一致连续性控制近处函数值差，组合恒等式给出至多$1/(4m)$的离散二阶矩，再据此控制远处总权重，得到对所有输入共用的误差界。证明不预先调用概率论，也不承诺仅凭连续性就有统一快速速率。
+2. 固定高斯宽度后，对中心求导得到正权函数$w(x)$乘次数逐阶增长的多项式；逐次消去最高次项表明这些导数张成各阶加权多项式。域内中心的高阶差分一致逼近相应导数，故它们属于核截面有限和的一致闭包。
+3. 对连续函数$f/w$使用Bernstein逼近，再乘回$w$，证明固定宽度高斯核截面族的一致稠密性。中心数可以增长，有限个固定中心本身不稠密；稠密性也不单独说明所需参数数、寻找方法或有限观测可识别性。
 
 ##### 7.5.4.2 基于样条的函数逼近
 
@@ -1042,13 +1068,14 @@
 
 #### 7.5.6 惩罚尺度变化下的函数逼近
 
-主要内容：写$y=y_0+y_+$，其中$y_0\in\ker T_K$、$y_+=\sum_jc_j\psi_j$，则$\lVert f_\lambda-y\rVert_{L^2}^2 =\lVert y_0\rVert_{L^2}^2+ \sum_j\left(\frac{\lambda}{\mu_j+\lambda}\right)^2c_j^2$当$\lambda\downarrow0$时，每项正谱误差趋零且不超过$c_j^2$。
+主要内容：研究正则化尺度下降时谱拟合的极限，再以迹类条件定义有效维度，区分代数维数、参数数量、参数敏感性与指定误差下的函数类大小。
 
 论证与表述逻辑：
 
-1. 矩阵迹汇总有限个方向的贡献；无限维空间中的方向可能有无穷多个，因此还要核对这份总量是否有限。下面把算子条件与所选正则化尺度分开。
-2. 定义（迹类条件与有效维度）：设$A$为Hilbert空间上的紧线性算子。$A^*A$的正特征值开方后得到奇异值$s_j(A)$，按重数排列；若只有有限个，可在其后补零。若$\sum_j s_j(A)<\infty$，称$A$为迹类算子（trace-class operator）。对正算子，这等价于非负特征值之和有限，它的迹就是这个和。若紧正算子$T_K$的正特征值为$(\mu_j)$，给定$\lambda>0$，其有效维度（effective dimension）定义为$d_{\mathrm{eff}}(\lambda) = \sum_{j:\mu_j>0}\frac{\mu_j}{\mu_j+\lambda},$这里要求右侧级数有限；等价地，$d_{\mathrm{eff}}(\lambda) = \operatorname{tr}\bigl(T_K(T_K+\lambda I)^{-1}\bigr)$并要求$T_K(T_K+\lambda I)^{-1}$为迹类。
-3. 有效维度不是代数维数。无限维空间在固定$\lambda$下可以有有限有效维度；反过来，一个有限参数化若参数到函数的映射高度敏感，也可能形成很大的函数集合。
+1. 将$y$分为零谱和正谱部分，逐方向误差为$[\lambda/(\mu_j+\lambda)]^2c_j^2$。由可求和的$c_j^2$支配，$\lambda\downarrow0$时解在$L^2$中趋于正谱部分；零空间误差仍保留，若目标的正谱部分属于RKHS，还可按核范数收敛，否则核范数发散。$\lambda\to\infty$时解在$L^2$中趋零；这些是最优解族随尺度的变化，不是算法的迭代收敛。
+2. 定义紧算子的迹类条件，并在级数有限时以$\sum_j\mu_j/(\mu_j+\lambda)$定义有效维度。Mercer条件给$\sum_j\mu_j<\infty$从而保证其有限；仿射核在$\lambda=1$时有效维度为$3/4$，而代数维数仍为$2$。紧正算子谱$1/j$的反例说明紧性本身不足以保证有效维度有限。
+3. 固定非空输入域，对常值函数族$M\theta$取$\theta\in[0,1]$、$M>0$，按一致距离和固定误差精度比较时，$M$增大会扩大待近似的取值区间。另一族$\sin(M\theta)$取$\theta\in[0,2\pi]$、$M$为正整数，参数导数虽可随$M$增大，所得函数集合却始终是取值在$[-1,1]$内的全部常值函数。函数类大小必须同时指定参数范围、函数误差距离和精度，不能只由参数数量或参数敏感性判断。
+4. 谱衰减、函数范数半径与导数规则性承担不同约束。有效维度汇总指定$\lambda$下的谱保留比例，覆盖数则数指定函数类在给定距离和精度下需要多少代表；二者不是同一指标，也不单独提供统计误差或优化保证。
 
 #### 7.5.7 统一误差约束下的函数类逼近
 
