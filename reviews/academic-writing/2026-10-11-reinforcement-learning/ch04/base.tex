@@ -1,0 +1,1259 @@
+\chapter{信息受限下的强化学习}
+\label{chap:rl-information}
+
+一辆小车驶近岔路口，摄像头中的当前位置已经足够清楚，控制器却未必知道应该怎样转向：它可能不知道小车正在向哪一侧滑动，也可能知道完整状态，却从未取得某种转向动作的后果。前一个问题要求利用过去的信息辨认当前处境，后一个问题要求判断已有经验能否支持新行为。增加记忆不能自动补出从未执行的动作，重复训练也不能找回日志里没有记录的线索。
+
+第~\ref{chap:rl-learning}~章建立了从经验估计价值、优化策略和学习模型的方法。本章保留这些计算工具，检查其输入条件。当状态不可见时，决策依据要从单次观测扩展为历史或历史的充分表示；当经验固定时，要先确定候选策略的价值是否可识别，再讨论估计和改进。图~\ref{fig:rl-information-roadmap}~区分了这两条主线。它们在离线部分可观测问题中汇合：学习者既要知道过去保留了什么，也要知道这些记录是怎样被选择出来的。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-information-roadmap}
+  \caption{本章的阅读依赖。箭头表示后项使用前项建立的概念，不表示必须依次执行的算法。历史表示与固定数据评价分别处理决策信息和经验访问，最终共同约束叠加限制下的策略结论。}
+  \label{fig:rl-information-roadmap}
+\end{figure}
+
+% Outline: 4.1
+\section{两类信息限制}
+\label{sec:rl-information-limits}
+
+% Outline: 4.1.1
+\subsection{决策所依据的状态信息}
+\label{sec:rl-information-state-information}
+
+在完整状态$s_t$上选择动作时，马尔可夫条件保证不必另外查询更早的经历，便能描述下一步的条件分布。摄像头给出的$o_t$只是状态的一个观测，通常不能继承这一性质。记录$(o_t,a_t,r_t,o_{t+1})$中的$t$是真实交互时刻；$a_t$在看到$o_t$以后执行，$r_t$是执行该动作后得到的奖励。训练中的第几次梯度更新与这里的时间不是同一个索引。
+
+\begin{definition}[决策历史]
+  \label{def:rl-information-history}
+  时刻$t$的完整记录历史为
+  \[
+    h_t=(o_0,a_0,r_0,\ldots,a_{t-1},r_{t-1},o_t).
+  \]
+  历史条件策略$\pi(a\mid h_t)$只能使用行动前已获得的观测、动作和奖励。当前观测策略只使用$o_t$；长度为$L$的窗口策略只使用最近$L$步记录及其边界约定。
+\end{definition}
+
+这里保留奖励不是记号上的冗余。例如，某次碰撞返回的奖励可以透露小车是否触及看不见的障碍。若过滤历史时丢掉奖励，下一步的决策可能失去刚刚获得的状态信息。反过来，未来才会揭示的状态和奖励都不能作为此刻策略的输入。
+
+\begin{example}[相同位置与不同记忆]
+  \label{ex:rl-information-cue}
+  以下为独立教学任务。小车的真实状态包含位置$x_t$与速度$v_t$，摄像头只报告位置。两次观测都为$x_t=0$时，$v_t=1$与$v_t=-1$需要方向相反的制动。在无噪声、采样间隔为1且速度在相邻采样间不变的简化下，$v_t=x_t-x_{t-1}$，两个位置就足以恢复速度；单帧则不够。
+
+  另设一个岔路任务：回合开始均匀随机显示提示$c\in\{L,R\}$，此后走过$L+1$步外观相同的走廊，沿途动作被限制为前进，奖励全为0。在出口选择与$c$相同的方向得1，否则得0。本例及后文对它的比较均使用不折扣的回合成功奖励，即成功概率，不使用默认折扣回报。完整历史策略的期望成功奖励为1；最近$L$步窗口不含提示，也不能从被固定的沿途动作中编码提示，其最好期望成功奖励为$1/2$。
+\end{example}
+
+第一个任务中，增加一帧补足了缺失量；第二个任务中，任何预先固定的窗口都可能被更长的延迟击穿。判断表示是否足够，要看它是否保留了会改变动作后果的信息，不能仅比较输入长度。
+
+% Outline: 4.1.2
+\subsection{学习能够访问的经验}
+\label{sec:rl-information-data-access}
+
+即使日志记录了小车的精确位置和速度，如果收集者从未在某一状态向左转，左转的后果仍可能未知。这不是一条记录少了字段，而是整批记录没有涉及相应行为。需要把记录完整性、行为覆盖和主动采样权限分开。
+
+\begin{definition}[经验访问协议]
+  \label{def:rl-information-access}
+  \term{固定经验}协议只允许使用给定数据集$\mathcal D$及声明可用的元数据，训练和选模期间均不能查询真实环境。\term{有限新增交互}协议允许按约定轮次和预算增加真实经验；每轮可执行哪些策略、是否能重置、能否请求专家帮助，都属于协议。\term{持续在线交互}协议允许策略随经验持续更新并继续收集数据，但仍须声明重置、传感和测试权限，不能默认能从任意状态采样。
+\end{definition}
+
+在固定经验上回放一百万轮，只改变学习算法利用记录的方式，不改变真实环境被访问过的状态和动作。学习模型生成的一百万条模拟转移同样不是一百万次真实查询。表~\ref{tab:rl-information-access}~固定小车任务和状态字段，只改变交互权限。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{20mm}XXXX}
+    \toprule
+    协议 & 记录字段 & 行为覆盖 & 主动采样权限 & 评价查询权限 \\
+    \midrule
+    固定经验 & 位置、速度、动作、奖励和回合边界 & 仅原日志的收集行为 & 无真实调用、无重置 & 只能离线估计；不能试跑候选 \\
+    有限新增 & 原字段加策略版本、轮次和查询用途 & 原日志加预算内新增行为 & 每轮限定步数；重置单列计数 & 允许的测试也扣除预算 \\
+    持续在线 & 同样记录状态与行为元数据 & 随收集策略持续变化 & 在可达轨迹上继续行动；任意状态重置仍需授权 & 独立测试须保留其数据职责与成本 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{同一完全可观测小车任务的三种经验协议。字段完整不等于动作覆盖充分；允许交互也不等于拥有可从任意状态调用的生成模型。}
+  \label{tab:rl-information-access}
+\end{table*}
+
+% Outline: 4.1.3
+\subsection{观测完整性与数据访问权的组合}
+\label{sec:rl-information-two-axes}
+
+小车能否看清状态，与训练者能否继续驾驶它，是两个独立的问题。只记录位置时，可以允许控制器主动加减速以辨认运动方向；记录了位置与速度时，也可以禁止训练者再作任何试验。表~\ref{tab:rl-information-two-axes}~用这两个设置构成四种条件。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{18mm}XX}
+    \toprule
+    执行观测 & 可新增真实交互 & 只有固定经验 \\
+    \midrule
+    完整状态 & 位置、速度均可见，可继续控制小车 & 状态字段完整，但只能使用已有驾驶日志 \\
+    部分观测 & 只见位置，可主动探查，构成在线POMDP & 只见位置的固定轨迹，构成离线POMDP \\
+    \bottomrule
+  \end{tabularx}
+  \caption{观测完整性与数据访问权的组合。少量新增经验位于访问权限这一轴上，不是第三种观测类型。POMDP的定义见下节。}
+  \label{tab:rl-information-two-axes}
+\end{table}
+
+下节固定“执行时不能直接看到状态”这一条件，研究怎样形成决策依据。第~\ref{sec:rl-information-evaluation}、\ref{sec:rl-information-offline-learning}~节暂时恢复完全可观测条件，分别讨论固定日志上的评价和学习；第~\ref{sec:rl-information-combined}~节再检查两类限制叠加后的结论。这样的分工可以避免把历史压缩误差和动作覆盖缺口归到同一个含混的“数据不足”中。
+
+% Outline: 4.2
+\section{决策信息不完整下的强化学习}
+\label{sec:rl-information-partial-observation}
+
+% Outline: 4.2.1
+\subsection{从当前观测扩展为观测历史}
+\label{sec:rl-information-history-policy}
+
+例~\ref{ex:rl-information-cue}~中，出口的两幅画面完全相同，却分别要求向左和向右。这种\term{观测混叠}（observation aliasing）是指不同的决策处境被映射成同一可见输入。隐藏状态过程满足马尔可夫条件，并不意味着观测过程也满足。图~\ref{fig:rl-information-aliasing}~把环境轨迹和观测生成分开：当前观测相同，不代表完整历史相同。
+
+\begin{definition}[有限部分可观测马尔可夫决策过程]
+  \label{def:rl-information-pomdp}
+  \term{部分可观测马尔可夫决策过程}（partially observable Markov decision process, POMDP）用隐藏状态描述环境，用观测描述智能体实际取得的信息。这里考虑有限状态集$\mathcal S$、动作集$\mathcal A$、观测集$\mathcal O$、初始分布$\rho_0$和有限时域$H$；为便于求和，奖励取值也暂限于有限集$\mathcal R$。
+
+  初始状态$s_0\sim\rho_0$产生$o_0\sim O_0(\cdot\mid s_0)$。随后在时刻$t$，智能体依据$h_t$选择$a_t$，环境产生$s_{t+1}$及反馈$y_{t+1}=(r_t,o_{t+1})$。已知联合核记为
+  \[
+    K(s',y\mid s,a)
+    =\mathbb P(s_{t+1}=s',y_{t+1}=y\mid s_t=s,a_t=a).
+  \]
+  转移核为$P(s'\mid s,a)=\sum_yK(s',y\mid s,a)$，期望奖励为
+  $R(s,a)=\sum_{s',r,o'}rK(s',(r,o')\mid s,a)$。奖励有界，回报为
+  $\sum_{t=0}^{H-1}\gamma^t r_t$，$0\leq\gamma<1$，终端价值为0。
+\end{definition}
+
+联合核容许奖励和观测共享隐藏信息；如果独立性成立，再将它分解成转移与观测模型。相应的历史策略是$\pi_t(a\mid h_t)$，仅看当前观测的$\pi_t(a\mid o_t)$只是较小的策略类。有限时域下，即使相同信念也可能因为剩余时间不同而需要不同动作，因此这里保留$t$。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-information-aliasing}
+  \caption{早期提示任务的两条可能轨迹。实线表示隐藏状态随时间演化，虚线表示观测生成；省略了被固定为前进的沿途动作。两个出口观测均为相同画面；独立的历史策略标注说明，记住不同起始提示才会选择相反方向，动作不是观测的一部分。}
+  \label{fig:rl-information-aliasing}
+\end{figure}
+
+仿真训练有时可以记录$s_t$，用于辅助训练评论家或表示。部署时若只取得$o_t$，便不能把训练中的特权状态直接交给执行策略；评价也必须使用真正部署的历史输入。下面的信念方法不要求在线看见$s_t$，而是利用模型推断它的分布。经典POMDP论述用这一分布把推断与决策连接起来\scite{rl1-kaelbling1998-pomdp}
+
+% Outline: 4.2.2
+\subsection{将观测历史压缩为决策状态}
+\label{sec:rl-information-sufficiency}
+
+完整历史能够保留线索，却会随时间增长。压缩的目标不是复原每个过去细节，而是留下预测行动后果所需要的信息。若模型已知，可以直接计算“当前可能处于哪些状态，各自有多大概率”。
+
+\begin{definition}[信念状态]
+  \label{def:rl-information-belief}
+  在给定POMDP及完整记录历史下，\term{信念状态}（belief state）为
+  \[
+    b_t(s)=\mathbb P(s_t=s\mid h_t),\qquad
+    b_t\in\Delta(\mathcal S),
+  \]
+  其中$\Delta(\mathcal S)$是$\mathcal S$上的概率单纯形。$b_t$是后验分布，不是另一个物理状态，也不是只保留$\argmax_s b_t(s)$的点估计。
+\end{definition}
+
+初始观测也要参与推断。对正概率的$o_0$，有
+$b_0(s)=\rho_0(s)O_0(o_0\mid s)/\sum_{\bar s}\rho_0(\bar s)O_0(o_0\mid\bar s)$；
+只有当初始观测不提供状态信息时，才可直接用$\rho_0$作为$b_0$。
+
+把“左侧有障碍的概率为0.6”替换为“障碍在左侧”，会丢掉右侧0.4的可能性。若碰撞成本很大，这部分概率可能改变最优动作。信念保留完整分布的意义，可以由下述结果精确表达。
+
+\begin{theorem}[精确信念对最优控制充分]
+  \label{thm:rl-information-belief-sufficient}
+  在定义~\ref{def:rl-information-pomdp}~的已知有限POMDP中，假设动作选择只依赖完整记录历史与独立的策略随机数。在每个时刻$t$，最优历史价值可写成$V_t^*(h_t)=U_t^*(b_t)$。存在只依赖$(t,b_t)$的最优策略。
+\end{theorem}
+
+\begin{proof}
+  固定一个具有正概率的历史$h_t$，并考虑在该历史后选择动作$a$。动作不额外透露隐藏状态，故全概率公式给出
+  \[
+    \mathbb P(s_{t+1}=s',y_{t+1}=y\mid h_t,a)
+    =\sum_s b_t(s)K(s',y\mid s,a).
+  \]
+  将上式对$s'$求和，得到下一反馈的概率
+  $q(y\mid b_t,a)=\sum_{s,s'}b_t(s)K(s',y\mid s,a)$；将奖励取期望，得到
+  $\bar R(b_t,a)=\sum_s b_t(s)R(s,a)$。两者只依赖$(b_t,a)$。
+
+  对$q(y\mid b_t,a)>0$的反馈，贝叶斯公式又给出
+  \[
+    b_{t+1}(s')
+    =\frac{\sum_s b_t(s)K(s',y\mid s,a)}
+           {q(y\mid b_t,a)}
+    =:\tau(b_t,a,y)(s').
+  \]
+  这说明后验递推闭合：旧信念、动作和新反馈足以生成新信念，不必重新使用其余历史。零概率反馈不会进入期望，在其上任意指定$\tau$不改变价值。
+
+  现在从终点向前归纳。$V_H^*(h_H)=0$，取$U_H^*(b)=0$即可。假设时刻$t+1$已有$V_{t+1}^*(h)=U_{t+1}^*(b(h))$。对任意时刻$t$的历史，其采取$a$后的最优继续价值为
+  \[
+    \bar R(b_t,a)
+    +\gamma\sum_y q(y\mid b_t,a)
+                      U_{t+1}^*(\tau(b_t,a,y)).
+  \]
+  该值只依赖$b_t$与$a$；在有限动作集中取最大值，定义$U_t^*(b_t)$，便得到归纳结论。每个$(t,b)$处选取一个最大化动作，采用固定规则处理平局，构成信念策略，并达到该最优值。归纳至$t=0$即得结论。
+\end{proof}
+
+命题保证的是存在最优信念策略，不是任意历史策略都必须在相同信念上作相同选择。一个控制器可以故意依据与未来无关的旧观测改变动作；这种差别不否定信念对最优控制的充分性。
+
+模型未知时，精确后验本身也是未知量。学习型潜在信念尝试用$\bm z_t$表示隐藏状态的不确定性；\term{预测状态表示}（predictive state representation, PSR）则用若干未来试验的预测概率表示过去。这里的“试验”包括将要执行的动作以及随后希望观察的反馈，不能只预测收集策略自然产生的下一帧。若这些预测足以递推所有相关试验，就可以绕过隐藏状态的语义命名；有限预测维度与可学习性仍需结构条件\scite{rl4-littman2001-psr}
+
+表~\ref{tab:rl-information-sufficiency}~区分三种常被混用的充分性。只为固定策略预测回报的压缩可能完全丢掉其他动作的后果。例如两个隐藏状态在策略“始终停止”下价值均为0，但“向左”和“向右”的奖励在两状态中正好相反；常数表示对停止策略的价值充分，却不支持改进。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{25mm}XXX}
+    \toprule
+    充分性要求 & 必须保留的量 & 动作或策略范围 & 仍可丢失什么 \\
+    \midrule
+    未来反馈预测充分 & 各允许动作试验下的未来反馈联合分布与可递推状态 & 声明的全部试验，通常跨多个动作与时域 & 对这些预测无影响的历史细节与隐藏状态名称 \\
+    给定策略价值充分 & 给定$\pi$和奖励下的条件期望回报 & 只要求该$\pi$的继续行为；还需说明其执行输入 & 其他动作的价值、完整反馈分布 \\
+    最优控制充分 & 允许策略类中达到最优值所需的动作比较与更新 & 所允许的控制行为；依赖任务与时域 & 不影响最优动作的预测细节 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{充分性总是相对于一个问题。能够准确预测一个固定策略的回报，不能自动支持更换策略或更换奖励；精确信念在已知POMDP中提供较强的充分性依据。}
+  \label{tab:rl-information-sufficiency}
+\end{table*}
+
+% Outline: 4.2.3
+\subsection{新观测到来后的决策状态更新}
+\label{sec:rl-information-filtering}
+
+信念充分性证明已经给出了更新的结构，现在展开计算。接收$y_{t+1}=(r_t,o_{t+1})$时，先用旧信念加权所有可能的前态，得到下一状态与反馈的联合概率
+$\widetilde b_{t+1}(s')=\sum_s b_t(s)K(s',y_{t+1}\mid s,a_t)$。其总和正是当前模型赋予该反馈的概率。因此
+\begin{equation}
+  \label{eq:rl-information-bayes}
+  b_{t+1}(s')
+  =\frac{\sum_s b_t(s)K(s',y_{t+1}\mid s,a_t)}
+         {\sum_{\bar s}\sum_s b_t(s)K(\bar s,y_{t+1}\mid s,a_t)}.
+\end{equation}
+分母必须为正。若真实出现的反馈在模型中概率为0，滤波器不能简单继续归一化，这通常暴露了模型或传感假设的失配。
+
+常见的“预测—校正”公式需要额外条件。假设
+$K(s',(r,o')\mid s,a)=P(s'\mid s,a)O(o'\mid s',a)p(r\mid o',a)$，
+即给定$o'$与$a$后，奖励不再提供关于前后状态的额外信息。奖励项才会在归一化中约去，得到
+\begin{align}
+  \label{eq:rl-information-predict-correct}
+  b_{t+1}^{-}(s')&=\sum_sP(s'\mid s,a_t)b_t(s),\\
+  b_{t+1}(s')&=
+  \frac{O(o_{t+1}\mid s',a_t)b_{t+1}^{-}(s')}
+       {\sum_{\bar s}O(o_{t+1}\mid\bar s,a_t)b_{t+1}^{-}(\bar s)}.
+  \nonumber
+\end{align}
+如果奖励是由隐藏状态决定的碰撞信号，就不能不加说明地使用这个省略奖励的版本。
+
+在线性高斯系统中，后验保持高斯，因而不用存储一般分布。设
+$\bm x_{t+1}=\bm A\bm x_t+\bm B\bm u_t+\bm w_t$，
+$\bm o_{t+1}=\bm C\bm x_{t+1}+\bm v_{t+1}$；
+初始状态高斯，过程噪声与观测噪声分别为独立的零均值高斯量，协方差为$\bm W,\bm N$，且与初始状态独立。暂假设另行记录的奖励不增加状态信息。若当前后验为
+$\mathcal N(\bm m_t,\bm\Sigma_t)$，Kalman滤波的预测和校正为
+\begin{align}
+  \label{eq:rl-information-kalman}
+  \bm m^-_{t+1}&=\bm A\bm m_t+\bm B\bm u_t,&
+  \bm\Sigma^-_{t+1}&=\bm A\bm\Sigma_t\bm A^\top+\bm W,\nonumber\\
+  \bm L_{t+1}&=\bm\Sigma^-_{t+1}\bm C^\top
+     (\bm C\bm\Sigma^-_{t+1}\bm C^\top+\bm N)^{-1},\nonumber\\
+  \bm m_{t+1}&=\bm m^-_{t+1}
+       +\bm L_{t+1}(\bm o_{t+1}-\bm C\bm m^-_{t+1}),\nonumber\\
+  \bm\Sigma_{t+1}&=(\bm I-\bm L_{t+1}\bm C)\bm\Sigma^-_{t+1}.
+\end{align}
+这里假设创新协方差可逆。增益$\bm L_{t+1}$决定在预测与新观测之间如何分配权重；该递推的精确性来自线性高斯闭合，不来自“均值和协方差总能代表一切分布”\scite{rl4-kalman1960-filter}
+
+\begin{example}[一次标量滤波]
+  \label{ex:rl-information-kalman}
+  教学设定为$x_{t+1}=x_t+u_t+w_t$、$o_{t+1}=x_{t+1}+v_{t+1}$。当前$m_t=0$、$\Sigma_t=1$，取$u_t=1$、$W=N=1$，新观测为2。预测给出$m^-_{t+1}=1$、$\Sigma^-_{t+1}=2$，增益为$2/3$；校正后$m_{t+1}=1+(2/3)(2-1)=5/3$，$\Sigma_{t+1}=2/3$。后验仍有不确定性，不能把$5/3$当成已知真实位置。
+\end{example}
+
+没有可信显式模型时，可以学习递推记忆
+$\bm z_{t+1}=f_{\bm\theta}(\bm z_t,a_t,r_t,o_{t+1})$，
+或用注意力网络从已保留的历史重新计算$\bm z_t$。图~\ref{fig:rl-information-memory}~显示两者的更新接口。训练输入必须来自同一轨迹，回合开始才按协议重置；在任意训练片段开头清零，不等于在真实回合开始清零。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-information-memory}
+  \caption{递推记忆与历史注意力。实线表示数据送入表示及策略的计算路径，虚线表示训练片段和边界标识。预热段用于重建损失起点处的记忆，不对其计算训练损失。图中片段从真实回合开始；回合中部的片段仍需用已保存状态或更早前缀初始化，不能把片段边界当作回合重置。}
+  \label{fig:rl-information-memory}
+\end{figure*}
+
+DRQN在价值网络中加入循环状态，允许信息跨帧传播。与堆叠有限帧相比，它改变的是历史信息的保存方式，价值目标仍来自时序差分学习\scite{rl4-hausknecht2015-drqn}
+R2D2进一步分析序列重放中的表示漂移和旧隐藏状态问题。截断反向传播限制梯度跨越的步数，不等于证明更早历史无用；burn-in即预热，是先运行片段前缀重建隐藏状态，再在后缀计算损失。存储收集时的隐藏状态可减少从零启动的偏差，但参数更新后该状态可能已经过时\scite{rl4-kapturowski2019-r2d2}
+
+GTrXL通过门控等结构调整，使带跨片段记忆的注意力模型更适合强化学习优化。外部记忆还可以把历史信息写入独立存储并按需读取。它们扩大了可保留信息的范围，也引入历史缓存、读写和训练成本；不能仅从上下文更长或预测损失更低，推出表示已满足定理~\ref{thm:rl-information-belief-sufficient}~的条件。
+
+% Outline: 4.2.4
+\subsection{基于决策状态的策略求解与动作选择}
+\label{sec:rl-information-belief-control}
+
+有了信念更新，下一步不是选出“最可能的状态再假装它已知”，而是比较各动作在全部可能状态和未来反馈下的后果。将信念视为一个完全可见的决策状态，就得到\term{信念MDP}（belief MDP）。其即时奖励为
+$\bar R(b,a)=\sum_s b(s)R(s,a)$，反馈概率为
+$q(y\mid b,a)=\sum_{s,s'}b(s)K(s',y\mid s,a)$，状态转移通过$\tau(b,a,y)$实现。
+因此第~\ref{chap:rl-planning}~章的Bellman关系变为
+\begin{equation}
+  \label{eq:rl-information-belief-bellman}
+  U_t^*(b)=\max_a\left\{
+    \bar R(b,a)+\gamma\sum_yq(y\mid b,a)
+                    U_{t+1}^*(\tau(b,a,y))\right\},
+  \qquad U_H^*=0.
+\end{equation}
+必须对每一种可能反馈更新信念、计算继续价值，再取期望。一般不能用
+$U_{t+1}^*(\mathbb E[b_{t+1}])$替代$\mathbb E[U_{t+1}^*(b_{t+1})]$，因为策略会根据实际反馈改变动作；先平均信念会抹去这种适应能力。
+
+\begin{example}[Tiger中的倾听、更新与开门]
+  \label{ex:rl-information-tiger}
+  两扇门后，一侧有危险，另一侧有奖励。隐藏状态$s\in\{L,R\}$表示危险所在侧。开到安全门奖励为10，开到危险门奖励为$-100$，开门后本回合终止。倾听奖励为$-1$，不改变隐藏状态，并以0.95的概率正确报告危险方向。初始$b_0(L)=b_0(R)=1/2$；最多行动两次，$\gamma=0.9$，之后价值为0。这些数字和两步终止规则是教学设定，不是对所有Tiger版本的约定。
+
+  不倾听就开任意一扇门，期望奖励均为
+  $(1/2)10+(1/2)(-100)=-45$。若倾听得到“左侧有声”，则
+  \[
+    b_1(L)=\frac{0.95(1/2)}
+                        {0.95(1/2)+0.05(1/2)}=0.95.
+  \]
+  此时开右门的期望奖励为$0.95(10)+0.05(-100)=4.5$，
+  开左门为$0.95(-100)+0.05(10)=-94.5$；
+  再倾听只得$-1$且已无剩余动作，因此应开右门。
+  听见右侧时对称地开左门。初始倾听的价值为
+  \[
+    Q_0(b_0,\text{倾听})
+       =-1+0.9\bigl[(1/2)4.5+(1/2)4.5\bigr]=3.05.
+  \]
+  与直接开门的$-45$相比，先倾听的最优两步方案更好。
+\end{example}
+
+图~\ref{fig:rl-information-tiger}~把算例中的分支画出。若只比较在同一开门时刻、有无免费信号时的最优开门收益，信号的期望价值是$4.5-(-45)=49.5$；实际两步方案还要扣除倾听成本并折扣后续收益。这里的模型与听觉准确率全部已知，倾听仍有价值，因为未知的是当前隐藏状态，而不是环境参数。倾听也并非总值得：剩余时间不足、先验已经很确定或探测成本过高，都可能使开门更合适。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-information-tiger}
+  \caption{教学Tiger的两步决策树。节点中的$b(L)$表示危险在左门后的概率；倾听的两个反馈各以$1/2$发生，反馈后选择安全概率较高的门。末端数字是开门的条件期望奖励，根节点的3.05包含倾听成本和折扣。}
+  \label{fig:rl-information-tiger}
+\end{figure}
+
+将先验中的最大概率状态直接当作真相，在$b_0(L)=b_0(R)$时任选一侧，再按完全可观测解开另一扇门，会预测获得10，却实际只获得期望$-45$。即使把先验稍改为$b_0(L)=0.6$，点估计控制仍会直接开右门，真实期望为$0.6(10)+0.4(-100)=-34$；对0.95准确率的信号作两分支计算，先听再开仍为3.05。问题不在平局，而在点估计删除了会影响动作的信息价值。
+
+信念空间规划本身可能很昂贵。有限状态控制器用有限个记忆节点规定动作分布及收到反馈后的节点跳转，直接限制可实现的历史策略；点基值迭代则保留信念的含义，只在选定的一组信念上近似价值备份。前者压缩策略记忆，后者近似信念空间上的价值函数，近似对象不同。点基方法的采样信念分布仍会影响其规划质量\scite{rl4-pineau2003-pbvi}
+
+在线性、高斯、已知模型、无额外约束的二次成本控制中，LQG分离原则允许把Kalman状态均值估计交给相应的线性最优反馈控制器。其条件还包括与动作无关的噪声和观测机制；无限时域稳定解另需可稳定性、可检测性等条件。若选择动作可以改变观测质量，或者另行观察到的奖励泄露额外状态，便不能直接套用这一分离结论。Tiger中倾听正会改变可获得的信息，一般POMDP不具备“先独立估计、再按已知状态控制”的普遍保证。
+
+模型未知时，循环价值学习以$\bm z_t$代替$s_t$构造自举目标；循环行动者—评论家据此计算动作分布和优势；潜在模型学习则估计$\bm z_t$上的转移与奖励，再用于规划或想象轨迹。它们分别接回第~\ref{chap:rl-learning}~章的评价、优化和模型使用接口。数据学习的是表示、价值或动力学，表示是否保留了反事实动作所需的信息仍是额外问题。
+
+% Outline: 4.2.5
+\subsection{近似决策状态的误差与计算边界}
+\label{sec:rl-information-memory-errors}
+
+记忆方法的成本不能只用网络参数量衡量。表~\ref{tab:rl-information-memory-cost}~以$n=|\mathcal S|$、当前历史长度$t$、窗口长度$L$、单步输入维度$d$、循环隐藏维度$m$及控制器节点数$k$为规模变量，区分存储、一次更新和后续规划。表中的复杂度指明列出的直接实现，不宣称所有模型都达到这些成本。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{21mm}XXXX}
+    \toprule
+    表示 & 历史范围与存储 & 一次更新代价 & 决策或规划空间 & 充分性依据 \\
+    \midrule
+    完整历史 & 全部；$O(td)$ & 追加记录$O(d)$；重新读取至少随$t$增长 & 分支随时域增长的历史树 & 不主动丢弃已记录信息 \\
+    精确信念 & 历史递推压缩；$O(n)$ & 稠密有限核$O(n^2)$ & $n-1$维单纯形；有限层可达点也可指数增长 & 已知正确模型下的充分性定理 \\
+    有限窗口 & 最近$L$步；$O(Ld)$ & 缓冲追加$O(d)$，编码另计 & 窗口输入；未必马尔可夫 & 需证明任务只依赖该窗口 \\
+    有限状态控制器 & 当前节点$O(1)$；节点表另计 & 表查找可为$O(1)$ & $k$个记忆节点上的策略 & 策略类限制；一般非充分 \\
+    学习型记忆 & 循环$O(m)$；注意力缓存随$L$增长 & 稠密循环$O(m^2+md)$；标准全窗口注意力$O(L^2m+Lm^2)$ & 学习表示上的价值或策略 & 任务与模型假设，加独立验证 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{信息表示的成本与依据。注意力复杂度按宽度$m$的一层完整窗口计算，增量缓存可改变单步成本；有限状态控制器若按节点与反馈跳转，跳转表需$O(k^2|\mathcal Y|)$存储，若另依赖实际动作，还需乘$|\mathcal A|$。存在充分统计量不等于易于规划。}
+  \label{tab:rl-information-memory-cost}
+\end{table*}
+
+以GTrXL为例，门控与残差结构的调整主要服务于训练稳定性，注意力缓存和计算开销仍取决于实际保留的序列长度。因此，网络更容易训练与它是否形成精确的决策状态，是两个需要分别检查的问题\scite{rl4-parisotto2020-gtrxl}
+
+压缩带来的错误要沿决策过程追踪。若两个历史被编码成同一$\bm z$，却对同一动作给出不同的未来反馈分布或价值，学习器无论训练多少轮，都无法仅从$\bm z$判断属于哪种历史。这是表示遗漏。若表示形式本来可以保留提示，却在每个重放片段开头被错误清零，错误来自初始化。联合核估计不准和在正确目标上优化未收敛又是另外两种误差，不能都通过延长训练来消除。
+
+这种区分可以量化。对某个历史$h$，若各动作的近似最优继续价值满足
+$|\widehat Q(h,a)-Q^*(h,a)|\leq\delta$，令
+$\hat a\in\argmax_a\widehat Q(h,a)$、$a^*\in\argmax_aQ^*(h,a)$，则
+\[
+  Q^*(h,a^*)-Q^*(h,\hat a)
+  \leq
+  [Q^*(h,a^*)-\widehat Q(h,a^*)]
+  +[\widehat Q(h,\hat a)-Q^*(h,\hat a)]
+  \leq2\delta.
+\]
+中间使用了$\widehat Q(h,a^*)\leq\widehat Q(h,\hat a)$。但一个平均重建损失并不提供这样的逐动作误差界；缺少把表示误差转为价值误差的条件时，不能直接将训练损失代入$\delta$。
+
+早期提示任务给出更直接的边界。沿用例~\ref{ex:rl-information-cue}~的不折扣成功奖励，保留提示的两个记忆节点可取得期望值1，丢弃提示则至多为$1/2$，二者相差$1/2$。即使窗口内每一帧都被完美重建，这个差距也不会消失。若后来将奖励改为依赖另一条早期线索，原先只存$c$的表示又可能不够。因此，“对当前任务足够”与“可以复用于所有奖励目标”也要分开。更一般的样本复杂度与函数类条件见第~\ref{chap:rl-learning}~章；这里已经可以确定，表示造成的信息损失先于优化和样本规模问题。
+
+% Outline: 4.3
+\section{固定经验下的策略评价与选择}
+\label{sec:rl-information-evaluation}
+
+% Outline: 4.3.1
+\subsection{固定经验与行为策略}
+\label{sec:rl-information-logging}
+
+现在暂时假设每条记录都包含完整状态，困难改为不能再试验新动作。拿到日志以后，需要先确定它是怎样生成的。相同的状态动作表，可能来自一项固定策略、多个策略的混合，也可能来自训练中不断更新的控制器；这些差别会影响概率校正与误差估计。
+
+\begin{definition}[行为策略与目标策略]
+  \label{def:rl-information-behavior}
+  行为策略$\mu$是生成日志动作的决策规律，目标策略$\pi$是希望评价或部署的规律。对有限时域的$n$个回合，记
+  \[
+    \mathcal D=\{\tau_i\}_{i=1}^n,\qquad
+    \tau_i=(s_{i,0},a_{i,0},r_{i,0},\ldots,s_{i,H}).
+  \]
+  本节主要评价
+  $J_H(\pi)=\mathbb E_\pi[\sum_{t=0}^{H-1}\gamma^t r_t]$。
+  回合提前终止时，可补上吸收状态与零奖励至$H$。这里的$J_H$不是无限时域的$J$，后续需要切换时会明确说明。
+\end{definition}
+
+对单一马尔可夫行为策略，可记录每一步$\mu(a_t\mid s_t)$。若每一步以已知概率选择一个子策略，边缘行为概率是该步混合概率加权的动作概率。若在回合开始只抽取一次子策略，则“给定当前状态的固定混合权重”一般不正确：历史已改变对所选子策略的后验。此时可记录策略身份及对应概率，并使用适当的条件采样分析，或记录真正的$\mu_t(a_t\mid h_t)$。若某个条件分层下缺少目标动作支持，不能靠记录身份解除这一缺口。自适应收集还须保存策略版本和选择机制。
+
+日志当时记录的随机化概率，与事后拟合的$\widehat\mu$不是同一种证据。前者在机制正确时是已知量，后者带有模型误差；确定性行为也不能因密度网络输出非零概率，就被改称为已覆盖所有动作。表~\ref{tab:rl-information-fields}~列出评价中不可随意省略的字段。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{29mm}X}
+    \toprule
+    字段 & 支撑的计算与省略后的风险 \\
+    \midrule
+    状态、动作、奖励、下一状态 & 构造回报、Bellman目标及目标策略动作概率 \\
+    真终止标记 & 真正终止后不再自举；终止奖励仍记在$r_t$ \\
+    时间截断标记 & 区分任务结束与记录停止；持续任务截断处通常仍需继续价值 \\
+    回合标识与时刻 & 恢复轨迹概率比、记忆重置和回合级划分 \\
+    行为概率及策略版本 & 确定动作选择机制，区分已知概率与估计概率 \\
+    初始条件、任务与目标 & 说明评价的$\rho_0$、奖励定义及任务分布是否匹配 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{完整状态日志仍需要采样元数据。有限时域的真正$H$步终止与持续任务在$H$处被时间截断，具有不同的自举目标。}
+  \label{tab:rl-information-fields}
+\end{table}
+
+如果$n$个回合独立收集，回合可以作为独立评价单位；一个回合内的相邻转移不能直接当成独立重复。若只有一条相关长轨迹，就需要混合性等条件支持分块估计或适当的相关数据推断。把相邻转移随机分到训练集和测试集，既可能泄露轨迹信息，也会夸大独立样本数量。
+
+D4RL强调不同质量、不同收集者与混合任务的数据，报告时应保留具体数据集版本、奖励及归一化分数的参照；“专家混合数据”不是一个足以复现实验的数据说明\scite{rl4-fu2020-d4rl}
+RL Unplugged还区分任务域和选模协议，尤其需要说明调参时是否能使用在线策略测试；用了环境分数选超参数，就不能把全部选模过程称为纯固定经验评价\scite{rl4-gulcehre2020-unplugged}
+
+Minari提供按回合组织的数据与元数据接口，使用时仍须核对具体数据集的终止、截断、环境版本和收集者说明，不能由存储格式推断行为概率必然可得\scite{rl4-farama-minari}
+OGBench面向离线目标条件强化学习，需同时报告无奖励数据的组成、目标选择、奖励重标记与测试目标协议；目标条件不同，成功率也不能直接横比。该基准已有ICLR 2025正式版本，本章只借它说明数据与评价协议，不引用其分数作为方法普遍优劣的证据\scite{rl4-park2025-ogbench}
+
+% Outline: 4.3.2
+\subsection{策略价值的可识别性与覆盖条件}
+\label{sec:rl-information-coverage}
+
+在考虑样本有多大以前，可以先问：无限重复当前收集方式，是否最终能知道某个策略的好坏？若仍不能，问题就不是估计精度，而是\term{可识别性}（identifiability），即已有观测规律是否唯一确定了我们要回答的量。
+
+\begin{definition}[策略价值可识别]
+  \label{def:rl-information-identifiability}
+  固定数据生成协议、可观察字段、环境结构假设、初始分布与目标策略。若所有产生相同可观测数据总体分布的允许环境，都给出同一个目标策略价值，则该价值可识别。该定义针对总体分布，不表示有限样本已经准确估计了价值。
+\end{definition}
+
+\begin{theorem}[固定经验不能识别未覆盖动作的价值]
+  \label{thm:rl-information-unseen-action}
+  仅有单状态、单步、两个动作的日志，若行为策略只执行其中一个动作，又没有联系两动作奖励的结构假设，则另一动作的价值及其相对行为策略的优劣一般不可识别。
+\end{theorem}
+
+\begin{proof}
+  设唯一非终止状态为$s$，两个动作是$a_0,a_1$，执行后均终止。构造环境$M_+$与$M_-$：两者都令$a_0$奖励为0，分别令$a_1$奖励为$+1$和$-1$。行为策略在两者中均为$\mu(a_0\mid s)=1$。
+
+  任意大小的日志都只能由$(s,a_0,0,s_{\mathrm{term}})$组成，因此两环境的可观测数据分布完全相同。目标策略$\pi(a_1\mid s)=1$在两环境中的价值却分别为$+1$和$-1$，而基线$\mu$的价值均为0。任何只使用日志的程序在两环境中收到相同输入，其输出分布也相同，故不可能在两者中都唯一正确地给出目标价值或优劣排序。由定义，所述价值和排序不可识别。
+\end{proof}
+
+神经网络可以给$a_1$输出一个数值，结构化动力学也可能把$a_0$的信息迁移给$a_1$；但只有后一种联系有可核验的正确性假设时，才可能排除反例中的某个环境。仅有网络表达能力，不能提供数据支持之外的识别证据。
+
+\begin{definition}[支持、集中程度与部分覆盖]
+  \label{def:rl-information-support}
+  目标轨迹分布$p_\pi$相对行为轨迹分布$p_\mu$\term{绝对连续}，记$p_\pi\ll p_\mu$，是指任何行为概率为0的轨迹事件，其目标概率也为0。在具有共同环境核的有限模型中，这要求每个目标可达历史上的目标动作均有相应行为支持。
+
+  对折扣占用评价，设$\nu(s,a)$为数据转移的归一化采样分布，定义集中程度系数
+  \[
+    C_\pi=\operatorname*{ess\,sup}_{(s,a)\sim\nu}
+               \frac{d^\pi(s,a)}{\nu(s,a)},
+  \]
+  并要求$d^\pi\ll\nu$。部分覆盖表示这些条件只对某些策略或状态动作区域成立；可达性则说明动作序列在环境中是否可能到达某处，不保证收集者曾给该序列正概率。
+\end{definition}
+
+支持非零只排除绝对缺口。若一个目标常用动作的行为概率为$10^{-6}$，少量日志很可能一次也没记录到它；即使取得一次，重要性权重也可能很大。不同分析可能使用逐时刻占用比、轨迹密度比或它们的矩，而不是同一个$C_\pi$，必须按具体估计式选择条件。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{26mm}XX}
+    \toprule
+    希望得到的结论 & 需要支持的行为范围 & 额外结构与不能省略的检查 \\
+    \midrule
+    给定策略评价 & 该策略的相关轨迹或占用 & 正确奖励、初始分布与行为机制；模型外推须有依据 \\
+    候选排序 & 候选共同模型下的性能差 & 不一定要分别点识别两个价值；差的符号必须有证据 \\
+    相对基线改进 & 候选与基线的比较行为 & 选择后仍有效的误差控制；缺数据处可限制回到基线 \\
+    策略类中最优 & 足以排除所有有竞争力的替代行为 & 通常需更广覆盖或更强结构；高回报轨迹本身不够 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{结论越强，通常需要检查越多行为。结构假设可改变所需覆盖，但必须说明它如何排除与日志一致的不同环境。}
+  \label{tab:rl-information-claims}
+\end{table*}
+
+表~\ref{tab:rl-information-claims}~也解释了为什么几条高回报轨迹不等于充分覆盖。日志可能完整展示一条奖励为10的路径，却没有尝试分岔处的另一动作；该动作可以通向奖励为11或$-100$的区域，两种解释都与日志相容。数据足以证明已观察路径可行，却未必足以证明它最优，或支持偏离它的策略。
+
+% Outline: 4.3.3
+\subsection{离线策略价值的估计}
+\label{sec:rl-information-estimators}
+
+在价值可识别以后，还需要把日志转换为数值证据。\term{离策略评价}（off-policy evaluation, OPE）从其他行为策略的数据估计目标策略的价值；本节再限定为不能新增交互的固定经验协议。先考虑独立回合、共同初始分布和共同环境核，行为动作概率已知，且$p_\pi\ll p_\mu$。沿用定理\ref{thm:rl-learning-importance-sampling}的矩条件，目标分布下每一步奖励都绝对可积。有限时域的马尔可夫策略轨迹密度为
+\[
+  p_\pi(\tau)=\rho_0(s_0)
+       \prod_{t=0}^{H-1}
+       \pi_t(a_t\mid s_t)p(s_{t+1},r_t\mid s_t,a_t).
+\]
+把$\pi$改为$\mu$便得到行为密度。相同环境项与初始项约去，留下
+\begin{equation}
+  \label{eq:rl-information-weights}
+  w_{i,0:t}=\prod_{k=0}^{t}
+       \frac{\pi_k(a_{i,k}\mid s_{i,k})}
+            {\mu_k(a_{i,k}\mid s_{i,k})}.
+\end{equation}
+这是第~\ref{chap:rl-learning}~章换测度关系在固定日志上的应用。若初始分布改变而未作校正，或行为实际依赖未记录信息，这一步消去就失去了依据。
+
+令$G_i=\sum_{t=0}^{H-1}\gamma^t r_{i,t}$，普通轨迹重要性采样与逐决策形式分别为
+\begin{align}
+  \label{eq:rl-information-is}
+  \widehat J_{\mathrm{IS}}
+    &=\frac1n\sum_iw_{i,0:H-1}G_i,\nonumber\\
+  \widehat J_{\mathrm{PDIS}}
+    &=\frac1n\sum_i\sum_{t=0}^{H-1}
+                      \gamma^t w_{i,0:t}r_{i,t}.
+\end{align}
+$r_t$在执行$a_t$后产生，所以必须包括该动作的概率比，却不需要$t$之后的比率。只对截至该奖励的轨迹前缀换测度，密度比就是$w_{i,0:t}$，因而直接得到逐决策形式。这不要求在目标概率为0的行为历史上，后续权重的条件均值也等于1。已知正确概率和支持条件下，两式都无偏，但权重乘积可能随时域快速增大。
+
+\begin{example}[三条两步轨迹的概率校正]
+  \label{ex:rl-information-ope-data}
+  以下为完全给定的教学MDP。初态固定为$s_0$，任意动作都转到$s_1$，再执行一步后终止。两个时刻均有动作$A,B$，$r_0(A)=1$、$r_0(B)=0$，$r_1(A)=2$、$r_1(B)=0$，奖励和转移均确定，$\gamma=0.9$。行为策略每步均匀选动作，目标策略每步以$3/4$概率选$A$。真实目标价值为
+  $J_2(\pi)=3/4+0.9(2\times3/4)=2.1$。
+
+  假设独立抽到三条轨迹$AA,BA,BB$，其计算量如下：
+  \[
+  \begin{array}{c|rrrr}
+    \text{轨迹}&G_i&w_{i,0:0}&w_{i,0:1}
+                    &\sum_t\gamma^t w_{i,0:t}r_{i,t}\\
+    \hline
+    AA&2.8&1.5&2.25&5.55\\
+    BA&1.8&0.5&0.75&1.35\\
+    BB&0&0.5&0.25&0
+  \end{array}
+  \]
+  普通IS为$(2.25\times2.8+0.75\times1.8)/3=2.55$；
+  逐决策IS为$(5.55+1.35)/3=2.3$。两者在这一小样本上都不等于2.1，无偏性指对反复收集整批日志取期望，而不是每批样本都准确。
+\end{example}
+
+为了减轻大权重影响，自归一化估计用
+$\widehat J_{\mathrm{SN}}=\sum_iw_iG_i/\sum_iw_i$，
+前提是分母非零；截断估计可以使用
+$\widehat J_{\mathrm{clip}}=n^{-1}\sum_i\min(w_i,c)G_i$。
+在例~\ref{ex:rl-information-ope-data}~中，$w_i=w_{i,0:1}$，
+自归一化结果为$7.65/3.25\approx2.3538$；取$c=1$的未归一化截断结果为
+$(2.8+0.75\times1.8)/3\approx1.3833$。前者随机化了分母，后者修改了换测度权重，一般都会引入有限样本偏差；用拟合行为概率代替已知概率也改变原来的无偏性条件。有效样本量诊断
+$(\sum_iw_i)^2/\sum_iw_i^2$可提示权重是否集中，却不是价值正确性的证书。
+
+另一条路线不乘整条轨迹的概率比，而是拟合固定目标策略的Bellman关系。\term{拟合Q评价}（fitted Q evaluation, FQE）固定$\pi$，只迭代价值，不在更新中取动作最大值。对有限时域，令$\widehat Q_H=0$，从$t=H-1$向前，用该时刻的数据拟合
+\begin{equation}
+  \label{eq:rl-information-fqe}
+  \widehat Q_t
+  \in\argmin_{f\in\mathcal F_t}
+    \sum_{i}
+    \left[
+      f(s_{i,t},a_{i,t})
+      -r_{i,t}
+      -\gamma\mathbb E_{a'\sim\pi_{t+1}(\cdot\mid s_{i,t+1})}
+                       \widehat Q_{t+1}(s_{i,t+1},a')
+    \right]^2.
+\end{equation}
+其中$\mathcal F_t$是时刻$t$允许使用的价值函数类，$t=H-1$时整个继续价值项直接取0，无需定义终点策略。在无限折扣任务中，则以同一时间不变函数类反复回归，右侧使用上一轮$\widehat Q^{(k)}$，产生$\widehat Q^{(k+1)}$。两种形式都要在真终止处将后续项置0，再对初始状态及目标初始动作求期望；有限时域的结果为$\widehat J_H(\pi)=\mathbb E_{s_0\sim\rho_0,a_0\sim\pi_0}\widehat Q_0(s_0,a_0)$，初始分布未知时还需相应初态样本。拟合过程每轮需要扫描或采样数据、计算目标动作期望并完成回归；非线性函数类下还包含优化误差。FQE的有限样本界需要相应函数类、Bellman逼近与覆盖条件，不能只由训练平方误差很小推出\scite{rl4-le2019-fqe}
+
+\begin{example}[在同一日志上完成FQE与DR]
+  \label{ex:rl-information-fqe-dr}
+  沿用例~\ref{ex:rl-information-ope-data}~的三条轨迹，使用每个时刻独立的表格价值。末步回归得到
+  $\widehat Q_1(s_1,A)=2$、$\widehat Q_1(s_1,B)=0$，故
+  $\widehat V_1(s_1)=0.75(2)+0.25(0)=1.5$。初步回归的两个目标为
+  \[
+    \widehat Q_0(s_0,A)=1+0.9(1.5)=2.35,\qquad
+    \widehat Q_0(s_0,B)=0+0.9(1.5)=1.35.
+  \]
+  对目标动作求期望，得到
+  $\widehat J_{\mathrm{FQE}}=0.75(2.35)+0.25(1.35)=2.1$。
+  这次恰好精确，是因为所有必要状态动作均已出现且后果确定，不是三条轨迹普遍足够。若从零开始同时更新两个时刻，第一轮只拟合即时奖励，第二轮才将1.5的继续价值传回初态。
+
+  为展示模型校正，另取一组事先给定而不准确的辅助价值：
+  $\widehat Q_1(A)=1$、$\widehat Q_1(B)=0$，
+  $\widehat Q_0(A)=1.5$、$\widehat Q_0(B)=0.5$。
+  相应$\widehat V_1=0.75$、$\widehat V_0=1.25$。
+  初步残差$r_0+0.9\widehat V_1-\widehat Q_0$对两个动作都是0.175，末步残差对$A$为1、对$B$为0。代入下式的双重稳健估计，三条轨迹的贡献分别是
+  \[
+  \begin{aligned}
+    D_{AA}&=1.25+1.5(0.175)+0.9(2.25)=3.5375,\\
+    D_{BA}&=1.25+0.5(0.175)+0.9(0.75)=2.0125,\\
+    D_{BB}&=1.25+0.5(0.175)=1.3375.
+  \end{aligned}
+  \]
+  均值为$2.2958$，仍有样本误差。若辅助价值换成上面精确的FQE结果，各步残差都为0，每条轨迹贡献均为2.1。
+\end{example}
+
+例中的校正使用有限时域逐决策\term{双重稳健估计}（doubly robust estimation, DR）。先构造辅助
+$\widehat V_t(s)=\mathbb E_{a\sim\pi_t}\widehat Q_t(s,a)$，
+令$\widehat V_H=0$，再计算
+\begin{equation}
+  \label{eq:rl-information-dr}
+  \widehat J_{\mathrm{DR}}
+  =\frac1n\sum_i\left[
+    \widehat V_0(s_{i,0})
+    +\sum_{t=0}^{H-1}\gamma^t w_{i,0:t}
+       \bigl(r_{i,t}+\gamma\widehat V_{t+1}(s_{i,t+1})
+                         -\widehat Q_t(s_{i,t},a_{i,t})\bigr)
+    \right].
+\end{equation}
+这一形式把模型预测作为起点，再用概率加权的Bellman残差纠正它。为陈述精确无偏性质，辅助函数应在独立训练数据上拟合，或通过交叉拟合使每条评价轨迹不参与其辅助函数训练。正确权重下，残差换到目标分布后，$\widehat V$和$\widehat Q$项沿时间望远镜消去，剩下$J_H(\pi)$；即使辅助价值有误也成立。另一侧，若所有$\widehat Q_t=Q_t^\pi$，则给定行动前历史与当前动作，残差条件均值为0，正确初始价值的期望就是目标价值；此时有限的、在该反馈产生前确定的错误行为权重也不改变均值。两侧都错时没有这样的保证，双重稳健也不表示方差必然小\scite{rl4-jiang2016-dr}
+
+FQE省去了行为概率，却没有省掉行为覆盖。若日志在$s_1$只执行$B$，目标却会选$A$，则$\widehat Q_1(s_1,A)$没有直接监督。即使初态数据拟合无误，该值的任意偏差$e$仍会以$\gamma\pi(A\mid s_1)e$进入初态目标。模型评价也面对同样的缺口，只是错误以奖励和转移预测的形式传播。
+
+占用比方法将校正集中在状态动作分布上。以无限折扣、时间不变MDP为例，DICE类方法可以不显式拟合$\mu$，而从流量平衡学习
+$w(s,a)=d^\pi(s,a)/\nu(s,a)$；DualDICE通过对偶优化求解这类分布校正问题\scite{rl4-nachum2019-dualdice}
+对适当的测试函数$f$，正确占用比满足
+\begin{align}
+  \label{eq:rl-information-dice}
+  &\mathbb E_{\nu,P,\pi}\!
+       \left[w(s,a)\{f(s,a)-\gamma f(s',a')\}\right]
+       =(1-\gamma)\mathbb E_{\rho_0,\pi}f(s_0,a_0),\nonumber\\
+  &J(\pi)=\frac{1}{1-\gamma}\mathbb E_\nu[w(s,a)R(s,a)].
+\end{align}
+式中$a'\sim\pi(\cdot\mid s')$，奖励均值可由条件正确的奖励样本代替。$d^\pi$与$\nu$都已归一化，故价值中的$(1-\gamma)^{-1}$不能删除。占用比仍要求目标分布受日志分布支持；省去行为策略拟合，并不使支持之外的价值变得可识别。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{17mm}XXXX}
+    \toprule
+    估计路线 & 必需信息 & 拟合对象 & 关键覆盖要求 & 主要误差 \\
+    \midrule
+    IS & 轨迹、目标与行为概率 & 可不拟合模型 & 目标轨迹相对行为绝对连续 & 乘积权重方差；概率估计偏差 \\
+    模型评价 & 转移、奖励及初始条件 & $\widehat P,\widehat R$ & 目标行为后果有支持或正确结构 & 模型误设、长滚动误差 \\
+    FQE & 转移、固定$\pi$、初态 & $Q^\pi$ & 目标继续动作及状态可被评价 & 回归、投影、自举传播 \\
+    本节DR & IS字段和辅助价值 & $\widehat Q,\widehat V$ & 仍需目标支持；辅助拟合与评价分离 & 双方错误的交互、权重方差 \\
+    DualDICE & 转移分布、初态、$\pi$ & 占用比及对偶函数 & $d^\pi\ll\nu$与可控比值 & 比率函数逼近、优化与采样误差 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{固定策略的评价路线。表中列出的是各具体形式的条件，不将某一DR或DICE变种的结论推广到全部同名方法。}
+  \label{tab:rl-information-estimators}
+\end{table*}
+
+表~\ref{tab:rl-information-estimators}~把不同估计器的误差来源放在同一口径下。选择评价器时，应先检查日志能否提供它需要的信息，再比较方差、拟合代价和偏差控制，不能仅按估计分数是否更高来选择。
+
+% Outline: 4.3.4
+\subsection{候选策略的比较与选择}
+\label{sec:rl-information-selection}
+
+固定一个策略后估计其价值，与反复训练并挑选得分最高的策略不是同一统计问题。即使每个预固定候选的估计都无偏，最大估计值也更容易来自正向噪声。候选越多、查询越频繁，直接报告这个最大值越可能乐观。
+
+可将数据职责分为训练、选择和最终报告：训练集产生候选与辅助模型，选择集调整超参数或保留候选，最终评价集只用于预先确定的报告。样本少时可使用严谨的交叉拟合或统一误差控制，但不能在反复查看最终集后仍称其为未使用测试集。无论怎样划分，都不能创造原日志中缺失的支持。
+
+两个候选通常可以在同一条轨迹上评价。设$Z_i(\pi)$是IS或满足相应条件的DR轨迹贡献，直接定义
+\begin{equation}
+  \label{eq:rl-information-paired}
+  \widehat\Delta=\frac1n\sum_i[Z_i(\pi_1)-Z_i(\pi_2)].
+\end{equation}
+固定候选与辅助模型，并对独立同分布评价回合取方差时，
+\[
+  \operatorname{Var}(\widehat\Delta)
+  =\frac1n\left[
+    \operatorname{Var}(Z(\pi_1))+\operatorname{Var}(Z(\pi_2))
+    -2\operatorname{Cov}(Z(\pi_1),Z(\pi_2))\right].
+\]
+共享轨迹常使两个估计同向波动，正协方差会降低差的方差；负协方差则可能增大它。分别报告两个价值区间再判断是否重叠，会忽略这项信息。
+
+\begin{example}[价值区间重叠仍可比较性能差]
+  \label{ex:rl-information-paired}
+  假设两项教学价值估计为5和4，各自标准误为1，两个均值估计的协方差为0.98。性能差估计为1，标准误为
+  $\sqrt{1+1-2(0.98)}=0.2$。在此处特意假设正态近似适用，边际95\%区间分别为$[3.04,6.96]$与$[2.04,5.96]$，高度重叠；配对差的95\%区间却为$[0.608,1.392]$，不含0。这些是假设的统计量，不是本书运行实验的结果。
+\end{example}
+
+图~\ref{fig:rl-information-comparison}~将这两种区间分开显示。该例讨论的是有限样本中的相关估计误差；第~\ref{sec:rl-information-partial-identification}~节还会遇到总体分布已知而两个价值都不能点识别的情形，届时也应在共同模型下比较差，不能混淆两类不确定性。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-information-comparison}
+  \caption{例~\ref{ex:rl-information-paired}~的教学区间。上组为两个价值的边际95\%正态近似区间，下组为共享轨迹计算的性能差区间；两组横轴各自标明量纲为回报。区间重叠与差是否包含0并非同一个判断。}
+  \label{fig:rl-information-comparison}
+\end{figure}
+
+报告比较结果时应明确候选数、产生候选所用数据、重复查询次数、置信水平和多重比较处理。对预先固定的有限候选集，可为各候选分配失败概率再用并集界控制共同事件；自适应扩大候选集不能直接套用原先单个候选的区间。证据不能确定排序时，可以保留一组尚不能排除的候选，或报告无法排序。分数的小数位不是额外证据。
+
+% Outline: 4.4
+\section{固定经验下的策略学习与改进}
+\label{sec:rl-information-offline-learning}
+
+% Outline: 4.4.1
+\subsection{策略学习的目标与数据边界}
+\label{sec:rl-information-learning-boundary}
+
+评价一个给定策略可以暴露证据缺口，学习策略则会主动改变将要查询的动作。最直接的起点是\term{行为克隆}（behavioral cloning, BC）：对日志中的状态动作对拟合
+$\min_{\bm\phi}\mathbb E_{\mathcal D}[-\log\pi_{\bm\phi}(a\mid s)]$。
+它模仿记录行为，没有利用奖励重新分配动作概率。离线强化学习希望从同一批数据中挑选更有利的行为，但“更有利”必须明确相对于什么。
+
+拟合行为考察模型是否复现数据动作；提高估计回报考察某个学习目标；相对基线改进比较$J(\pi)$与$J(\pi_b)$；逼近最优则比较$J(\pi)$与允许策略类中最好的真实价值。后面三个量并不因同一个优化器成功运行而同时改善。尤其当优化器能查询数据之外的动作时，它可能专门利用模型错误。
+
+\begin{example}[一次贪心更新利用了外推错误]
+  \label{ex:rl-information-extrapolation}
+  设单步任务中日志只记录动作$a_0$，真实奖励为1；另一个动作$a_1$真实奖励为$-10$，但没有日志。价值网络给出$\widehat Q(s,a_0)=1$、$\widehat Q(s,a_1)=5$，在全部数据动作上的平方误差为0。一次贪心更新选择$a_1$，估计回报由1升到5，真实回报却由1降到$-10$。继续在原日志上拟合$a_0$不能纠正这个选择。
+\end{example}
+
+图~\ref{fig:rl-information-offline-pipeline}~标出了外推进入计算的位置：策略可以生成新动作，价值备份可以查询新动作，规划器也可以生成从未观测过的状态动作。后续方法分别限制这三个位置，并允许组合。比较时固定数据和评价协议，说明优化对象、执行动作的产生方式和额外假设；网络叫Transformer、扩散模型或流模型，本身不决定有没有策略改进。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-information-offline-pipeline}
+  \caption{固定数据上的学习与评价。实线分别标注拟合、生成动作及评价，虚线标出外推可能进入的查询。行为约束限制动作来源，悲观价值限制对未支持动作的乐观估计，模型约束限制规划范围；任何一条学习路径仍需独立的评价证据。}
+  \label{fig:rl-information-offline-pipeline}
+\end{figure*}
+
+% Outline: 4.4.2
+\subsection{行为数据约束下的策略学习}
+\label{sec:rl-information-behavior-constraint}
+
+如果价值网络在远离日志动作处最不可靠，可以先限制策略离记录行为的距离。以下切换到完全可观测的无限折扣任务，仍只使用固定$\mathcal D$。TD3+BC沿用TD3的双评论家、目标网络和延迟行动者更新，在确定性行动者$f_{\bm\phi}(s)$的目标中加入平方行为拟合项：
+\begin{equation}
+  \label{eq:rl-information-td3bc}
+  \max_{\bm\phi}\ %
+  \mathbb E_{(s,a)\sim\mathcal D}
+  \left[\lambda Q_{\bm\theta}(s,f_{\bm\phi}(s))
+            -\lVert f_{\bm\phi}(s)-a\rVert_2^2\right].
+\end{equation}
+动作是向量时，范数作用于各动作坐标；此处保留常用动作符号$a$。一批数据上常取
+$\lambda=\alpha/(\frac1N\sum_i|Q_{\bm\theta}(s_i,a_i)|)$，
+并在行动者更新时固定这个尺度；分母为0的退化批次需要实现中的非零保护。梯度中的两项分别为
+\[
+  \mathbb E_{\mathcal D}
+  \left[(\nabla_{\bm\phi}f_{\bm\phi}(s))^\top
+  \{\lambda\nabla_a Q_{\bm\theta}(s,a)|_{a=f_{\bm\phi}(s)}
+          -2(f_{\bm\phi}(s)-a)\}\right].
+\]
+价值项鼓励向预测高价值的方向移动，拟合项把动作拉回记录附近。约束过弱可能重现例~\ref{ex:rl-information-extrapolation}~，过强则接近模仿。奖励和动作的数值尺度会改变两项的相对作用，不能脱离归一化方式比较$\alpha$\scite{rl4-fujimoto2021-td3bc}
+
+对多模态行为，只用一个动作均值表示“接近日志”可能产生数据稀少的中间动作。\term{批量约束Q学习}（batch-constrained Q-learning, BCQ）先拟合条件行为生成模型，再只在其候选附近改进。其连续动作形式可用下列可执行过程理解：以数据$(s,a)$训练条件变分自编码器，编码器从$(s,a)$产生潜变量后验，解码器$g_{\bm\omega}(s,\bm z)$用其样本重构行为动作；生成候选时，则按规定的潜变量先验采样，不再读取待生成的数据动作。以扰动网络$\xi_{\bm\phi}(s,a)$生成逐坐标限于$[-\Phi,\Phi]$的小修正，其中$\Phi\geq0$，并把最终动作限制在合法动作域内。令
+\begin{equation}
+  \label{eq:rl-information-bcq}
+  a_j=g_{\bm\omega}(s,\bm z_j),\qquad
+  \widetilde a_j=\operatorname{clip}_{\mathcal A}
+                  (a_j+\xi_{\bm\phi}(s,a_j)),\qquad
+  a_{\mathrm{exec}}\in\argmax_{\widetilde a_j,\ 1\leq j\leq m}
+                  Q_1(s,\widetilde a_j).
+\end{equation}
+生成模型的训练损失是动作重构误差加潜变量后验相对标准先验的KL项。评论家从下一状态同样生成$m$个候选，用目标网络的
+$\eta\min(Q_1^-,Q_2^-)+(1-\eta)\max(Q_1^-,Q_2^-)$
+对每个候选评分，其中$\eta\in[0,1]$控制对两个评论家中较小值的偏重。取候选最大值构造$r_t+\gamma$倍继续价值的回归目标，真终止时继续价值为0。扰动网络在幅度限制内提高$Q_1$，目标网络缓慢更新。部署时输出式~\eqref{eq:rl-information-bcq}~筛出的一个实际动作，而不是输出行为模型本身。正整数候选数$m$增大要付出更多生成与价值前向计算，扰动幅度$\Phi$增大则放宽偏离范围\scite{rl4-fujimoto2019-bcq}
+
+例如在一个标量教学状态中，生成器给出$-0.2,0.1,0.3$，扰动后成为$-0.15,0.1,0.25$，三个$Q_1$评分为$0.4,0.8,0.6$，实际执行的是0.1。限制候选并没有证明这三个动作的后果都已充分观测：密度模型可能平滑跨越数据空洞，有限扰动也可能跨出支持。BCQ减少了任意动作最大化的范围，没有取消覆盖检查。
+
+其他行为正则方法可按“接近什么、在哪里限制”比较。BEAR通过样本间的最大均值差异约束行动者与行为动作分布，使备份尽量不查询分布外动作；这一距离仍依赖核、样本和阈值\scite{rl4-kumar2019-bear}
+BRAC比较在策略目标与价值递推中加入行为分布散度的不同方式；ReBRAC在TD3+BC基础上分别调整行动者与评论家目标中的行为惩罚，并检查网络、批量和归一化等实现选择。表~\ref{tab:rl-information-behavior-methods}~保留这些差别，而不把实现改动当成新的信息来源\scite{rl4-wu2019-brac,rl4-tarasov2023-rebrac}
+
+\begin{table*}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{15mm}XXXX}
+    \toprule
+    方法 & 行为接近度 & 施加位置 & 执行动作来源 & 强度与代价 \\
+    \midrule
+    BEAR & 动作样本的核最大均值差异 & 行动者约束，间接限制备份 & 训练后的随机行动者；可对候选评分 & 阈值、核及拉格朗日权重；行为模型与样本比较 \\
+    BRAC & 相对行为模型的KL等散度 & 策略正则，或同时进入价值递推 & 正则化行动者 & 散度权重；行为密度拟合误差 \\
+    ReBRAC & 相对数据动作的平方距离 & 行动者及评论家目标的独立惩罚 & 确定性行动者 & 两处惩罚系数；数据下一动作与实现配置 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{行为正则的不同位置。表中“接近”都不表示已经获得未见动作的真实后果；实际比较还需固定动作尺度、数据与选模预算。}
+  \label{tab:rl-information-behavior-methods}
+\end{table*}
+
+也可以不显式写行为距离，而让生成模型根据“希望获得的回报”选择数据中的动作模式。Decision Transformer将过去状态、动作与剩余回报条件编码成因果序列，通过监督动作预测拟合$\pi_{\bm\phi}(a_t\mid h_t,g_t)$。其常见实现使用有限时域未折扣的剩余回报条件$g_t=\sum_{k=t}^{H-1}r_k$，不是本书默认的折扣$G_t$；部署时由用户给定目标$g_0$，每步按$g_{t+1}=g_t-r_t$更新。训练时的未来回报是监督标签，部署时给出的则是愿望，二者是否可实现需要另行检验\scite{rl4-chen2021-dt}
+
+\begin{example}[回报条件不能控制外部随机结果]
+  \label{ex:rl-information-return-conditioning}
+  在单步教学任务中，任意动作的奖励都是与动作独立的公平硬币：以$1/2$概率为1，否则为0。挑选回报为1的轨迹训练条件动作模型，可以完美拟合这批“成功”数据；部署时即使一直输入目标回报1，成功概率仍为$1/2$。条件化删除了失败结果，却没有找到能改变结果概率的动作。
+\end{example}
+
+因此，回报条件模仿与显式行为距离约束不是同一个目标。前者可以表达数据中的高回报动作模式，但随机环境中的幸运结果、不可达目标条件和日志外状态都会限制它的含义。是否改进仍需前节的价值证据。
+
+% Outline: 4.4.3
+\subsection{价值估计与策略更新中的外推控制}
+\label{sec:rl-information-pessimism}
+
+限制行为之外，还可以直接压低缺乏证据的高价值预测。\term{保守Q学习}（conservative Q-learning, CQL）在Bellman拟合损失之外加入价值正则，用不同动作分布下的价值差抑制没有数据支撑的乐观估计\scite{rl4-kumar2020-cql}
+以有限动作的一种常用形式为例，
+\begin{equation}
+  \label{eq:rl-information-cql}
+  \min_Q\
+  \frac12\mathbb E_{\mathcal D}\bigl[Q(s,a)-y(s,a,r,s')\bigr]^2
+  +\alpha\mathbb E_{s\sim\mathcal D}
+       \left[\log\sum_{a'}e^{Q(s,a')}
+                       -\mathbb E_{a\sim\widehat\mu_{\mathcal D}}Q(s,a)\right].
+\end{equation}
+其中$\alpha\geq0$控制保守正则强度，$y$是使用固定目标网络$Q^-$的Bellman目标。在当前策略$\pi^{(k)}$的评价步，可以取
+$y=r+\gamma\mathbb E_{a'\sim\pi^{(k)}(\cdot\mid s')}Q^-(s',a')$；
+控制备份也可采用规定的动作最大化版本，真终止时均令继续价值为0。
+$\widehat\mu_{\mathcal D}$表示该状态的数据动作分布。对某个动作价值求正则梯度，得到
+$\alpha(\operatorname{softmax}(Q)(a\mid s)-\widehat\mu_{\mathcal D}(a\mid s))$；
+于是数据里没有但被赋高值的动作受到向下修正，数据动作获得相对支撑。连续动作无法直接求有限和，需要针对规定的采样分布近似相关积分。
+
+在例~\ref{ex:rl-information-extrapolation}~的另一组教学预测
+$Q(a_0)=0,Q(a_1)=4$中，未见$a_1$对应的正则梯度约为$0.982\alpha$，梯度下降会降低它。这个局部方向说明正则怎样抑制外推，但不证明训练后每个$Q(s,a)$都是可信下界。CQL的理论结果依赖表格或特定逼近条件、采样误差控制、正则强度和策略更新条件；常用版本关注策略期望价值的下界，也不能随意加强为所有动作逐点下界。
+
+\term{隐式Q学习}（implicit Q-learning, IQL）采用另一种方式：在价值训练中不查询新行动者提出的数据外动作，而从已有动作的价值中估计一个偏向较好动作的状态价值。\term{期望分位数}（expectile）由非对称平方损失确定；与按概率质量切分的分位数不同，它还取决于两侧偏差的大小。给定$\tau\in(0,1)$，定义
+\begin{equation}
+  \label{eq:rl-information-expectile}
+  \ell_\tau(u)=|\tau-\mathbb I\{u<0\}|u^2,\qquad
+  e_\tau(X)\in\argmin_v\mathbb E[\ell_\tau(X-v)].
+\end{equation}
+$\mathbb I$是指示函数。$\tau=1/2$时得到均值；$\tau>1/2$时，低估一个较大$X$的惩罚更重，最优$v$向上移动。对离散分布求导，最优点满足
+$\tau\mathbb E[(X-v)_+]=(1-\tau)\mathbb E[(v-X)_+]$。
+
+IQL在每个状态上把数据动作对应的$Q$当作这个随机变量。记$Q_{\bar{\bm\theta}}$为固定目标网络，$V_{\bm\psi}$为状态价值网络，依赖次序为
+\begin{align}
+  \label{eq:rl-information-iql}
+  L_V(\bm\psi)
+    &=\mathbb E_{(s,a)\sim\mathcal D}
+       \ell_\tau(Q_{\bar{\bm\theta}}(s,a)-V_{\bm\psi}(s)),\nonumber\\
+  L_Q(\bm\theta)
+    &=\mathbb E_{\mathcal D}
+       [Q_{\bm\theta}(s,a)-r-\gamma V_{\bm\psi}(s')]^2,\nonumber\\
+  L_\pi(\bm\phi)
+    &=-\mathbb E_{(s,a)\sim\mathcal D}
+       [\exp(\beta\widehat A(s,a))\log\pi_{\bm\phi}(a\mid s)],\\
+  \widehat A(s,a)&=Q_{\bar{\bm\theta}}(s,a)-V_{\bm\psi}(s).
+  \nonumber
+\end{align}
+各次更新把其目标视为固定量，真终止时$V(s')=0$，$\beta\geq0$是逆温度。价值拟合完成后再做策略提取，或在不反向影响价值目标的前提下交替训练。实践中还会用双Q的较小值和权重截断，截断阈值必须报告。关键是$V$在同一状态的不同动作之间取上侧expectile，$Q$仍以平方损失平均奖励和随机转移，不对单次幸运结果取上侧统计量。原IQL正是用分开的$V$与$Q$目标避免把环境随机性误当成可选择的好动作\scite{rl4-kostrikov2022-iql}
+
+\begin{example}[三个动作的IQL更新与提取]
+  \label{ex:rl-information-iql}
+  设一个教学状态$s$的三个数据动作等频出现，目标Q值分别为0、1、3，取$\tau=3/4$。若$v\in[1,3]$，最优条件为
+  \[
+    \tfrac34(3-v)=\tfrac14[(v-0)+(v-1)],
+  \]
+  解得$v=2$，确在该区间内。凸损失保证这是全局最优点。对一条到达$s$的非终止转移，若即时奖励为0.5、$\gamma=0.9$，Q回归目标就是$0.5+0.9(2)=2.3$。
+
+  在$s$处取$\beta=\log2$，三个优势为$-2,-1,1$，未归一化拟合权重为$1/4,1/2,2$。若策略是无容量限制的分类分布，最大化加权对数似然给出
+  \[
+    \pi(a_1\mid s)=1/11,\quad
+    \pi(a_2\mid s)=2/11,\quad
+    \pi(a_3\mid s)=8/11.
+  \]
+  在这些Q恰为单步真实奖励的特殊情形下，新策略价值为$26/11$，高于原等频行为的$4/3$，但仍低于选择$a_3$的3。学习到的$V=2$不等于提取策略的精确价值$26/11$。
+\end{example}
+
+\begin{algorithm}[固定经验上的IQL与策略提取]
+  \label{alg:rl-information-iql}
+  \begin{algorithmic}[1]
+    \Require 固定$\mathcal D$，$\gamma,\tau,\beta$，价值与策略更新预算，权重截断阈值
+    \Ensure 可执行$\pi_{\bm\phi}$及送往独立评价的数据职责说明
+    \State 初始化$Q_{\bm\theta},Q_{\bar{\bm\theta}},V_{\bm\psi},\pi_{\bm\phi}$
+    \For{每次价值更新}
+      \State 从$\mathcal D$抽取转移批次，按$L_V$拟合数据动作Q值的expectile
+      \State 按真终止标记屏蔽继续价值，构造固定目标$r+\gamma V_{\bm\psi}(s')$
+      \State 按$L_Q$更新评论家，再缓慢更新目标Q参数
+    \EndFor
+    \For{每次策略提取更新}
+      \State 固定价值网络，计算数据动作优势和截断后的指数权重
+      \State 最小化加权负对数似然$L_\pi$
+    \EndFor
+    \State 固定提取策略，按第~\ref{sec:rl-information-evaluation}~节评价，不以$V$直接充当最终证据
+  \end{algorithmic}
+\end{algorithm}
+
+算法~\ref{alg:rl-information-iql}~将价值学习与动作提取分开。表~\ref{tab:rl-information-extraction}~说明，这一步不是可忽略的实现细节：同一个价值函数可以通过不同的动作来源变成不同的策略，其误差和覆盖风险也不同。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{26mm}XXX}
+    \toprule
+    提取方式 & 动作来源与价值查询 & 逼近误差 & 覆盖风险 \\
+    \midrule
+    直接贪心 & 全动作优化或行动者提出动作；查询其Q值 & 动作优化不精确、评论家误差 & 容易主动寻找数据外高估动作 \\
+    优势加权拟合 & 用数据动作训练执行分布；训练查询数据Q值 & 策略族与加权分布不匹配、优化误差 & 连续输出仍可能落在稀疏间隙 \\
+    行为采样后筛选 & 生成$m$个候选，按Q取最大或重采样 & 行为生成偏差、有限$m$误差 & 生成概率非零不证明环境后果有支持 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{价值学习之后的三个动作接口。增大候选数或策略容量可能减少提取误差，也可能更充分地利用价值外推误差。}
+  \label{tab:rl-information-extraction}
+\end{table*}
+
+Diffusion-QL以条件扩散模型拟合数据动作，在去噪拟合目标外加入生成动作的价值最大化项，价值梯度通过生成过程改变策略。这把行为建模与价值驱动训练结合起来，其去噪步数也进入训练与推理成本\scite{rl4-wang2023-diffusionql}
+IDQL则分析价值目标隐含的行为重加权分布，用灵活的扩散行为模型产生候选，再按评论家导出的权重重采样，或使用其贪心提取变体。它着重减少简单行动者难以表达多模态隐含策略的误差，而不是从生成的动作中取得新环境证据\scite{rl4-hansenestruch2023-idql}
+
+图~\ref{fig:rl-information-extraction}~把“价值影响生成器”和“价值筛选已生成候选”分开。流模型也可以承担生成候选或可微动作映射的角色，但只有接上经过论证的价值加权、策略目标或规划准则，才构成具体的改进接口。条件生成训练本身没有自动增加这个步骤。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-information-extraction}
+  \caption{生成式动作的两种价值接口。实线为部署时的候选与动作流，虚线为训练中从价值目标进入生成器的梯度；两条路径不应混称为同一种“扩散策略改进”。}
+  \label{fig:rl-information-extraction}
+\end{figure}
+
+近期的DEAS将价值学习扩展到动作序列，并通过与显式行动者分离的价值学习减轻动作块评价中的过估计。其ICLR 2026正式版本将实验范围放在长时程离线任务及动作序列模型上；动作块可以减少显式决策次数，却也扩大组合动作空间。固定长度动作序列不自动等于可中途依据信息反馈的Option，也不意味着原日志覆盖了所有动作块。这里将DEAS作为这一接口的近期研究，不把其基准表现写成普遍最优性结论\scite{rl4-kim2026-deas}
+
+% Outline: 4.4.4
+\subsection{学习模型上的规划与策略优化}
+\label{sec:rl-information-model-learning}
+
+第~\ref{chap:rl-learning}~章中，规划器发现模型漏洞后还可以用新交互校正它；固定经验协议没有这种自由。模型通常拟合$\widehat R(s,a)$、$\widehat P(s'\mid s,a)$，并输出某种不确定性分数$u(s,a)$。在数据内，留出集可以检查部分预测误差；在数据外，小误差、小集成分歧或高似然都不能独自证明真实后果正确。
+
+MOPO把学习模型的滚动与不确定性惩罚连接起来：从日志状态出发，用当前策略在$\widehat P$中滚动有限长度，给模拟奖励
+$\widetilde R=\widehat R-\lambda u$，混合真实和模拟转移更新策略，再重复模型内采样与策略优化。模型本身仍由真实$\mathcal D$拟合，模拟数据要保持来源标识。滚动长度决定误差累积范围，$\lambda$决定对不确定区域的代价\scite{rl4-yu2020-mopo}
+
+惩罚何时能解释为保守价值，可以用一个明确的充分条件说明。固定$\pi$，令$\widehat d^\pi$为在$\widehat P$下的归一化折扣占用。真实与模型Bellman方程相减，并沿模型轨迹累积，得到
+\begin{equation}
+  \label{eq:rl-information-model-telescoping}
+  J_M(\pi)-J_{\widehat M}(\pi)
+  =\frac1{1-\gamma}\mathbb E_{\widehat d^\pi}
+       \left[R-\widehat R
+                  +\gamma(P-\widehat P)V_M^\pi\right].
+\end{equation}
+这里$(P-\widehat P)V$表示两转移核对下一状态价值期望之差；等式使用共同$\rho_0$和有界价值，使折扣尾项消失。如果在该策略访问区域内，
+$|R-\widehat R|\leq u_R$且
+$|(P-\widehat P)V_M^\pi|\leq u_P$，
+那么将奖励扣除$u_R+\gamma u_P$可得
+\[
+  J_M(\pi)\geq
+    \frac1{1-\gamma}\mathbb E_{\widehat d^\pi}
+       [\widehat R-u_R-\gamma u_P].
+\]
+这解释了为何需要把$\lambda u$与实际误差建立联系。若还要用该下界选择策略，误差条件必须对参与选择的候选共同有效，不能把一个预固定策略的界直接交给优化器使用。实际集成模型即使全部学错，也可能意见一致；没有覆盖或正确结构提供这种联系时，模型分歧只是启发式量。
+
+MOReL与COMBO把限制放在别处。MOReL在不可信状态动作处转入低回报吸收状态，限制规划器离开可信区域\scite{rl4-kidambi2020-morel}
+COMBO针对模型滚动产生的状态动作加入保守价值正则，不必先显式构造同一种不确定性分数\scite{rl4-yu2021-combo}
+两者仍依赖真实数据和各自保证所需的模型误差条件。
+表~\ref{tab:rl-information-model-methods}~比较相同日志缺口下的代价：如果未见动作其实很好，保守限制会损失可实现回报；如果未见动作很差，这个损失可能正好阻止模型被利用。
+
+\begin{table*}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{17mm}XXXX}
+    \toprule
+    方法 & 限制位置 & 候选轨迹来源 & 真实数据依赖 & 保守程度与代价 \\
+    \midrule
+    MOPO & 模型奖励减去误差代理惩罚 & 日志状态出发的短模型滚动 & 动力学拟合及误差校准 & 惩罚系数、滚动长度；可能拒绝高回报稀疏区域 \\
+    MOReL & 不可信区域进入低回报吸收态 & 悲观模型中的规划或学习 & 可信区域判定与模型置信 & 阈值与吸收惩罚；错误拒绝会缩小可达策略类 \\
+    COMBO & 真实与模型数据上的保守价值正则 & 学习模型中的策略滚动 & 模型拟合及数据动作的价值支撑 & 正则及混合比例；过强会压低真实可行动作 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{模型法限制外推的三个位置。比较成立的前提是任务、日志、模型容量与查询预算相同；减少显式不确定性估计不等于不再需要误差依据。}
+  \label{tab:rl-information-model-methods}
+\end{table*}
+
+模型还可以直接生成整段轨迹。Trajectory Transformer把状态、动作和奖励序列建模成自回归分布，规划时通过束搜索保留高评分候选，再执行选中轨迹的首个动作；收到真实新观测后重新搜索。其改进来自搜索评分与可行候选的结合，不是下一token预测损失本身。
+Diffuser用扩散过程生成轨迹，通过当前状态等条件及回报引导的采样形成计划，同样可执行首个动作并滚动重规划。前者搜索自回归候选，后者用引导去噪形成计划；两种生成轨迹都是学习模型的预测，不是新观测到的经验\scite{rl4-janner2021-trajectory,rl4-janner2022-diffuser}
+
+两者部署时的反馈闭环不能倒推为训练时允许在线调参。若为了选超参数而在真实环境反复执行计划，这些调用属于第~\ref{sec:rl-information-limited-interaction}~节的新增预算。通用搜索和模型滚动的算法基础见第~\ref{chap:rl-planning}、\ref{chap:rl-learning}~章；在本节，关键限制始终是规划器不能自行验证日志之外的预测。
+
+% Outline: 4.4.5
+\subsection{策略改进的保证与比较}
+\label{sec:rl-information-improvement}
+
+行为约束、悲观价值与模型限制都能给出候选策略，但“改进”还需要把候选与基线放在共同误差条件下比较。下面的结论刻意不绑定某种网络或优化算法，以突出评价证据承担的作用。
+
+\begin{theorem}[共同误差事件上的基线性能控制]
+  \label{thm:rl-information-improvement}
+  固定任务、初始分布、时域口径与基线$\pi_b$。在一个共同事件$\mathcal E$上，假设对每个
+  $\pi\in\Pi\cup\{\pi_b\}$均有
+  $|\widehat J(\pi)-J(\pi)|\leq\varepsilon$。从$\Pi$中选出的策略$\widehat\pi$若满足
+  $\widehat J(\widehat\pi)\geq\widehat J(\pi_b)$，则在该事件上
+  \[
+    J(\widehat\pi)\geq J(\pi_b)-2\varepsilon.
+  \]
+  若$\mathbb P(\mathcal E)\geq1-\delta$，结论也以至少$1-\delta$的概率成立。
+\end{theorem}
+
+\begin{proof}
+  共同事件同时包含选择后策略与基线，故可以逐项插入估计值：
+  \[
+  \begin{aligned}
+    J(\widehat\pi)
+    &\geq\widehat J(\widehat\pi)-\varepsilon\\
+    &\geq\widehat J(\pi_b)-\varepsilon\\
+    &\geq J(\pi_b)-2\varepsilon.
+  \end{aligned}
+  \]
+  第一、三步分别使用共同事件对$\widehat\pi$与$\pi_b$的误差界，中间使用选择规则。结论在$\mathcal E$内逐个成立，因此其成立概率至少为$\mathbb P(\mathcal E)$。
+\end{proof}
+
+该界容许$2\varepsilon$的性能损失，不是严格提高的保证。若要求
+$\widehat J(\widehat\pi)-\widehat J(\pi_b)>2\varepsilon$，才可由同样推导获得严格正的真实改进。更重要的是，预先固定一个策略的95\%区间不能直接充当从许多策略中挑出最好者的共同事件；若候选集也由评价数据生成，还须处理这一适应性。
+
+SPIBB用基线自举落实“数据稀少处少改动”的思想。在有限MDP中，令
+$\mathcal B=\{(s,a):N(s,a)<N_{\min}\}$，
+对其中的状态动作要求$\pi(a\mid s)=\pi_b(a\mid s)$，在其余动作上重新分配可用概率质量并优化经验模型价值。例如某状态基线为$(0.6,0.3,0.1)$，第三个动作稀少，则约束第三项仍为0.1，而不是把它删除并重新归一化；前两项的总概率0.9可以在数据支持下调整。
+
+原始$\Pi_b$-SPIBB性能界在有限状态动作、奖励有界、已知可执行基线、按计数建立的模型置信条件及规定的受约束求解下，控制相对基线的容许损失。损失项随置信半径、折扣累积和经验模型上的改进量变化，不能把算法名称中的“安全”解释成每次运行必然超过基线。神经网络近似、模型误设或基线概率不准确，也不能直接继承表格结论\scite{rl4-laroche2019-spibb}
+
+\begin{table*}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{28mm}XXX}
+    \toprule
+    共同报告项 & 行为克隆 & 可复现行为策略 & 等预算离线改进方法 \\
+    \midrule
+    价值证据 & 留出OPE或独立测试；不是拟合准确率 & 原始版本、真实测试或日志回报及其条件 & 同一评价器、置信处理和查询权限 \\
+    偏离与悲观设置 & 模型容量、拟合与动作输出形式 & 原收集分布与版本 & 行为惩罚、价值惩罚、模型可信阈值 \\
+    训练成本 & 数据遍历、批量、更新次数 & 复现基线所需成本单列 & 评论家、生成器、模型及调参总成本 \\
+    推理成本 & 一次动作预测或采样 & 原控制器调用成本 & 候选数、去噪步数、搜索与滚动长度 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{方法比较的报告口径，而非虚构的实验结果表。真实测试、离线估计和理论性能界分别标注，不能放在同一列中当作等强度证据。}
+  \label{tab:rl-information-reporting}
+\end{table*}
+
+表~\ref{tab:rl-information-reporting}~要求将训练收益与证据来源分开。基线也可能回报很低，或者违反业务安全要求；接近基线不代表接近全局最优，更不代表满足碰撞概率或资源成本约束。执行安全与约束保证由第~\ref{chap:rl-trustworthy}~章处理，本节的保证只回答指定条件下的相对性能问题。
+
+% Outline: 4.5
+\section{有限新增经验下的策略修正}
+\label{sec:rl-information-limited-interaction}
+
+定理~\ref{thm:rl-information-unseen-action}~的两个环境在固定日志下完全不可区分，但允许执行一次$a_1$后，确定性奖励$+1$或$-1$就能区分它们。查询真正改变了可获得的信息。如果奖励有噪声，一次结果一般还不够；能够查询，也不表示已经取得可忽略误差的答案。
+
+有限交互协议应在每轮开始前写明可执行策略、步数、重置次数、是否允许专家帮助以及验证查询的用途。专家选择的动作和主动随机探索产生的动作机制不同，新增日志必须记录。用于最终报告的试跑也消耗交互预算，不能因为没有参与梯度更新就从成本中删除。
+
+离线初始化进入在线阶段以后，原来的保守构造需要重新检查。过强的行为约束可能阻止已经有数据支持的新动作；突然撤掉约束又可能让未校准的评论家驱动危险外推。AWAC通过优势加权动作拟合结合离线数据与在线经验，减少对显式行为密度模型的依赖\scite{rl4-nair2021-awac}
+IQL可以在加入新经验后继续用同样的$V,Q$与加权策略接口学习。Cal-QL针对保守初始化的数值尺度问题，在下估当前策略价值的同时，用参考策略价值约束过度压低的估计，避免微调开始时大量更新只用于恢复价值尺度。这里的校准不是任意任务上的概率校准保证\scite{rl4-nakamoto2023-calql}
+
+\begin{table*}[t]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{18mm}XXXX}
+    \toprule
+    起点 & 新旧经验混合 & 评论家变化 & 行为限制变化 & 探索恢复要点 \\
+    \midrule
+    AWAC & 旧日志与在线回放用于动态规划和优势拟合 & 用当前继续策略的价值更新优势 & 加权似然的隐式接近度随数据改变 & 行动者必须真正产生可补足覆盖的新动作 \\
+    IQL微调 & 新转移加入价值和策略训练 & 数据动作expectile与Q目标随新分布变化 & 温度、截断和混合比例决定偏离程度 & 不查询数据外Q不等于主动探索已经充分 \\
+    Cal-QL & 离线初始化后混合在线经验 & 参考价值校准限制过度低估 & 保守强度与新证据一起检查 & 减轻初始价值尺度失配，仍需覆盖新增行为 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{有限交互修正中的组件职责。三行不是新的互斥算法分类；混合比例、约束强度和探索预算都需报告，不能只比较最终训练步数。}
+  \label{tab:rl-information-finetuning}
+\end{table*}
+
+表~\ref{tab:rl-information-finetuning}~中的组件可以放进同一轮工作流程。算法~\ref{alg:rl-information-round}~特意把数据更新与评价分开：新数据改变覆盖，也改变行为分布，旧评价器不能不经检查地继续使用。
+
+\begin{algorithm}[一轮有限经验修正]
+  \label{alg:rl-information-round}
+  \begin{algorithmic}[1]
+    \Require 当前日志$\mathcal D^{(k)}$、基线、候选，收集预算$B_k$与独立评价预算$E_k$
+    \Ensure 更新后的候选集合与本轮可支持的性能结论
+    \State 固定本轮收集策略及版本，声明可访问状态、重置和帮助权限
+    \State 在$B_k$内收集经验，保存策略概率、轨迹边界及用途标识
+    \State 构成$\mathcal D^{(k+1)}$，重新检查覆盖及新旧数据混合权重
+    \State 更新表示、价值、行为或环境模型，按选定接口提取候选
+    \State 固定待比较策略，在保留日志或$E_k$内的独立交互上重新评价
+    \State 依据置信规则保留、替换或拒绝候选，记录下一轮需要补充的信息
+    \State 扣除收集、验证、重置及专家调用预算；预算用尽时停止
+  \end{algorithmic}
+\end{algorithm}
+
+有限批次和连续在线的区别，还在于何时可以利用反馈，而不只在于总样本数。
+
+\begin{example}[相同两次查询与不同适应轮次]
+  \label{ex:rl-information-batches}
+  沿用$a_0$奖励为0、$a_1$奖励为固定$+1$或$-1$的两个单步环境，并为教学比较假设两环境先验各为$1/2$。总共允许两个新回合，每回合一次动作。
+
+  若必须在看到任何新结果前选定两次动作，无论预先选择几次$a_1$，两环境平均的收集回报都是0。若允许两轮，第一轮执行$a_1$，看到$+1$后第二轮再选$a_1$，看到$-1$后第二轮选$a_0$，两环境的总回报分别为2和$-1$，先验平均为$1/2$。
+\end{example}
+
+该例比较的是收集期间的总回报；若只关心收集完毕后的最终动作，某些一次性设计也能用一次$a_1$查询完成辨认，不能把这一算例扩大为所有终点指标都必然有差距。它说明同样两个样本，在不同适应轮次下能支持不同的行为过程。多轮方法因此需要同时报告原始固定日志、每轮新增预算和反馈使用时机；反复测试所得的选择偏差也应计入最终证据。
+
+% Outline: 4.6
+\section{两类信息限制叠加时的强化学习}
+\label{sec:rl-information-combined}
+
+% Outline: 4.6.1
+\subsection{两类限制下的决策目标与可用信息}
+\label{sec:rl-information-combined-target}
+
+历史记忆能够保留观测线索，固定日志却未必记录了收集者当时实际使用的线索。二者叠加时，不能直接把状态$s_t$替换成网络表示$\bm z_t$，然后认为前面的评价结论原样成立。需要固定希望知道的量，并比较三套信息：执行策略能用什么，日志实际保存什么，行为策略当时依据什么。
+
+以下重新考虑有限时域$H$，固定$\rho_0$、$0\leq\gamma<1$和执行时可得的历史$h_t$，允许策略类记为$\Pi$。目标可以是一个$J_H(\pi)$、两个候选的性能差，或相对基线的改进；若目标是$\Pi$中的最优行为，还需要能够比较其中所有相关候选。论证中不能从“某候选可评价”悄悄转为“可以找到全局最优”。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{XXX}
+    \toprule
+    执行可用信息 & 日志实际字段 & 行为策略曾使用的信息 \\
+    \midrule
+    只见位置与历史动作、奖励 & 同样的全回合历史与边界 & 同样历史及独立随机数：可建立历史条件校正 \\
+    可以保留起始提示 & 日志只保留最近窗口 & 收集者记住提示：执行输入与记录信息不匹配 \\
+    只见传感观测 & 记录动作概率但缺少概率所条件化的上下文 & 专家还看到未记录状态：不能把边缘频率当成随机分配机制 \\
+    回合开始重置记忆 & 片段无回合标识、无前缀 & 行为控制器跨片段保留记忆：初始化机制未知 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{离线POMDP中的三套信息。动作概率需要连同其条件信息和收集协议解释；一个额外字段不能自动修复全部缺口。}
+  \label{tab:rl-information-information-sets}
+\end{table*}
+
+表~\ref{tab:rl-information-information-sets}~的第二行遗漏了执行可以利用的提示，第三行则遗漏了专家选择动作的依据。即使两种遗漏都表现为“隐藏状态”，对评价的影响也不同：前者妨碍构造所需历史，后者还可能改变动作与结果之间的统计关系。
+
+\begin{definition}[给定问题上的决策等价]
+  \label{def:rl-information-decision-equivalence}
+  固定允许策略类、时域、初始条件与目标结论。若两个潜在模型对该问题涉及的全部价值或动作比较给出同一结论，称其在该问题上决策等价。等价只针对已声明的结论，不要求隐藏状态有相同名称，也不自动扩展到新的奖励或策略类。
+\end{definition}
+
+例如交换隐藏状态的名称，可以改变模型参数表示而不改变任何可执行策略的价值；无需为了控制恢复唯一的隐藏语义。相反，两个模型即使同样准确地预测原日志，也可能在强制执行另一个动作后给出不同结果。学习前先约定要取得哪种决策证据，才能判断这种差别是否重要。
+
+% Outline: 4.6.2
+\subsection{策略结论的可识别程度}
+\label{sec:rl-information-identification-levels}
+
+离线POMDP的识别条件至少要检查三处。记录历史必须覆盖执行策略所需的信息并具有正确回合边界；行为动作必须只依赖已记录历史与独立随机化，或满足另一套明确的识别条件；目标历史动作必须受到行为数据支持。隐藏物理状态并不自动破坏第二条：如果行为控制器也只能看记录历史，隐藏状态影响未来反馈，却不再给动作选择增加未记录的依据。
+
+\begin{definition}[一致模型集合与识别集合]
+  \label{def:rl-information-identified-set}
+  给定可观测日志的总体分布$p_{\mathrm{obs}}$与结构假设集合$\mathcal A_0$，定义
+  \[
+    \mathcal M(p_{\mathrm{obs}},\mathcal A_0)
+       =\{M:M\text{满足}\mathcal A_0
+                  \text{且产生}p_{\mathrm{obs}}\}.
+  \]
+  这里$M$同时指定潜在环境和与假设相容的数据生成机制。对目标量$T(M)$，其识别集合为
+  $\mathcal I_T=\{T(M):M\in\mathcal M\}$，假设$\mathcal M$非空。
+  若$\mathcal I_T$只有一个元素，则目标量$T$被点识别；若不能唯一确定$T$，但能将其限制在比预先允许范围更小的集合内，则得到部分识别结论。若关心的是策略排序，还需检查所有允许模型是否支持同一排序；不同模型支持相反排序时，该排序不可识别。
+\end{definition}
+
+数值识别与决策判断是两个层次。例如，假设性能差$T(M)=J_M(\pi_1)-J_M(\pi_2)$原本允许取$[-10,10]$中的值，日志与结构条件将其识别集合缩小为$[-1,2]$。这已经提供了部分数值信息，但集合内仍有正值和负值，无法确定哪个策略更好。若识别集合为$[1,2]$，同样没有点识别性能差，却已足以确定$\pi_1$更好。下面分别讨论能确定数值、只能确定部分范围以及仍不能回答目标决策的情形；部分识别并不必然意味着无法决策。
+
+上述集合由可观测数据的总体分布和结构假设确定。有限日志还带有采样误差，需要构造覆盖相应目标量或识别集合的统计置信集合。因此，一个模型在有限日志上拟合得很好，并不表示总体一致模型集合只剩这一个模型。
+
+图~\ref{fig:rl-information-confounding}~用因果假设区分普通隐藏状态和\term{隐藏混杂}（hidden confounding）。后者是未记录变量同时影响行为动作与后果，使观察到的动作分组不再可直接当作随机试验分组。图中的箭头描述假定的生成关系，不是由日志拟合自动发现的事实。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/rl-information-confounding}
+  \caption{隐藏状态与隐藏混杂的区别。两图中的$U$均未记录，$h_t$为记录历史，$Y$为未来反馈。左图假设行为仅由$h_t$和独立随机数决定；右图多出$U\to a_t$，给定$h_t$仍不能阻断动作与后果之间的未记录共同原因。箭头表示因果假设。}
+  \label{fig:rl-information-confounding}
+\end{figure*}
+
+\begin{example}[同样日志与相反的动作价值]
+  \label{ex:rl-information-confounding}
+  设单步任务的观测$o$恒定，未记录类型$U\in\{0,1\}$等概率，行为专家能看到$U$。两个动作$a_0,a_1$的潜在奖励及专家选择如下，全部为教学构造：
+  \[
+  \begin{array}{cc|c|rr}
+    \text{模型}&U&\text{专家动作}&r(a_0)&r(a_1)\\
+    \hline
+    M_+&0&a_0&1&3\\
+    M_+&1&a_1&-1&1\\
+    M_-&0&a_1&3&1\\
+    M_-&1&a_0&1&-1
+  \end{array}
+  \]
+  两个模型的记录分布都为：以$1/2$概率出现$(o,a_0,1)$，以$1/2$概率出现$(o,a_1,1)$。但对不能看见$U$、始终选固定动作的部署策略，
+  \[
+  \begin{array}{c|rr}
+    &J_1(\pi_{a_0})&J_1(\pi_{a_1})\\
+    \hline
+    M_+&(1-1)/2=0&(3+1)/2=2\\
+    M_-&(3+1)/2=2&(1-1)/2=0
+  \end{array}
+  \]
+  两者的最优固定动作正好相反。
+\end{example}
+
+仅用当前观测拟合行为概率，会得到$\widehat\mu(a_0\mid o)=\widehat\mu(a_1\mid o)=1/2$。把它代入普通IS，对任一固定目标动作都估计为
+$(1/2)\times2\times1=1$，却既不等于0也不等于2。每个动作在边缘日志中都有支持，问题仍未解决：选择该动作的样本来自特定隐藏类型，不代表对总体类型分布执行该动作的后果。
+
+代理变量或额外传感数据有时可以支持识别，但需要具体的条件独立、可逆性或完备性等结构约束；字段多并不等于这些条件成立。POMDP离策略评价的一些工作明确使用代理观测及矩阵秩条件来处理隐藏机制，其结论不能概括成“训练循环网络即可去除混杂”\scite{rl4-tennenholtz2020-pomdp-ope}
+
+% Outline: 4.6.3
+\subsection{完全可识别时的历史表示与决策学习}
+\label{sec:rl-information-full-identification}
+
+考虑一个可以点识别的条件组：完整记录从回合开始的$h_t$；行为策略以已知$\mu_t(a_t\mid h_t)$随机选动作，其随机数在给定历史后与潜在环境独立；目标策略也只依赖记录历史；初始分布与环境相同，且目标轨迹有行为支持。在此条件下，环境即使有隐藏状态，行为动作也相当于在每个历史层内按已知机制随机分配。
+
+对观测轨迹
+$\tau^o=(o_0,a_0,r_0,\ldots,o_H)$，
+给定动作与过去后的下一反馈分布记为$q(y_{t+1}\mid h_t,a_t)$。正确行为条件信息使这个环境反馈因子在目标和行为系统中相同。于是
+\begin{equation}
+  \label{eq:rl-information-history-is}
+  \frac{p_\pi(\tau^o)}{p_\mu(\tau^o)}
+   =\frac{p(o_0)\prod_{t=0}^{H-1}
+                  \pi_t(a_t\mid h_t)q(y_{t+1}\mid h_t,a_t)}
+          {p(o_0)\prod_{t=0}^{H-1}
+                  \mu_t(a_t\mid h_t)q(y_{t+1}\mid h_t,a_t)}
+   =\prod_{t=0}^{H-1}\frac{\pi_t(a_t\mid h_t)}
+                              {\mu_t(a_t\mid h_t)}.
+\end{equation}
+隐藏状态不出现在最后的比率中，因为已经在共同的反馈因子内积分掉了。也可以对每条完整隐藏轨迹先消去相同环境因子，再对隐藏状态求和；行为与目标动作概率均只依赖可见历史，才能从这个求和中提出。
+
+不能直接把式~\eqref{eq:rl-information-history-is}~中的$h_t$换成$o_t$。如果行为记住早期提示而模型只输入当前画面，算出的边缘概率就不再是该次动作使用的真实条件概率。若专家还看到例~\ref{ex:rl-information-confounding}~中的$U$，其动作概率甚至无法从隐藏状态求和中提出，原来的消去便失败。
+
+识别成立后，可以直接使用完整历史评价，也可以选择更经济的表示。已知正确POMDP时用精确信念；有可识别预测结构时用PSR；用潜在模型或循环、注意力记忆时，需要检查该表示是否对允许动作保留了预测或控制充分性。FQE可在有限时域历史树上拟合，行为约束可作用于$\pi(a\mid h)$，价值提取也应查询同一历史或经论证的充分表示。直接使用历史免去了某些压缩假设，却可能面对极其稀疏的历史动作组合。
+
+误差报告应区分表示构造、行为概率估计、有限轨迹采样与优化。训练时使用burn-in，部署却每隔$L$步清零，会改变实际策略；训练读取回合开始提示，部署只提供窗口，同样不再是评价过的对象。总体可识别只排除了信息上的不可能性，并未保证有限数据和选定网络已经达到它。
+
+再看早期提示任务。一个编码器保留提示位$c$，另一个仅重建走廊图像。延迟很长时，提示帧在平均重建损失中的比例很小，二者可能有相近的重建误差；按原例的不折扣成功奖励比较，期望值却分别可达1和至多$1/2$。如果行为在每种提示下都随机尝试两个出口、完整历史又有记录，那么动作价值在总体上可识别，失败的原因就是所选编码丢掉了信息，不能再归咎于环境原则上不可识别。
+
+% Outline: 4.6.4
+\subsection{部分可识别时的历史表示与决策学习}
+\label{sec:rl-information-partial-identification}
+
+有些日志和结构条件不能唯一确定价值，却足以排除一部分决策。此时不应任意挑选一个拟合成功的潜在模型作为唯一真相，而应保留共同的一致模型集合，计算
+$[\inf_MJ_M(\pi),\sup_MJ_M(\pi)]$，
+或考察随允许的混杂强度变化的敏感性范围。区间只是识别集合的上下包络，未必表示中间每个值都可实现。有限数据还要将总体分布未知带来的误差加入外层。
+
+\begin{theorem}[共同模型下的性能差确定排序]
+  \label{thm:rl-information-partial-order}
+  设$\mathcal M$为非空一致模型集合，两个策略在每个模型中的价值均存在。若
+  \[
+    \inf_{M\in\mathcal M}
+          [J_M(\pi_1)-J_M(\pi_2)]>0,
+  \]
+  则每个允许模型都支持$\pi_1$优于$\pi_2$，即使两个单独价值区间重叠。
+\end{theorem}
+
+\begin{proof}
+  记该下确界为$c>0$。由下确界的定义，对任意同一个$M\in\mathcal M$，
+  $J_M(\pi_1)-J_M(\pi_2)\geq c>0$，因此所有允许模型中的排序一致。这里没有为两个策略分别选择不同模型；下确界是否由某个模型取到，都不影响不等式。
+\end{proof}
+
+\begin{example}[不知道共同偏移，仍知道谁更好]
+  \label{ex:rl-information-partial-order}
+  设一致模型由$u\in[0,10]$参数化，且
+  $J_u(\pi_1)=u+1$、$J_u(\pi_2)=u$。两个价值包络分别为$[1,11]$与$[0,10]$，大幅重叠，但每个模型中差都为1，故$\pi_1$始终更好。计算$1-10=-9$只给出了松的分别包络差：它为$\pi_1$取$u=0$、为$\pi_2$取$u=10$，并不是任何共同模型中的真实性能差。
+\end{example}
+
+这个构造可以理解为两个候选都包含一项未识别收益，而结构假设已确定其中一个方案多得1；这个增量是额外依据，不能仅凭日志拟合宣称它已知。保留$\pi_1,\pi_2$时，最坏情形价值分别为1和0，最大化最坏价值也会选$\pi_1$；相对$\pi_2$的性能差下界则直接给出改进1。若另加“不得偏离已覆盖历史”的策略约束，恰好把$\pi_1$使用的新历史排除，允许策略类就只剩$\pi_2$，这项可证明的改进也会被放弃。保守性既能防止不支持的推断，也可能因为策略类过窄而付出性能代价。系统的鲁棒优化方法见第~\ref{chap:rl-trustworthy}~章。
+
+样本量增加只能消除统计不确定性，不能自动消除结构性识别宽度。图~\ref{fig:rl-information-identification-width}~假设总体价值识别区间为$[1,3]$，外层统计半径示意性地取$2/\sqrt n$。外层范围随$n$增加收缩到$[1,3]$，不会收缩到单点。这个解析草图用来区分两种宽度，不是某个离线算法的经验收敛曲线，也不是未经推导的置信保证。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-information-identification-width}
+  \caption{教学识别区间$[1,3]$与示意外层范围$[1-2/\sqrt n,3+2/\sqrt n]$。实线范围随样本量缩小，虚线之间的非零宽度来自允许模型仍有差异；半径公式仅用于解释两种不确定性。}
+  \label{fig:rl-information-identification-width}
+\end{figure}
+
+% Outline: 4.6.5
+\subsection{不可识别时的学习边界与信息补充}
+\label{sec:rl-information-unidentifiable}
+
+例~\ref{ex:rl-information-confounding}~的两个模型给日志完全相同的似然，却分别支持$a_0$与$a_1$。缺失的是行为选择所依据的未记录类型及相应反事实后果；不是把当前观测编码得更精细就能补回。一个复杂模型可能收敛到其中任意一个解释，训练成功不构成其排序正确的证据。
+
+面对这种情形，可以改变目标，也可以改变允许模型集合。缩小$\Pi$、只比较原日志能支持的策略，或把全局最优改成基线附近的有限决策，是收缩要回答的问题。增加已知动力学、随机化行为或代理观测等可核验假设，是排除某些相容模型。后者只有在假设有外部依据时才提供新证据，不能把便利的模型设定伪装成从原日志推出的事实。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{p{26mm}XX}
+    \toprule
+    明确的信息缺口 & 可能补充的信息 & 仍须核验的条件 \\
+    \midrule
+    较早提示未记录 & 从真实回合开始的长历史或足够记忆摘要 & 提示是否确实保留；部署可用性与回合边界一致 \\
+    行为机制不明 & 当时动作概率、策略版本及相关上下文 & 概率条件信息正确；潜在类型上的支持仍可能缺失 \\
+    当前状态混叠 & 新传感器、主动辨识动作或代理变量 & 新观测能否区分与控制有关的状态；代理识别条件 \\
+    目标行为无覆盖 & 受控随机交互、指定区域的实验 & 查询确实覆盖目标历史动作；代价和安全权限允许 \\
+    初始或任务条件不明 & 初始状态、目标及采样分层元数据 & 评价分布与部署分布一致，或有正确校正 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{补充信息要对应具体缺口。记录隐藏类型可以消除部分混杂，却未必补齐每种类型下未尝试的动作；新增字段与新增行为各有不同作用。}
+  \label{tab:rl-information-information-repair}
+\end{table*}
+
+表~\ref{tab:rl-information-information-repair}~也说明，单独补记行为概率未必足够。例~\ref{ex:rl-information-confounding}~中的专家在每个类型上确定性选择动作；即使后来记下$U$，每种类型的另一个动作仍无覆盖。要识别两项固定策略的价值，可以在允许的类型内加入可控随机动作，或者引入有依据的跨类型、跨动作结构。二者不能靠一份更长的同类日志相互替代。
+
+允许有限交互时，可把预算分成状态辨识与策略验证两部分。前者选择能区分相容模型的传感或行动，必要时更新表示；后者在固定新策略和输入协议后取得独立性能证据。用于辨识的自适应数据不能未经处理就当作独立最终测试。若权限不足，或者新反馈在两种相容环境中仍同分布，就应继续保留无法判断的结论。增加网络容量可以减小表示或拟合误差，却不能让相同输入数据区分本来不可区分的环境。
+
+% Outline: 4.7
+\section{本章小结}
+\label{sec:rl-information-summary}
+
+小车看不见速度，与日志没有左转经验，是两种不同的信息限制。历史、信念和记忆表示回答“此刻依据什么行动”；行为机制和覆盖回答“哪些新行为的后果有证据”。Tiger表明，即使环境模型完全已知，付费辨认当前状态也可能提高期望回报。固定数据反例则表明，即使当前状态完整可见，缺少动作后果仍可使策略价值不可识别。
+
+可识别、可估计、可优化和可验证构成有条件的联系，不是自动完成的流水线。识别排除相容环境给出不同答案的歧义；估计还要控制有限样本、模型和概率误差；优化会主动改变所查询的行为，并可能利用外推；从价值、行为生成器或轨迹模型提取出的执行策略，又必须回到共同评价条件下比较。行为约束与悲观目标能够限制这种风险，但其名称和训练损失不能替代误差依据。
+
+当两类限制叠加时，执行历史、日志字段与收集者信息必须对齐。只要行为随机化机制和历史动作支持足够，隐藏状态不必显式出现在概率比中；若存在未记录的行为依据，同样的日志却可能支持相反排序。部分识别时，保留共同模型下的性能差仍可能作出有限而可靠的决策；无法识别时，只能收缩结论或补充真正能区分模型的信息。每项策略结论都应随附执行信息、日志机制、覆盖范围、表示假设、查询预算和误差依据，这才说明结论能够用于何处。

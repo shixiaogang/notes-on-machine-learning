@@ -3,11 +3,11 @@
 
 预测房屋价格时，可以估计平均成交价，也可以给出预算所需的上分位数或价格分布。\term{回归}（regression）根据输入估计数值响应的这些条件特征。设训练集为$D_n=\{(\bm{x}_i,y_i)\}_{i=1}^{n}$，其中$\bm{x}_i\in\mathbb{R}^{d}$为输入，$y_i\in\mathbb{R}$为响应，预测函数记为$f$；响应也可以是次数等离散数值。
 
-回归的计算起点可追溯到19世纪初的最小二乘法，“回归”这一名称则来自Galton在1886年对亲子身高的研究。1970年代的广义线性模型扩展了响应类型，1980年代的回归树表达条件分区，1990年代的支持向量回归及随后发展的树集成进一步容纳非线性与交互\scite{galton1886,nelder1972glm,breiman1984cart}。
+回归的计算起点可追溯到19世纪初的最小二乘法，“回归”这一名称则来自Galton在1886年对亲子身高的研究。1970年代的广义线性模型扩展了响应类型，1980年代的回归树表达条件分区，1990年代的支持向量回归则利用核表示非线性关系\scite{galton1886,nelder1972glm,breiman1984cart,smola2004svr}。
 
-如今，需要检查变量作用或建立简洁基线时，线性模型仍是常见起点；面对复杂表格数据，随机森林与梯度提升树是常用候选。现代基准中，梯度提升树在多类表格任务上仍有竞争力；具体比较同时受到数据、调参与计算预算的影响\scite{erickson2026tabarena}。
+需要检查变量作用或建立简洁基线时，可以从线性模型开始；关系随输入区域变化时，则考察局部回归、树或平滑函数。若决策还需要尾部阈值或分布信息，预测对象也要相应改变。
 
-预测对象确定以后，还要选择输入与响应之间的关系。全局加权适合描述共同趋势，邻域方法在查询点附近估计响应，树与规则为不同条件分配局部预测；概率模型保留分布信息，集成则组合多个成员。各节沿着这些关系展开训练目标与求解过程，再考察新输入上的预测误差。第\ref{chap:classic-models-overview}章建立的建模思路，在这里由数值响应及其损失具体化。
+预测对象确定以后，还要选择输入与响应之间的关系。全局加权适合描述共同趋势，邻域方法在查询点附近估计响应，树与规则为不同条件分配局部预测，概率模型保留分布信息。各节沿着这些关系展开训练目标与求解过程，再考察新输入上的预测误差。第\ref{chap:classic-models-overview}章建立的建模思路，在这里由数值响应及其损失具体化。
 
 \section{基于线性关系的回归}
 \label{sec:regression-linear}
@@ -17,7 +17,9 @@
 \subsection{普通最小二乘（OLS）}
 \label{sec:regression-ols}
 
-从样本中选择一组系数，需要先规定怎样衡量预测误差。\term{普通最小二乘}（ordinary least squares, OLS）选择使残差平方和最小的系数。它既可以作为一个无需指定响应分布的优化准则，也可以在高斯噪声模型下解释为最大似然估计；以下先建立前一种形式，再说明统计结论需要哪些额外条件\scite{bishop2006}。
+同一输入可能对应不同的观测响应，因而很难找到一条穿过所有样本的直线。考虑四个教学样本：$x=0$处的响应为$2,4$，$x=1$处的响应为$4,6$。两处各有两个不同数值，精确插值已经不可能；我们需要一个规则，在这些不一致的观测之间选择预测。若用平方残差计分，两个位置分别取均值$3,5$最合适，对应直线$f(x)=3+2x$。
+
+\term{普通最小二乘}（ordinary least squares, OLS）把这种选择推广为寻找残差平方和最小的系数。平方损失让正、负误差受到相同惩罚，也让大误差付出更高代价。它可以作为无需指定响应分布的拟合准则；在高斯噪声模型下，又可解释为最大似然估计。下面先建立拟合问题，再说明统计结论所需的额外条件\scite{bishop2006}。
 
 这种误差准则早于“回归”的名称。Legendre在1805年公开发表最小二乘法时，面对的是观测方程多于未知量、各方程通常无法同时精确成立的问题；误差平方和提供了在不一致观测之间取舍的准则。Gauss在1809年的天体轨道著作中又从观测误差的概率分析出发讨论其依据\scite{stigler1981,gauss1809}。
 
@@ -51,7 +53,12 @@
 \subsubsection{参数学习}
 \label{sec:regression-ols-learning}
 
-目标的梯度为$\bm{X}^{\top}(\bm{X}\bm{w}-\bm{y})/n$，Hessian为$\bm{X}^{\top}\bm{X}/n$，后者半正定。因此使梯度为零既是必要条件，也是充分条件，得到\term{正规方程}（normal equations）：残差与每一列特征都正交。
+OLS的参数学习有两条路线。一条路线直接求出最优系数的方程，再用矩阵分解解方程；另一条路线从初始系数出发，反复减小训练损失。先看第一条：式\eqref{eq:regression-ols-objective}是一个无约束、可微的凸二次目标，在最小点处，每个系数方向上的一阶变化都应为零。对残差平方求导得到
+\[
+  \nabla J(\bm w)=\frac1n\bm X^\top(\bm X\bm w-\bm y),
+  \qquad \nabla^2J(\bm w)=\frac1n\bm X^\top\bm X.
+\]
+第二个矩阵半正定，说明目标凸；因此梯度为零不仅是必要条件，也足以认证全局最优。把第一式置零，就得到\term{正规方程}（normal equations）。它要求残差与每一列特征正交：沿任何已提供的特征方向调整系数，都不能再降低平方误差。
 \begin{equation}
   \bm{X}^{\top}\bm{X}\widehat{\bm{w}}=\bm{X}^{\top}\bm{y}.
   \label{eq:regression-normal-equations}
@@ -63,7 +70,7 @@
 
 闭式表达用于分析，计算时通常不显式求逆。列满秩且$n\geq p$时，薄QR分解$\bm{X}=\bm{Q}\bm{R}$把问题化为三角方程$\bm{R}\widehat{\bm{w}}=\bm{Q}^{\top}\bm{y}$，稠密计算代价约为$O(np^2)$。秩亏或需要检查小奇异值时可以用SVD。直接形成$\bm{X}^{\top}\bm{X}$会把满列秩矩阵的二范数条件数平方，因此近似共线时尤其应避免求逆实现。
 
-当矩阵分解不便进行时，可迭代更新
+第二条路线适合不便一次完成矩阵分解的规模。我们从$\bm w^{(0)}$出发，沿训练损失的负梯度调整系数：
 \begin{equation}
   \bm{w}^{(t+1)}
   =\bm{w}^{(t)}+\frac{\eta}{n}
@@ -86,34 +93,90 @@ y_pred = X_new @ w
 \subsubsection{理论分析}
 \label{sec:regression-ols-theory}
 
-解正规方程得到的是当前数据上的最小平方误差，未来预测还取决于数据怎样产生。我们先检查固定特征能表达哪些函数、梯度迭代怎样选解，再在固定设计下量化参数误差对新输入的影响。把输入也作为随机样本时，分析对象才转为估计量的渐近分布；相应假设需要随这一转换改变。
-
 \paragraph{表达能力}
-固定特征决定了OLS的候选函数：每个候选都是这些特征的线性组合。加入平方项或其他基函数可以表示原输入上的弯曲关系，但有限基只能覆盖其张成空间。即使精确求得最优系数，张成空间之外的目标变化仍会留下逼近误差。
+OLS的候选函数由固定特征张成：$\mathcal F_{\phi}=\{\bm\phi^\top\bm w:\bm w\in\mathbb R^p\}$。例如，特征只有$1,x$时，这个空间包含所有直线；加入$x^2$，才包含所有二次曲线。表达能力取决于整个空间中有没有足够接近目标的函数。
+
+设目标为条件均值$m(\bm x)=\mathbb E[Y\mid\bm X=\bm x]$，输入分布为$P_X$，并假定$m$与各特征二阶可积。用按输入分布加权的平方距离衡量逼近程度，记
+\begin{equation}
+ A(\mathcal F_{\phi})
+ =\frac12\inf_{f\in\mathcal F_{\phi}}
+       \lVert f-m\rVert_{L^2(P_X)}^2.
+ \label{eq:regression-approximation-error}
+\end{equation}
+有限维张成空间在$L^2(P_X)$中闭合，所以其中存在离$m$最近的函数。$A=0$当且仅当$m$在$P_X$几乎处处属于这个空间；否则$A>0$，给出了该空间无法消除的差距。
+
+一个具体例子是$X$在$[-1,1]$上均匀分布、$m(x)=x^2$。在所有$a+bx$中，目标的对称性使最佳斜率为零，最佳常数为$\mathbb E[X^2]=1/3$，因此
+\[
+ \frac12\inf_{a,b}\mathbb E[(X^2-a-bX)^2]
+ =\frac12\left(\frac15-\frac19\right)=\frac{2}{45}.
+\]
+图\ref{fig:regression-feature-approximation}显示了这项差距：任何直线都无法同时贴合曲线的中部与两端。特征改为$1,x,x^2$后，候选空间包含目标本身，最小距离便为零。多项式、样条与核的扩展，都应按它们增加了哪些函数来判断表达能力。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=159mm]{figures/04-classic-models/00-shared/matplotlib/regression-feature-approximation/figure.pdf}
+  \caption{固定目标$m(x)=x^2$与不同候选空间的最佳逼近。输入在$[-1,1]$上均匀分布；左图中，所有仿射函数的最佳候选为$1/3$，阴影表示它与目标的差距，平方距离的一半为$2/45$。右图加入二次特征后，候选空间包含目标，最小距离为零。图中比较的是候选空间，不使用训练样本。}
+  \label{fig:regression-feature-approximation}
+\end{figure*}
 
 \paragraph{收敛性}
-令$\bm A=\bm X^\top\bm X/n$。当$\bm X\ne\bm0$且
-$0<\eta<2/\lambda_{\max}(\bm A)$时，式\eqref{eq:regression-ols-gradient}的迭代在非零谱方向收敛；秩亏时零空间分量保持初值，
-从零启动得到最小范数解（参考\BookTheoremRef{thm:gradient-descent-minimum-norm}{卷1《数学准备：计算、分析与几何》第5章“线性空间”第5.5.3节“求解和优化下的迭代序列收敛”}）。该结论适用于这里固定训练目标的完整梯度迭代；新样本风险还需要下面的统计分析。
-学习率应按当前平均损失的谱尺度选取。
+有限数据上的OLS总有最小二乘解，因为响应向量可以投影到设计矩阵的列空间。列满秩时解唯一；秩亏时有多个系数表示同一训练投影。QR或SVD直接求解没有迭代速率，需报告的是运算代价与数值误差。
+
+若使用梯度下降，令$\bm A=\bm X^\top\bm X/n$、$L=\lambda_{\max}(\bm A)$。当$L>0$时，它是$L$光滑凸目标。取$\eta=1/L$，对任一最优解$\bm w_{\min}$有
+\[
+ J(\bm w^{(t)})-J_{\min}
+ \leq\frac{L\lVert\bm w^{(0)}-\bm w_{\min}\rVert_2^2}{2t},\qquad t\geq1.
+\]
+在最小解已经存在的前提下，凸性与梯度光滑性就能得到这一$O(1/t)$界。OLS的二次结构还允许我们沿$\bm A$的特征向量分别计算误差：第$j$个方向的参数误差每步乘以$1-\eta\lambda_j(\bm A)$。满列秩时令$\mu=\lambda_{\min}(\bm A)>0$，则参数误差至多按$(1-\mu/L)^t$衰减，目标误差至多按$(1-\mu/L)^{2t}$衰减。条件数$L/\mu$越大，需要的步数越多；达到目标精度$e$所需步数量级为$O((L/\mu)\log(e_0/e))$，其中$e_0$是初始目标差。
+
+秩亏时，零空间分量保持初值，正特征值方向仍按上述谱因子衰减；从零启动得到最小范数解。$\bm X=\bm0$时目标与系数无关，无需更新。满秩二次目标的Newton更新用$\bm A^{-1}$校正梯度，在精确算术下只需一步就到达最优解，因为二阶展开就是目标本身；但构造和求解Hessian系统通常比一次$O(np)$的一阶更新昂贵。因此，选择求解路线时要同时比较所需步数与每步计算量（参考\BookSectionRef{sec:opt-gradient-descent}{卷1《数学准备：计算、分析与几何》第4章“最优化”第4.2.1.1节“基于梯度下降的求解”}）。
 
 \paragraph{泛化性}
-求到经验最优解后，还需考察有限样本造成的估计误差及其对新输入预测的影响。偏差与方差分析需要指定响应如何产生。以下条件于固定设计，假设
+记当前损失的期望风险为$R(f)=\mathbb E_P[\ell(Y,f(\bm X))]$，经验风险为$\widehat R_n(f)=n^{-1}\sum_i\ell(y_i,f(\bm x_i))$，最优可测函数的风险为$R_\star$。训练记录与独立未来记录同分布于$P$。对平方损失$\ell(y,a)=(y-a)^2/2$，展开$Y-f=(Y-m)+(m-f)$，利用$\mathbb E[Y-m\mid\bm X]=0$消去交叉项，得到
 \begin{equation}
-  \bm{y}=\bm{X}\bm{w}_{\star}+\bm{\varepsilon},\qquad
-  \mathbb{E}[\bm{\varepsilon}\mid\bm{X}]=\bm{0},\qquad
-  \operatorname{Cov}(\bm{\varepsilon}\mid\bm{X})=\sigma^2\bm{I}_n,
-  \quad 0<\sigma^2<\infty.
-  \label{eq:regression-gauss-markov-model}
+ R(f)=\frac12\mathbb E[\operatorname{Var}(Y\mid\bm X)]
+          +\frac12\lVert f-m\rVert_{L^2(P_X)}^2.
+ \label{eq:regression-square-risk-distance}
 \end{equation}
-这些条件要求均值模型正确、误差同方差且两两不相关；不相关不等于独立，也没有要求高斯分布。
+因此$\inf_{f\in\mathcal F_\phi}R(f)-R_\star$恰好等于式\eqref{eq:regression-approximation-error}中的$A(\mathcal F_\phi)$。后续使用其他损失时，记相应的风险差为$A(\mathcal F)=\inf_{f\in\mathcal F}R(f)-R_\star$。
 
-\Needspace{9\baselineskip}
-若设计矩阵列满秩，OLS无偏，协方差为$\sigma^2(\bm X^\top\bm X)^{-1}$；在条件于设计固定、对所有真参数均无偏的线性估计中，它具有最小协方差（参考\BookTheoremRef{thm:statistics-gauss-markov}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.5.4.1节“估计误差与效率”}）。本节进一步说明该协方差怎样影响新输入的回归预测。
+训练残差小并不总能带来准确的新样本预测，因为系数与残差都使用了同一组带噪响应。下面先从经验风险导出期望风险保证，再在正确的线性均值模型下计算OLS的新样本误差。
 
-Gauss--Markov定理比较的是线性无偏估计量的协方差。要将这一结论用于预测，固定一个新特征向量$\bm{\phi}_{\star}$，估计其条件均值的均方误差为$\sigma^2\bm{\phi}_{\star}^{\top}(\bm{X}^{\top}\bm{X})^{-1}\bm{\phi}_{\star}$；预测带独立同方差噪声的未来响应时，再加上$\sigma^2$。新输入在设计的小特征值方向上分量较大时，逆矩阵会放大相应的估计误差，这也解释了远离训练范围的预测为何可能不稳定。
+\input{tex/04-classic-models/common/regression-analysis}
 
-异方差不会在零条件均值下破坏OLS无偏性，但会改变协方差。若已知正定误差协方差$\bm{\Omega}$，最小化$(\bm{y}-\bm{X}\bm{w})^{\top}\bm{\Omega}^{-1}(\bm{y}-\bm{X}\bm{w})$得到\term{广义最小二乘}（generalized least squares, GLS），即按噪声结构重新度量残差；对角$\bm{\Omega}$对应加权最小二乘。用$\bm{\Omega}^{-1/2}$变换数据即可回到同方差问题。若协方差也需估计，须另行考虑其误差。
+\Needspace{15\baselineskip}
+\begin{theorem}[OLS在固定设计下的期望平方风险]
+ \label{thm:regression-ols-test-risk}
+ 设固定设计矩阵$\bm X\in\mathbb R^{n\times p}$列满秩，训练响应满足
+ \begin{equation}
+  \begin{gathered}
+   \bm y=\bm X\bm w_\star+\bm\varepsilon,\qquad
+   \mathbb E[\bm\varepsilon\mid\bm X]=\bm0,\\
+   \operatorname{Cov}(\bm\varepsilon\mid\bm X)=\sigma^2\bm I_n,
+   \qquad 0<\sigma^2<\infty.
+  \end{gathered}
+  \label{eq:regression-gauss-markov-model}
+ \end{equation}
+ 独立测试记录满足同一均值模型与同方差噪声，测试特征二阶矩为$\bm Q_{\mathrm{test}}=\mathbb E[\bm\phi_\star\bm\phi_\star^\top]$。采用平方损失的一半，OLS预测器$\widehat f$满足
+ \begin{equation}
+  \mathbb E_{\bm\varepsilon\mid\bm X}[R(\widehat f)]
+  =\frac{\sigma^2}{2}
+   +\frac{\sigma^2}{2}\operatorname{tr}
+      [\bm Q_{\mathrm{test}}(\bm X^\top\bm X)^{-1}].
+  \label{eq:regression-ols-test-risk}
+ \end{equation}
+ 若另有$\bm Q_{\mathrm{test}}\preceq c\bm X^\top\bm X/n$，其中$c>0$，则
+ \[
+  \mathbb E_{\bm\varepsilon\mid\bm X}[R(\widehat f)]
+  \leq\frac{\sigma^2}{2}+\frac{c\sigma^2p}{2n}.
+ \]
+\end{theorem}
+
+\begin{proof}
+由显式解，$\widehat{\bm w}-\bm w_\star=(\bm X^\top\bm X)^{-1}\bm X^\top\bm\varepsilon$，所以系数误差均值为零、协方差为$\sigma^2(\bm X^\top\bm X)^{-1}$。固定测试特征时，预测条件均值的均方误差为$\sigma^2\bm\phi_\star^\top(\bm X^\top\bm X)^{-1}\bm\phi_\star$；独立测试响应再增加$\sigma^2$的噪声。先对测试特征取期望，再按平方损失的一半计分，就得到风险等式。矩阵序条件使迹项不超过$cp/n$，得到最后的界。
+\end{proof}
+
+风险等式中的平均先针对未来输入与响应，再针对重复训练的噪声；它没有用训练SSE替代未来风险。相同条件下，训练目标的期望反而为$\sigma^2(n-p)/(2n)$，因为训练投影消去了$p$个噪声方向。测试二阶矩的矩阵序条件则要求未来输入不要在训练薄弱的方向上赋予过大权重。在该条件和固定$p$下，估计增加的风险以$1/n$减小；只有系数无偏，还不足以得到这项预测结论。Gauss--Markov的估计量比较见\BookTheoremRef{thm:statistics-gauss-markov}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.5.4.1节“估计误差与效率”}。
 
 固定维数下的一致性可以直接由协方差得到。若固定设计序列满足$\bm{X}^{\top}\bm{X}/n\to\bm{Q}\succ0$，并在每个$n$下满足式\eqref{eq:regression-gauss-markov-model}，则
 \[
@@ -131,17 +194,33 @@ Gauss--Markov定理比较的是线性无偏估计量的协方差。要将这一�
 \]
 这里分别对Gram矩阵使用大数定律、对独立的$\bm{z}_i\varepsilon_i$使用多元中心极限定理，再用Slutsky定理合并。仅有误差不相关并不足以直接调用该中心极限定理。若误差条件高斯，OLS在有限样本下已经具有相应高斯分布，并与高斯似然的最大似然估计一致。
 
-\subsubsection{支持非线性映射（多项式回归与基函数展开）}
+\subsubsection{优化表达能力}
+
 \label{sec:regression-basis}
 
-价格随面积变化未必是一条直线，但仍可使用线性参数模型。选择$\bm{\phi}(\bm{x})$后，所有正规方程与求解方法都保持不变，改变的是设计矩阵各列的含义。例如一维多项式使用$1,x,\ldots,x^q$，径向基使用$\exp(-(x-c_j)^2/(2s^2))$，其中中心$c_j$和尺度$s>0$预先给定或在训练过程中选择。
+在前面的$m(x)=x^2$例子中，增加样本仍不能让一条直线贴合整条曲线；加入$x^2$这一列后，系数$(0,0,1)$就能精确表示它。改变预测形状并不一定要改变求解方法。选择特征向量$\bm\phi(\bm x)$后，模型对系数仍然线性，正规方程与矩阵求解都保持不变，改变的是设计矩阵各列所表示的函数。
+
+一维多项式使用$1,x,\ldots,x^q$；径向基$\exp(-(x-c_j)^2/(2s^2))$则在中心$c_j$附近产生局部起伏，尺度$s>0$决定其作用范围。固定中心与尺度以后，学习的仍是这些基函数的加权系数；若中心或尺度也用响应选择，选择过程还要纳入计算与统计分析。
 
 样条用分段多项式描述局部变化，并约束分段之间如何连接。带结点$\xi_1,\ldots,\xi_K$的三次样条可用$1,x,x^2,x^3$及$(x-\xi_k)_+^3$展开，其中$(a)_+=\max(a,0)$；只保留截断三次项会遗漏全局多项式部分。基函数越多，表达越灵活，也越可能出现高方差与病态设计。核方法将显式基的内积计算换为核值计算；采用固定核时，其特征表示也随之给定\scite{hastie2009}。
 
-\subsubsection{支持异常值鲁棒性（Huber回归与M估计）}
+\subsubsection{优化泛化能力}
+
+\paragraph{利用观测误差结构}
+\label{sec:regression-weighted-noise}
+
+观测精度不同，平方残差也未必应受到相同权重。假设两次独立观测测量同一个未知常数，噪声方差分别为$1$和$100$。OLS直接取两次观测的平均；用噪声方差倒数加权，则给第一条观测$100$倍于第二条的权重，降低较不精确观测的影响。
+
+更一般地，已知正定误差协方差$\bm\Omega$时，最小化$(\bm y-\bm X\bm w)^\top\bm\Omega^{-1}(\bm y-\bm X\bm w)$得到\term{广义最小二乘}（generalized least squares, GLS）。它按噪声结构重新度量残差，对角$\bm\Omega$对应加权最小二乘，用$\bm\Omega^{-1/2}$变换数据即可回到同方差问题。异方差在零条件均值下不破坏OLS无偏性，却会改变其协方差，因此这种调整服务于估计方差；若$\bm\Omega$也要由样本估计，还要计入协方差估计的误差。
+
+\paragraph{限制异常响应的影响}
 \label{sec:regression-huber}
 
-平方损失把十倍残差变成一百倍损失，少量错误记录因此可能主导拟合。\term{Huber损失}（Huber loss）在小残差处保持二次形状，在大残差处改为线性增长，从而限制残差方向的导数。它来自稳健位置估计的研究，也可用于回归目标\scite{huber1964}。
+如果少数响应记录受到污染，而预测仍面向未受污染的数据，追随这些记录就可能把拟合偏离真正的预测目标。限制污染记录的影响是改善泛化的一条思路；若极端响应本来就是目标分布的一部分，则还需检查这种限制是否符合所用损失和预测目标。
+
+平方损失把十倍残差变成一百倍损失，少量错误记录因此可能主导拟合。只拟合一个常数时，构造响应$(0,0,0,20)$的OLS预测为$5$；最后一个大响应把预测从前三个样本所在的零点拉开。若希望保留小误差处的平滑拟合，又减轻大残差的作用，可以让损失在离零较远处按残差绝对值增长。
+
+\term{Huber损失}（Huber loss）采用这一做法：小残差处保持二次形状，大残差处改为线性增长，从而限制残差方向的导数。取下式阈值$\delta=1$，刚才四个响应的最优常数变成$1/3$；三个小残差共同抵消最后一个被截断的残差导数。它来自稳健位置估计的研究，也可用于回归目标\scite{huber1964}。
 \begin{equation}
   \rho_\delta(r)=
   \begin{cases}
@@ -155,14 +234,24 @@ Gauss--Markov定理比较的是线性无偏估计量的协方差。要将这一�
 
 将一般残差函数$\rho$代入$\min_{\bm{w}}\sum_i\rho(r_i)$，便得到以回归参数为目标的\(M\)估计（参考\BookSectionRef{sec:statistics-likelihood-robustness}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.5.2.1节“有限维目标的估计”}）。Huber准则凸且连续可微；Tukey双权、Cauchy等准则则可能非凸，求解与统计性质须分别分析。估计方程中的样本贡献是特征向量与$\psi_\delta$的乘积。有界残差导数限制了响应方向的影响，但远离其他输入的高杠杆点仍可因特征幅度较大而主导估计。Huber准则拟合的是自身损失下的最优中心；条件分布偏斜时，该中心可能偏离条件均值。
 
+Huber损失也改变了总体拟合的目标。在$\mathbb E|Y|<\infty$下，条件最优中心$a$满足$\mathbb E[\psi_\delta(Y-a)\mid\bm X=\bm x]=0$。我们要逼近的是这个中心函数；条件分布对称且均值存在时，它可以与条件均值重合，偏斜分布下则可能不同。例如，$Y=m(\bm X)+s(\bm X)Z$，其中$Z$为独立标准正态变量、$s>0$时，Huber中心就是$m$；若$m$不属于所选特征的张成空间，改变残差损失仍不能精确表示它。所选特征是否合适，应按Huber损失而非平方损失计算逼近误差。
+
+有限数据上的Huber目标在设计列空间中随拟合值范数增大而趋于无穷，所以最小值可以取到，秩亏时系数可能不唯一。Huber损失的导数为Lipschitz函数，平均目标的梯度光滑常数至多为$\lVert\bm X^\top\bm X/n\rVert_2$。该值为正时，以其倒数为步长的梯度下降具有$O(1/t)$的目标差；反复加权求解使用另一套更新，需要检查对应的目标下降和停止条件。
+
+Huber限制残差导数，并不自动限制每次损失；要将训练损失联系到期望Huber风险，仍需控制响应、特征和候选系数。响应与预测有界时，可以按其损失上界与Lipschitz常数使用定理\ref{thm:regression-parametric-risk}；结论比较的是Huber中心的损失，不能直接换成条件均值的平方风险。
+
 \subsubsection{小结}
 
-OLS把预测误差化为特征列空间中的投影问题。列满秩时参数唯一；秩亏时训练拟合值仍唯一，而不同参数解可能在新输入上给出不同预测。无偏性、最小协方差和渐近分布则分别依赖均值模型、误差协方差和抽样条件。接下来改变的是两个不同环节：正则化控制数据难以确定的系数方向，其他损失则重新规定要拟合的响应中心。
+OLS用固定特征的加权和拟合条件均值。若直线遗漏了曲率，增加多项式、样条或其他基函数可以改变候选曲线，同时保留对系数的最小二乘求解；需要付出的代价是更多系数和更复杂的设计矩阵。若不同观测的精度不相同，加权最小二乘与GLS则按误差方差或协方差重新度量残差。这条路线利用的是噪声结构，不会自动补上特征中缺失的非线性关系。
+
+少量异常响应可能被平方损失放大，Huber在稳健位置估计中提出的小残差二次、大残差线性的准则提供了另一种调整思路。用于回归时，它限制大残差的边际影响，却仍可能受高杠杆输入影响，拟合的中心也可能不同于条件均值。若问题来自相关特征造成的系数波动，仅改变残差损失还不够；下一小节用正则化直接约束这些难以确定的系数方向。
 
 \subsection{正则化线性回归}
 \label{sec:regression-regularization}
 
-面积与套内面积高度相关时，许多系数组合能产生近似相同的训练预测，数据却难以分辨它们。\term{正则化}（regularization）在拟合准则中加入参数约束或惩罚，限制这些缺少数据支持的变化。它可以降低估计方差，也会引入偏差；是否改善未来预测取决于真实结构、正则强度和测试分布。
+面积与套内面积高度相关时，许多系数组合能产生近似相同的训练预测，数据却难以分辨它们。把情形简化为两列特征完全相同，预测就只取决于$w_1+w_2$；$(100,-98)$与$(1,1)$在训练点上给出同样结果。到了两列略有差别的新输入$(1.01,1)$，两组系数的预测却分别为$3$与$2.01$。较大的相反系数把训练中几乎看不到的差异放大了。
+
+\term{正则化}（regularization）在拟合准则中加入参数约束或惩罚，让这种缺少数据支持的变化也付出代价。它可以减少估计的波动，但系数收缩也可能压低真实信号。因此，正则化的用途是用可接受的偏差换取较小的方差，是否改善未来预测仍取决于真实结构、正则强度和测试分布。
 
 \subsubsection{模型结构}
 \label{sec:regression-penalties}
@@ -171,11 +260,11 @@ OLS把预测误差化为特征列空间中的投影问题。列满秩时参数�
 
 四种常见方法都在$\lVert\bm{y}-\bm{X}\bm{w}\rVert_2^2/(2n)$之外增加凸惩罚。\term{岭回归}（ridge regression）使用$\lambda\lVert\bm{w}\rVert_2^2/2$抑制参数幅度，收缩数据约束较弱的方向。Hoerl与Kennard在1970年的论文中系统研究了非正交设计下的有偏估计：当共线性使OLS方差过大时，容许一定偏差可能换来较小的均方误差\scite{hoerl1970ridge}。
 
-\term{Lasso}（least absolute shrinkage and selection operator）使用$\lambda\lVert\bm{w}\rVert_1$。绝对值惩罚在零点有尖点，使部分坐标即使受到损失项的非零斜率推动，也仍可在零点取得最优值；下面会用左右导数说明这一点。Tibshirani在1996年提出这一方法，将连续收缩与变量选择放进同一个优化问题；与岭的差别因而不只是惩罚曲线的形状，还在于能否直接得到零系数\scite{tibshirani1996lasso}。
+岭回归通常保留每个变量，只把系数变小。如果记录了许多特征，而我们还希望删去缺乏预测作用的坐标，就需要让某些系数恰好为零。\term{Lasso}（least absolute shrinkage and selection operator）使用$\lambda\lVert\bm w\rVert_1$实现这种选择。绝对值惩罚在零点有尖点，损失项对某个坐标的推动较弱时，最优系数可以停在零点。比如正交标准化设计下，OLS系数为$(0.12,1.40)$，取$\lambda=0.20$后Lasso得到$(0,1.20)$；岭回归在同一数值的惩罚系数下则得到$(0.10,1.40/1.20)$，两个坐标都保留。这里比较的是两种惩罚的作用方式，不代表相同数值的$\lambda$给出相同强度的约束。Tibshirani在1996年提出Lasso，将连续收缩与变量选择放进同一个优化问题\scite{tibshirani1996lasso}。
 
-\term{弹性网}（elastic net）使用$\lambda_1\lVert\bm{w}\rVert_1+\lambda_2\lVert\bm{w}\rVert_2^2/2$，结合坐标稀疏与二次收缩；常写作$\lambda_1=\lambda\alpha$、$\lambda_2=\lambda(1-\alpha)$，其中$0\leq\alpha\leq1$。Zou与Hastie在2005年研究了这种结合，以改善高相关特征下的选择与估计。这里采用直接混合惩罚的形式；原始文献还讨论了对系数重标定以修正过度收缩的版本\scite{zou2005elastic}。
+Lasso的坐标选择在特征高度相关时也会出现歧义。若两列完全相同，并且最优系数和为正，$(a,0)$、$(0,a)$与$(a/2,a/2)$具有同样的数据拟合和一范数惩罚。数据难以决定该保留哪个变量，轻微扰动就可能改变选择。\term{弹性网}（elastic net）在一范数之外加入二次惩罚；上面三种分配中，平均分摊的平方范数最小。它因此同时保留坐标选择和稳定相关系数的机制。惩罚写成$\lambda_1\lVert\bm w\rVert_1+\lambda_2\lVert\bm w\rVert_2^2/2$，常取$\lambda_1=\lambda\alpha$、$\lambda_2=\lambda(1-\alpha)$，其中$0\leq\alpha\leq1$。Zou与Hastie在2005年研究了这一结合；原始文献还讨论了对系数重标定以修正过度收缩的版本\scite{zou2005elastic}。
 
-\term{组Lasso}（group Lasso）使用$\lambda\sum_{g=1}^{G}\omega_g\lVert\bm{w}_{A_g}\rVert_2$，其中$A_1,\ldots,A_G$是不重叠的坐标组，$\omega_g>0$为组权重，常取$\sqrt{|A_g|}$。Yuan与Lin在2006年将选择单位扩展到成组变量，例如一个分类特征展开的多个指示变量。该惩罚允许一整组变成零向量；被保留组中的各个坐标不必都非零\scite{yuan2006group}。
+另一些变量由多个系数共同表示。例如用$t,t^2,t^3$表示楼龄作用，三个坐标合起来才是一个楼龄函数；我们的选择问题可能是“是否保留楼龄”，而不是“是否保留某次幂”。\term{组Lasso}（group Lasso）把预先指定的一组坐标作为一个选择单位，使用惩罚$\lambda\sum_{g=1}^{G}\omega_g\lVert\bm w_{A_g}\rVert_2$。其中$A_1,\ldots,A_G$是不重叠且覆盖全部斜率坐标的组，$\omega_g>0$为组权重，常取$\sqrt{|A_g|}$。组向量为零，就意味着这一整组的作用被删除；保留一组则允许各系数共同拟合其形状，组内的某些坐标仍可为零。Yuan与Lin在2006年研究了这种成组变量选择，包括分类特征展开的多个指示变量\scite{yuan2006group}。
 
 表\ref{tab:regression-regularization-comparison}将四种方法放在相同的平方损失下比较。选择方法时，需要区分“系数整体变小”“某个坐标变零”和“某组变量一起变零”；这三种要求对应不同的结构假设。
 
@@ -215,7 +304,7 @@ OLS把预测误差化为特征列空间中的投影问题。列满秩时参数�
 \subsubsection{参数学习}
 \label{sec:regression-regularization-learning}
 
-岭目标的梯度为零给出
+岭回归仍有直接求解与迭代求解两条路线。先把平方损失与二次惩罚相加，再对系数求导。令梯度$\bm X^\top(\bm X\bm w-\bm y)/n+\lambda\bm w$为零，便得到一个在OLS正规方程上增加$n\lambda\bm I$的线性系统；其解为
 \begin{equation}
   \widehat{\bm{w}}_{\lambda}
   =(\bm{X}^{\top}\bm{X}+n\lambda\bm{I})^{-1}\bm{X}^{\top}\bm{y},
@@ -244,7 +333,11 @@ Lasso的目标记为$F(\bm{w})$。由于$\lambda>0$时$F(\bm{w})\geq\lambda\lVer
 \]
 这个目标是凸函数，零点最优恰好要求左导数不大于零、右导数不小于零，即$|c_j|\leq\lambda$。此时无论向哪一侧离开零点，目标都不会降低；损失项在零点的导数$-c_j$却不必为零。
 
-为了统一写出光滑点与尖点的条件，引入\term{次梯度}（subgradient）。对一维凸函数$f$，若斜率$s$满足$f(v)\geq f(u)+s(v-u)$对所有$v$成立，它就是$f$在$u$处的一个次梯度：经过该点、斜率为$s$的直线始终位于函数图像下方。所有这样的斜率组成次梯度集合$\partial f(u)$；可导时集合只有导数一个元素，而$|u|$在零点允许$[-1,1]$中的全部斜率。凸函数的最优性因而可统一表为$0\in\partial f(u)$。对Lasso，损失梯度加上惩罚次梯度为零，得到充要最优性条件
+刚才的零系数虽然已经最优，损失项的导数却不一定为零，而绝对值惩罚在零点又没有普通导数。因此，OLS使用的“总梯度等于零”不能直接检验这个解。我们需要一种允许惩罚在零点提供一段斜率、并检验这些斜率能否抵消损失导数的条件。
+
+\term{次梯度}（subgradient）用位于凸函数下方的支持直线描述这些可用斜率。对一维凸函数$f$，若斜率$s$满足$f(v)\geq f(u)+s(v-u)$对所有$v$成立，它就是$f$在$u$处的一个次梯度：经过该点、斜率为$s$的直线始终位于函数图像下方。所有这样的斜率组成次梯度集合$\partial f(u)$；可导时集合只有导数一个元素，而$|u|$在零点允许$[-1,1]$中的全部斜率。
+
+凸函数的最优性因而可统一表为$0\in\partial f(u)$。对Lasso，损失梯度加上惩罚次梯度为零，得到充要最优性条件
 \begin{equation}
   \frac{\bm{X}^{\top}(\bm{y}-\bm{X}\widehat{\bm{w}})}{n}
   =\lambda\bm{z},\qquad
@@ -282,16 +375,48 @@ Lasso的目标记为$F(\bm{w})$。由于$\lambda>0$时$F(\bm{w})\geq\lambda\lVer
 \subsubsection{理论分析}
 \label{sec:regression-regularization-theory}
 
-加入惩罚后，训练算法选择系数的方式和估计量的统计行为都会改变。凸性与步长决定优化能否到达目标最小值；惩罚对真实信号和噪声的同时收缩，决定偏差、方差以及变量选择。下面在固定设计下比较这些量，再为符号恢复单独规定噪声和最小信号条件。
+正则化既约束系数，也改变估计误差。小奇异值方向上的噪声受到抑制，真实信号却会同时被压低，这两种变化构成新的偏差与方差。我们先说明惩罚怎样影响候选函数与求解，再计算新输入上这两项误差的总和。
 
 \paragraph{表达能力}
-岭回归在原线性函数族中偏好较小系数，Lasso进一步偏好零坐标；将惩罚换成硬范数约束时，允许选择的集合会直接缩小。约束越强，数据不足以确定的变化越难进入模型，目标中的真实弱信号也可能一同被压低。表示选择与正则强度因此需要一起评价。
+岭、Lasso与组Lasso在目标中加入有限的系数惩罚，但任意有限系数仍然允许，候选函数集仍为$\mathcal F_\phi$，能够表示的函数与OLS相同。若改用硬约束$\lVert\bm w\rVert\leq B$，候选空间才缩小为$\mathcal F_{\phi,B}$，其最佳平方逼近误差满足$A(\mathcal F_{\phi,B})\geq A(\mathcal F_\phi)$。
+
+例如，仍取均匀输入$X\in[-1,1]$与目标$m(x)=x^2$。基$1,x,x^2$可以精确表示它；若将二次项系数限制在$[-1/2,1/2]$内，而截距与一次项不受限，最佳候选变为$1/6+x^2/2$，平方逼近误差的一半为$1/90$。系数限制使候选曲线的弯曲程度不足，因而留下正的差距。类似地，只有明确限制非零坐标数或非零组数，才把候选空间限制为相应的稀疏函数；单独加入有限的一范数惩罚并没有排除稠密函数。
 
 \paragraph{收敛性}
-凸性保证满足最优性条件的点是全局最优点，但迭代算法仍需合适的步长。岭回归在$\lambda>0$时具有正定Hessian，梯度下降可按前述谱条件选择步长；Lasso与组Lasso的近端更新则需同时处理光滑损失和非光滑惩罚。目标值收敛与参数解唯一是不同性质：岭与含正二次惩罚的弹性网有唯一斜率解，Lasso的唯一性还取决于设计和活跃坐标。
+岭回归取$\lambda>0$后，系数范数无限增大时，二次惩罚也无限增大；连续目标因此能取得最小值。其Hessian为$\bm X^\top\bm X/n+\lambda\bm I$，最小特征值为正，解也就唯一。记$L_{\lambda}=\lVert\bm X^\top\bm X/n\rVert_2+\lambda$、$\mu_{\lambda}=\lambda_{\min}(\bm X^\top\bm X/n)+\lambda>0$，步长$1/L_{\lambda}$的梯度下降按$1-\mu_{\lambda}/L_{\lambda}$收缩参数误差，Newton法对该二次目标一步求解。正则项因而既改变统计折中，也改善内部求解的曲率下界。
+
+Lasso与不重叠组Lasso的惩罚也在系数范数增大时趋于无穷，所以连续目标至少有一个最小解。它们的平方损失光滑，但惩罚在零点不可微，求解时要保留这些尖点的作用。令$L=\lVert\bm X^\top\bm X/n\rVert_2>0$，步长$1/L$的近端梯度法每步先减小平方损失，再完成软阈值或组阈值，目标差满足
+\[
+ F(\bm w^{(t)})-F_{\min}
+ \leq \frac{L\lVert\bm w^{(0)}-\bm w_{\min}\rVert_2^2}{2t}.
+\]
+加速近端方法FISTA把这一界改为$2L\lVert\bm w^{(0)}-\bm w_{\min}\rVert_2^2/(t+1)^2$，即$O(1/t^2)$；两者比较的是同一凸目标的目标差，而非变量恢复率\scite{beck2009fista}。含正二次项的弹性网进一步有唯一解；采用适配强凸性的加速或重启方案可获得几何速率。$L=0$时设计为零，各惩罚的最优斜率直接取零。循环坐标下降也可使用，但它的速率还取决于坐标曲率与更新规则，不能仅由“凸”推断。
 
 \paragraph{泛化性}
-正则化的统计收益来自偏差与方差的取舍：收缩会压低参数的真实分量，也会减弱噪声引起的波动。下面的定理在固定设计与真参数下比较参数均方误差，说明足够小的正收缩可以使方差下降超过偏差平方的增加。这个比较对象是参数误差，预测风险还要由新输入怎样加权这些参数方向来决定。
+岭回归的收缩同时引入偏差并减小估计方差。下面把这两项传到独立新输入的平方误差中，给出不惩罚截距时的期望风险。
+
+\begin{theorem}[岭回归在固定设计下的期望平方风险]
+  \label{thm:regression-ridge-test-risk}
+固定原始训练输入与$\lambda>0$，假定响应满足正确的仿射均值模型，并具有式\eqref{eq:regression-gauss-markov-model}中的同方差噪声。中心化后，$\bm X^\top\bm1=0$，所以减去噪声均值不会改变斜率误差中的$\bm X^\top\bm\varepsilon$。把岭解中的响应拆成真实均值与噪声，记$\bm G=\bm X^\top\bm X$、$a=n\lambda$，就得到斜率估计的偏差与协方差：
+\[
+ \begin{aligned}
+ \bm b_{\lambda}&=\mathbb E[\widehat{\bm w}_{\lambda}\mid\bm X]-\bm w_{\star}
+          =-a(\bm G+a\bm I)^{-1}\bm w_{\star},\\
+ \bm V_{\lambda}&=\operatorname{Cov}(\widehat{\bm w}_{\lambda}\mid\bm X)
+          =\sigma^2(\bm G+a\bm I)^{-1}\bm G(\bm G+a\bm I)^{-1}.
+ \end{aligned}
+\]
+预测新输入时还要恢复截距：$\widehat f(\bm x_\star)=\bar y+(\bm x_\star-\bar{\bm x})^\top\widehat{\bm w}_{\lambda}$。记$\bm z_\star=\bm x_\star-\bar{\bm x}$，$\bm Q_{\mathrm{test}}=\mathbb E[\bm z_\star\bm z_\star^\top\mid\bm X]$。噪声样本均值的方差为$\sigma^2/n$，它与斜率误差不相关，所以同一仿射均值模型下独立新响应的风险为
+\begin{equation}
+ \mathbb E_{D_n}[R(\widehat f_{\lambda})\mid\bm X]
+ =\frac{\sigma^2}{2}+\frac{\sigma^2}{2n}
+  +\frac12\bm b_{\lambda}^\top\bm Q_{\mathrm{test}}\bm b_{\lambda}
+  +\frac12\operatorname{tr}(\bm Q_{\mathrm{test}}\bm V_{\lambda}).
+ \label{eq:regression-ridge-test-risk}
+\end{equation}
+\end{theorem}
+
+推导只需把系数误差写成均值偏差与零均值波动，展开新输入的平方误差，再取两层期望。其中$\sigma^2/(2n)$是估计截距增加的误差。其余项明确显示了斜率收缩的收益来源：收缩减少方差，也增加偏差，测试输入按$\bm Q_{\mathrm{test}}$给这些方向重新加权。某个$\lambda$是否优于OLS，需要比较两项之和，系数误差还要经过测试输入的加权，才转化为预测误差。
 
 \begin{figure}[htbp]
   \centering
@@ -300,87 +425,39 @@ Lasso的目标记为$F(\bm{w})$。由于$\lambda>0$时$F(\bm{w})\geq\lambda\lVer
   \label{fig:regression-bias-variance-noise}
 \end{figure}
 
-\Needspace{8\baselineskip}
-\begin{theorem}[小幅岭收缩的参数均方误差]
-  \label{thm:regression-ridge-mse}
-  设$\bm{y}=\bm{X}\bm{w}_{\star}+\bm{\varepsilon}$，固定设计$\bm{X}$列满秩，参数维数至少为$1$，噪声均值为零、协方差为$\sigma^2\bm{I}$，且$\sigma^2>0$。则存在$\lambda_0>0$，使所有$0<\lambda<\lambda_0$的岭估计参数均方误差严格小于OLS。
+对Lasso、弹性网与组Lasso，可以用同一项风险结论保留各自的惩罚代价。下面比较的仍是预测损失，不把变量恢复率当作泛化风险。
+
+\begin{theorem}[Lasso及其范数惩罚变体在有界线性模型下的期望风险界]
+ \label{thm:regression-penalized-risk}
+ 在定理\ref{thm:regression-parametric-risk}的条件下，设$\operatorname{pen}(f)\geq0$为预定惩罚，$\widetilde f$将$\widehat R_n(f)+\operatorname{pen}(f)$求到目标差$e_{\mathrm{opt}}$以内。以关于训练集至少$1-\delta$的概率，
+ \begin{equation}
+  R(\widetilde f)-R_\star
+  \leq\inf_{f\in\mathcal F}
+     \{R(f)-R_\star+\operatorname{pen}(f)\}
+     +2u_n+e_{\mathrm{opt}},
+  \label{eq:regression-penalized-transfer}
+ \end{equation}
+ 其中$u_n$由式\eqref{eq:regression-risk-radius}明确给出。Lasso取$\operatorname{pen}(f)=\lambda\lVert\bm w\rVert_1$；弹性网再加$\lambda_2\lVert\bm w\rVert_2^2/2$；组Lasso采用预定分组的加权范数和。对特征界$F_0$、响应界$Y_{\max}$、系数球半径$B$内的线性平方回归，取$M=(Y_{\max}+BF_0)^2/2$、$L_\ell=F_0(Y_{\max}+BF_0)$、$q=p$。
 \end{theorem}
 
 \begin{proof}
-令$a=n\lambda$，将$\bm{X}^{\top}\bm{X}$正交对角化，特征值为$\gamma_j>0$，真参数在相应方向上的坐标为$\theta_j$。岭估计在第$j$个方向上的偏差为$-a\theta_j/(\gamma_j+a)$，方差为$\sigma^2\gamma_j/(\gamma_j+a)^2$。正交变换保持欧氏范数，故参数均方误差为
+在$\Delta_n\leq u_n$的同一事件上，将期望风险换为经验风险，使用带惩罚的近似最优性，再换回期望风险，得到
 \[
-  M(a)=\sum_j\frac{a^2\theta_j^2+\sigma^2\gamma_j}{(\gamma_j+a)^2}.
+ R(\widetilde f)+\operatorname{pen}(\widetilde f)
+ \leq R(f)+\operatorname{pen}(f)+2u_n+e_{\mathrm{opt}}.
 \]
-函数在$a=0$附近可微，且$M'(0)=-2\sigma^2\sum_j\gamma_j^{-2}<0$。导数定义保证存在$a_0>0$，使所有$0<a<a_0$满足$M(a)<M(0)$。取$\lambda_0=a_0/n$即可。
+去掉左侧非负惩罚，再对比较函数取下确界，即得结论。
 \end{proof}
 
-中心化响应会使噪声协方差变成$\sigma^2(\bm{I}-\bm{1}\bm{1}^{\top}/n)$，但中心化设计满足$\bm{X}^{\top}\bm{1}=\bm{0}$，所以斜率方向上的上述计算仍成立。定理中的有效收缩范围依赖真参数；实际正则强度仍需选择，预测风险还需按测试输入对参数方向的加权来评价。
+Lasso取$\operatorname{pen}(f)=\lambda\|\bm w\|_1$，弹性网增加$\lambda_2\|\bm w\|_2^2/2$，组Lasso取预定组的加权范数和。比较函数的逼近误差与惩罚越小，界越有用；输出惩罚使训练选择偏向这类函数。这里的范围必须在抽样前受控，无硬约束程序要先证明其输出和比较类满足相应范围；用同一数据选择多个正则强度时，还要同时覆盖这些选择。
 
-Lasso能否认出真实非零变量，则是更强的问题。仅有稀疏性还不够：无关变量若可由相关变量近似替代，就难以判定贡献应归给谁。\term{不可表示条件}（irrepresentable condition）限制这种替代关系；符号恢复还需要噪声和最小信号条件\scite{zhao2006lasso}。
+恢复哪些变量的系数非零是另一项统计任务。稀疏性之外，Lasso的精确符号恢复还要求设计不能用无关变量近似替代相关变量，并要求信号足够强以超过噪声和收缩误差；\term{不可表示条件}（irrepresentable condition）给出一类这样的充分条件\scite{zhao2006lasso}。即使两个高度相关变量无法被准确区分，它们的组合仍可能预测得好，变量恢复与新样本预测因而需要各自的评价和证明。
 
-\Needspace{18\baselineskip}
-\begin{theorem}[Lasso的确定性符号恢复充分条件]
-  \label{thm:regression-lasso-recovery}
-  设$\bm{y}=\bm{X}\bm{w}_{\star}+\bm{\varepsilon}$，$A=\{j:w_{\star,j}\ne0\}$非空，$\bm{X}_A=\bm{X}_{:,A}$列满秩。记
-  \[
-    \bm{G}=\bm{X}^{\top}\bm{X}/n,\quad
-    \bm{s}=\operatorname{sign}(\bm{w}_{\star,A}),\quad
-    \bm{P}_A=\bm{X}_A(\bm{X}_A^{\top}\bm{X}_A)^{-1}\bm{X}_A^{\top},
-  \]
-  以及$\bm{q}=\bm{G}_{A,A}^{-1}\bm{X}_A^{\top}\bm{\varepsilon}/n$、$\bm{b}=\bm{G}_{A,A}^{-1}\bm{s}$。若$\lambda>0$，且存在$0<\eta\leq1$使
-  \begin{align}
-    \lVert\bm{G}_{A^c,A}\bm{G}_{A,A}^{-1}\bm{s}\rVert_\infty
-      &\leq1-\eta, \label{eq:regression-irrepresentable}\\
-    \left\lVert\bm{X}_{A^c}^{\top}(\bm{I}-\bm{P}_A)
-                  \bm{\varepsilon}/n\right\rVert_\infty
-      &\leq\lambda\eta/2, \label{eq:regression-lasso-noise}\\
-    \min_{j\in A}|w_{\star,j}|
-      &>\lVert\bm{q}\rVert_\infty+\lambda\lVert\bm{b}\rVert_\infty,
-      \label{eq:regression-lasso-beta-min}
-  \end{align}
-  则Lasso解唯一，且$\operatorname{sign}(\widehat{\bm{w}})=\operatorname{sign}(\bm{w}_{\star})$。$A^c$为空时，前两个条件为空条件。
-\end{theorem}
+\subsubsection{优化泛化能力}
 
-\begin{proof}
-构造$\widetilde{\bm{w}}_{A^c}=\bm{0}$、$\widetilde{\bm{w}}_A=\bm{w}_{\star,A}+\bm{q}-\lambda\bm{b}$。最小信号条件保证每个活跃坐标的扰动小于其原绝对值，因此符号仍为$\bm{s}$。残差满足
-\[
-  \bm{r}=\bm{y}-\bm{X}\widetilde{\bm{w}}
-  =(\bm{I}-\bm{P}_A)\bm{\varepsilon}
-   +\lambda\bm{X}_A\bm{G}_{A,A}^{-1}\bm{s}.
-\]
-令$\widetilde{\bm{z}}=\bm{X}^{\top}\bm{r}/(n\lambda)$，则$\widetilde{\bm{z}}_A=\bm{s}$，且
-\[
-  \widetilde{\bm{z}}_{A^c}
-  =\bm{G}_{A^c,A}\bm{G}_{A,A}^{-1}\bm{s}
-    +\frac{\bm{X}_{A^c}^{\top}(\bm{I}-\bm{P}_A)
-            \bm{\varepsilon}}{n\lambda}.
-\]
-前两个条件给出$\lVert\widetilde{\bm{z}}_{A^c}\rVert_\infty\leq1-\eta/2<1$。因此$\widetilde{\bm{z}}$是合法次梯度，式\eqref{eq:regression-lasso-kkt}成立，候选解最优。
+有限样本难以辨认高度相关变量的各自作用，较大的相反系数又可能放大新输入中的细小差异。下面三种调整分别约束相关系数、变量组和估计方向，用不同的偏差代价控制这种波动。系数更稳定并不直接保证期望风险更低，还要检查留下的方向是否保留了响应信息。
 
-对任意扰动$\bm{h}$，精确展开目标差并代入平稳条件，得到
-\[
-  \begin{aligned}
-    F(\widetilde{\bm{w}}+\bm{h})-F(\widetilde{\bm{w}})
-    ={}&\frac{\lVert\bm{X}\bm{h}\rVert_2^2}{2n}\\
-      &+\lambda\bigl(\lVert\widetilde{\bm{w}}+\bm{h}\rVert_1
-         -\lVert\widetilde{\bm{w}}\rVert_1
-         -\widetilde{\bm{z}}^{\top}\bm{h}\bigr).
-  \end{aligned}
-\]
-活跃坐标的括号贡献由次梯度不等式非负；非活跃坐标的贡献至少为$(\eta/2)|h_j|$。若扰动后仍最优，必有$\bm{h}_{A^c}=\bm{0}$与$\bm{X}\bm{h}=\bm{0}$，故$\bm{X}_A\bm{h}_A=\bm{0}$。活跃设计满列秩进一步推出$\bm{h}_A=\bm{0}$，唯一性得证。
-\end{proof}
-
-这个命题直接约束一份数据中的噪声向量，不需要高斯假设。要得到高概率恢复，还须对这些约束的概率作估计。例如在固定设计、独立高斯噪声且$\lVert\bm{X}_{:,j}\rVert_2\leq\sqrt n$下，并合界给出
-\[
-  \mathbb{P}\!\left(
-    \lVert\bm{X}_{A^c}^{\top}(\bm{I}-\bm{P}_A)
-       \bm{\varepsilon}/n\rVert_\infty>\lambda\eta/2
-  \right)
-  \leq2|A^c|\exp\!\left(-\frac{n\lambda^2\eta^2}{8\sigma^2}\right).
-\]
-完整恢复结论还需控制活跃坐标上的$\bm{q}$，以验证最小信号条件。变量选择与预测误差关注的对象也不同：相关特征之间的替换可能保持近似相同的预测，却改变支持集；若要进一步解释干预效应，还需要因果模型和识别条件。
-
-\subsubsection{支持相关特征的分组稳定（Elastic Net）}
+\paragraph{缓解高度相关特征造成的系数不稳定}
 \label{sec:regression-elastic-net}
 
 弹性网中的$\lambda_2>0$使整个目标严格凸，即使设计秩亏也有唯一参数解。若两列完全相同，交换相应系数不改变目标，唯一性便要求两个系数相等。二次惩罚由此排除了完全相同特征之间任意分摊系数的歧义。
@@ -393,24 +470,31 @@ Lasso能否认出真实非零变量，则是更强的问题。仅有稀疏性还
 \]
 因此在相同尺度下，两列越接近，其同号估计越接近。这个界以非零同号为条件，不保证任何相关变量组都被选中。实际选择$\alpha,\lambda$时，仍应根据预测或变量选择的目标验证稳定性。
 
-\subsubsection{支持结构化稀疏（Group Lasso）}
+\paragraph{按变量组控制稀疏性}
 \label{sec:regression-group-lasso}
 
-一个类别变量的多个指示变量，或一个连续变量的整组样条基，常需要作为整体评价。组Lasso把这样的先验分组写进惩罚；在非零组上，惩罚的梯度方向是$\bm{w}_{A_g}/\lVert\bm{w}_{A_g}\rVert_2$，零组处的次梯度则是单位球。组内残差相关向量未超过$\lambda\omega_g$时，整组可以保持为零。
+前面把楼龄的多项式系数组成一组，这种分组也适用于类别指示变量或同一个连续变量的整组样条基。组Lasso将整体取舍写进惩罚；在非零组上，惩罚的梯度方向是$\bm{w}_{A_g}/\lVert\bm{w}_{A_g}\rVert_2$，零组处的次梯度则是单位球。组内残差相关向量未超过$\lambda\omega_g$时，整组可以保持为零。
 
 权重$\sqrt{|A_g|}$能补偿组大小的一部分影响，但并不消除组内相关性或量纲差异。若还希望在保留组内继续选择坐标，可使用\term{稀疏组Lasso}（sparse group Lasso），即在组惩罚之外再加$\lambda_1\lVert\bm{w}\rVert_1$。这同时约束组与坐标两个层次；选择一致性除真实组结构外，还依赖设计、信号强度及正则化条件。
+
+\paragraph{压缩共线特征的估计方向}
+\label{sec:regression-component-regression}
+
+处理共线性的另一条路线是先把相关变量合成为少数正交成分，再对这些成分回归。这会减少需要估计的方向，却也需要决定哪些方向值得保留。\term{主成分回归}（principal component regression, PCR）保留若干主成分，在这些正交方向上拟合，等价于对选中方向完全保留、对其余方向硬截断。第\ref{sec:dim-pca}节从无监督表示的角度推导主成分分析（PCA）：PCA与PCR共享由输入方差确定的主成分基，但PCA按方差保留与重构误差评价表示，PCR还要用响应检验这些成分是否有利于预测。与式\eqref{eq:regression-ridge-spectral}的连续收缩相比，PCR的取舍更直接，但输入方差小不意味着对响应不重要。\term{偏最小二乘回归}（partial least squares regression, PLS）在构造成分时同时利用输入与响应的关系，因而属于监督降维；它有不同的具体算法，不能笼统理解为收缩因子必在$0$和$1$之间的岭回归。例如教学构造中，$X_1,X_2$独立、方差分别为$100$与$1$，响应为$Y=X_2$。不额外标准化时，PCA的第一主成分为$X_1$；只保留这一成分做PCR会丢掉全部响应信号。PLS构造成分时利用输入与响应的关系，在这个例子中可以识别$X_2$与$Y$的关联，而不只按输入方差决定取舍。成分数同样需要在训练折内选择。
 
 \subsubsection{小结}
 \label{sec:regression-regularization-summary}
 
-岭回归收缩全部系数，Lasso选择坐标，弹性网同时利用坐标选择与二次收缩，组Lasso则将选择单位改为预先给定的变量组。它们的差别来自希望保留的参数结构，求解与恢复结论也要匹配相应惩罚。其他方法沿着这些选择继续扩展：Adaptive Lasso按坐标加权，Fused Lasso惩罚相邻系数差，SCAD和MCP减弱对大系数的收缩。后两者采用非凸惩罚，需要处理局部最优；所称“Oracle性质”也只在规定的渐近条件下，描述仿佛已知真支持集的估计行为\scite{hastie2009}。
+正则化的取舍取决于希望保留什么。岭回归用二次惩罚收缩系数，适合在保留相关变量的同时减轻估计波动；Lasso用坐标绝对值惩罚选择变量，但多个变量近似提供同一信息时，选中哪个变量可能随样本改变。Zou与Hastie提出的弹性网将两种惩罚结合，用二次项约束相关系数的分摊，同时保留坐标稀疏的可能。它针对的是相关特征中的选择与估计稳定性，仍需要选择两种惩罚的相对强度\scite{zou2005elastic}。
 
-处理共线性的另一条路线是先降维再回归。\term{主成分回归}（principal component regression, PCR）保留若干主成分，在这些正交方向上拟合，等价于对选中方向完全保留、对其余方向硬截断。第\ref{sec:dim-pca}节从无监督表示的角度推导主成分分析（PCA）：PCA与PCR共享由输入方差确定的主成分基，但PCA按方差保留与重构误差评价表示，PCR还要用响应检验这些成分是否有利于预测。与式\eqref{eq:regression-ridge-spectral}的连续收缩相比，PCR的取舍更直接，但输入方差小不意味着对响应不重要。\term{偏最小二乘回归}（partial least squares regression, PLS）在构造成分时同时利用输入与响应的关系，因而属于监督降维；它有不同的具体算法，不能笼统理解为收缩因子必在$0$和$1$之间的岭回归。成分数同样需要在训练折内选择。
+变量选择的单位也未必是单个系数。一个类别变量对应多列指示变量，一个连续变量也可能对应整组样条基；逐列选择会把同一变量的表示拆散。Yuan与Lin提出的组Lasso对预定变量组施加范数惩罚，让模型能够整体保留或删去一组；若还希望在保留组内继续删减坐标，稀疏组Lasso再加入坐标惩罚。这些方法需要事先说明分组依据，组大小、尺度和相关性仍会影响选择\scite{yuan2006group}。
+
+PCR与PLS则通过少数成分减少需要估计的方向。PCR按输入方差保留成分，PLS还利用输入与响应的关系，所以两者可能保留不同的信息。惩罚与成分压缩都能处理共线性，却改变不同的环节：前者约束原坐标系数，后者先改变回归的输入表示。应将尺度处理、复杂度选择和选择稳定性放在同一训练流程中评价。
 
 \subsection{分位数回归（Quantile Regression）}
 \label{sec:regression-quantiles}
 
-预算制定者关心的是实际支出超过预算的概率，单个条件均值无法回答这个问题。\term{分位数回归}（quantile regression）用非对称残差损失估计给定输入后的指定分位数；例如$0.9$分位数提供一个使响应至少有$90\%$概率不超过它的条件阈值。Koenker与Bassett在1978年系统提出回归分位数，将回归目标从条件均值扩展到条件分布的不同位置。这一区分源于决策目标，无需先假定误差对称或同方差\scite{koenker1978quantiles}。
+预算制定者关心的是实际支出超过预算的概率，单个条件均值无法回答这个问题。假设同类任务的支出以$80\%$概率为$100$，以$20\%$概率为$200$。平均支出是$120$，照此准备预算仍有$20\%$概率超支；如果要求至少$90\%$的支出不超过预算，这个例子中应把阈值提高到$200$。两种预测使用同一响应分布，差别来自需要完成的决策。\term{分位数回归}（quantile regression）用非对称残差损失估计给定输入后的指定分位数；例如$0.9$分位数提供一个使响应至少有$90\%$概率不超过它的条件阈值。Koenker与Bassett在1978年系统提出回归分位数，将回归目标从条件均值扩展到条件分布的不同位置。这一区分源于决策目标，无需先假定误差对称或同方差\scite{koenker1978quantiles}。
 
 \subsubsection{模型结构}
 
@@ -432,9 +516,18 @@ Lasso能否认出真实非零变量，则是更强的问题。仅有稀疏性还
 
 将分布换成给定输入的条件分布，便得到条件分位数；换成经验分布，便得到样本分位数。$\tau=1/2$时损失为$|r|/2$，对应中位数。在线性模型受到限制时，只有正确指定等条件下才能精确表示真实条件分位数，一般得到该函数类中的最佳损失逼近。
 
+图\ref{fig:regression-quantile-objective}用只有截距的模型展示这一选择：同一组响应，在不同$\tau$下对应不同的最优阈值。较大的$\tau$给低估更高的代价，最优预测也向较高的响应移动；分位数回归把这个目标进一步应用到每个输入的条件分布。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=159mm]{figures/04-classic-models/00-shared/matplotlib/regression-quantile-objective/figure.pdf}
+  \caption{分位数损失怎样改变学习目标。左图中，正残差表示低估、负残差表示高估；$\tau$越大，低估一单位的代价越高。右图对固定响应$0,1,2,4,8$比较三个平均损失目标，其唯一最小点分别为$1,2,4$，对应经验分布的$0.25,0.5,0.75$分位数。数值均为无量纲教学构造，圆点表示最小值。}
+  \label{fig:regression-quantile-objective}
+\end{figure*}
+
 \subsubsection{参数学习}
 
-引入非负正、负残差$\bm{u},\bm{v}\in\mathbb{R}^{n}$，可将目标写成线性规划
+分位数损失在零残差处不可微，因而不宜像OLS那样直接解梯度为零的方程。我们可以把每个残差拆成正、负两部分，分别按$\tau$和$1-\tau$计分。引入非负变量$\bm u,\bm v\in\mathbb R^n$，将残差写成$\bm y-\bm X\bm w=\bm u-\bm v$，便得到线性规划
 \begin{equation}
   \begin{aligned}
     \min_{\bm{w},\bm{u},\bm{v}}\quad&
@@ -447,7 +540,59 @@ Lasso能否认出真实非零变量，则是更强的问题。仅有稀疏性还
 \end{equation}
 若某个$u_i,v_i$同时为正，同时减小二者保持约束不变且严格降低目标，因此最优时二者不会同时为正，线性规划与原损失等价。可采用单纯形法、内点法或适合数据规模的非光滑凸优化算法；这些算法分别利用线性规划结构或直接处理非光滑凸目标。
 
-高维时可在平均分位数损失之外增加$\lambda\lVert\bm{w}\rVert_1$，通过把系数也拆为正负部分继续写成线性规划。多个$\tau$可以分别拟合，也可以联合加入顺序约束；超参数评价应使用对应的分位数损失，而不是仅凭平方误差判断。
+\subsubsection{理论分析}
+
+\paragraph{表达能力}
+分位数回归的目标为条件分位数$q_\tau(\bm x)$。采用固定特征时，候选空间仍是$\mathcal F_\phi$：$q_\tau$在该空间中，便能精确表示；否则，最佳逼近距离取决于目标中未被特征覆盖的部分。
+
+正态位置尺度模型可以说明均值与分位数所需特征为何不同。设$X$在$[-1,1]$上均匀分布，$Y=\mu(X)+s(X)Z$，其中$Z$为独立标准正态变量、$s>0$。此时$q_\tau(x)=\mu(x)+s(x)\Phi^{-1}(\tau)$，$\Phi$为标准正态分布函数。若$\mu$与$s$均为仿射函数，则每个固定分位数都属于仿射候选空间。若$\mu(x)=x$、$s(x)=1+x^2$，中位数仍为$x$，其他分位数却带有二次项。记$c_\tau=\Phi^{-1}(\tau)$，只用$1,x$时有
+\[
+ \frac12\inf_{a,b}\|q_\tau-(a+bx)\|_{L^2(P_X)}^2
+ =\frac{2c_\tau^2}{45}.
+\]
+最佳候选为$x+4c_\tau/3$，所以只有中位数的距离为零；加入$x^2$后，所有固定分位数都能精确表示。
+
+\paragraph{收敛性}
+有限数据上的线性规划始终可行，且目标下有界于零，因此至少有一个最优解，系数未必唯一。这里可以用线性规划算法达到全局最优，但不能直接套用光滑凸优化的梯度速率，因为损失在零残差处有尖点。若在半径$B$的参数球内求解，设$\lVert\bm\phi(\bm x_i)\rVert_2\leq F$且$F>0$，平均损失的次梯度范数至多为$F$；投影次梯度法用$2B/(F\sqrt T)$步长，从球内初值出发，其$T$步平均迭代的目标差至多为$2BF/\sqrt T$。这个例子给出$O(T^{-1/2})$的一阶保证，约束后的比较对象也相应变成球内最优解。内点法则利用线性规划结构，停止时可以用原始与对偶可行目标之间的间隙认证精度。
+
+\paragraph{泛化性}
+记分位数损失的期望风险为$R_\tau$，对应最优风险为$R_{\tau,\star}$，并记$A_\tau(\mathcal F)=\inf_{f\in\mathcal F}R_\tau(f)-R_{\tau,\star}$。要将损失差转成预测值与真实分位数的距离，还需控制分位点附近的概率质量。条件密度存在时，
+\[
+ \mathbb E[\rho_\tau(Y-a)-\rho_\tau(Y-q_\tau)\mid\bm X=\bm x]
+ =\int_{q_\tau(\bm x)}^a(F_{Y\mid\bm x}(u)-\tau)\,du.
+\]
+若两点之间的条件密度满足$0<c\leq p_{Y\mid\bm x}\leq C$，则上式位于$c(a-q_\tau)^2/2$与$C(a-q_\tau)^2/2$之间。下面先界定期望分位数损失，再用密度下界得到分位数的平方距离界。
+
+\begin{theorem}[线性分位数回归在有界输入与参数下的期望风险界]
+ \label{thm:regression-quantile-risk}
+ 设训练记录独立同分布，未来记录独立且服从同一分布，固定$\tau\in(0,1)$与$p$维特征，满足$|Y|\leq Y_{\max}$、$\|\bm\phi(\bm X)\|_2\leq F$，系数限制在预定半径$B$的球内。若$\widetilde f$将平均分位数损失求到目标差$e_{\mathrm{opt}}$以内，则对预定$\alpha>0$、$\delta\in(0,1)$，以关于训练集至少$1-\delta$的概率，
+ \[
+  R_\tau(\widetilde f)-R_{\tau,\star}
+  \leq A_\tau(\mathcal F_{\phi,B})
+   +2u_n(Y_{\max}+BF,F,p,B;\alpha,\delta)
+   +e_{\mathrm{opt}}.
+ \]
+ 若前述条件密度下界$c>0$在$q_\tau(\bm x)$与所有候选预测之间成立，则同一事件上还有
+ \[
+  \|\widetilde f-q_\tau\|_{L^2(P_X)}^2
+  \leq\frac{2}{c}
+  [A_\tau(\mathcal F_{\phi,B})+2u_n+e_{\mathrm{opt}}].
+ \]
+\end{theorem}
+
+分位数损失至多为$Y_{\max}+BF$，关于预测值为$1$-Lipschitz，因此第一界来自定理\ref{thm:regression-parametric-risk}。第二界再使用上述条件损失下界，并对未来输入积分。密度下界承担了从损失接近转换到分位点数值接近的作用；没有它，第一界仍成立，第二界则不能保证。无界响应或同时训练多个分位点，需要相应的尾部控制或并合概率。
+
+\subsubsection{优化泛化能力}
+
+\label{sec:regression-quantile-sparsity}
+
+变量很多、尾部观测有限时，估计每个变量的作用容易受个别记录影响。可在平均分位数损失之外增加$\lambda\lVert\bm w\rVert_1$，使部分系数可以取零。把系数也拆成正、负两部分，仍可将这一目标写成线性规划。这与Lasso使用相同的系数约束，却保留分位数损失规定的预测对象；$\lambda$应按验证分位数损失选择，不能只凭平方误差判断。
+
+\subsubsection{支持多个分位数有序预测场景}
+
+\label{sec:regression-quantile-ordering}
+
+若分别估计预算的中位数和较高分位数，两条曲线可能在某些输入处交叉，使较高分位数反而更低。可以同时拟合多个$\tau$，在预先指定的输入集合$\mathcal X_0$上加入顺序约束：对$\tau_1<\tau_2$，要求$\bm\phi(\bm x)^\top\bm w_{\tau_1}\leq\bm\phi(\bm x)^\top\bm w_{\tau_2}$，$\bm x\in\mathcal X_0$。对有限$\mathcal X_0$，这些是线性约束，可以和各分位数的残差分解一起求解。它们只保证指定输入处的顺序；要保证整个输入域不交叉，还需对该域施加足够的约束。联合拟合增加系数和约束数量，但避免了在各分位数之间分别选择互不协调的预测。
 
 \subsubsection{小结}
 
@@ -456,7 +601,7 @@ Lasso能否认出真实非零变量，则是更强的问题。仅有稀疏性还
 \subsection{支持向量回归（SVR）}
 \label{sec:regression-svr}
 
-另一种误差评价允许小偏差不计损失，只惩罚超出容忍范围的部分。\term{支持向量回归}（support vector regression, SVR）将这种损失与二次正则化结合，得到一个由训练样本加权表示的预测函数。部分样本的权重可以为零，核化以后只需保留非零权重对应的样本来计算预测。这是样本展开的稀疏性，与Lasso选择输入变量的稀疏性不同\scite{smola2004svr}。
+有些任务并不要求把每一个小偏差都继续压低。例如，假设测量任务把$0.05$单位以内的误差都视为可接受；真实响应为$2.00$时，预测$1.98$已在容忍范围内，而预测$1.80$超出范围$0.15$。平方损失仍会区分带内的细小误差，分位数损失则对每个非零残差计分。另一种选择是让容忍范围内的损失为零，只对超出部分计分。\term{支持向量回归}（support vector regression, SVR）将这种损失与二次正则化结合，得到一个由训练样本加权表示的预测函数。部分样本的权重可以为零，核化以后只需保留非零权重对应的样本来计算预测。这是样本展开的稀疏性，与Lasso选择输入变量的稀疏性不同\scite{smola2004svr}。
 
 \subsubsection{模型结构}
 
@@ -470,7 +615,16 @@ Lasso能否认出真实非零变量，则是更强的问题。仅有稀疏性还
 \end{equation}
 除以$nC$，可知它与“平均损失$+\lambda\lVert\bm{w}\rVert_2^2/2$”在$\lambda=1/(nC)$时等价。$C$越大，训练误差在目标中的相对权重越大；$\epsilon$则具有响应的单位，规定不计损失的范围。
 
-为推导对偶问题，引入$\xi_i^+,\xi_i^-\geq0$，分别表示两个方向超出容忍带的量。等价约束形式为
+图\ref{fig:regression-svr-objective}把损失画回响应坐标：围绕候选函数的带内偏差都不计分，带外残差只有超过边缘的部分计分。学习时还要加入斜率或核函数范数的惩罚，所以扩大容忍带、减小带外误差与选择较平缓的函数，是目标中的不同调节。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=159mm]{figures/04-classic-models/00-shared/matplotlib/regression-svr-objective/figure.pdf}
+  \caption{SVR的容忍带与带外损失。左图取候选$f(x)=1+x/2$、$\epsilon=0.5$，圆点位于带内或边界，方点位于带外；红色竖段只标记超出带边缘的部分。右图将同一规则写成残差损失，带内损失为零、带外线性增长。构造样本的损失之和为$1.2$，斜率惩罚为$0.125$，因此该候选的完整目标为$0.125+1.2C$；图中不假定它是最优解。}
+  \label{fig:regression-svr-objective}
+\end{figure*}
+
+损失在容忍带边缘不可微，直接用普通梯度求解并不方便。我们可以用两个非负量$\xi_i^+,\xi_i^-\geq0$，分别记录残差从两侧超出容忍带的部分；损失于是成为它们的和，而预测条件变成线性约束。这个等价形式也便于推导只依赖样本内积的对偶问题：
 \begin{equation}
   \begin{aligned}
     \min_{\bm{w},b,\bm{\xi}^+,\bm{\xi}^-}\quad&
@@ -524,18 +678,32 @@ Lasso能否认出真实非零变量，则是更强的问题。仅有稀疏性还
 
 \subsubsection{理论分析}
 
-SVR的对偶给出了当前训练目标的最优性判据，接下来还要检查这个目标能表示什么、算法如何减少优化误差，以及训练样本怎样约束新输入上的误差。前两项由核函数、KKT条件和对偶间隙描述；泛化分析则另外需要抽样制度、函数类以及响应尾部条件。支持向量的数量是学得表示的规模，并非新样本风险的替代指标。
+SVR把损失、容忍带与函数范数共同放进训练目标。核函数决定候选预测的形状，对偶提供有限样本求解和精度认证；新样本上的带外误差则还取决于样本分布与候选函数的复杂度。下面沿着这三个环节分析。
 
 \paragraph{表达能力}
-选定核以后，SVR在相应再生核Hilbert空间中拟合函数；非线性变化由核的特征映射提供。范数惩罚使某些变化比其他变化代价更大，$\varepsilon$不敏感损失则规定什么残差值得继续拟合。两者分别限制候选函数的变化方式和拟合精度，需要与目标规律匹配。
+线性SVR的候选函数为所有仿射函数，核化后则由核定义相应的函数空间。对于任一给定目标$t$，有限次数多项式核只能提供相应次数的多项式；例如一次核无法精确表示区间上的$t(x)=x^2$，二次核则可以。
+
+高斯核对应的RKHS在紧致输入域上的连续函数空间中稠密。因此，对任意连续目标$t$与$e>0$，都存在$h\in\mathcal H_K$使$\sup_{\bm x}|h(\bm x)-t(\bm x)|<e$。这一结论允许使用整个RKHS；若把范数限制在固定半径内，可用的函数减少，最佳距离未必趋于零。核的类型决定允许哪些变化，范数约束又决定这些变化能够达到多大幅度\scite{steinwart2001kernel}。
 
 \paragraph{收敛性}
-SVR的原始问题是凸优化问题，前述强对偶与KKT条件给出了全局最优性的判据。数值求解时，可以用原始可行解与对偶可行解的目标差距控制尚未消除的优化误差；具体迭代的收敛速度仍取决于求解器、设计与核矩阵。
+有限训练集、$C>0$时原始目标有解：权重趋于无穷会使二次惩罚增长；权重有界而$|b|$趋于无穷，又使带外损失增长。因而连续目标的水平集有界，最小值可以取到。二次项保证权重唯一，但截距和对偶系数可能不唯一。合法核下，有限表示将求解归结为同样的凸二次规划，强对偶使原始与对偶目标差成为优化误差的证书。
+
+一种明确的一阶求法是在式\eqref{eq:regression-svr-dual}的可行域内做投影梯度下降。把负对偶目标记为$q(\bm u)$，$\bm u=(\bm\alpha^+,\bm\alpha^-)$，其Hessian为
+\[
+ \begin{pmatrix}\bm K&-\bm K\\-\bm K&\bm K\end{pmatrix},
+ \qquad L_{\mathrm d}=2\lambda_{\max}(\bm K).
+\]
+$\bm K$是线性或非线性训练Gram矩阵。若$L_{\mathrm d}>0$，用步长$1/L_{\mathrm d}$，每步投影回盒约束与等式约束的交集，则
+\[
+ q(\bm u^{(t)})-q_{\min}
+ \leq\frac{L_{\mathrm d}\lVert\bm u^{(0)}-\bm u_{\min}\rVert_2^2}{2t}.
+\]
+因此对偶目标差有$O(1/t)$保证；核矩阵奇异时仍适用，但不能由此声称系数按几何速率收敛。$\bm K=\bm0$时问题退化为线性规划，可直接解。对偶目标差并不直接等于某个恢复出的原始预测器的目标差；报告后者时需构造原始可行解，并计算实际对偶间隙。分解算法改变每步的成本与速度，需要针对其更新规则分析。
 
 支持向量与残差位置的关系必须区分带内、带外和边界三个情况。边界上的约束虽然取等号，乘子仍然可以为零。
 
 \Needspace{16\baselineskip}
-\begin{theorem}[SVR的样本系数与残差]
+\begin{lemma}[SVR的样本系数与残差]
   \label{thm:regression-svr-support}
   设$\epsilon>0$，在任意一组原始与对偶最优解处记$r_i=y_i-\bm{w}^{\top}\bm{x}_i-b$、$\beta_i=\alpha_i^+-\alpha_i^-$。则
   \[
@@ -549,7 +717,7 @@ SVR的原始问题是凸优化问题，前述强对偶与KKT条件给出了全�
     \end{array}
   \]
   因而$\beta_i\ne0$蕴含$|r_i|\geq\epsilon$，反向蕴含在边界处不成立。
-\end{theorem}
+\end{lemma}
 
 \begin{proof}
 最优松弛量为$\xi_i^+=(r_i-\epsilon)_+$、$\xi_i^-=(-r_i-\epsilon)_+$。KKT互补松弛条件为
@@ -564,9 +732,59 @@ SVR的原始问题是凸优化问题，前述强对偶与KKT条件给出了全�
 一个反例足以排除边界处的“当且仅当”：取单个样本、$\bm{x}_1=\bm{0}$，令$\bm{w}=\bm{0}$、$b=y_1-\epsilon$，则$r_1=\epsilon$，原始目标为零；两个乘子均为零也满足对偶最优性。这个边界样本的系数为零。$\epsilon=0$时两个边界重合，零残差处两类乘子可能同时非零，必须单独处理，不能沿用上表的两行边界结论。
 
 \paragraph{泛化性}
-支持向量的数量由最优函数与残差位置共同决定。改变$\epsilon$会重新拟合整条函数，因而支持向量数未必严格单调下降。泛化分析更直接地约束核对角线、函数范数、截距或响应尾部，并在指定抽样条件下评价新样本损失。有限步求解留下的优化误差，与有限数据造成的统计误差，分别进入这一评价。
+记$\epsilon$不敏感损失的期望风险为$R_\epsilon$。该损失的条件最优预测一般不是均值：条件分布连续时，关于预测值$a$的条件期望损失导数为$F_{Y\mid\bm x}(a-\epsilon)+F_{Y\mid\bm x}(a+\epsilon)-1$，最优点使它为零；$\epsilon=0$时得到中位数。若某个最优函数$t_\epsilon$能被候选$f$一致逼近到$e$，损失的$1$-Lipschitz性质就给出$R_\epsilon(f)-R_\epsilon(t_\epsilon)\leq e$。
 
-\subsubsection{支持非线性回归（核 SVR）}
+支持向量少说明预测计算保留的训练样本少，但未来响应的损失还需要另外界定。下面约束核、函数范数与截距，先给出函数类的风险结论，再代入SVR的损失。
+
+\Needspace{12\baselineskip}
+\begin{lemma}[范数受限核函数类的一致风险偏差]
+ \label{thm:regression-rkhs-risk}
+ 设训练记录独立同分布，未来记录独立且服从同一分布，核$K$与常数$A,B$在抽样前固定，$K(\bm x,\bm x)\leq\kappa^2$。候选类为$\mathcal F=\{f=h+b:\|h\|_{\mathcal H_K}\leq A,|b|\leq B\}$。假设损失取值于$[0,M]$，关于预测值为$L_\ell$-Lipschitz，相关上确界可测。对预定$\delta\in(0,1)$，令
+ \begin{equation}
+  u_{\mathcal H,n}
+  =\frac{4L_\ell(A\kappa+B)}{\sqrt n}
+   +3M\sqrt{\frac{\log(4/\delta)}{2n}}.
+  \label{eq:regression-rkhs-risk-radius}
+ \end{equation}
+ 以关于训练集至少$1-\delta$的概率，所有$f\in\mathcal F$同时有$R(f)\leq\widehat R_n(f)+u_{\mathcal H,n}$。在同一事件上，任意非负预定惩罚及目标差不超过$e_{\mathrm{opt}}$的正则化经验解满足
+ \[
+  R(\widetilde f)
+  \leq\inf_{f\in\mathcal F}\{R(f)+\operatorname{pen}(f)\}
+   +2u_{\mathcal H,n}+e_{\mathrm{opt}}.
+ \]
+\end{lemma}
+
+\begin{proof}
+令$\xi_i$为独立、等概率取$\pm1$且与训练记录独立的随机符号。再生关系给出$|h(\bm x)|\leq A\kappa$。该类的经验Rademacher复杂度满足
+\[
+ \widehat{\mathfrak R}_{X_{1:n}}(\mathcal F)
+ \leq\frac{A}{n}\mathbb E_\xi
+   \left\|\sum_i\xi_iK(\bm x_i,\cdot)\right\|_{\mathcal H_K}
+ +\frac Bn\mathbb E_\xi\left|\sum_i\xi_i\right|
+ \leq\frac{A\kappa+B}{\sqrt n}.
+\]
+最后一步使用Jensen不等式及独立符号消去交叉项。分别对损失类与其补函数类应用经验Rademacher风险界，并各分配$\delta/2$的失败概率；Lipschitz收缩给出保守上界$\Delta_n\leq u_{\mathcal H,n}$。再沿定理\ref{thm:regression-penalized-risk}的比较步骤，得到带惩罚结论。风险估计与收缩的依据见\BookSectionRef{sec:rademacher-complexity}{卷3《基础、理论与可信性》第5章“二分类学习的可学习性”第5.4节“估计期望风险”}。
+\end{proof}
+
+\begin{theorem}[核SVR在范数约束与有界响应下的期望风险界]
+ \label{thm:regression-svr-risk}
+在引理\ref{thm:regression-rkhs-risk}的抽样与候选类条件下，设$|Y|\leq Y_{\max}$。对SVR，$\epsilon$不敏感损失为$1$-Lipschitz，且不超过$M=Y_{\max}+A\kappa+B$。将原始目标除以$Cn$，其惩罚为$\operatorname{pen}(f)=\lambda\|h\|_{\mathcal H_K}^2/2$，$\lambda=1/(Cn)$。以至少$1-\delta$的训练抽样概率，候选类中目标差至多为$e_{\mathrm{opt}}$的训练结果满足
+\[
+ \begin{aligned}
+ R_\epsilon(\widetilde f)
+ &\leq\inf_{f=h+b\in\mathcal F}
+   \left\{R_\epsilon(f)+\frac\lambda2\|h\|_{\mathcal H_K}^2\right\}\\
+ &\quad+\frac{8(A\kappa+B)}{\sqrt n}
+ +6(Y_{\max}+A\kappa+B)\sqrt{\frac{\log(4/\delta)}{2n}}
+ +e_{\mathrm{opt}}.
+ \end{aligned}
+\]
+\end{theorem}
+
+这项保证控制容忍带外的期望损失，不能直接替代平方风险。核、范数界与截距界由数据选择时，需要覆盖所有候选设置；定理没有把支持向量数量当作这些条件的替代。
+
+\subsubsection{优化表达能力}
+
 \label{sec:regression-kernel-svr}
 
 当数值响应包含原始特征的非线性变化时，可以保留SVR的容忍带和范数惩罚，只改变用于计算内积的表示。采用第\ref{sec:classic-overview-kernel-trick}节的正定核$K$，把式\eqref{eq:regression-svr-dual}中的$\bm{x}_i^{\top}\bm{x}_j$换为$K(\bm{x}_i,\bm{x}_j)$，便得到特征空间中的同一个SVR对偶问题。预测为
@@ -580,12 +798,14 @@ SVR的原始问题是凸优化问题，前述强对偶与KKT条件给出了全�
 
 \subsubsection{小结}
 
-SVR在固定容忍带下折中残差代价与函数范数，核化使这种折中作用于非线性函数类。这一目标得到的是容忍带下的点预测；要估计指定条件分位数或完整分布，还需要相应损失或概率设定。$\nu$-SVR通过另一个参数控制与误差比例、支持向量比例有关的约束，具体比例结论有相应条件；最小二乘SVR把损失换为平方形式，与核岭回归密切相关，但是否惩罚截距必须一致后才能判断等价。核选择与$C,\epsilon$调参共同影响结果，方法是否适用应按样本展开规模、验证误差及预算判断。
+SVR把容忍带外的残差代价与函数范数放在同一目标中。当测量精度允许忽略小残差时，$\epsilon$不敏感损失使这些残差不再逐个推动拟合；容忍带必须结合响应单位选择，不能只按训练误差设得越小越好。
+
+若线性得分无法描述输入与响应的弯曲关系，核SVR保留原来的间隔损失和约束，用特征空间内积扩大候选函数。它解决的是表示限制，并没有改变预测对象：基本SVR仍给出一个点预测，条件分位数和完整分布需要相应的损失或概率设定。核尺度、惩罚强度和容忍带应共同验证，预测成本还取决于需要保留多少训练样本的核展开。
 
 \subsection{广义线性模型（GLM）}
 \label{sec:regression-glm}
 
-预测每天的交易次数时，均值必须非负；预测交易是否成功时，均值是$[0,1]$中的概率。平方损失可以用于这些响应，但无约束线性预测不自动满足取值范围，也没有规定均值与方差的关系。\term{广义线性模型}（generalized linear model, GLM）把响应分布、均值和线性预测器连接起来。Nelder与Wedderburn在1972年给出这一统一框架，使高斯、二项和Poisson等响应可以沿同一条似然与加权最小二乘路线处理；扩展的关键是响应分布与链接，而不只是增加多项式特征\scite{nelder1972glm}。
+预测每天的交易次数时，均值必须非负；预测交易是否成功时，均值是$[0,1]$中的概率。原始特征上的线性函数不保证这些范围。例如构造拟合$10-2x$在$x=0,1$时都为正，却在$x=6$时给出负次数。仅给平方损失增加惩罚并不能自动排除这种预测；平方损失也没有为这些响应规定均值与方差的关系。\term{广义线性模型}（generalized linear model, GLM）把响应分布、均值和线性预测器连接起来。Nelder与Wedderburn在1972年给出这一统一框架，使高斯、二项和Poisson等响应可以沿同一条似然与加权最小二乘路线处理；扩展的关键是响应分布与链接，而不只是增加多项式特征\scite{nelder1972glm}。
 
 \subsubsection{模型结构}
 
@@ -641,7 +861,7 @@ $\theta_i$是自然参数，$\varphi$是离散度参数或尺度参数；此处�
 
 \subsubsection{参数学习}
 
-记$\bm{z}_i=\bm{\phi}(\bm{x}_i)$，设计矩阵第$i$行为$\bm{z}_i^{\top}$，暂将$\varphi$视为已知。由$d\mu_i/d\theta_i=V(\mu_i)$及$d\eta_i/d\mu_i=g'(\mu_i)$，对数似然的得分为
+一般GLM的均值随系数非线性变化，最大似然估计通常需要迭代求解。要选择增大对数似然的方向，我们先计算它对系数的导数，这个梯度称为得分。记$\bm z_i=\bm\phi(\bm x_i)$，设计矩阵第$i$行为$\bm z_i^\top$，暂将$\varphi$视为已知。由$d\mu_i/d\theta_i=V(\mu_i)$及$d\eta_i/d\mu_i=g'(\mu_i)$，利用链式法则得到
 \begin{equation}
   \bm{U}(\bm{w})
   =\sum_i\frac{y_i-\mu_i}
@@ -676,49 +896,75 @@ $\theta_i$是自然参数，$\varphi$是离散度参数或尺度参数；此处�
 \subsubsection{理论分析}
 \label{sec:regression-glm-theory}
 
-采用GLM以后，响应分布与链接同时规定了候选均值和似然目标。分析需要从这里分开：候选均值能否描述输入作用，固定样本是否存在有限最大似然解，求得的估计量在重复抽样中怎样变化。渐近分布的讨论以模型正确、维数固定以及相应抽样和正则条件为前提，所得参数区间也要与未来响应的预测区间区分。
+响应分布与链接共同决定GLM的拟合范围。我们仍能像OLS一样考察所选函数形式留下的误差，但现在评价的是似然损失，差距也要在条件分布之间计算。有限样本求解则要先确认最大似然是否有有限解，再根据曲率选择迭代方法。
 
 \paragraph{表达能力}
-GLM先用线性预测器组合特征，再经逆链接得到均值，并用响应分布规定条件方差。错误链接或遗漏交互会使真实均值落在候选关系之外；样本增加可以减少估计误差，拟合中这种表示失配仍然存在。
+固定特征$\bm\phi$后，GLM的候选均值集为$\{g^{-1}(\bm\phi^\top\bm w)\}$。它在链接尺度上仍受有限特征空间限制。例如Poisson对数链接与特征$1,x$只允许均值$\exp(b+wx)$；若目标均值满足$\log m(x)=x^2$，就无法在区间上精确表示。加入$x^2$可以消除这一限制，单独更换响应族却不会增加缺失的特征。
+
+若目标是完整条件分布，还需检查响应族本身。设目标为$p_\star(\cdot\mid\bm x)$，候选为$p_{\bm w}(\cdot\mid\bm x)$。当目标确实是Poisson分布，且其对数均值属于特征空间时，候选族包含目标。若目标是均值与方差不同的负二项分布，Poisson候选的方差却始终等于均值，任何系数都无法精确表达这个条件分布。更灵活的均值函数能够改变计数的平均水平，但不能解除响应族对离散程度的限制。
 
 \paragraph{收敛性}
-严格凸性只能保证已经存在的最优解唯一。以无惩罚logistic回归为例，若存在方向$\bm{v}$使类别标签$t_i\in\{-1,1\}$满足$t_i\bm{z}_i^{\top}\bm{v}>0$，则负对数似然$\sum_i\log(1+\exp(-t_i\bm{z}_i^{\top}\bm{w}))$在$\bm{w}=a\bm{v}$、$a\to\infty$时趋于零，却在每个有限参数处严格为正。即使设计满秩，也没有有限最大似然估计。分离、近似分离和病态设计都可能使迭代参数持续增大。
+无惩罚规范链接GLM是凸目标，却不一定有有限解。以logistic回归为例，若存在方向$\bm v$使$t_i\bm z_i^\top\bm v>0$，其中$t_i\in\{-1,1\}$，负对数似然在$\bm w=a\bm v$、$a\to\infty$时趋于零，在任一有限参数处却严格为正。即使设计满秩，这个分离例子也没有有限最大似然解。约束参数到预定紧凸集，且该集位于合法参数域内，可由连续性保证最小值存在；或者在非负的Bernoulli、Poisson负对数似然中对全部系数增加正二次惩罚，以强制增长保证存在。若截距不受惩罚，仍需检查截距方向，不能一概断言存在。
+
+为选择一阶步长，需要先检查目标的曲率。对平均负对数似然$F$，规范链接模型给出
+\[
+ \nabla^2F(\bm w)=\frac{1}{na(\varphi)}
+  \bm X^\top\operatorname{diag}(b''(\eta_i))\bm X.
+\]
+在所讨论的参数区域内，若它的最大特征值至多为$L>0$，则步长$1/L$的一阶方法对已有最小点给出$F(\bm w^{(t)})-F_{\min}\leq L\lVert\bm w^{(0)}-\bm w_{\min}\rVert_2^2/(2t)$；有紧约束时使用投影梯度法。Bernoulli规范链接满足$b''\leq1/4$，因此可取$L=\lVert\bm X^\top\bm X\rVert_2/(4n)$。Poisson的$b''=e^{\eta}$没有全空间上界；只有限制$\eta$或用线搜索维持受控区域后，才能使用对应的光滑常数。
+
+若无约束最优点位于合法参数域内部，且其邻域内Hessian正定、具有Lipschitz变化，Newton法从足够近的初值出发，完整步的参数误差可按$\lVert\bm e^{(t+1)}\rVert_2\leq C\lVert\bm e^{(t)}\rVert_2^2$缩小，即局部二次收敛。阻尼与线搜索用于先进入这样的邻域；“二阶更快”不意味着任意初值都能全局二次收敛。规范链接时IRLS就是这一步Newton求解，非规范链接的Fisher评分使用期望曲率，不能不加条件套用相同的局部速率（参考\BookSectionRef{sec:opt-newton-gauss-newton}{卷1《数学准备：计算、分析与几何》第4章“最优化”第4.2.2.1节“基于牛顿与Gauss–Newton更新的求解”}）。
 
 \paragraph{泛化性}
-有限样本估计量的分布可以帮助量化参数及预测的不确定性，它与优化算法的收敛分别分析。以下给出统计渐近分布的一组充分条件；具体GLM需根据分布、链接和输入矩条件验证它们。
-
-设观测独立同分布，模型正确指定，参数维数固定，真参数$\bm w_\star$位于参数域内部。单样本对数似然$\ell_i(\bm w)$在真参数的某凸邻域内二阶连续可微，并满足
+GLM按负对数似然拟合指定响应分布。在相关期望有限时，真实条件分布的对数风险$R_\star$与候选风险满足
 \[
- \mathbb E[\nabla\ell_i(\bm w_\star)]=\bm0,\qquad
- \operatorname{Cov}(\nabla\ell_i(\bm w_\star))
- =\bm I_\star\succ0.
+ R(\bm w)-R_\star
+ =\mathbb E_{P_X}\!\left[
+  \operatorname{KL}\bigl(p_\star(\cdot\mid\bm X)
+       \,\Vert\,p_{\bm w}(\cdot\mid\bm X)\bigr)\right].
 \]
-再假设有限的内部最大似然估计$\widehat{\bm w}_n$以趋于$1$的概率存在且一致。记$J_n(\bm w)=-n^{-1}\sum_i\nabla^2\ell_i(\bm w)$，要求它在上述邻域内一致依概率收敛到$J$，且$J$在$\bm w_\star$连续、$J(\bm w_\star)=\bm I_\star$。在这些条件下，
-\[
- \sqrt n(\widehat{\bm w}_n-\bm w_\star)
- \xrightarrow{d}\mathcal N(\bm0,\bm I_\star^{-1}).
-\]
-一致性使估计点以趋于$1$的概率留在真参数邻域内，局部一致曲率控制得分方程沿两点连线的积分Hessian，再结合得分的多元中心极限定理与Slutsky定理得到该极限（参考\BookSectionRef{sec:statistics-bias-efficiency}{卷2《数学准备：概率、因果与决策》第1章“随机变量”第1.5.4.1节“估计误差与效率”}）。多维得分的各分量未必共享同一个中间点，因此这里使用沿线段的Hessian积分。
+等式来自对数密度比的条件期望，所以风险差同时计入均值形式和响应族的限制。下面对二值响应与有预定计数上界的响应，给出可直接计算的期望对数损失界。
 
-在GLM中，单观测信息为
-\[
- \bm I_\star
- =\mathbb E\!\left[
- \frac{\bm z\bm z^\top}
- {a(\varphi)V(\mu_\star)[g'(\mu_\star)]^2}\right].
-\]
-这项分布结论以估计一致性为前提；正定信息矩阵本身不替代有限解存在与全部正则条件。若另行限制到紧参数集，连续总体准则具有唯一极大点，且经验准则一致收敛，可用极值点的一致性论证验证此前提。模型失配时，估计可能趋于伪真参数，极限协方差通常改为夹心形式。
+\begin{theorem}[GLM在有界参数下的期望对数损失界]
+ \label{thm:regression-glm-risk}
+ 设训练记录独立同分布，未来记录独立且服从同一分布，固定$q$维特征$\bm z$满足$\|\bm z\|_2\leq F_0$，候选系数满足$\|\bm w\|_2\leq B$。令$A=BF_0$，采用规范链接，并令$R_{\log}$表示完整负对数似然的期望风险。下列两种情形分别取
+ \[
+ \begin{array}{c|c|c}
+  \text{候选响应族及观测范围}&M&L_\ell\\ \hline
+  \text{Bernoulli，}Y\in\{0,1\}
+   &\log(1+e^A)&F_0\\
+  \text{Poisson，}Y\in\{0,\ldots,H\}
+   &e^A+HA+\log(H!)&F_0(e^A+H)
+ \end{array}
+ \]
+ 其中$H$是抽样前固定的非负整数。若$\widetilde f$将经验负对数似然求到目标差$e_{\mathrm{opt}}$以内，则对预定$\alpha>0$、$\delta\in(0,1)$，以关于训练集至少$1-\delta$的概率，
+ \[
+  R_{\log}(\widetilde f)
+  \leq\inf_{\|\bm w\|_2\leq B}R_{\log}(f_{\bm w})
+   +2u_n(M,L_\ell,q,B;\alpha,\delta)+e_{\mathrm{opt}}.
+ \]
+\end{theorem}
 
-渐近正态性支持参数区间与检验，但不自动控制任意测试分布下的预测风险。Poisson等模型的损失无界，输入尾部、参数大小与设计条件都会影响有限样本结论；样本数大于维数也不保证泛化可靠。
+\begin{proof}
+Bernoulli损失为$\log(1+e^\eta)-Y\eta$，其预测参数梯度不超过$F_0$。Poisson完整损失为$e^\eta-Y\eta+\log(Y!)$；在$|\eta|\leq A$、$Y\leq H$下，它非负且不超过表中的$M$，梯度范数不超过$F_0(e^A+H)$。两者因此满足定理\ref{thm:regression-parametric-risk}的条件。
+\end{proof}
+
+该结论不要求真实条件分布属于候选族。期望对数损失与真实条件熵之差就是条件KL误差，所以类内最低风险保留了分布失配的代价。这里Poisson是候选族；有上界的真实计数不必服从Poisson分布。若真实响应本身来自非退化Poisson分布，它没有确定上界，上述计数条件便不成立，不能直接使用表中常数。此时可利用$\mathbb E[e^{t(Y-\mu)}\mid\bm X]=\exp\{\mu(e^t-1-t)\}$，在均值有统一上界时建立尾部控制，再用相应的Bernstein型集中替换有界损失步骤。参数渐近正态性仅说明局部估计波动，不能替代这里对未来对数损失的结论。
 
 \subsubsection{小结}
 
-GLM把条件均值的取值范围和均值方差关系纳入模型，在同一似然与IRLS框架下处理多类响应。它扩展的是分布和链接，仍需检验线性预测器、观测独立性与分布假设是否合适。有限解存在、算法收敛和统计一致性是不同问题；参数置信区间与未来响应预测区间也有不同含义。若线性预测器遗漏单特征的弯曲趋势，可以在下一小节中将线性项替换为光滑函数。
+GLM把条件均值的取值范围和均值方差关系纳入模型，在同一似然与IRLS框架下处理多类响应。选择分布和链接可以让预测适应计数、比例等响应，但链接尺度上的预测器仍是特征的线性组合。若楼龄的作用随取值变化，下一小节的GAM用平滑函数替换单一斜率，同时保留分布和链接的组织方式。
+
+另一种困难是均值相近的记录仍有不同的响应波动。只改变均值的模型未必足够，第\ref{sec:regression-distributional}节介绍的GAMLSS允许尺度与形状参数也随输入变化。这两条扩展分别改变均值函数的形状和条件分布的参数结构，不能互相替代。使用时仍需检查观测独立性、分布假设、有限解和数值求解；参数区间与未来响应区间也须按各自的对象解释。
 
 \subsection{广义可加模型（GAM）}
 \label{sec:regression-gam}
 
-楼龄对价格的影响可能先降得快、之后趋缓，用一个斜率难以概括，而完全自由的多维函数又需要更多数据。\term{广义可加模型}（generalized additive model, GAM）让每个特征贡献一个一维函数，再把这些贡献相加。Hastie与Tibshirani在1986年系统阐述了这一扩展：保留GLM的分布与链接，用平滑函数替代单特征的线性项。它保留逐特征检查作用形状的便利，并通过可加结构限制需要学习的交互关系\scite{hastie1986gam}。
+上一节GLM改变了响应分布和链接，但还保留$\eta=b+\sum_j w_jx_j$。这意味着：固定其他属性，楼龄每增加一年，链接尺度上的预测总改变同一个$w_{\mathrm{age}}$。如果采用恒等链接，这就是每年固定减少同样价格；采用对数链接，则是每年固定乘上同一个比例。
+
+考虑一个教学构造：其余房屋属性固定，年龄$t\geq0$以年计，价格以万元计，条件均值为$m(t)=200+100e^{-t/10}$。它在第0、10、20年约为300、236.8、213.5万元。第一个十年下降约63.2万元，第二个十年只下降约23.3万元；一条直线若配合前一段的下降速度，就会把后一段的降幅预测得过大。换成对数链接也不能完整解决：$d\log m(t)/dt=-10e^{-t/10}/(200+100e^{-t/10})$随楼龄变化，仍不是一个常数。这里缺少的是单个变量在不同取值处可以具有不同作用，而不只是输出取值范围。
+
+可以为楼龄预先设计平方项、指数项或样条基，但我们还希望从数据估计曲线，同时单独检查面积与楼龄各自怎样影响预测。\term{广义可加模型}（generalized additive model, GAM）让每个特征贡献一个一维函数，再把这些贡献相加。Hastie与Tibshirani在1986年系统阐述了这一扩展：保留GLM的分布与链接，用平滑函数替代单特征的线性项。在刚才的恒等链接例子中，楼龄项可以取$f_{\mathrm{age}}(t)=100e^{-t/10}$再按约定移除常数，截距吸收基准价格；其导数随$t$变化，因而不再强求两个十年使用同一降幅。面积等属性也可分别使用自己的函数。它保留逐特征检查作用形状的便利，并通过可加结构限制需要学习的交互关系\scite{hastie1986gam}。
 
 \subsubsection{模型结构}
 
@@ -730,7 +976,7 @@ GLM把条件均值的取值范围和均值方差关系纳入模型，在同一�
 \end{equation}
 中心化约束把常数部分留给截距$b$，使各$f_j$描述相对于样本平均水平的变化。它消除了常数在各项之间任意移动的歧义，却不能解决所有不可识别问题：若两个输入完全相同，两个光滑项仍可能互相抵消，需要进一步约束或合并表示。
 
-恒等链接下，$f_j$直接作用于条件均值；非线性链接下，它作用于链接尺度。例如可加logistic模型中的函数描述对数几率的变化，不能直接当作概率变化。没有显式交互项时，GAM不能表达任意多维关系；可加入少数$f_{j,k}(x_j,x_k)$补充必要交互，并约束其与主效应重叠的部分。每项可画图并不意味着它具有因果含义，相关特征仍会影响解释。
+恒等链接下，$f_j$直接作用于条件均值；非线性链接下，它作用于链接尺度。例如可加logistic模型中的函数描述对数几率的变化，不能直接当作概率变化。没有显式交互项时，GAM不能表达任意多维关系。每项可画图并不意味着它具有因果含义，相关特征仍会影响解释。
 
 \subsubsection{参数学习}
 
@@ -758,9 +1004,93 @@ GLM把条件均值的取值范围和均值方差关系纳入模型，在同一�
 
 平滑参数决定拟合曲线的曲折程度，可用交叉验证、广义交叉验证，或采用混合模型解释下的受限最大似然选择。相关工作发展了多个平滑参数的稳定估计与数值方法；外层超参数目标仍可能存在局部最优；报告固定平滑参数的条件区间时，还需区分参数选择所带来的额外不确定性\scite{wood2011reml}。
 
+\subsubsection{理论分析}
+
+\paragraph{表达能力}
+恒等链接的可加候选集为$\mathcal F_{\mathrm{add}}=\{b+\sum_j f_j(x_j)\}$，实际有限基实现再要求$f_j$属于所选样条空间。要逼近的是条件均值$m$：若$m=b+\sum_j m_j$且各$m_j$可被对应基空间逼近，整体$L^2(P_X)$误差可由各项误差之和控制。扩大每项的基空间可以减小这一近似误差，但不能补出未包含的交互。例如$X_1,X_2$独立且均匀于$[-1,1]$、$m(x_1,x_2)=x_1x_2$，目标与常数及每个单变量函数都正交；最佳可加候选为零，$A(\mathcal F_{\mathrm{add}})=\mathbb E[X_1^2X_2^2]/2=1/18$。增加任意多单变量结点也消不掉它，只有加入交互项才改变这个限制。非恒等链接时，可加要求作用于$g(m)$；因此应检查链接后的目标能否分解为单变量函数之和。
+
+\paragraph{收敛性}
+高斯恒等链接下，固定噪声方差可以吸收到平滑参数中。为方便比较求解方法，将目标写成$\lVert\bm y-\bm B\bm\gamma\rVert_2^2/2+\bm\gamma^\top\bm S_{\lambda}\bm\gamma/2$。固定有限基与平滑参数后，这是一个带半正定二次惩罚、含中心化约束的最小二乘问题。消去约束，若$\bm A=\bm B^\top\bm B+\bm S_{\lambda}$正定，就有唯一解，矩阵分解直接求得；梯度法在该坐标下按$1-\lambda_{\min}(\bm A)/\lambda_{\max}(\bm A)$缩小参数误差，Newton法一步求解。半正定时仍有最小解，但系数未必唯一。回代拟合每次精确解一个块，在正定系统下收敛；它的速度取决于块间耦合，两个特征的基几乎重复时可很慢。
+
+规范链接的非高斯GAM在固定基下沿用GLM的凸性与局部Newton分析，但曲率惩罚的零空间可能仍包含一个分离方向，不能仅由$\lambda_j>0$推出有限解存在。学习平滑参数是外层问题，也不继承内层系数求解的全局保证。
+
+\paragraph{泛化性}
+高斯恒等链接的GAM是一个固定基上的线性平滑器。其风险可以由基空间的剩余误差、惩罚偏差和噪声传播三项直接计算。
+
+\begin{theorem}[GAM在固定基与有界参数下的期望平方风险界]
+ \label{thm:regression-gam-risk}
+ 固定基、中心化约束与平滑参数，并在消去约束后的坐标中记设计为$\bm B$，$\bm A=\bm B^\top\bm B+\bm S_\lambda\succ0$。设训练响应$\bm y=\bm m+\bm\varepsilon$满足$\mathbb E[\bm\varepsilon\mid\bm X_{1:n}]=\bm0$、协方差$\sigma^2\bm I$。独立未来响应的条件均值为同一函数$m$。对任意比较系数$\bm\gamma_\star$，写
+ \[
+  m(\bm x)=\bm b(\bm x)^\top\bm\gamma_\star+r(\bm x),\qquad
+  \bm r_i=r(\bm x_i),
+ \]
+ 其中$\bm b(\bm x)$是完整基向量。令
+ \[
+ \begin{aligned}
+  d(\bm x)&=\bm b(\bm x)^\top
+     [-\bm A^{-1}\bm S_\lambda\bm\gamma_\star
+       +\bm A^{-1}\bm B^\top\bm r]-r(\bm x),\\
+  V(\bm x)&=\sigma^2\|\bm B\bm A^{-1}\bm b(\bm x)\|_2^2.
+ \end{aligned}
+ \]
+ 在相应二阶矩有限时，平方风险满足
+ \[
+  \mathbb E_{\bm\varepsilon\mid\bm X_{1:n}}
+     [R(\widehat f)-R(m)]
+  =\frac12\int[d(\bm x)^2+V(\bm x)]P_X(d\bm x).
+ \]
+ 特别地，若两个积分分别不超过$a^2$与$v$，则平均超额期望风险不超过$(a^2+v)/2$。
+\end{theorem}
+
+\begin{proof}
+将$\widehat{\bm\gamma}=\bm A^{-1}\bm B^\top\bm y$中的响应拆开，得到
+\[
+ \widehat{\bm\gamma}-\bm\gamma_\star
+ =-\bm A^{-1}\bm S_\lambda\bm\gamma_\star
+  +\bm A^{-1}\bm B^\top\bm r
+  +\bm A^{-1}\bm B^\top\bm\varepsilon.
+\]
+前两项产生$d$，第三项产生$V$。训练噪声均值为零，使偏差与波动的交叉项消失；再对独立未来输入积分，使用式\eqref{eq:regression-square-risk-distance}即得结论。
+\end{proof}
+
+这项等式允许真实均值不完全可加，遗漏交互的误差仍在$r$中。它的固定矩阵条件很关键：基、结点或平滑参数也用同一响应选择时，不能条件于被选中的矩阵后就把选择影响删去。
+
+对于事先受控的全部候选设置，可以改用定理\ref{thm:regression-penalized-risk}。例如抽样前固定的$q$维基及系数坐标满足$\|\bm b(\bm X)\|_2\leq F_0$，响应满足$|Y|\leq Y_{\max}$，系数位于半径$B_0$的球内，则以至少$1-\delta$的概率，
+\[
+ \begin{aligned}
+ R(\widetilde f)
+ &\leq\inf_{\|\bm\gamma\|_2\leq B_0}
+   \left\{R(f_{\bm\gamma})+
+          \frac{\bm\gamma^\top\bm S_\lambda\bm\gamma}{2n}\right\}\\
+ &\quad+2u_n\!\left(
+   \frac{(Y_{\max}+B_0F_0)^2}{2},
+   F_0(Y_{\max}+B_0F_0),q,B_0;\alpha,\delta\right)
+   +e_{\mathrm{opt}}.
+ \end{aligned}
+\]
+这里将前述未除以$n$的平方目标归一化，所以惩罚也除以$n$。该界给出未来平方风险的明确上限，而不是仅给系数波动；非高斯似然则需使用相应GLM损失的范围与集中条件。
+
+\subsubsection{优化表达能力}
+
+\label{sec:regression-gam-interactions}
+
+若楼龄对价格的作用还取决于房屋面积，只把楼龄曲线与面积曲线相加便不够。可以在链接尺度上加入少数二变量函数$f_{j,k}(x_j,x_k)$，让一个变量的作用随另一个变量改变。前述$x_1x_2$例子只需加入对应交互项就能精确表示；继续增加单变量基函数则不能达到这个目的。
+
+交互项需与主效应作区分，否则同一段单变量变化既可归入$f_j$，也可藏在$f_{j,k}$中。实际展开要约束或去除与主效应基空间重叠的部分，再对剩余交互成分施加平滑惩罚。二变量基通常包含更多系数，需要更多联合输入覆盖，也使逐特征解释变成对两变量响应面的检查，因此应围绕明确的交互问题增加这些项。
+
+\subsubsection{支持条件分布预测场景}
+
+\label{sec:regression-distributional}
+
+条件均值相同，并不意味着响应的波动范围相同。考虑两个教学区域的价格都以$100$为条件均值，标准差却分别为$10$与$40$；只改变均值的高斯GLM或GAM，仍会给两者使用同一个噪声尺度。
+
+\term{分布回归}（distributional regression）提供了完整条件分布的另一条入口：先选择响应分布族，再让位置、尺度或形状等多个分布参数分别依赖输入。广义可加位置、尺度与形状模型（generalized additive models for location, scale and shape, GAMLSS）允许用线性项或平滑项建模这些参数，因而能表达均值不变但条件方差、偏度或尾部随输入变化的情形\scite{rigby2005gamlss}。它描述整个响应分布，与只拟合若干分位点的目标不同。代价是必须选择分布族、链接与各参数的结构，并用样本外的分布评分和校准诊断检查预测。
+
 \subsubsection{小结}
 
-GAM在链接尺度上保留可加结构，用每个特征的函数替代单一斜率。它在真实关系接近可加、交互有限时降低估计负担，代价是不能自动表示未指定的复杂交互。平滑强度、基维数与相关特征共同影响结果。可解释性与预测精度也不是固定的此消彼长关系：若可加结构接近真实规律，约束本身就可能同时帮助解释与泛化。
+GAM在链接尺度上保留可加结构，用每个特征的函数替代单一斜率。Hastie与Tibshirani用这种构造扩展GLM，使楼龄在早期与晚期可以有不同作用，同时保留逐特征检查曲线的方式。基维数决定可用的曲线分辨率，平滑惩罚约束曲线起伏，两者需要与相关特征的可识别性一起处理。
+
+若一个变量的作用还随另一个变量改变，单变量曲线相加就遗漏了交互。可以加入有明确用途的多变量项，第\ref{sec:regression-mars}节的MARS则用铰链乘积自适应选择局部交互；增加这些项会提高表示与搜索成本。若缺少的是随输入变化的响应尺度或尾部，应该扩展分布参数，而不是只把均值曲线画得更弯。可加结构是否合适，需要结合这两类不同的失配判断。
 
 \subsection{模型对比与总结}
 \label{sec:regression-linear-summary}
@@ -785,9 +1115,9 @@ GAM在链接尺度上保留可加结构，用每个特征的函数替代单一�
   \label{tab:regression-linear-comparison}
 \end{table*}
 
-Lasso与Group Lasso在参数或参数组上产生零值，SVR在训练样本展开上产生零值，两者不能按同一个“稀疏度”直接比较。核岭回归则把平方损失和函数范数结合，一般没有SVR的零损失带，其与高斯过程后验均值的联系将在第\ref{sec:regression-gpr-theory}节由同一核线性系统加以说明。PCR、PLS与显式正则化处理的是相近的共线性问题，但分别在表示和参数约束上作取舍。
+相关特征使系数难以分辨时，岭与弹性网收缩原坐标中的系数，PCR与PLS则先压缩估计方向；前者可能压低信号，后者可能舍弃预测所需的成分。若还需要删去变量，Lasso与组Lasso分别按坐标或预定变量组选择。这些方法调整的是函数表示或系数约束，不能替代对响应目标的选择：均值、分位数与容忍带仍需各自的损失。参数稀疏选择输入特征，SVR的样本展开稀疏则减少预测时访问的训练记录，二者影响不同的成本。
 
-响应的观测机制还可能超出上述模型：Tobit模型处理潜在连续响应被删失后的观测，不能把删失与截断混为一谈；生存分析中的Cox模型通过风险函数处理事件时间与删失。它们说明选择回归方法时，除了函数形状，还需明确实际观测到了什么。若主要困难来自不同输入区域的局部关系，而不是全局系数的约束，就可以转向下一节的邻域方法。
+若同一个变量在不同位置有不同斜率，可以增加基函数、采用核表示，或用GAM分别估计各变量的曲线。GAM通过限制交互保留逐变量解释；核表示能否覆盖所需关系取决于核所规定的候选空间，还需承担样本展开与核矩阵的成本。若缺少的是响应尺度与尾部随输入的变化，分布回归扩展的是响应分布参数，不能只靠增加均值曲线的弯曲程度解决。若关系主要由查询附近的数据支撑，就转向下一节的邻域方法。
 
 \section{基于邻域的回归}
 \label{sec:regression-instance}
@@ -797,7 +1127,9 @@ Lasso与Group Lasso在参数或参数组上产生零值，SVR在训练样本展�
 \subsection{$k$近邻回归（$k$-NN）}
 \label{sec:regression-knn}
 
-$k$-NN回归以邻居响应的平均估计条件均值。Stone关于非参数回归一致性的工作为这类方法提供了理论依据；具体一致性条件与收敛对象将在下文区分\scite{stone1977regression}。
+用多项式或样条回归时，我们先决定整条预测曲线由哪些基函数组成。如果只相信相近输入应有相近的条件均值，也可以暂不指定全局函数形式，把查询点附近的观测作为局部依据。例如$m(x)=x^2$时，查询$x=1$附近的无噪声响应$m(0.9)=0.81$和$m(1.1)=1.21$，平均为$1.01$，已经接近$m(1)=1$；换到$x=0$附近，局部平均也随之改变。
+
+$k$-NN回归为每个查询点找出$k$个最近输入，再用它们的响应平均估计条件均值。相近输入减少函数变化带来的偏差，多次观测的平均则减少响应噪声；这两个作用对邻域大小有不同要求。Stone关于非参数回归一致性的工作为这类方法提供了理论依据，具体条件与收敛对象将在下文说明\scite{stone1977regression}。
 
 \subsubsection{模型结构}
 
@@ -809,32 +1141,38 @@ $k$-NN回归以邻居响应的平均估计条件均值。Stone关于非参数回
 \end{equation}
 距离并列时应采用不依赖响应的固定规则或独立随机化。欧氏距离适合尺度已经可比的数值特征；若使用Mahalanobis距离，则还要估计或指定度量矩阵。特征标准化应基于训练集，类别特征的相似性也需另行定义。
 
-$k=1$保留最近样本的响应噪声，$k=n$退化为全局平均；两者的偏差大小仍取决于真实函数，不能仅由$k$断言。距离加权版本写成$\sum_i a_i(\bm{x})y_i$，其中$a_i\geq0$、$\sum_i a_i=1$，权重可在邻域外置零。使用距离倒数时必须规定零距离的处理，例如仅对重合输入的响应平均，不能直接除以零。
+$k=1$保留最近样本的响应噪声，$k=n$退化为全局平均；两者的偏差大小仍取决于真实函数，不能仅由$k$断言。
 
 \subsubsection{参数学习}
 
 基本$k$-NN回归不拟合固定维数的系数，但仍需保存训练样本、建立可选索引，并通过验证选择$k$和距离设定。朴素查询计算全部距离需要$O(nd)$运算，再通过选择算法找出前$k$个邻居；不必为此完整排序全部距离。
-
-KD树、Ball树等索引在适合的低维几何结构下可以减少搜索量，但查询复杂度依赖数据分布、查询位置与维数，最坏情况仍可能接近扫描。近似近邻以容许搜索误差换取计算节约，预测误差分析需把邻居近似的影响计入。索引和$k$的选择因此应依据当前数据的几何结构、查询预算与验证误差。
 
 交叉验证比较候选$k$时，每个验证点只能使用相应训练折作为邻居库。用训练点预测自身会产生过于乐观的误差，尤其$k=1$时可以直接复现训练响应。若从同一响应数据学习距离或选择邻居，下面仅条件于输入的简单证明也不能原样套用。
 
 \subsubsection{理论分析}
 \label{sec:regression-knn-theory}
 
-$k$-NN的统计目标是固定查询点处的条件均值，而不是一组经迭代优化的参数。下面假设训练样本独立同分布，且邻居并列规则不依赖响应；所得结论依次是条件均方误差界、依概率点态一致性，以及附加有界条件下的均方一致性。结论中的误差在固定查询点处评价；所有输入上的一致收敛或有限样本速率需要更强的条件。
+$k$-NN没有一组固定维数的系数，预测形状由训练输入和邻居规则决定。下面假设样本独立同分布，并且邻居并列规则不依赖响应。先计算一个查询点处的偏差与方差，再按未来输入的分布平均，就能看到邻域大小怎样影响新样本风险。
 
 \paragraph{表达能力}
-近邻回归由邻域中的响应平均构造局部常数预测。小邻域可跟随细节，大邻域会平滑变化；距离忽略关键坐标或在高维中无法形成有效局部性时，候选预测也受到限制。
+先看$1$-NN的候选空间。固定互异的参考位置$\bm z_1,\ldots,\bm z_N$与并列规则，它们将输入域划成最近点的Voronoi区域。允许每个参考位置携带任意实数值时，候选空间$\mathcal F_Z$就是在这些区域内分别取常数的全部函数。因此，固定区域只能精确表示在各区域内为常数的目标；连续变化的目标通常需要更细的区域。
+
+设$P_X(D)=1$，$D$为紧致输入域，参考位置均属于$D$。若$m$在$D$上为$L$-Lipschitz函数，且参考位置覆盖$D$，使每个输入到最近位置的距离至多为$h$，取各区域的常数为$m(\bm z_j)$，就得到一个候选$f$满足
+\[
+ \sup_{\bm x\in D}|f(\bm x)-m(\bm x)|\leq Lh,
+ \qquad
+ \frac12\inf_{f\in\mathcal F_Z}\|f-m\|_{L^2(P_X)}^2\leq\frac{L^2h^2}{2}.
+\]
+这里的上确界说明整个目标都能被逼近，平方距离则按输入分布计量。参考位置越密，局部常数候选可以保留的变化越细。$k>1$时，各区域的值由多个参考值的平均共同决定，相邻区域之间受到额外的耦合，不能直接把它们当作彼此独立的常数。
 
 \paragraph{收敛性}
 精确$k$-NN回归在选定邻居后直接计算响应均值，没有反复更新模型参数的训练过程，因此不存在这类迭代的优化收敛问题。若使用近似近邻搜索，计算结果还可能偏离精确邻居集；这种搜索误差需要与有限样本造成的统计误差分开评价。
 
 \paragraph{泛化性}
-局部平均面临两个相反要求：邻域应足够小，使邻居的条件均值接近查询点；邻居又应足够多，使噪声被平均。先在明确的光滑条件下给出可直接证明的结果，再说明它与普适一致性的区别。
+局部平均面临两个相反要求：邻域应足够小，使邻居的条件均值接近查询点；邻居又应足够多，使噪声被平均。固定训练输入后，无噪声的邻居平均为$\widetilde m_{n,k}(\bm x)=k^{-1}\sum_{i\in I_k(\bm x)}m(\bm X_i)$。若$m$为$L$-Lipschitz函数，它与查询点均值的差至多为$LR_{n,k}(\bm x)$，其中$R_{n,k}$是最远邻居的距离。下面将这项偏差与噪声平均的方差合并，再说明结论与普适一致性的区别。
 
 \Needspace{18\baselineskip}
-\begin{theorem}[$k$-NN回归的条件误差与点态一致性]
+\begin{theorem}[$k$-NN回归的期望风险与一致性]
   \label{thm:regression-knn}
   设$(\bm{X}_i,Y_i)$独立同分布，$Y_i=m(\bm{X}_i)+\varepsilon_i$，$\mathbb{E}[\varepsilon_i\mid\bm{X}_i]=0$，$\operatorname{Var}(\varepsilon_i\mid\bm{X}_i)\leq\sigma^2$。固定查询点$\bm{x}$，假设$m$在支持集与该点上为$L$-Lipschitz函数。记
   \[
@@ -848,6 +1186,14 @@ $k$-NN的统计目标是固定查询点处的条件均值，而不是一组经�
     \leq L^2R_{n,k}(\bm{x})^2+\frac{\sigma^2}{k}.
   \]
   若$\bm{x}$的每个正半径球都有正概率，且确定序列$k_n\to\infty$、$k_n/n\to0$，则$\widehat m_{n,k_n}(\bm{x})\to m(\bm{x})$依概率成立。若另有$|m|\leq M<\infty$，则也有点态均方一致性。
+  若$m$在整个输入支持上满足相同Lipschitz条件，且相关二阶矩有限，则对独立未来输入$\bm X_\star$，还有
+  \[
+   \mathbb E_{D_n}[R(\widehat m_{n,k})]-R(m)
+   \leq\frac{L^2}{2}\mathbb E_{D_n,\bm X_\star}
+        R_{n,k}(\bm X_\star)^2+\frac{\sigma^2}{2k}.
+  \]
+  在$|m|\leq M$下，可将半径项换成
+  $\mathbb E\min\{L^2R_{n,k}(\bm X_\star)^2,4M^2\}/2$；此时$k_n\to\infty$、$k_n/n\to0$使$\mathbb E_{D_n}R(\widehat m_{n,k_n})\to R(m)$。
 \end{theorem}
 
 \begin{proof}
@@ -875,18 +1221,52 @@ $k$-NN的统计目标是固定查询点处的条件均值，而不是一组经�
 先令$n\to\infty$，再令$r\downarrow0$，右侧趋于零，得到点态均方一致性。
 \end{proof}
 
+定理中的风险界由逐点条件误差对独立未来输入积分得到。有界$m$使被积函数至多为$4M^2+\sigma^2$；由点态均方一致性与控制收敛，得到最后的期望风险收敛结论。如果还知道邻域能获得多少概率质量，风险界就能进一步写成样本数的函数。
+
+\begin{theorem}[邻域概率下界下的$k$-NN期望风险速率]
+ \label{thm:regression-knn-risk-rate}
+ 在定理\ref{thm:regression-knn}的条件下，假设输入支持直径不超过$D$，并存在$c,r_0>0$，使支持上每个$\bm x$及$0<r\leq r_0$都满足
+ $P_X(B(\bm x,r))\geq cr^d$，其中$B(\bm x,r)$是欧氏闭球。若$r_k=(2k/(cn))^{1/d}\leq r_0$，则
+ \[
+  \mathbb E_{D_n}[R(\widehat m_{n,k})]-R(m)
+  \leq\frac{L^2}{2}
+      \left[\left(\frac{2k}{cn}\right)^{2/d}
+              +D^2e^{-k/4}\right]
+      +\frac{\sigma^2}{2k}.
+ \]
+ 因而对$k\asymp n^{2/(d+2)}$，超额期望平方风险为$O(n^{-2/(d+2)})$。
+\end{theorem}
+
+\begin{proof}
+半径$r_k$的球内样本数均值至少为$2k$。二项分布的Chernoff下尾界使少于$k$个样本的概率不超过$e^{-k/4}$。在其余事件上近邻半径不超过$r_k$，在失败事件上不超过$D$，所以平均半径平方不超过$r_k^2+D^2e^{-k/4}$。代入前一定理的期望风险界，再平衡$(k/n)^{2/d}$与$1/k$即可。
+\end{proof}
+
 Stone型普适$L^2$一致性更一般：在有限维欧氏空间及适当的、与响应无关的近邻并列处理下，对任意满足$\mathbb{E}[Y^2]<\infty$的数据分布，$k_n\to\infty$、$k_n/n\to0$可使独立查询输入上的积分均方误差趋于零。它不要求$m$为Lipschitz函数，也不保证每个指定点都收敛。其证明需要近邻权重的几何控制与对一般可测函数的逼近，不能用“距离近所以函数值近”替代；上面的定理给出的是具有额外光滑条件的点态证明，而非普适定理的证明。
 
 一致性也不提供无分布条件的统一速率。若查询点附近存在正且有界的密度，半径的典型尺度约为$(k/n)^{1/d}$，Lipschitz误差界提示平衡$(k/n)^{2/d}$与$1/k$。在相应正则条件下，这给出$k$约为$n^{2/(d+2)}$的量级及$n^{-2/(d+2)}$的风险尺度；这只是针对该光滑类别的分析，不能把任意高阶光滑函数的最优速率都赋给局部常数$k$-NN回归。有效维数增大时，为保持小邻域所需的样本会显著增加。
 
+\subsubsection{优化泛化能力}
+
+\label{sec:regression-knn-weighting}
+
+等权平均让第一个邻居与第$k$个邻居贡献相同。若邻域跨越的范围较大，可以给更近的观测较高权重，减少远处响应对查询值的影响。距离加权版本写成$\sum_i a_i(\bm x)y_i$，其中$a_i\geq0$、$\sum_i a_i=1$，权重可在邻域外置零。使用距离倒数时必须规定零距离的处理，例如仅对重合输入的响应平均，不能直接除以零。权重若集中于很少的记录，也会削弱平均噪声的作用，因此距离权重与邻居数需要共同选择。
+
+\subsubsection{优化计算能力}
+
+\label{sec:regression-knn-query}
+
+保存训练记录以后，每次查询仍需找到邻居；当记录很多、查询频繁时，逐条计算距离成为主要成本。
+
+KD树、Ball树等索引在适合的低维几何结构下可以减少搜索量，但查询复杂度依赖数据分布、查询位置与维数，最坏情况仍可能接近扫描。近似近邻以容许搜索误差换取计算节约，预测误差分析需把邻居近似的影响计入。索引和$k$的选择因此应依据当前数据的几何结构、查询预算与验证误差。
+
 \subsubsection{小结}
 
-$k$-NN回归通过保留训练样本和局部平均避免了固定全局函数形式，代价是查询计算、存储以及对距离表示的依赖。随样本量增加，应让邻居数与相对邻域尺度同时调整，固定$k$通常不能消除响应噪声。高维中的困难来自局部数据稀疏与无关坐标，而非“近邻方法只能表示简单函数”；良好的低维表示可能帮助它，但需要额外的数据与学习依据。
+$k$-NN回归通过保留训练样本和局部平均避免了固定全局函数形式，代价是查询计算、存储以及对距离表示的依赖。邻居数控制使用多少局部数据，距离度量控制哪些记录被视为邻居，两者都需要结合输入密度与响应噪声选择。高维中的困难来自局部数据稀疏与无关坐标，而非“近邻方法只能表示简单函数”；良好的低维表示可能帮助它，但需要额外的数据与学习依据。
 
 \subsection{局部加权回归（LOESS）}
 \label{sec:regression-loess}
 
-当价格随面积在邻域中已有清晰斜率时，只取邻居均值会丢失这部分结构，尤其在数据边界的一侧邻域中更明显。\term{局部加权回归}（locally estimated scatterplot smoothing, LOESS）在每个查询点附近拟合低阶多项式，按距离给邻近样本较大权重。Cleveland在1979年介绍的稳健局部加权散点平滑还加入残差重加权，以减轻异常响应的影响；LOWESS与LOESS在具体实现中的阶数、邻域和稳健化约定应分别说明\scite{cleveland1979lowess}。
+局部平均把邻域内的预测视作常数，因而会丢掉已经能由样本看出的斜率。取一个教学例子：查询$x_0=0$，可用样本只有$(0.1,0.1)$和$(0.2,0.2)$，真实关系为$m(x)=x$。等权平均给出$0.15$，而穿过两点的局部直线在查询处给出$0$。样本都在查询点的一侧，平均输入不等于查询输入，正是这段偏差的来源。\term{局部加权回归}（locally estimated scatterplot smoothing, LOESS）在每个查询点附近拟合低阶多项式，按距离给邻近样本较大权重。Cleveland在1979年介绍的稳健局部加权散点平滑还加入残差重加权，以减轻异常响应的影响；LOWESS与LOESS在具体实现中的阶数、邻域和稳健化约定应分别说明\scite{cleveland1979lowess}。
 
 \subsubsection{模型结构}
 
@@ -928,18 +1308,22 @@ $k$-NN回归通过保留训练样本和局部平均避免了固定全局函数�
 \end{equation}
 对非负核权重，$\Delta=\sum_{i<j}K_iK_j(u_i-u_j)^2$，所以至少需要两个不同输入具有正权重。即使$\Delta>0$，接近退化的设计也可能产生很大的$l_i$。
 
-固定带宽与只依赖输入的权重时，估计是响应$\bm{y}$的线性函数。稳健LOESS则在初次拟合后根据残差增加降权系数，再重复局部拟合；权重一旦依赖响应，整体估计便不再是固定的线性平滑算子，下面的固定权重方差公式不能直接沿用。若一个查询使用$n_{\mathrm{loc}}$个有效样本、$q$个局部基函数，稠密拟合约需$O(n_{\mathrm{loc}}q^2+q^3)$运算，另加邻域查询成本。
+固定带宽与只依赖输入的权重时，估计是响应$\bm{y}$的线性函数。若一个查询使用$n_{\mathrm{loc}}$个有效样本、$q$个局部基函数，稠密拟合约需$O(n_{\mathrm{loc}}q^2+q^3)$运算，另加邻域查询成本。
 
 \subsubsection{理论分析}
 \label{sec:regression-loess-theory}
 
-LOESS为每个查询点建立局部拟合，因此表示与计算都随邻域改变。固定输入和权重后，加权设计的秩决定系数能否唯一求出；在一维随机设计下，带宽又决定邻域逼近误差与响应平均的方差。下面把这两层分开，先用精确权重解释一次函数的再现，再在指定带宽序列下展开局部偏差与方差。
+LOESS在查询点附近用多项式替代真实曲线，求解与误差都会随这个邻域改变。固定输入和距离权重后，它就是一次加权最小二乘；样本随机变化时，局部设计又会影响预测的偏差与方差。下面先说明局部线性能够消去哪些近似误差，再计算由噪声和有限带宽留下的预测误差。
 
 \paragraph{表达能力}
-LOESS用每个查询点附近的低阶多项式描述局部趋势。带宽越宽，被同一个局部模型覆盖的输入越多，模型也越可能跨越规律的突变；阶数增加则能表达更高阶曲率，同时需要更多有效样本来确定系数。
+局部常数在有斜率的邻域留下约为邻域半径的一阶误差；局部线性把这一趋势也纳入候选函数。若一维目标在查询点附近二阶可微且$|m''|\leq M_2$，一次Taylor多项式$p_{x_0}$满足
+\[
+ \sup_{|x-x_0|\leq h}|m(x)-p_{x_0}(x)|\leq M_2h^2/2.
+\]
+因此局部线性候选空间包含一个误差为$O(h^2)$的函数；一般$q$阶多项式在有界$q+1$阶导数下有$O(h^{q+1})$的局部逼近误差。这说明为何提高阶数能减少光滑目标的表示偏差。
 
 \paragraph{收敛性}
-固定查询点、带宽和邻域权重后，局部多项式拟合是加权最小二乘问题。加权设计满列秩时，求解线性系统即可得到唯一系数；秩亏时则需降阶、正则化或规定回退方式。若加入依赖残差的稳健重加权，外层权重也随拟合改变，单次加权最小二乘的可解性不再等于整个迭代必然收敛，仍需检查相应目标和停止准则。
+固定查询点、带宽和非负权重后，局部目标是无约束光滑凸二次函数，总有最小二乘解；加权设计满列秩时系数唯一。可用QR或SVD直接求解，秩亏时还须规定系数选择与查询预测的回退方式。若选择梯度迭代，局部Hessian为$H=2\bm P^\top\bm W\bm P$，$L=\lambda_{\max}(H)>0$时用步长$1/L$有$O(1/t)$的目标差；若另有$\mu=\lambda_{\min}(H)>0$，则有几何收敛，Newton法求解该二次问题只需一次精确线性求解。这些结论与OLS相同，但每个查询点的设计及条件数不同。若加入依赖残差的稳健重加权，外层权重也随拟合改变，单次加权最小二乘的可解性不再等于整个迭代必然收敛，仍需检查相应目标和停止准则。
 
 \paragraph{泛化性}
 局部线性拟合的核心收益是精确再现一次函数。由式\eqref{eq:regression-local-linear-weights}直接求和，
@@ -962,12 +1346,31 @@ LOESS用每个查询点附近的低阶多项式描述局部趋势。带宽越宽
 \]
 绝对值不能删去，也不能把这些权重当作凸组合套用$k$-NN回归误差界。
 
+负权重的风险不能仅按邻居数量计算。下面的结论保留这些权重带来的噪声放大，再将局部误差汇总到独立未来输入上。
+
+\begin{theorem}[固定输入局部线性回归的期望风险]
+ \label{thm:regression-loess-risk}
+ 固定训练输入。设训练响应的条件均值为$m(x_i)$，噪声条件独立、均值为零、方差$v(x_i)\leq\sigma^2$。独立未来记录满足$X_\star\sim P_X$、$\mathbb E[Y_\star\mid X_\star]=m(X_\star)$及$\mathbb E[Y_\star^2]<\infty$。假设对$P_X$几乎每个查询$x$，局部设计非退化，响应无关权重$l_i(x)$满足
+ $\sum_i l_i(x)=1$、$\sum_i l_i(x)(x_i-x)=0$，并且下列积分有限。若覆盖训练与查询位置的区间内$m$二阶连续可微且$|m''|\leq M_2$，则
+ \[
+ \begin{aligned}
+ &\mathbb E_{\bm Y\mid X_{1:n}}[R(\widehat m)-R(m)]\\
+ &\quad=\frac12\int[B_n(x)^2+V_n(x)]P_X(dx)\\
+ &\quad\leq\frac{M_2^2}{8}\int
+        \left[\sum_i|l_i(x)|(x_i-x)^2\right]^2P_X(dx)
+        +\frac{\sigma^2}{2}\int\sum_i l_i(x)^2P_X(dx).
+ \end{aligned}
+ \]
+\end{theorem}
+
+等式先对训练噪声平均，再对未来输入积分；不等式使用一次趋势抵消后的Taylor余项与条件方差界。第一项是函数曲率造成的偏差，第二项是有符号权重传播的噪声。若局部设计退化，则需先规定回退预测，再单独计入该事件；用响应反复修正权重的稳健LOESS也不直接满足权重与响应无关的条件。单个内部点的渐近展开，不能替代这里对全部查询位置的积分控制。
+
 在内部点及规则随机设计下，上述精确公式可进一步化为熟悉的渐近偏差方差展开。局部多项式的系统分析见Fan与Gijbels的专著；下面明确给出本章使用的条件与推导\scite{fan1996local}。
 
 以下余项随随机训练输入变化。记$Z_n=o_P(a_n)$表示$Z_n/a_n$依概率趋于零，$Z_n=O_P(a_n)$表示该比值依概率有界：对任意$\delta>0$，存在有限$M$使充分大的$n$满足$\mathbb{P}(|Z_n/a_n|>M)<\delta$。
 
 \Needspace{16\baselineskip}
-\begin{theorem}[一维内部点的局部线性展开]
+\begin{lemma}[一维内部点的局部线性展开]
   \label{thm:regression-local-asymptotic}
   设$(X_i,Y_i)$独立同分布，固定内部点$x_0$附近的输入密度$p$连续且$p(x_0)>0$，回归函数$m$二阶连续可微，条件方差$v$在$x_0$连续且有限。核$K$非负、有界、对称，支撑在$[-1,1]$，满足$\int K=1$和$\mu_2=\int u^2K(u)\,du>0$。取确定带宽$h\to0$、$nh\to\infty$，$K_i=K((X_i-x_0)/h)$，记$R(K)=\int K(u)^2du$。在可逆事件上，条件偏差与方差满足
   \begin{align*}
@@ -975,7 +1378,7 @@ LOESS用每个查询点附近的低阶多项式描述局部趋势。带宽越宽
     V_n&=\frac{v(x_0)R(K)}{nhp(x_0)}+o_P((nh)^{-1}).
   \end{align*}
   可逆事件的概率趋于$1$；在退化事件上须另设估计值。
-\end{theorem}
+\end{lemma}
 
 \begin{proof}
 令$\mu_j=\int u^jK(u)\,du$。变量替换给出，对$j=0,1,2,3$，
@@ -1006,10 +1409,12 @@ LOESS用每个查询点附近的低阶多项式描述局部趋势。带宽越宽
 
 当偏差和方差的领先系数都为正时，平衡$h^4$与$1/(nh)$提示$h$取$n^{-1/5}$量级，对应条件风险的$n^{-4/5}$尺度。若曲率为零，领先偏差项消失，不能仍按同一常数求最佳带宽。这些是随机设计下依概率成立的条件展开；改成无条件均方误差展开还需控制退化设计和余项的可积性。边界点的核矩被截断，也不能直接沿用内部点常数。
 
-\subsubsection{支持局部常数（Nadaraya-Watson 核平滑）}
+\subsubsection{优化泛化能力}
+
+\paragraph{用局部常数减少拟合参数}
 \label{sec:regression-nadaraya-watson}
 
-在式\eqref{eq:regression-local-polynomial}中只拟合截距，对截距求导便得到\term{Nadaraya--Watson核平滑}（Nadaraya--Watson kernel smoothing）
+邻域中若只有一个有效输入，局部斜率无法确定；即使样本更多，估计斜率也可能带来不需要的噪声放大。只保留局部常数就能减少待估参数，同时保留按距离区别观测的方式。在式\eqref{eq:regression-local-polynomial}中只拟合截距，对截距求导便得到\term{Nadaraya--Watson核平滑}（Nadaraya--Watson kernel smoothing）
 \begin{equation}
   \widehat m_{\mathrm{NW}}(\bm{x}_0)
   =\frac{\sum_iK_i y_i}{\sum_iK_i},
@@ -1028,15 +1433,24 @@ LOESS用每个查询点附近的低阶多项式描述局部趋势。带宽越宽
 \]
 后一项反映设计密度不均匀的影响。局部线性消去这项并改善边界处的一阶偏差，但其负权重可能增大方差，所以选择仍应看总风险。
 
+\paragraph{减弱异常响应对局部回归曲线的拉动}
+\label{sec:regression-loess-robustness}
+
+距离近不意味着响应可靠：查询附近的一条异常成交记录仍可能拉动整段拟合曲线。Cleveland的稳健LOESS先按距离作局部拟合，再根据残差增加降权系数，减小残差很大的记录在下一轮拟合中的作用。重复这两步后，局部曲线同时反映输入的远近和响应对当前曲线的偏离程度。
+
+残差权重依赖响应，整体估计便不再是固定的线性平滑算子，本节的固定权重方差公式不能直接沿用。这种处理针对异常响应；若局部输入覆盖不足，或异常输入支配了局部设计，残差降权本身不能补足信息。它也增加了重复拟合的计算成本，不能与只按输入设置带宽混为同一步骤。
+
 \subsubsection{小结}
 
-LOESS用局部斜率或曲率补充局部平均，适合观察低维输入与响应之间的平滑关系。其有效性取决于局部数据量、设计秩、带宽和光滑程度；稳健重加权可以减轻部分异常响应影响，却没有消除所有异常点风险。局部曲线和导数描述特定输入附近的变化，可据此检查响应趋势；它们的解释随查询位置与带宽改变。
+LOESS用局部斜率或曲率补充局部平均，适合观察低维输入与响应之间的平滑关系。Nadaraya--Watson核平滑只按距离加权平均，计算较简单；局部多项式增加斜率项，可以描述查询点附近的变化，也能减轻数据只在查询一侧时常数平均产生的偏差。增加阶数需要更多局部数据与足够的设计秩，不能单凭曲线更平滑选择。
+
+Cleveland的稳健局部平滑还根据残差调整权重，以减轻异常响应对曲线的拉动。这一调整针对响应污染，不能消除邻域覆盖不足或所有高杠杆输入的影响。带宽控制哪些记录共同支持一段曲线，残差重加权控制其中哪些记录影响过大；二者应分别说明用途，并在查询区域的实际数据覆盖下评价。
 
 \subsection{模型对比与总结}
 
-$k$-NN回归与LOESS都根据查询点选择局部数据，差别在于是否拟合邻域内的趋势。$k$-NN回归的均匀权重便于控制方差，局部线性权重能再现一次函数，却可能为负。比较风险时，需要同时计入设计位置、局部对称性和密度：这些条件会改变两者的偏差阶，也会改变方差的大小。
+$k$-NN回归与LOESS面对同一个问题：怎样把查询附近有限的记录转成预测。$k$-NN先用常数平均，距离权重再区别邻居的贡献；LOESS增加局部斜率或曲率，Nadaraya--Watson则保留加权常数。若样本只在查询点的一侧，局部斜率可以补偿平均输入偏离查询输入的影响，但需要足够的局部设计信息。增加阶数、缩小带宽与加强距离权重都可能让少数记录的影响变大，因此应同时检查局部覆盖和响应噪声。
 
-平滑样条沿另一条路线控制函数曲率，径向基函数网络则先选中心再学习全局展开系数。它们与邻域方法都使用局部性或相似性，但目标并不相同。尤其Nadaraya--Watson的系数由查询点归一化得到，核岭回归的训练系数则由整个Gram矩阵耦合求解；二者一般不等价。选择方法时应同时比较局部光滑性、输入的有效维数、权重如何学习以及查询预算。
+输入距离与异常响应也要分开处理。带宽和距离权重决定哪些记录共同支持查询，稳健LOESS再根据残差限制异常记录的作用；残差降权不能补足一个没有数据的查询区域。计算安排同样不同：近邻索引减少找邻居的工作，LOESS还要在每次查询时解局部问题；核岭回归则预先联合学习训练点的展开系数。选择时需要把训练记录的存储、查询次数和每次查询的拟合成本一起比较。
 
 \section{基于树与规则的回归}
 \label{sec:regression-trees}
@@ -1046,7 +1460,9 @@ $k$-NN回归与LOESS都根据查询点选择局部数据，差别在于是否拟
 \subsection{CART 回归树}
 \label{sec:regression-cart}
 
-\term{分类与回归树}（classification and regression trees, CART）将递归二分、叶内估计和复杂度剪枝组织成统一框架。Breiman等人在1984年的专著中系统阐述了这套方法，把数据决定的分区与树的规模控制联系起来。回归情形通常用平方误差评价分裂，再通过独立验证选择树的规模；这一流程将在下面分别展开\scite{breiman1984cart}。
+有些响应变化来自明确的条件组合，未必适合用全局直线或平滑邻域描述。考虑一个教学函数：只有$x_1>1/2$且$x_2>1/2$时响应为$10$，其他区域为$0$。固定$x_2\leq1/2$时，改变$x_1$不起作用；固定$x_2>1/2$时，越过$x_1=1/2$却使响应跳变。一个全局斜率无法同时表达这两种作用，平滑曲线也会在跳变附近折中。先按$x_2$分支，再在高值分支按$x_1$分支，就能用三个常数区域精确表示这个函数。
+
+\term{分类与回归树}（classification and regression trees, CART）让数据选择这样的阈值与分支，并将递归二分、叶内估计和复杂度剪枝组织成统一框架。Breiman等人在1984年的专著中系统阐述了这套方法，把数据决定的分区与树的规模控制联系起来。回归情形通常用平方误差评价分裂，再通过独立验证选择树的规模；这一流程将在下面分别展开\scite{breiman1984cart}。
 
 第\ref{sec:classification-cart}节的分类CART共享递归二分与代价复杂度剪枝。任务差异落在分裂和叶输出上：本节按响应平方误差选择分区并输出叶均值，分类树按类别不纯度或误分类代价分裂，并输出类别标签或类别比例。
 
@@ -1100,7 +1516,7 @@ $k$-NN回归与LOESS都根据查询点选择局部数据，差别在于是否拟
 \term{代价复杂度剪枝}（cost-complexity pruning）在保留局部拟合与减少叶数之间作折中。临界$\alpha$处可能出现多个最优子树，唯一性需要额外的并列规则。
 
 \Needspace{11\baselineskip}
-\begin{theorem}[固定生长树内的最优剪枝]
+\begin{theorem}[CART在固定生长树内的最优剪枝解]
   \label{thm:regression-pruning}
   设$Q_\alpha(v)$为从$T_0$的节点$v$出发可得到的所有剪枝子树的最小代价。若$v$是原始叶，则$Q_\alpha(v)=\mathrm{SSE}_v+\alpha$；若$v$有左右孩子$v_L,v_R$，则
   \[
@@ -1119,10 +1535,17 @@ $k$-NN回归与LOESS都根据查询点选择局部数据，差别在于是否拟
 \subsubsection{理论分析}
 \label{sec:regression-cart-theory}
 
-回归树通过数据选择分区，再用叶内响应估计预测。叶区域和叶输出共同决定表示，分裂与剪枝决定搜索范围，响应同时参与这两个环节则影响统计误差。下面先说明有限训练集上的计算何时结束，再通过独立的结构样本与估计样本，展示可以直接证明的叶平均误差；普通CART的响应自适应性需要另行处理。
+树的表示能力来自叶区域和叶内常数，训练则用响应同时选择这两者。先把分区固定，可以算出区域划分留下的逼近误差；再考察数据选分区的过程，才能判断叶平均在新输入上是否可靠。下面用独立的结构样本与估计样本给出一个直接的误差界，并说明普通CART为何还要计入选择分区的误差。
 
 \paragraph{表达能力}
-常数叶回归树为每个叶区域赋予一个预测值。增加叶数可以细化分区，但轴对齐切分若要逼近斜向或平滑关系，往往需要许多区域。有限叶数下的表示误差，因此同时受目标几何和分裂方式影响。
+给定分区$\Pi$时，候选集是各叶上分别取常数的函数。对每片满足$P_X(A)>0$的叶，最优常数为$\mathbb E[m(\bm X)\mid\bm X\in A]$；零概率叶的取值不影响按$P_X$计算的平方距离。因此，它留下的逼近误差为
+\[
+ A(\mathcal F_\Pi)=\frac12\sum_{A\in\Pi:\,P_X(A)>0}
+ P_X(A)\operatorname{Var}(m(\bm X)\mid\bm X\in A).
+\]
+若$m$为$L$-Lipschitz且所有叶直径不超过$h$，选择叶内任一点的$m$值便得$A\leq L^2h^2/2$。在$[0,1]^d$上，轴对齐网格可用约$h^{-d}$片叶实现这一尺度，说明逼近精度的代价随维数增长。与此相对，若目标本来就在少量轴对齐区域上取常数，包含这些切分的树可使逼近误差为零。目标几何决定了多少叶才足够，而不是叶数越多就无条件越好。
+
+即使在一维，连续斜率也不能由有限片常数精确表示。若$X$在$[0,1]$上均匀分布且$m(x)=x$，将区间划成$M$片、每片取最优常数时，等长分区达到最小逼近误差$A=1/(24M^2)$。这是每片长度的三次方之和除以$24$的最小值。增加叶数可以逐渐逼近这条直线，但任何有限$M$都仍有正误差；线性模型则用一个斜率即可精确表示它。
 
 \paragraph{收敛性}
 在有限训练集上，若每次分裂都产生两个非空子节点，叶数至多为$n$，树的生长会在有限步内终止。对固定生长树，前述剪枝递推也能在有限步内求得该树内的最优剪枝。这些计算性质没有把逐节点贪心搜索变成所有树结构上的全局优化，也没有回答样本量增加时的预测误差是否趋于零。
@@ -1133,14 +1556,25 @@ $k$-NN回归与LOESS都根据查询点选择局部数据，差别在于是否拟
 用独立数据分别选分区和估计叶均值，可以得到一个透明的有限样本结论。\term{诚实分区}（honest partitioning）在这里指：结构样本决定分区，独立估计样本提供叶内被平均的响应。
 
 \Needspace{14\baselineskip}
-\begin{theorem}[独立分区下的叶平均误差]
+\begin{theorem}[回归树在独立固定分区下的期望平方风险]
   \label{thm:regression-honest-tree}
-  用结构样本选定可测分区$\Pi$，用独立同分布的估计样本计算叶均值。假设估计样本满足零条件均值噪声、条件方差不超过$\sigma^2$，回归函数$m$为$L$-Lipschitz。固定查询点$\bm{x}$，其叶为$A$，其中估计样本数为$N_A$，叶内最大样本距离为$R_A$。条件于结构样本与全部估计输入的信息$\mathcal G$，在$N_A>0$时，
+  用结构样本选定可测分区$\Pi$，用独立同分布的估计样本计算叶均值。假设估计样本满足零条件均值噪声、条件方差不超过$\sigma^2$，回归函数$m$为$L$-Lipschitz。固定查询点$\bm{x}$，其叶为$A$，其中估计样本数为$N_A$，叶内最大样本距离为$R_A$，约定空叶的$R_A=0$。条件于结构样本与全部估计输入的信息$\mathcal G$，在$N_A>0$时，
   \[
     \mathbb{E}[(\widehat m_\Pi(\bm{x})-m(\bm{x}))^2\mid\mathcal G]
     \leq L^2R_A^2+\frac{\sigma^2}{N_A}.
   \]
   若空叶预测规定为零，则$N_A=0$时的条件误差为$m(\bm{x})^2$。
+  令独立未来记录满足同一条件均值$m$，其输入$\bm X_\star$所在叶为$A_\star$，空叶采用上述零预测。在二阶矩有限时，
+  \[
+  \begin{aligned}
+   \mathbb E_{D_n}[R(\widehat m_\Pi)]-R(m)
+   \leq\frac12\mathbb E\bigl[&
+    (L^2R_{A_\star}^2+\sigma^2/(N_{A_\star}\vee1))
+         \mathbf1\{N_{A_\star}>0\}\\
+    &+m(\bm X_\star)^2\mathbf1\{N_{A_\star}=0\}\bigr].
+  \end{aligned}
+  \]
+  右侧期望同时针对结构样本、估计输入与未来输入。
 \end{theorem}
 
 \begin{proof}
@@ -1149,25 +1583,55 @@ $k$-NN回归与LOESS都根据查询点选择局部数据，差别在于是否拟
 
 在有界$m$下，若$R_A\to0$、$N_A\to\infty$依概率成立，可用与$k$-NN回归相同的有界偏差分解和噪声界得到点态均方一致性。空叶概率随之趋零。这里的样本数是独立估计样本中的叶成员数，结构样本上的最小叶样本约束并不自动保证它。
 
-普通CART不能直接套用这一界。考虑固定输入$(1,2,3)$、查询点$2$，真实$m\equiv0$，三个响应独立等概率取$\pm1$。令树必须在$1.5$和$2.5$之间择一分裂，查询叶始终含两个样本。只要左邻或右邻与中间响应同号，最小SSE切分就选到同号二点叶，预测平方为$1$；该事件概率为$3/4$。两侧均异号时预测为零，故实际风险为$3/4$，大于机械套用$\sigma^2/N_A$得到的$1/2$。该反例否定的是独立平均公式的直接挪用，并不声称所有CART程序都不一致。
+定理的最后一个结论将条件误差对未来输入积分，明确保留了叶内逼近、噪声平均和空叶三项。小叶、足够多的独立估计响应以及较小空叶概率，分别控制这三项；仅有结构样本上的叶规模约束，不能保证未来风险已经足够小。
+
+普通CART不能直接套用这一界。考虑固定输入$(1,2,3)$、查询点$2$，真实$m\equiv0$，三个响应独立等概率取$\pm1$。令树必须在$1.5$和$2.5$之间择一分裂，查询叶始终含两个样本。只要左邻或右邻与中间响应同号，最小SSE切分就选到同号二点叶，预测平方为$1$；该事件概率为$3/4$。两侧均异号时预测为零，故实际均方误差为$3/4$，大于直接套用$\sigma^2/N_A$得到的$1/2$。该反例否定的是独立平均公式的直接挪用，并不声称所有CART程序都不一致。
+
+对于用同一响应选择分区的普通CART，可以同时控制所有预定树的评价偏差，而不是在选择完成后将树当作独立分区。
+
+\begin{theorem}[回归树在预定阈值与规模约束下的期望风险界]
+ \label{thm:regression-cart-risk}
+ 设训练记录独立同分布，未来记录独立且服从同一分布。抽样前，在$d\geq1$个变量上各固定至多$H\geq1$个候选阈值，候选二叉树至多有$M\geq1$片叶，响应及叶值都在$[-B,B]$内。对预定$\alpha>0$，令$J=\lceil2B/\alpha\rceil+1$、$N_\alpha=4^M(dH)^{M-1}J^M$。若输出树$\widetilde f$相对于整类$\mathcal T$的经验平方风险最小值有目标差至多$e_{\mathrm{opt}}$，则对预定$\delta\in(0,1)$，以关于训练集至少$1-\delta$的概率，
+ \[
+  R(\widetilde f)
+  \leq\inf_{f\in\mathcal T}R(f)
+     +8B\alpha
+     +4B^2\sqrt{\frac{\log(2N_\alpha/\delta)}{2n}}
+     +e_{\mathrm{opt}}.
+ \]
+\end{theorem}
+
+\begin{proof}
+二叉树形状数、节点阈值数与离散叶值数相乘，至多为$N_\alpha$。平方损失的一半至多为$2B^2$，将叶值舍入到误差不超过$\alpha$的网格使单样本损失至多改变$2B\alpha$。对网格树应用式\eqref{eq:regression-finite-class-deviation}，再补上经验与期望两端的舍入，得到
+\[
+ \Delta_n(\mathcal T)\leq4B\alpha
+  +2B^2\sqrt{\frac{\log(2N_\alpha/\delta)}{2n}}.
+\]
+式\eqref{eq:regression-risk-transfer}把两倍偏差与求解差带入期望风险，得到结论。
+\end{proof}
+
+该定理允许响应参与树的选择，但没有免除搜索误差。贪心生长只优化局部分裂，$e_{\mathrm{opt}}$必须相对于整个预定树类计算；固定生长树内的最优剪枝并不使它自动为零。阈值若随当前样本变化，则要控制包含这些阈值的完整候选类，不能直接使用上述预定计数。
 
 有限样本下，单棵树还可能对数据扰动敏感，贪心分裂也可能错过只有联合出现才有效的交互。后续的Bagging、随机森林和梯度提升通过多棵树组合改善某些误差来源，但组合对偏差或方差的影响仍取决于数据、成员依赖和训练设定。
 
-\subsubsection{支持分段线性叶节点（模型树 M5）}
+\subsubsection{优化表达能力}
+
 \label{sec:regression-model-tree}
 
-如果每个区域内的价格趋势近似线性，用多片常数叶逼近可能需要很多切分。\term{模型树}（model tree）在叶内拟合线性模型$f_m(\bm{x})=b_m+\bm{w}_m^{\top}\bm{x}_{A_m}$，其中$A_m$为该叶使用的特征集。M5是这条路线的代表，用树选择适用区域，再用局部回归描述区域内部的趋势\scite{quinlan1992m5}。
+如果区域内部仍有连续的线性变化，常数叶就需要继续切分。例如$m(x)=1+2x$在$[0,1]$上处处变化，有限个常数叶无法精确表示它，一个线性叶却已足够。我们可以保留树对不同条件的分区，让每片叶负责拟合该区域内部的趋势。\term{模型树}（model tree）在叶内拟合线性模型$f_m(\bm{x})=b_m+\bm{w}_m^{\top}\bm{x}_{A_m}$，其中$A_m$为该叶使用的特征集。M5是这条路线的代表，用树选择适用区域，再用局部回归描述区域内部的趋势\scite{quinlan1992m5}。
 
 局部样本少时，叶内设计可能秩亏，需要选择变量或正则化。父子节点预测的加权混合可以缓和估计跳跃，但两侧叶模型在共同边界上没有被强制相等，因此这种平滑处理不自动保证函数连续。叶模型也可改为GLM、岭或Lasso，不过分裂准则、参数估计与复杂度惩罚需要与新模型配套，不能只替换叶公式就沿用全部CART理论。
 
 \subsubsection{小结}
 
-CART把回归拆为选分区与叶内估计，阈值规则适合表达局部条件关系。它对输入单位缩放通常不如距离方法敏感，但候选分裂数量、缺失值规则与叶内样本量仍会影响结果。固定生长树内的剪枝可以精确优化，整体建树仍是贪心搜索；同一响应参与选树的自适应性也必须进入统计分析。
+CART把回归拆为选分区与叶内估计，阈值规则适合表达局部条件关系。剪枝控制树的规模，却不改变常数叶只能给一个区域使用同一预测的限制。若叶内仍有线性趋势，Quinlan提出的M5让树先选择适用区域，再在叶内拟合线性模型，减少为描述连续斜率而反复切分的需要；局部样本量、设计秩与叶模型正则化随之成为额外的条件。
+
+另一类改进针对分裂搜索的偏向：具有较多候选切分的变量更容易出现偶然较好的分裂。模型对比中的条件推断树先检验变量与响应的关联，再选择切分位置，改变的是搜索依据。它与线性叶处理不同问题，也都不能替代样本外评价。检查预测时，应把变量搜索、复杂度选择与叶内估计作为一个完整流程。
 
 \subsection{多元自适应回归样条（MARS）}
 \label{sec:regression-mars}
 
-树的阈值选择能够适应数据，常数叶却在边界处跳跃。\term{多元自适应回归样条}（multivariate adaptive regression splines, MARS）把阈值写进连续的铰链基函数，再从数据中选择这些基函数及其乘积。Friedman在1991年提出这一方法，将自适应选择结点与样条展开结合。它在可加模型与树式区域表达之间提供了另一种选择：多个基函数可同时作用于同一输入，预测不再由唯一一片叶决定\scite{friedman1991mars}。
+树的阈值选择能够适应数据，常数叶却在边界处跳跃。对于连续但斜率会变化的关系，我们可以保留阈值，又让预测跨过阈值时连续。例如$m(x)=1+2x+3(x-1)_+$在$x\leq1$时斜率为$2$，在$x>1$时斜率为$5$；$(x-1)_+$在结点处从零开始增长，所以没有产生跳跃。常数叶需要许多区域来逼近这段线性变化，两个斜率和一个结点却已能准确描述它。\term{多元自适应回归样条}（multivariate adaptive regression splines, MARS）把阈值写进连续的铰链基函数，再从数据中选择这些基函数及其乘积。Friedman在1991年提出这一方法，将自适应选择结点与样条展开结合。它在可加模型与树式区域表达之间提供了另一种选择：多个基函数可同时作用于同一输入，预测不再由唯一一片叶决定\scite{friedman1991mars}。
 
 \subsubsection{模型结构}
 
@@ -1198,16 +1662,42 @@ $C_{\mathrm{eff}}$是复杂度计数，既考虑保留的线性系数，也以�
 
 \subsubsection{理论分析}
 
-MARS的表达来自铰链基及其乘积，训练则同时选择基函数和线性系数。固定基时可以精确求解最小二乘，前向与后向搜索只逐步改变当前基集合。统计分析还要包含响应参与选择所产生的误差，因此固定样条空间的结果与数据自适应搜索的结果，需要按各自条件使用。
+MARS保留了固定基下最小二乘的求解便利，同时让数据选择结点和交互。铰链与乘积决定哪些函数可以表示，前向与后向步骤决定算法实际搜索到哪里；选择基函数的过程也会影响估计误差。因此，下面既分析固定基的拟合，也把基选择纳入新样本风险。
 
 \paragraph{表达能力}
-MARS把目标展开为铰链基与其乘积的线性组合。结点数、基数量和交互阶数限定可选择的变化；提高交互阶数可以加入更多多变量关系，也增加候选搜索和系数估计的负担。
+先看有限区间$[a,b]$上的一维目标，假定输入分布支撑于该区间。取包含两端点、覆盖全区间且相邻点间距不超过$h$的网格，分段线性插值可写成常数、线性项与铰链之和；若$|m''|\leq M_2$，其最大误差不超过$M_2h^2/8$。因此只要候选结点覆盖该网格且基数量足够，候选集中就存在这一近似，平方逼近误差的一半至多$M_2^2h^4/128$。
+
+多变量时，交互上限还限定了不能逼近的部分。只允许单变量铰链得到加性函数，与GAM一样无法逼近独立均匀$[-1,1]$输入上的$m(x_1,x_2)=x_1x_2$，最小平方逼近误差的一半为$1/18$。允许两个变量的铰链乘积后，$(x_1)_+-( -x_1)_+=x_1$的展开可准确表示该乘积。增加结点解决单变量曲线分辨率，增加交互阶数解决不同变量的联合影响；二者不能相互替代。
 
 \paragraph{收敛性}
-固定基函数后，系数可通过最小二乘求解。前向搜索在给定基数量上限或满足停止准则时结束，后向阶段每步删除基函数，也会在有限步内终止。前向与后向步骤都没有搜索全部可能基集合，因此不能由每一步的局部改善推出全局最优。
+固定基函数后，系数目标是无约束光滑凸二次问题，总有最小二乘解；满列秩时唯一，可用QR或SVD求解。若采用迭代算法，OLS给出的$O(1/t)$目标差、强凸时几何收敛及Newton一次精确求解的结论均可复用，Hessian须换成当前基设计矩阵。前向搜索在给定基数量上限或满足停止准则时结束，后向阶段每步删除基函数，也会在有限步内终止。前向与后向步骤都没有搜索全部可能基集合，因此不能由每一步的局部改善推出全局最优。
 
 \paragraph{泛化性}
 如果基函数由同一批响应选择，直接条件于所选设计再套用固定设计OLS的无偏性，就忽略了选择偏差。统计分析需要同时考虑系数估计与基函数选择。
+
+固定一个完整字典后，就能把选基的代价写入候选计数，并保留贪心搜索未消去的目标差。
+
+\begin{theorem}[MARS在固定字典与有界系数下的期望风险界]
+ \label{thm:regression-mars-risk}
+ 设训练记录独立同分布，未来记录独立且服从同一分布，$|Y|\leq Y_{\max}$。抽样前固定$K$个字典函数，包含所用铰链、乘积与常数项，且每个函数绝对值不超过$C$。候选模型最多使用$1\leq M\leq K$项，系数二范数不超过$A$。令
+ \[
+ \begin{aligned}
+  S&=\sum_{j=0}^M\binom Kj,\qquad D=Y_{\max}+AC\sqrt M,\\
+  M_\ell&=D^2/2,\qquad L_\ell=C\sqrt M\,D.
+ \end{aligned}
+ \]
+ 若$\widetilde f$相对于完整候选类$\mathcal F$的经验平方风险最小值有目标差不超过$e_{\mathrm{opt}}$，则对预定$\alpha>0$、$\delta\in(0,1)$，以关于训练集至少$1-\delta$的概率，
+ \[
+ \begin{aligned}
+ R(\widetilde f)\leq\inf_{f\in\mathcal F}R(f)
+ &+4L_\ell\alpha\\
+ &+2M_\ell\sqrt{\frac{M\log(1+2A/\alpha)+\log(2S/\delta)}{2n}}
+ +e_{\mathrm{opt}}.
+ \end{aligned}
+ \]
+\end{theorem}
+
+每个支持的系数球覆盖数至多为$(1+2A/\alpha)^M$，全部支持至多$S$个；预测绝对值不超过$AC\sqrt M$。对这些支持的覆盖并合，再按平方损失的Lipschitz常数补上舍入，便得到定理中的风险界。它把字典规模、项数、系数范围和优化差一起纳入未来预测误差。字典或结点若由当前响应生成，还要把生成过程放进候选范围；GCV的自由度近似不能替代这项概率控制。
 
 样条与低阶交互函数空间有成熟的逼近和统计理论。例如，扩展线性建模研究了多项式样条及张量积表示怎样适应指定的低阶结构。这类结论对应指定的空间增长、平滑性和模型选择条件；评价具体MARS贪心实现时，还需验证其搜索和选择规则是否满足这些条件\scite{stone1997splines}。
 
@@ -1219,31 +1709,31 @@ MARS通过自适应结点与铰链乘积表达阈值和交互，在线性系数�
 
 \subsection{模型对比与总结}
 
-CART用不重叠叶区域和常数预测，模型树在叶内增加线性趋势，MARS用可重叠的连续基函数及其乘积。前两者沿树路径路由，MARS需要计算保留的基；叶线性模型可能在边界跳跃，MARS的基本铰链构造则连续但不必处处可微。三者都允许阈值由数据决定，却使用不同的复杂度控制。
+输入跨过阈值以后，预测可能切换到新的水平，也可能只改变斜率。CART用常数叶表达前一种情况；若区域内还有连续趋势，模型树在同一叶中增加线性项，减少为了描述斜率而继续切分的需要。MARS则把阈值写成连续铰链，允许多个基函数及其乘积共同作用于一个输入。模型树的不同叶仍可能在边界跳跃，MARS的基本构造连续但不必处处可微；前者按路径查询并估计各叶系数，后者计算保留的全部基。需要的局部样本、交互搜索和预测成本因而不同。
 
-相关工作还从选择偏差和集成方式改进树模型。\term{条件推断树}（conditional inference tree）把变量关联检验与分裂位置选择分开，缓解候选切分多的变量更容易被选中的偏向；检验规则和显著性水平共同控制树大小，预测误差仍需由样本外评价确定\scite{hothorn2006ctree}。
+树的变量选择还可能偏向具有较多候选切分的特征。\term{条件推断树}（conditional inference tree）把变量关联检验与分裂位置选择分开，缓解候选切分多的变量更容易被选中的偏向；检验规则和显著性水平共同控制树大小，预测误差仍需由样本外评价确定\scite{hothorn2006ctree}。
 
 \section{基于概率的回归}
 \label{sec:regression-probabilistic}
 
 一个房价点预测没有说明价格自身的波动，也没有说明有限数据下函数估计的差异。GLM已经通过条件分布描述前一种变化；本节进一步给未知系数或函数设置先验，由观测形成后验，再将函数不确定性与响应噪声一起带入预测分布。第\ref{sec:classic-overview-probabilistic}节的概率表示由此落实为可以计算的后验更新。
 
-\term{分布回归}（distributional regression）提供了完整条件分布的另一条入口：先选择响应分布族，再让位置、尺度或形状等多个分布参数分别依赖输入。GAMLSS允许用线性项或平滑项建模这些参数，因而能表达均值不变但条件方差、偏度或尾部随输入变化的情形\scite{rigby2005gamlss}。它与只拟合若干分位点不同，也不等同于描述未知函数后验的GPR；代价是必须选择分布族、链接与各参数的结构，并用适当评分和校准诊断检查整个预测分布。
-
 \subsection{高斯过程回归（GPR）}
 \label{sec:regression-gpr}
 
-对一组房屋属性，我们希望同时描述多个输入位置上的价格函数值及其相互关系。\term{高斯过程回归}（Gaussian process regression, GPR）用均值函数规定各位置的先验中心，用协方差函数规定函数值怎样共同变化。任意有限输入集合上的函数值都具有联合高斯分布，加入高斯观测噪声以后，可以精确计算后验与预测分布。先从有限权重模型推导这一计算，再转向函数值本身，就能看清它与贝叶斯线性回归、核岭回归的联系。
+点预测给出一个数值，却没有说明训练数据在该位置提供了多少信息。两个输入都得到相同价格预测，其中一个可能紧邻大量观测，另一个却远离训练范围；仅看这两个数值，无法分辨估计的不确定性。给有限基系数设置分布，可以描述未知系数带来的变化，但函数形状仍受预先选定的基限制。如果希望直接用“相近输入处的函数值怎样一起变化”来规定未知曲线，就可以把概率模型建立在函数值上。\term{高斯过程回归}（Gaussian process regression, GPR）用均值函数规定各位置的先验中心，用协方差函数规定函数值怎样共同变化。任意有限输入集合上的函数值都具有联合高斯分布，加入高斯观测噪声以后，可以精确计算后验与预测分布。先从有限权重模型推导这一计算，再转向函数值本身，就能看清它与贝叶斯线性回归、核岭回归的联系。
 
 高斯过程预测较早已用于时间序列和地统计学，空间预测中的相关方法通常称为克里金（kriging）。20世纪90年代，Williams与Rasmussen在机器学习语境中讨论了GPR及协方差函数参数的学习，并将它与贝叶斯神经网络联系起来\scite{rasmussen2006}。
 
 \subsubsection{模型结构}
 \label{sec:regression-gpr-structure}
 
-先考虑有限维特征$\bm{\phi}(\bm{x})\in\mathbb{R}^{p}$，令$f(\bm{x})=\bm{\phi}(\bm{x})^{\top}\bm{w}$。与OLS把$\bm{w}$看作待估计固定量不同，\term{贝叶斯线性回归}（Bayesian linear regression）对$\bm{w}$设置分布，再根据数据更新。使用高斯先验与高斯噪声，更新可通过完成平方得到。
+先考虑有限维特征$\bm\phi(\bm x)\in\mathbb R^p$，令$f(\bm x)=\bm\phi(\bm x)^\top\bm w$。OLS给出一组拟合系数，岭回归还会用惩罚规定哪些系数较可接受；如果要让预测保留这些未知系数的全部分布，而不是只保留一个点，就可以先设置系数的先验分布，再用观测更新。\term{贝叶斯线性回归}（Bayesian linear regression）采用这种做法。
+
+考虑只含截距的教学模型。我们先给未知均值设置均值为$100$、方差为$20^2$的高斯先验，再将单次观测噪声的方差设为$10^2$。观测到一次$100$以后，后验均值仍是$100$，但后验方差从$400$降为$(1/400+1/100)^{-1}=80$。点预测没有变化，观测却减少了不确定性；预测下一次带噪响应时还要加上$100$的观测噪声方差。下面将这一计算推广到多个系数，使用高斯先验与高斯噪声通过完成平方求出后验。
 
 \Needspace{14\baselineskip}
-\begin{theorem}[贝叶斯线性回归的后验与预测]
+\begin{lemma}[贝叶斯线性回归的后验与预测]
   \label{thm:regression-bayesian-linear}
   条件于设计矩阵$\bm{X}$，设$\bm{w}\sim\mathcal{N}(\bm{m}_0,\bm{V}_0)$，其中$\bm{V}_0\succ0$，并设$\bm{y}=\bm{X}\bm{w}+\bm{\varepsilon}$，$\bm{\varepsilon}\sim\mathcal{N}(\bm{0},\sigma^2\bm{I})$与$\bm{w}$独立，$\sigma^2>0$。则
   \[
@@ -1260,7 +1750,7 @@ CART用不重叠叶区域和常数预测，模型树在叶内增加线性趋势�
       \bm{\phi}_{\star}^{\top}\bm{m}_n,\,
       \bm{\phi}_{\star}^{\top}\bm{V}_n\bm{\phi}_{\star}+\sigma^2\bigr).
   \]
-\end{theorem}
+\end{lemma}
 
 \begin{proof}
 先验与似然的负对数相加，去掉与$\bm{w}$无关的项后为
@@ -1270,7 +1760,7 @@ CART用不重叠叶区域和常数预测，模型树在叶内增加线性趋势�
   -\bm{w}^{\top}
        (\bm{V}_0^{-1}\bm{m}_0+\sigma^{-2}\bm{X}^{\top}\bm{y}).
 \]
-定义定理中的$\bm{V}_n,\bm{m}_n$，上式等于
+定义引理中的$\bm{V}_n,\bm{m}_n$，上式等于
 $\tfrac12(\bm{w}-\bm{m}_n)^{\top}\bm{V}_n^{-1}(\bm{w}-\bm{m}_n)$加常数。精度矩阵正定，故该可积密度归一化后就是所述高斯后验。新响应为后验高斯参数的线性变换与独立高斯噪声之和，均值与方差相加即得预测分布。
 \end{proof}
 
@@ -1295,6 +1785,18 @@ $\tfrac12(\bm{w}-\bm{m}_n)^{\top}\bm{V}_n^{-1}(\bm{w}-\bm{m}_n)$加常数。精�
 \end{figure}
 
 若$\bm{m}_0=\bm{0}$、$\bm{V}_0=\tau^2\bm{I}$，后验均值为$(\bm{X}^{\top}\bm{X}+\sigma^2\bm{I}/\tau^2)^{-1}\bm{X}^{\top}\bm{y}$，在本章归一化下对应$\lambda=\sigma^2/(n\tau^2)$的岭估计。高斯后验的均值与众数相同，所以也等于MAP估计。该对应要求截距处理一致：若先验惩罚全部特征系数，就不能直接与截距不受惩罚的岭模型比较。后验协方差与前面固定真参数下岭估计的重复抽样协方差也是不同对象。
+
+\paragraph{有限特征模型的预测误差}
+高斯参数先验没有改变候选均值$\bm\phi(\bm x)^\top\bm w$的线性空间；若目标不在这个空间中，OLS小节计算的投影逼近误差仍然存在。先验改变的是怎样选择系数和怎样表示估计不确定性。正定$\bm V_0$与$\sigma^2>0$使后验精度$\bm V_n^{-1}$正定，后验均值与MAP存在且唯一；可用Cholesky直接求解，或按该精度矩阵的最大、最小特征值使用强凸二次问题的梯度速率。概率推断在这里没有增加外层非凸搜索，学习超参数则另当别论。
+
+若评价固定真函数下的点预测，后验均值是响应的仿射函数，因而可像岭一样分离偏差与训练噪声方差。设真实响应$\bm y=\bm m+\bm\varepsilon$，噪声条件均值为零、协方差为$\tau^2\bm I$，令$\bm H=\sigma^{-2}\bm V_n\bm X^\top$、$\bm c=\bm V_n\bm V_0^{-1}\bm m_0$，则预测为$\bm\phi(\bm x)^\top(\bm c+\bm H\bm y)$。独立新样本上的平均超额平方风险为
+\[
+ \frac12\int\left[
+ \{\bm\phi(\bm x)^\top(\bm c+\bm H\bm m)-m(\bm x)\}^2
+ +\tau^2\bm\phi(\bm x)^\top\bm H\bm H^\top\bm\phi(\bm x)
+ \right]P_X(d\bm x).
+\]
+第一项含候选空间的限制与先验收缩偏差，第二项量化训练噪声怎样影响未来预测。它与后验参数协方差$\bm V_n$不同：后验区间的模型内概率不能代替固定真函数的预测风险。若真参数也按所设先验产生，后验预测分布就直接描述该联合概率模型下的新响应。
 
 有限维贝叶斯线性模型已经诱导出函数上的高斯分布：
 \[
@@ -1357,7 +1859,7 @@ $\tfrac12(\bm{w}-\bm{m}_n)^{\top}\bm{V}_n^{-1}(\bm{w}-\bm{m}_n)$加常数。精�
 \end{equation}
 二次项评价响应与协方差结构的匹配，行列式项来自密度归一化，两者共同决定目标。行列式随核的尺度和相关结构变化，外层优化据此选择当前核族中的超参数；所选结构的预测效果仍需用样本外数据检查。
 
-若$\bm{a}=\bm{C}^{-1}\bm{y}$，固定零均值模型的梯度为
+学习超参数没有OLS那样的闭式解。我们可以计算边缘对数似然随每个超参数的变化，再沿增大它的方向迭代。固定零均值，记$\bm a=\bm C^{-1}\bm y$；对式\eqref{eq:regression-gp-evidence}关于$\theta_j$求导得到
 \[
   \frac{\partial\log p(\bm{y})}{\partial\theta_j}
   =\tfrac12\operatorname{tr}\!\left[
@@ -1368,20 +1870,27 @@ $\tfrac12(\bm{w}-\bm{m}_n)^{\top}\bm{V}_n^{-1}(\bm{w}-\bm{m}_n)$加常数。精�
 
 数值计算使用Cholesky分解$\bm{C}=\bm{L}\bm{L}^{\top}$。解两次三角方程得到$\bm{a}$后，预测均值为$\bm{k}_{\star}^{\top}\bm{a}$；令$\bm{v}=\bm{L}^{-1}\bm{k}_{\star}$，预测方差为$k(\bm{x}_{\star},\bm{x}_{\star})-\lVert\bm{v}\rVert_2^2$。稠密分解需要$O(n^3)$时间、$O(n^2)$存储，预计算后的单点均值需$O(n)$算术加核计算，单点方差通常需$O(n^2)$三角求解。均值与方差不能统称同一个预测代价。
 
-大数据下可选取$m\ll n$个输入位置$\bm{z}_j$，以潜在函数值$u_j=f(\bm{z}_j)$作为\term{诱导变量}（inducing variables），通过它们的近似后验概括数据对函数的约束。Titsias的变分诱导点方法在高斯回归中优化边缘对数似然的变分下界，以选择诱导输入并近似后验，常见稠密计算规模为$O(nm^2)$；后续随机变分方法进一步支持小批量训练。近似是否充分，仍需检查诱导表示能否保留任务所需的函数变化\scite{titsias2009}。
-
 \subsubsection{理论分析}
 \label{sec:regression-gpr-theory}
 
-GPR的核规定未知函数怎样变化，训练观测通过高斯条件分布更新这些函数值。固定核和正噪声方差时，这一步是正定线性系统求解；继续学习核超参数时，外层目标则可能非凸。样本增加后的后验集中属于另一个统计问题，需要明确抽样制度、真函数光滑性与先验尺度，区间覆盖也要按相应模型和超参数处理评价。
+固定核与噪声参数以后，GPR的后验更新归结为正定线性系统。这个计算是否准确，与核所允许的函数能否接近真实关系，是两个不同的误差来源。下面先考察后验均值的函数表示和求解，再将它视作一个回归器，计算独立新样本上的预测风险。
 
 \paragraph{表达能力}
-GPR的核规定函数变化的先验结构和平滑尺度，后验均值用训练点处的核函数组合预测。核尺度过大可能压平目标中的局部变化，观测范围不足则使部分输入上的后验主要受先验影响。核与噪声设定还共同决定后验区间，因此精确条件计算的意义始终依赖这些表示假设。
+固定先验均值$m_0$与核$k$后，考察候选函数$m_0+h$，其中$h$属于核截面的有限线性组合或其RKHS闭包。逼近目标$m$的能力取决于$m-m_0$到这个空间的距离。有限秩核只提供固定特征的张成空间；高斯核在紧致输入域上可一致逼近任意连续目标，但限制RKHS范数后，最佳距离未必为零\scite{steinwart2001kernel}。
+
+例如，$k(x,x')=1+xx'$且$m_0=0$时，所有候选都是仿射函数。对均匀输入$X\in[-1,1]$与$m(x)=x^2$，最佳平方逼近误差的一半仍为$2/45$；换用包含二次特征的核，才能精确表示该目标。若目标是完整条件分布，还要检查高斯噪声这一假设：候选条件响应为$\mathcal N(f(\bm x),\sigma^2)$时，任何均值函数都无法精确表达两个峰分离的高斯混合分布。改变均值核可以增加曲线的自由度，却不能单独解除响应族的限制。
 
 \paragraph{收敛性}
-固定核超参数与正噪声方差后，精确GPR通过正定线性系统求解后验，其计算误差来自线性系统的数值求解。若用迭代线性求解器替代矩阵分解，其收敛仍取决于矩阵条件数和算法；外层核超参数优化则可能是非凸的，不能沿用内部线性求解的保证。
+固定核超参数与$\sigma^2>0$后，$\bm C=\bm K+\sigma^2\bm I$正定，后验所需线性系统存在唯一解。Cholesky直接求解需要$O(n^3)$运算。也可把求解写成光滑强凸二次优化：梯度法以$1/\lambda_{\max}(\bm C)$为步长几何收敛，速率由条件数$\kappa_C=\lambda_{\max}(\bm C)/\lambda_{\min}(\bm C)$决定。共轭梯度法从初值$\bm a^{(0)}$出发，在精确算术下满足
+\[
+ \|\bm a^{(t)}-\bm a_\star\|_{\bm C}
+ \leq2\left(\frac{\sqrt{\kappa_C}-1}{\sqrt{\kappa_C}+1}\right)^t
+ \|\bm a^{(0)}-\bm a_\star\|_{\bm C},
+ \quad\|\bm v\|_{\bm C}^2=\bm v^\top\bm C\bm v.
+\]
+这个界的依据见\BookEquationRef{eq:ch06-cg-condition-bound}{第一卷“数学准备”的共轭梯度条件数误差界}。改善条件数或使用预条件可以减少所需迭代；每次稠密矩阵乘法仍需$O(n^2)$运算。外层学习核超参数的边缘似然则可能非凸，既不保证全局最优，也不能把内部求解速率移用于超参数搜索。
 
-后验均值还能解释为正则化核回归的最优解。为建立这一联系，回顾第\ref{sec:classic-overview-kernel-validity}节的再生核Hilbert空间（RKHS）：记核$k$对应的函数空间为$\mathcal H_k$，其核截面满足$f(\bm{x})=\langle f,k(\bm{x},\cdot)\rangle_{\mathcal H_k}$。这一再生关系把函数取值化为内积，也使核范数可以作为函数复杂度惩罚。
+GP先验是随机函数的概率律，RKHS则是由核定义的确定性函数空间；无限维GP的样本函数一般不属于该RKHS。两者的联系体现在后验均值的求解上：后验均值还能解释为正则化核回归的最优解。为建立这一联系，回顾第\ref{sec:classic-overview-kernel-validity}节的再生核Hilbert空间（RKHS）：记核$k$对应的函数空间为$\mathcal H_k$，其核截面满足$f(\bm{x})=\langle f,k(\bm{x},\cdot)\rangle_{\mathcal H_k}$。这一再生关系把函数取值化为内积，也使核范数可以作为函数复杂度惩罚。
 
 数据拟合项只依赖训练点上的有限个函数值。严格递增的范数惩罚会排除这些取值无法识别的正交分量；在最优解存在且最优值有限时，最优函数可限制到训练点核截面的张成空间（参考\BookTheoremRef{thm:functional-representer-theorem}{卷1《数学准备：计算、分析与几何》第7章“函数空间”第7.4.2节“有限观测下的函数拟合”}）。
 
@@ -1401,16 +1910,38 @@ GPR的核规定函数变化的先验结构和平滑尺度，后验均值用训�
 将$\lambda=\sigma^2/n$代入该解，与式\eqref{eq:regression-gp-posterior}的零均值后验预测完全一致。非零先验均值时，应对$\bm{y}-\bm{m}_0$做相同核岭拟合，再加回$m_0(\bm{x})$。等价关系要求核尺度、均值和截距处理一致；若某个模型额外加入不受惩罚的截距，其解通常需要另解增广系统。
 
 \paragraph{泛化性}
-点预测相同以后，推断仍需明确要评价哪一种不确定性。GP方差是模型内潜在函数的后验不确定性，KRR目标本身只确定一个函数估计；后者也可以配合频率学理论或校准构造区间。固定核超参数时，GP后验方差只依赖输入与噪声设定，不直接依赖观测响应；输入间的相关性由核决定，不能简单归纳为“欧氏距离越远方差必然越大”。高斯可信区间在先验模型下有后验概率解释，模型失配或超参数估计后不自动具有同样的重复抽样覆盖率。
+先将后验均值当作一个已经确定的回归算法，评价它在独立未来记录上的平方风险。这里可以固定真实函数，不要求它由所用GP先验产生。
 
-后验收缩研究样本增加时后验质量是否集中到真实函数附近。已有理论把收缩速度与先验函数落入小半径范数球的概率、真函数相对于RKHS的可逼近性及先验尺度联系起来。前一种概率称为小球概率，它衡量先验在局部函数邻域内分配了多少质量；固定设计与随机设计的结论还需分别说明所使用的函数距离\scite{vaart2008gp}。
+\begin{theorem}[高斯过程回归在固定核与设计下的期望平方风险]
+ \label{thm:regression-gpr-risk}
+ 固定训练输入、先验均值$m_0$、核与模型噪声方差$\sigma^2>0$，记$\bm C=\bm K+\sigma^2\bm I$。真实训练响应为$\bm y=\bm m+\bm\varepsilon$，其中$\bm m_i=m(\bm x_i)$，训练噪声条件均值为零、协方差为$\tau^2\bm I$。独立未来记录的条件均值同为$m$，相应二阶矩有限。令
+ \[
+ \begin{aligned}
+  d(\bm x)&=m_0(\bm x)+\bm k_{\bm x}^\top\bm C^{-1}
+        (\bm m-\bm m_0)-m(\bm x),\\
+  V(\bm x)&=\tau^2\|\bm C^{-1}\bm k_{\bm x}\|_2^2.
+ \end{aligned}
+ \]
+ 后验均值作为预测器时，满足
+ \[
+  \mathbb E_{\bm\varepsilon\mid\bm X_{1:n}}
+       [R(\widehat m)-R(m)]
+  =\frac12\int[d(\bm x)^2+V(\bm x)]P_X(d\bm x).
+ \]
+ 若$|d|\leq D$且$\int V\,dP_X\leq v$，则平均超额期望风险至多为$(D^2+v)/2$。
+\end{theorem}
 
-例如，在$\alpha>0$阶光滑函数的非参数回归比较中，常见的$L^2$误差尺度为$n^{-\alpha/(2\alpha+d)}$，其平方尺度则为$n^{-2\alpha/(2\alpha+d)}$。某个GP先验能否达到这样的尺度，还取决于平滑度与先验尺度的匹配，以及具体观测设定和距离。后验收缩本身也不自动给出后验均值风险界或可信区间的频率覆盖保证。
+将后验均值中的响应拆成真实均值与零均值噪声，就得到$d$与$V$；对未来输入积分即得风险结论。这里$\tau^2$是真实噪声方差，未必等于模型使用的$\sigma^2$。$V$反映固定真实函数下的重复训练波动，与后验方差$k(\bm x,\bm x)-\bm k_{\bm x}^\top\bm C^{-1}\bm k_{\bm x}$所平均的先验随机性不同。
 
-\subsubsection{支持非高斯似然（拉普拉斯近似与期望传播）}
+核岭回归的等价目标还允许使用引理\ref{thm:regression-rkhs-risk}，在响应有界、核对角有界且核与正则化参数预定时控制期望风险。其范数范围随正则化强度变化；取$\lambda=\sigma^2/n$并不能单独保证风险界随样本量消失。用响应选择核或超参数后，需要控制整个候选范围，不能仅沿用固定核结论。
+
+若真实函数也按所设GP先验产生，则高斯条件分布另给出模型内的结论：给定观测，后验均值的潜在函数平方预测误差的后验期望等于后验方差；预测未来响应还需加上噪声方差。这是平均先验随机性的结论。固定真函数下的风险与可信区间重复抽样覆盖，需要各自的条件；估计超参数后也不能把固定核结论直接沿用。
+
+\subsubsection{优化表达能力}
+
 \label{sec:regression-gp-nongaussian}
 
-计数或二分类响应需要不同似然。仍可设潜在函数服从GP，借助$\exp(f)$或logistic函数映射到条件均值，但$p(\bm{f}\mid\bm{y})\propto p(\bm{y}\mid\bm{f})p(\bm{f})$一般不再是高斯，不能继续使用精确高斯回归公式。
+计数响应不能由连续高斯似然准确描述其取值范围。仍可设潜在函数服从GP，借助$\exp(f)$映射到条件均值，并按计数分布选择观测似然，但$p(\bm{f}\mid\bm{y})\propto p(\bm{y}\mid\bm{f})p(\bm{f})$一般不再是高斯，不能继续使用精确高斯回归公式。
 
 \term{拉普拉斯近似}（Laplace approximation）在后验众数$\widehat{\bm{f}}$附近用二阶Taylor展开近似对数密度。若零均值先验的$\bm{K}$正定，并在众数处定义$\bm{W}=-\nabla^2\log p(\bm{y}\mid\bm{f})$，后验局部高斯近似为
 \[
@@ -1421,96 +1952,63 @@ GPR的核规定函数变化的先验结构和平滑尺度，后验均值用训�
 
 \term{期望传播}（expectation propagation, EP）用便于处理的近似因子替代逐个似然因子，在移除当前近似因子后形成的分布上加入真实因子，再匹配相应矩。它与拉普拉斯近似使用不同的局部信息，不保证对所有问题都更准确或必然收敛。变分推断则通过优化分布族中的近似准则处理后验，并可结合诱导变量。无论采用哪一种近似，最终的观测预测仍需积分$p(y_{\star}\mid f_{\star})$；潜在高斯的均值方差并不意味着观测响应也服从高斯\scite{rasmussen2006}。
 
+\subsubsection{优化计算能力}
+
+\label{sec:regression-gp-computation}
+
+稠密核矩阵的成本随样本数迅速增加。若可以用较少的输入位置保留主要函数变化，就不必为每一条训练记录维持同样规模的后验表示。
+
+大数据下可选取$m\ll n$个输入位置$\bm{z}_j$，以潜在函数值$u_j=f(\bm{z}_j)$作为\term{诱导变量}（inducing variables），通过它们的近似后验概括数据对函数的约束。Titsias的变分诱导点方法在高斯回归中优化边缘对数似然的变分下界，以选择诱导输入并近似后验，常见稠密计算规模为$O(nm^2)$；后续随机变分方法进一步支持小批量训练。近似是否充分，仍需检查诱导表示能否保留任务所需的函数变化\scite{titsias2009}。
+
 \subsubsection{小结}
 
-GPR用核规定函数先验，在高斯噪声下精确更新任意有限查询集合的分布。有限维贝叶斯线性模型、非线性核和非高斯似然都可在这一思路中理解，但核选择、超参数估计与近似推断分别引入新的条件。计算瓶颈主要来自训练协方差矩阵；只需点预测与还需完整方差时，计算预算并不相同。
+GPR用核描述不同输入处的函数关系，用似然连接函数与响应，再由观测更新函数的不确定性。有限维贝叶斯线性模型与非线性核对应不同的函数表示；若高斯观测似然不适合响应，可以更换似然，但后验通常不再具有原来的闭式形式。拉普拉斯近似利用后验众数附近的曲率，期望传播逐个近似似然因子并匹配矩，两者处理同一计算困难，却使用不同信息，需要分别检查近似与数值收敛。
+
+样本规模扩大带来的是另一种困难：训练核矩阵的分解与存储变得昂贵。Titsias提出的变分诱导变量方法用少量潜在函数值概括观测对函数的约束，并通过变分目标选择诱导位置与核参数。它减少计算量，也引入了近似误差；只需点预测与还需完整方差时，对诱导表示和计算预算的要求并不相同\scite{titsias2009}。
 
 第\ref{sec:dim-gplvm}节的GPLVM复用GP核协方差和边缘似然计算，却把低维输入坐标也作为未知量：GPR从已观测输入预测数值响应，GPLVM则从高维观测反求低维坐标并学习由低维空间到观测空间的映射。二者共享概率函数表示，不共享任务方向与待估计对象。
 
 \subsection{模型对比与总结}
 
-贝叶斯线性回归与GPR的共同点是对函数不确定性进行更新，区别主要在于表示方式与计算所依赖的规模变量。有限特征模型也可以通过非线性基表示曲线；GP也可以使用有限秩核，因此不能把两者简单分成“只能线性”和“必然无限维”。若显式基维数为$p$，贝叶斯线性回归的稠密训练通常需$O(np^2+p^3)$运算，而一般稠密GP主要受$n$控制；低秩表示可以在两种计算形式之间转换。
+有限数据使系数或函数仍有不确定性，贝叶斯线性回归与GPR都用先验和观测形成后验。二者的区别在函数表示：前者用有限基系数，后者用核规定输入处函数值的共同变化；非线性基与有限秩核又使这两种表示相接。有限基的主要矩阵规模随基维数增长，稠密GPR的矩阵规模随训练样本量增长，诱导变量近似再用较少位置概括函数约束。选择时既要比较表示是否足够，也要区分只计算预测均值与还要计算方差的成本。
 
-模型内后验区间在给定似然、先验和超参数处理下具有后验概率含义。分布无关覆盖方法则先固定已训练回归器及其评分规则，再用与训练分离的校准样本设定预测范围。条件于训练资料与训练随机性后，若校准样本与未来测试样本可交换，同一固定评分的共形秩构造可给出边际覆盖保证；这里的概率同时平均校准集与未来样本。分割共形预测可以校准点预测的残差；共形分位数回归（conformalized quantile regression, CQR）则保留已拟合的有序上下分位点随输入变化的形状，再用留出分数修正边际覆盖（参考\BookSectionRef{sec:reliability-guarantee}{卷3《基础、理论与可信性》第11章“可靠性”第11.3节“可靠性的保证”}）\scite{angelopoulos2022conformal,romano2019cqr}。这种覆盖保证允许基础回归器失配，但拟合质量会影响预测范围的宽度。比较区间还需同时报告覆盖与宽度。
+预测对象不同，也需要不同的不确定性描述。后验区间依赖似然、先验和超参数处理；共形方法则在已训练预测器之外增加独立校准步骤，用留出残差或分位数分数调整预测范围。它们的构造与解释应分别核对，不能只按区间宽窄判断质量。覆盖条件及评价见\BookSectionRef{sec:reliability-guarantee}{卷3《基础、理论与可信性》第11章“可靠性”第11.3节“可靠性的保证”}\scite{angelopoulos2022conformal,romano2019cqr}。
 
-贝叶斯方法还能与其他模型结合。\term{贝叶斯加性回归树}（Bayesian additive regression trees, BART）对树之和及叶参数设置正则化先验，使用后验采样获得函数和预测分布，连接了本章的树路线与概率路线\scite{chipman2010bart}。
+若关心条件方差、偏度或尾部随输入怎样变化，第\ref{sec:regression-distributional}节的分布回归直接建模这些参数；若关心有限数据下函数估计的变化，则需要参数或函数后验。两种做法可以结合，却承担不同的建模选择：前者需指定响应分布族及各参数的输入结构，后者需指定先验、核与超参数处理。响应波动和函数估计不确定性因此需要分别检查。
 
-贝叶斯神经网络对网络权重设置先验；在特定独立权重先验、尺度和无限宽极限下，某些网络诱导的函数分布趋于GP，并非任意网络结构或训练过程都具有这种极限。狄利克雷过程混合回归则对混合分布采用非参数先验，允许有效成分随数据变化；其优势在于表达多模态条件分布，成分解释与可识别性仍需检查。概率模型为决策提供分布信息，同时需要承担分布设定、后验计算与校准的成本。
-
-\section{基于集成的回归}
-\label{sec:regression-ensemble}
-
-第\ref{sec:classic-overview-ensemble}节已给出Bagging、Boosting和Stacking的基本动机，第\ref{chap:ensemble-learning}章进一步说明成员怎样生成、依赖与组合。用于回归时，需要确定成员输出及组合后的预测对象：随机森林通常平均按平方损失训练的树预测；梯度提升的目标由所选回归损失决定；Stacking则由元学习器按回归目标组合成员预测。平均条件均值预测仍输出条件均值的估计；若任务要求分位数或覆盖区间，需要改变训练、聚合或校准规则。
-
-比较树集成时，树深、树数、特征抽样、学习率和早停都应在训练流程中选择。袋外误差可以辅助诊断，仍不能替代最终测试；组合后也不能直接移植单棵树的剪枝最优性或独立叶平均证明。
-分类投票的错误变化取决于成员错误的依赖，平均得分的方差变化取决于成员间的协方差；二分类AdaBoost则在各轮取得带权优势时控制训练误差上界，并结合投票类的容量或间隔分析总体风险（参考\BookSectionRef{sec:boosting}{卷3《基础、理论与可信性》第5章“二分类学习的可学习性”第5.6节“集成学习”}）。第\ref{sec:ensemble-quality-dependence-diversity}节讨论成员质量和错误依赖。实际选型应按表\ref{tab:regression-evaluation-protocol}中的预测对象比较误差、分布质量或区间覆盖，并同时记录训练与查询成本。
-
-\section{模型选择与评价}
-\label{sec:regression-evaluation}
-
-\subsection{方法比较}
-
-回归方法可能估计条件均值、指定分位数或完整分布。表\ref{tab:regression-navigation}把预测对象与函数表示、训练准则和区间解释放在一起比较；改变损失或概率设定，同一表示也可以服务于不同目标。
-
-\begin{table*}[htbp]
-  \centering
-  \small
-  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{25mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
-    \toprule
-    代表方法 & 预测对象 & 函数表示 & 训练准则 & 推断或校准 \\
-    \midrule
-    OLS & 条件均值 & 固定线性特征映射 & 平方损失 & 模型假设下的参数与预测区间 \\
-    岭、Lasso & 条件均值的受约束逼近 & 固定线性特征映射 & 平方损失加$\ell_2$或$\ell_1$系数惩罚 & 不自动给出区间，需另加推断模型 \\
-    分位数回归 & 指定条件分位数 & 线性特征映射 & 分位数损失 & 抽样假设下的分位数推断 \\
-    SVR & 容忍带点预测 & 线性特征或核展开 & $\epsilon$不敏感损失加范数惩罚 & 不自带概率解释 \\
-    GLM、GAM & 经链接的条件均值 & 线性预测器或可加函数 & 似然或惩罚似然 & 响应模型假设下的参数与预测区间 \\
-    分布回归 & 完整条件分布 & 各分布参数的线性或平滑函数 & 多参数似然或惩罚似然 & 模型内预测分布，校准需样本外检查 \\
-    $k$-NN、LOESS & 局部条件均值 & 邻域常数或局部多项式 & 局部加权平方损失 & 不自动给出区间，需另建推断或覆盖程序 \\
-    CART & 叶内均值、分位数或其他统计量 & 递归分区上的分段常数 & 分裂损失与复杂度惩罚 & 不自动给出有效区间 \\
-    随机森林 & 条件均值；变体可估计条件分位数 & 随机树的平均 & 单棵树的分裂损失 & 不自动给出有效区间 \\
-    梯度提升 & 由损失确定的条件目标 & 基学习器的逐步加和 & 分阶段最小化经验风险 & 不自动给出有效区间 \\
-    贝叶斯线性回归、GPR、BART & 未来响应的后验预测 & 有限基、核函数或树之和 & 后验密度（似然与先验） & 参数或函数后验、模型内后验区间与后验预测分布 \\
-    \bottomrule
-  \end{tabularx}
-  \caption{回归方法的属性导航。各行登记本章代表方法的基本形式，而不是划分互斥类别；改变损失、叶输出或概率设定后，同一函数表示可以对应不同预测对象。}
-  \label{tab:regression-navigation}
-\end{table*}
-
-\subsection{评价与选择}
-
-模型的输出决定了评价对象。训练损失描述当前数据上的拟合，验证结果选择模型与复杂度，独立测试则评价选择完成后的预测；表\ref{tab:regression-evaluation-protocol}按输出类型固定训练、选择、独立校准和测试证据的职责。共形预测等方法另用独立校准数据估计覆盖修正；模型内区间则由相应响应模型或后验设定构造。完整分布的比较应使用\term{适当评分}（proper scoring rule），即在期望意义下鼓励报告真实分布的评分规则；对数得分与连续秩概率得分（continuous ranked probability score, CRPS）是常见选择。
-
-\begin{table*}[htbp]
-  \centering
-  \small
-  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{20mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
-    \toprule
-    输出类型 & 训练证据 & 选择证据 & 独立校准证据 & 测试证据 \\
-    \midrule
-    点均值 & 平方损失或均值模型似然 & 验证MSE选择表示与复杂度 & 不另设；若需覆盖则转入区间程序 & 独立测试MSE、残差与分组误差 \\
-    条件分位数 & 对应$\tau$的分位数损失 & 验证分位数损失、尾部样本量与分位数交叉 & 不另设；原始分位点按其损失评价 & 测试分位数损失与经验超越率 \\
-    模型内或参数化区间 & 拟合区间所需的响应或后验模型 & 验证集选择模型与超参数 & 不需要独立校准；区间由已拟合模型构造 & 测试覆盖率、宽度及分组表现 \\
-    共形覆盖区间 & 训练折拟合基础预测器或端点 & 校准前选定基础模型与超参数 & 独立校准集估计不合格分数分位数 & 测试覆盖率、宽度及分组表现 \\
-    完整分布 & 似然、对数得分或其他适当评分 & 验证适当评分及分布诊断 & 通常不另设；再校准时单独留出 & 测试对数得分或CRPS、校准与锐度 \\
-    \bottomrule
-  \end{tabularx}
-  \caption{不同回归输出的评价协议。模型内或参数化区间依赖其响应模型、抽样假设或后验设定；共形覆盖区间才用独立校准样本估计覆盖修正。测试数据始终留到选择与校准结束之后。}
-  \label{tab:regression-evaluation-protocol}
-\end{table*}
-
-适当评分怎样连接概率预测、估计与模型选择，可参见Gneiting与Raftery的统一讨论\scite{gneiting2007scoring}。以章首房价任务为例，可以先把成交记录按部署时间或地区规则划分，再在每个训练折内完成缺失值处理、标准化、特征选择和模型拟合，用验证结果选择线性、局部、树或概率表示及其超参数。随后检查残差随面积、地区和价格水平的变化，形成模型失配与区间宽度的诊断。若交付共形覆盖区间，还要在模型与超参数冻结后，用未参与拟合和选择的校准集确定覆盖修正；模型内或参数化区间不因此强制另留校准集。完成这些步骤后，才在独立测试集上按表\ref{tab:regression-evaluation-protocol}报告与交付对象匹配的误差、覆盖或分布评分。若看过测试结果后再改模型，该批数据就不再是最终测试证据。
-
-选型时先由决策问题确定输出：只需平均成本时比较条件均值风险，关心阈值超越时估计相应分位数，需要完整风险积分时才承担分布建模成本。若要求模型无关的有限样本覆盖承诺，再为分割共形或CQR留出独立校准数据；若采用模型内后验区间或参数化频率学区间，则按各自假设构造，并在独立测试数据上检查覆盖与宽度。随后用残差结构判断表示：近似全局关系优先从线性或可加模型开始，局部平滑关系比较邻域方法，明显阈值和交互比较树及其集成；最后在同一验证协议下权衡误差、校准、时间、存储和解释需求。显式线性模型可把训练信息压缩为固定系数，局部方法要保留查询库，核与集成方法则取决于展开规模、树数及是否计算分布信息。
-
-\Needspace{18\baselineskip}
+\Needspace{6\baselineskip}
 \section{本章小结}
 \label{sec:regression-summary}
 
-房价预测中的平均价格、预算阈值和价格分布，分别需要条件均值、条件分位数和分布信息。平方损失、分位数损失与概率似然规定这些不同目标，线性与核、邻域、树与规则则规定用怎样的函数去拟合。两项选择共同决定学得结果的含义，集成也必须按同一个输出目标组合成员。
+房价预测中的平均价格、预算阈值和价格分布，分别需要条件均值、条件分位数和分布信息。平方损失、分位数损失与概率似然规定不同目标，线性与核、邻域、树与规则则规定可用的函数表示。关系中缺少曲率或交互时，需要改变表示；数据难以分辨系数时，需要约束或压缩估计方向；异常响应影响过大时，需要调整残差的作用。扩展针对的环节不同，不能只按模型复杂程度排列。
 
-表示更灵活时，可以拟合更多变化，也需要数据来分辨这些变化，并承担相应的计算成本。正规方程、凸优化和有限搜索分别回答求解问题，独立测试上的损失与分布诊断才评价未来预测。响应噪声、函数估计不确定性和区间覆盖各有不同对象，第\ref{sec:regression-evaluation}节据此把点误差、区间宽度与覆盖、分布评分和资源成本放在相应条件下比较。
+各类回归输出在拟合、选择、校准与最终测试中的分工见表\ref{tab:regression-evaluation-protocol}。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{22mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    输出 & 拟合与验证选择 & 独立校准 & 最终测试 \\
+    \midrule
+    条件均值 & 平方损失或均值模型似然；验证MSE & 点预测不另设 & MSE、残差与分组误差 \\
+    条件分位数 & 对应$\tau$的损失；检查尾部记录与交叉 & 原始分位点不另设 & 分位数损失与经验超越率 \\
+    模型内区间 & 拟合响应或后验模型；选择超参数 & 按模型构造；若再校准则单独留出 & 覆盖率、宽度与分组表现 \\
+    共形覆盖区间 & 拟合基础预测器；校准前选定模型 & 留出记录估计不合格分数分位数 & 覆盖率、宽度与分组表现 \\
+    完整分布 & 似然或适当评分；验证分布诊断 & 若作再校准则单独留出 & 对数得分或CRPS、校准与锐度 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{不同回归输出的评价分工。模型内区间依赖其响应模型、抽样或后验设定，共形覆盖区间用独立校准记录估计覆盖修正。最终测试留到模型选择与校准结束之后。}
+  \label{tab:regression-evaluation-protocol}
+\end{table*}
+
+评价也应与交付对象对应。条件均值用平方误差比较，分位数用对应分位数损失比较，区间同时检查覆盖与宽度。完整分布采用\term{适当评分}（proper scoring rule），即在期望意义下鼓励报告真实分布的评分规则；常用对数得分或连续秩概率得分（continuous ranked probability score, CRPS）\scite{gneiting2007scoring}。
+
+以房价任务为例，先按部署时间或地区划分数据，在每个训练折内完成缺失值处理、标准化、特征选择和拟合，再用验证结果选择表示与超参数。若交付共形覆盖区间，还需在模型冻结后，用未参与拟合与选择的校准集确定覆盖修正。随后才用独立测试数据报告与输出相符的误差或分布诊断；看过测试结果后再调整模型，该批数据便不再是最终测试证据。模型内区间由相应模型构造，不因报告覆盖与宽度就必须另设校准集。
+
+表示更灵活，需要更多数据分辨变化，也会增加计算与解释的成本。显式线性模型把训练信息压缩为系数，局部方法保留查询库，核方法的成本取决于展开规模与所需分布信息。应在同一验证流程下比较预测质量、存储、查询预算和解释需求，同时区分响应噪声、函数估计不确定性与区间覆盖各自回答的问题。
 
 第\ref{chap:classification}章把数值响应换成类别标签，仍使用线性与核、近邻、分区和概率模型；任务改变后，输出、损失、邻域聚合与决策规则也随之改变。
 
 \paragraph{扩展阅读}
-Bishop的教材第3章从线性基函数模型展开估计与贝叶斯回归，第6章解释核方法，可以进一步对照响应噪声和参数不确定性如何进入预测分布。Hastie等的教材则比较正则化、局部回归与树回归，适合继续考察不同表示怎样改变误差与计算代价\scite{bishop2006,hastie2009}。
+Bishop教材第3、6章展开线性基函数、贝叶斯回归与核方法；Hastie等的教材比较正则化、局部回归与树回归，可进一步对照不同表示的误差和计算代价\scite{bishop2006,hastie2009}。

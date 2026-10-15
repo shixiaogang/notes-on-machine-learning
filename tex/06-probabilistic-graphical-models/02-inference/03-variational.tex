@@ -3,25 +3,38 @@
 
 消元和团树通过中间因子保存变量之间的依赖（第~\ref{chap:pgm-elimination}、\ref{chap:pgm-junction-tree}章）。局部因子虽然很小，中间团却可能包含许多变量，使联合推断的时间和存储成本迅速增长。面对这一瓶颈，我们可以限制后验分布的表达形式，在可计算的分布族中寻找近似；若任务只需要一组最可能的配置，则可以放宽配置约束，先求解较容易的连续优化问题。前一条路线保留概率和不确定性，后一条路线选择离散配置，其误差需要分别衡量。
 
-本章设模型参数已知。对于观测$\bm{x}$和潜变量$\bm{z}$，分布查询以$p(\bm{z}\mid\bm{x})$为目标，计算边缘概率和期望；近似方法可能输出全局分布、局部概率表或高斯近似。配置查询则将证据吸收到因子中，为全部未观测变量选择一组联合最优值，即最可能解释（most probable explanation, MPE）。围绕这两类查询，后文依次讨论近似对象的选择、误差的衡量和优化的求解。
-
-图~\ref{fig:pgm-variational-query-map}给出两类查询的阅读路线：需要边缘概率、期望或不确定性时，进入第~\ref{sec:pgm-variational-posterior}节；只需全部未观测变量的一组最大得分配置时，进入第~\ref{sec:pgm-variational-mpe}节。下一节先建立共同的优化表示，后文再解释图中的方法及其组合方式。
-\begin{figure*}[htbp]
-  \centering
-  \includegraphics[width=141.563mm]{figures/06-probabilistic-graphical-models/02-inference/generated/pgm-variational-query-map/figure.png}
-  \caption{按查询选择阅读路线。上支保留后验或边缘不确定性，下支回答完整配置MPE；图中的实线与虚线用于区分两支，不表示精确与近似。方法按所改变的对象分组，同一分支内的近似族、计算组织与优化方式可以组合。正温度TRW近似分布查询，零温度TRW提供MPE得分上界；含求和与最大化的边缘MAP不在本图范围内。}
-  \label{fig:pgm-variational-query-map}
-\end{figure*}
-\FloatBarrier
+本章设模型参数已知。对于观测$\bm{x}$和潜变量$\bm{z}$，分布查询以$p(\bm{z}\mid\bm{x})$为目标，计算边缘概率和期望；近似方法可能输出全局分布、局部概率表或高斯近似。配置查询则将证据吸收到因子中，为全部未观测变量选择一组联合最优值，即最可能解释（most probable explanation, MPE）。围绕这两类查询，后文依次讨论近似对象的选择、优化求解与误差诊断。
 
 \section{变分推断的统一视角}
+
 \label{sec:pgm-variational-unified}
 \label{sec:pgm-variational-duality}
 
-设$p(\bm{x})$有限且为正；对于连续观测，它表示观测位置的边缘密度。直接表示后验的困难在于依赖关系及归一化计算。我们选取容易归一化、求期望或采样的分布族$\mathcal Q$，从中选择$q$逼近后验。\term{变分推断}（variational inference, VI）由此把后验计算转化为分布优化，保留近似族能够表达的不确定性和依赖。
+设备报警后，要判断故障有多大可能，我们需要的是给定报警的状态分布，而不是先选定一种故障状态。推广到一般模型，固定观测$\bm x$和模型参数，用随机向量$\bm Z$表示尚未观测、需要推断的变量。联合模型给出了各个配置的权重$p(\bm x,\bm z)$，后验则要把这些权重归一化：
+\[
+  \pi(\bm z):=p(\bm z\mid\bm x)
+    =\frac{p(\bm x,\bm z)}{p(\bm x)},
+  \qquad p(\bm x)=\int p(\bm x,\bm z)\,d\bm z.
+\]
+本章用积分统一表示连续与离散情形；离散变量的积分改为求和。假设$0<p(\bm x)<\infty$；连续观测下，$p(\bm x)$是观测位置的边缘密度。单个配置的联合权重即使容易评价，累加所有配置仍可能很昂贵。例如，$d$个二元未知变量共有$2^d$种配置；局部分解可减少重复运算，但消元中出现的大团仍可能使计算难以承受。连续变量还可能留下无法解析计算的高维积分。
 
-用反向KL衡量$q$与后验$\pi=p(\cdot\mid\bm x)$的差距时，可以将未知的对数证据与可优化的项分开。
-要求$q\ll\pi$且$D_{\mathrm{KL}}(q\Vert\pi)<\infty$，并将证据下界（evidence lower bound, ELBO）定义为整体对数比的期望：
+如果暂时无法求出$\pi$，可以先构造一个容易查询的分布$q$，用它给同一组未知变量分配概率。对设备模型，固定$A=1$后，$q$仍是$(F,H,S)$上的联合分布，故障概率就用$q(F=1)$近似。若查询的是某个实值统计量$f(\bm Z)$的后验期望，则用$\mathbb E_q f(\bm Z)$近似$\mathbb E_\pi f(\bm Z)$，两者均须存在。这里改变的是计算所用的分布，观测和原模型保持固定。只输出一个配置无法保留这些概率与期望，因此$q$需要描述未知变量的整个分布。
+
+接下来要决定允许使用哪些$q$，以及怎样选出其中较合适的一个。记候选分布族为$\mathcal Q$；例如可用高斯的均值和协方差调整$q$，也可用每个二元变量取$1$的概率规定一个独立乘积分布。若候选写成$q_{\bm\lambda}$，$\bm\lambda\in\Lambda$就是待调整的分布参数，$\Lambda$包含方差为正或概率位于$[0,1]$等约束。调整$\bm\lambda$便是在候选族中选择一个分布，这就是\term{变分推断}（variational inference, VI）将后验计算改写为分布优化的含义\scite{bishop2006,pgm-cmu2017-vi}。
+
+选择$q$需要一个比较准则。反向KL以$q$为积分权重，衡量它与目标后验$\pi$的差异；两者相同时KL为零。因此，我们希望在$\mathcal Q$中减小$D_{\mathrm{KL}}(q\Vert\pi)$。“反向”指参数顺序；本章的$D_{\mathrm{KL}}$和$\operatorname{KL}$表示同一散度。若改用$D_{\mathrm{KL}}(\pi\Vert q)$，期望要在难以查询的真实后验下计算。反向KL把期望放到我们能够控制的$q$下，但它的定义仍含未知的$p(\bm x)$，还需要消去这个计算障碍。
+
+将$\pi(\bm z)=p(\bm x,\bm z)/p(\bm x)$代入KL。因为$\bm x$固定，$\log p(\bm x)$对所有$\bm z$都是同一个常数，又因为$q$的总质量为$1$，便有
+\[
+  \begin{aligned}
+    D_{\mathrm{KL}}(q\Vert\pi)
+      &=\mathbb E_q\log\frac{q(\bm Z)}{p(\bm x,\bm Z)}
+          +\log p(\bm x)\\
+      &=\log p(\bm x)
+          -\mathbb E_q\log\frac{p(\bm x,\bm Z)}{q(\bm Z)}.
+  \end{aligned}
+\]
+这一步把目标拆成两项：第一项对所有候选$q$相同，第二项只涉及联合权重和候选分布。比较候选时无需知道第一项的数值，只要增大第二项，就会减小KL。于是将第二项记为证据下界（evidence lower bound, ELBO）：
 \begin{equation}
   \begin{aligned}
     \mathcal L(q)
@@ -31,11 +44,9 @@
   \end{aligned}
   \label{eq:pgm-variational-elbo}
 \end{equation}
-这里使用整体期望；将它进一步写成$\mathbb E_q\log p+H(q)$，还需确认两项分别有定义。
-KL无限时，ELBO可取扩展值$-\infty$，此时原分解中的无穷项相加没有定义。
-模型固定后，$\log p(\bm x)$与$q$无关，因此最大化ELBO等价于最小化$D_{\mathrm{KL}}(q\Vert\pi)$（参见\BookSectionRef{sec:information-elbo-approximation}{卷2《数学准备：概率、因果与决策》第2章“概率分布”第2.5.2节“表示约束下的分布逼近”}）。
-“反向”约定的是KL的参数顺序，$D_{\mathrm{KL}}$和后文的$\operatorname{KL}$表示同一散度。
+KL非负，所以$\mathcal L(q)\leq\log p(\bm x)$；这解释了“下界”的名称。最大化ELBO同时选择了反向KL意义下更接近后验的候选，而不仅是在估计证据。若采用参数化候选，实际求解的是$\max_{\bm\lambda\in\Lambda}\mathcal L(q_{\bm\lambda})$；所学的是近似后验的参数，原模型参数仍然固定。相关分布逼近准则可参考\BookSectionRef{sec:information-elbo-approximation}{卷2《数学准备：概率、因果与决策》第2章“概率分布”第2.5.2节“表示约束下的分布逼近”}。
 
+上述有限值分解要求$q\ll\pi$且$D_{\mathrm{KL}}(q\Vert\pi)<\infty$，即$q$不在后验概率为零的集合上放置正质量，并满足相应可积性。这里将ELBO定义为整体对数比的期望；只有两项分别有定义时，才进一步拆成$\mathbb E_q\log p(\bm x,\bm Z)+H(q)$。KL无限时可令ELBO取$-\infty$，但不能在原分解中相加无穷项。消去$p(\bm x)$也不自动保证ELBO容易计算：还需让$q$下的这些期望可以解析求出，或能用采样估计。近似族与计算方法正是围绕这一要求共同选择的\scite{pgm-stanford-cs228-variational}。
 
 从近似族到实际解，还要经过目标选择和数值优化。若$\mathcal Q$无法表示后验，其最优解$q^\star$也会留下近似误差；换用正向KL或矩匹配，则改变了衡量分布差距的准则。对于选定的ELBO，算法得到$\widehat q$后，$\mathcal L(q^\star)-\mathcal L(\widehat q)$衡量尚未消除的优化误差；最优值未取得时，以上确界代替$\mathcal L(q^\star)$。增加迭代主要作用于这一优化差距，近似族的表达限制仍由$\mathcal Q$决定。
 
@@ -58,7 +69,7 @@ KL无限时，ELBO可取扩展值$-\infty$，此时原分解中的无穷项相�
 
 取$r=0.8$时，目标的两个边缘方差均为$1$，最优独立近似却均为$0.36$。最优独立近似的方差等于给定另一坐标时的条件方差，比目标的边缘方差更小。相反，最小化$\operatorname{KL}(p\Vert q)$会匹配边缘矩，得到$v_i=1$。因此，在这一相关高斯和独立高斯近似族的设定下，反向KL最优解低估边缘方差；结论的范围由这两个分布族共同限定。
 
-图上的局部概率表可以用统计量的期望表示。为将这些表格与分布优化联系起来，先将模型写成指数族形式，记自然参数为$\bm\theta$、统计量为$\bm T$：
+优化整个$q$后，可以由它计算各个节点或因子的边缘概率。不过，许多查询只需这些小表，我们也希望直接以局部概率表作为优化变量。两种表示怎样连接？对离散节点，事件$Z_i=k$的概率等于指示函数$\mathbb I\{Z_i=k\}$的期望；一组变量的联合配置概率同样可以这样表示。将所需指示函数收集为统计量向量$\bm T$，其期望就收集了局部概率表。下面先用指数族说明模型得分怎样作用于这些期望，再检查哪些局部表能够来自同一个联合分布。记自然参数为$\bm\theta$，它在此表示固定模型的得分系数：
 \begin{equation}
   \begin{aligned}
     p_{\bm{\theta}}(\bm{z})
@@ -85,7 +96,7 @@ $\bm{\mu}$称为\term{均值参数}（mean parameter），直接记录期望统�
 图模型中的配置指示统计量可能存在仿射冗余，使Hessian出现零方向。
 自然参数与均值参数的局部一一对应需要相应的最小表示和内部条件（参见\BookSectionRef{sec:information-maximum-entropy}{卷2《数学准备：概率、因果与决策》第2章“概率分布”第2.5.1.2节“矩约束下的最大熵选择”}）。
 
-以下对偶与多面体陈述先限定为有限离散状态、$h=1$。以$V=\{1,\ldots,d\}$记节点集，$Z_i$的有限非空状态集为$\mathcal X_i$，节点集$A\subseteq V$上的配置集为$\mathcal X_A=\prod_{i\in A}\mathcal X_i$，全部联合配置组成$D=\mathcal X_V$。定义\term{边缘多面体}（marginal polytope）
+将局部表直接当作优化变量时，逐表归一化还不够。例如，两个表若都包含同一节点，却给该节点不同的边缘概率，就不可能来自同一个联合分布。我们因此需要描述所有可由联合分布实现的统计量期望。以下对偶与多面体陈述先限定为有限离散状态、$h=1$。以$V=\{1,\ldots,d\}$记节点集，$Z_i$的有限非空状态集为$\mathcal X_i$，节点集$A\subseteq V$上的配置集为$\mathcal X_A=\prod_{i\in A}\mathcal X_i$，全部联合配置组成$D=\mathcal X_V$。定义\term{边缘多面体}（marginal polytope）
 \begin{equation}
   \mathcal M
     =\left\{\mathbb E_q\bm{T}(\bm{Z}):q\text{为全局分布}\right\}
@@ -148,22 +159,29 @@ $\bm{\mu}$称为\term{均值参数}（mean parameter），直接记录期望统�
 \end{figure}
 
 \section{近似后验分布与边缘概率}
-\label{sec:pgm-variational-posterior}
-\label{sec:pgm-variational-mean-field}
 
-\subsection{从平均场到结构化变分}
+\label{sec:pgm-variational-posterior}
+
+后验分布或边缘概率难以精确求出时，需要回答三个问题：怎样构造可计算的近似，怎样求出这个近似，以及它能否可靠地回答所需的查询。下面依次讨论后验分布与边缘概率的近似、近似的计算和近似的可靠性。
+
+\subsection{后验分布与边缘概率的近似}
+\label{sec:pgm-variational-laplace-ep}
+
+限制全局分布、放宽局部边缘的一致性、匹配分布矩和近似局部曲率，改变的是不同的概率对象与近似准则。各方法的更新公式在构造中一并给出；随后再讨论如何组织这些计算。
+
+\subsubsection{基于因子化分布的近似}
+
+\label{sec:pgm-variational-mean-field}
 \label{sec:pgm-variational-mean-field-structured}
 \label{sec:pgm-variational-coordinate}
 
-后验近似既涉及表达哪些依赖，也涉及怎样计算。平均场与结构化VI规定近似分布族，VMP利用共轭结构组织局部计算，SVI通过小批量降低全局更新的数据遍历成本。因此，同一个结构化近似可以同时使用共轭消息和随机优化。后文的局部自由能、拉普拉斯近似与EP还将改变输出对象或匹配准则。
-
-最直接的计算简化是让每个潜变量只保留自己的不确定性。\term{平均场近似}（mean-field approximation）采用
+完整联合概率表要记录每一种变量组合；$d$个二元变量需要$2^d-1$个自由概率。若只保存每个变量取$1$的概率，就只需$d$个数，但还须规定如何由它们组成联合分布。将各单变量分布相乘是一种直接选择：它保留每个变量的不确定性，舍去变量之间的相关性。\term{平均场近似}（mean-field approximation）采用
 \[
   q(\bm{z})=\prod_{i=1}^{d}q_i(z_i).
 \]
 在$q$中，各变量相互独立，条件分布因而不随其他变量的取值改变。原模型的耦合仍通过期望进入坐标更新，因子化简化的是近似分布的表达。
 
-固定除$q_i$之外的所有因子，记$q_{-i}=\prod_{j\ne i}q_j$，并定义$a_i(z_i)=\mathbb E_{q_{-i}}\log p(\bm{x},z_i,\bm{Z}_{-i})$。ELBO中依赖$q_i$的部分为
+因子化之后，仍要选择各个$q_i$，使整个乘积分布的ELBO尽量大。可以先保持其他因子不变，只调整一个$q_i$，再依次轮换；这相当于把一次联合优化拆成多次单因子优化。这里固定的是其他变量的分布，而非其他变量的某个取值。记$q_{-i}=\prod_{j\ne i}q_j$，并定义$a_i(z_i)=\mathbb E_{q_{-i}}\log p(\bm{x},z_i,\bm{Z}_{-i})$。ELBO中依赖$q_i$的部分为
 \[
   \int q_i(z_i)a_i(z_i)\,dz_i-\int q_i(z_i)\log q_i(z_i)\,dz_i.
 \]
@@ -245,163 +263,10 @@ $\bm{\mu}$称为\term{均值参数}（mean parameter），直接记录期望统�
 \]
 当$\beta=\log2$时，块内不同值的概率为$2/3$，跨块边的不同值概率仍为$1/2$。该解也是块坐标固定点；它给出的对数配分函数下界为$\mathcal L_Z=\log(2+2e^\beta)+\beta+\log2=\log24\approx3.178054$，高于完全平均场的$3.119162$，但仍低于$\log26$。与完全平均场相比，块内联合分布提高了该下界，但两条跨块边的相关性仍未进入$q$。
 
-若$\mathcal Q_1\subseteq\mathcal Q_2$，对同一ELBO有$\sup_{\mathcal Q_1}\mathcal L\leq\sup_{\mathcal Q_2}\mathcal L$；这一关系比较的是近似族中的最优目标值。有限预算下的实际解还受优化误差影响。更一般的树结构$q$未必能分成互不相交的块，可以用树边缘及条件分布参数化，其熵仍能精确计算。这些结构均需定义合法的全局$q$，并正确计算期望和真实熵，才能继续使用ELBO下界。结构化变分补回了选定依赖，却提高了每次坐标更新的成本；下一条路线固定近似族，转而利用共轭结构简化这些更新。
+若$\mathcal Q_1\subseteq\mathcal Q_2$，对同一ELBO有$\sup_{\mathcal Q_1}\mathcal L\leq\sup_{\mathcal Q_2}\mathcal L$；这一关系比较的是近似族中的最优目标值。有限预算下的实际解还受优化误差影响。更一般的树结构$q$未必能分成互不相交的块，可以用树边缘及条件分布参数化，其熵仍能精确计算。这些结构均需定义合法的全局$q$，并正确计算期望和真实熵，才能继续使用ELBO下界。结构化变分补回了选定依赖，却提高了每次坐标更新的成本。若直接维护全局分布仍然困难，还可以改变近似对象，只维护局部概率表；下面考察这种安排。
 
-\subsection{从坐标更新到变分消息传递}
-\label{sec:pgm-variational-coordinate-vmp}
-\label{sec:pgm-variational-vmp}
+\subsubsection{基于局部边缘的近似}
 
-式~\eqref{eq:pgm-variational-coordinate}虽然形式简洁，指数中的期望仍可能难算。若完整条件分布属于指数族，
-\[
-  \log p(z_i\mid\bm{z}_{-i},\bm{x})
-    =\log h_i(z_i)
-      +\langle\bm{\eta}_i(\bm{z}_{-i},\bm{x}),\bm T_i(z_i)\rangle
-      +c(\bm{z}_{-i},\bm{x}),
-\]
-且相关期望存在，则更新后的$q_i$保持同一家族，自然参数为
-\begin{equation}
-  \bm{\lambda}_i
-    =\mathbb E_{q_{-i}}\bm{\eta}_i(\bm{Z}_{-i},\bm{x}).
-  \label{eq:pgm-variational-conjugacy}
-\end{equation}
-这就是条件共轭带来的计算闭合：期望改变参数，不改变函数形式。这里不要求$\bm{\eta}_i$对其他变量线性，但必须能够计算其期望，并确认结果落在合法自然参数域内。
-
-在因子图中，设每个邻接因子的对数中与$z_i$有关的部分能写成$\langle\bm{\eta}_{a\to i}(\bm z_{S_a\setminus\{i\}}),\bm T_i(z_i)\rangle$。把$\log h_i$只计入一次，定义消息
-\[
-  \bm m_{a\to i}
-    =\mathbb E_{q_{S_a\setminus\{i\}}}\bm{\eta}_{a\to i},
-  \qquad
-  \bm{\lambda}_i=\sum_{a:\,i\in S_a}\bm m_{a\to i}.
-\]
-变量再把$\mathbb E_{q_i}\bm T_i$发给邻接因子，以供后续期望计算。\term{变分消息传递}（variational message passing, VMP）就是这种以充分统计量和自然参数交换实现坐标优化的方式。消息不必是归一化概率表，也不同于和积算法对原因子先乘后求和的消息。闭式VMP利用所选因子化及条件共轭求出期望；非共轭模型则需结合局部界、数值积分或梯度更新完成这一计算\scite{pgm-variational-winn2005}。
-
-例如，全局成功率$\Pi\sim\operatorname{Beta}(a_0,b_0)$，$Z_i\mid\Pi\sim\operatorname{Bernoulli}(\Pi)$，观测因子为$p(x_i\mid z_i)$。取$q(\pi)\prod_iq_i(z_i)$，记$r_i=q_i(Z_i=1)$，便有
-\begin{equation}
-  \begin{aligned}
-    q(\pi)&=\operatorname{Beta}(a,b),\\
-    a&=a_0+\sum_i r_i,\qquad
-    b=b_0+\sum_i(1-r_i),\\
-    \log\frac{r_i}{1-r_i}
-      &=\mathbb E_q\log\Pi-\mathbb E_q\log(1-\Pi)
-         +\log\frac{p(x_i\mid1)}{p(x_i\mid0)}.
-  \end{aligned}
-  \label{eq:pgm-variational-beta-bernoulli}
-\end{equation}
-其中$\mathbb E\log\Pi=\psi(a)-\psi(a+b)$、$\mathbb E\log(1-\Pi)=\psi(b)-\psi(a+b)$，$\psi(u)=d\log\Gamma(u)/du$是双伽马函数。局部变量向全局因子发送的是软计数$(r_i,1-r_i)$，全局变量返回的是期望对数概率，而不是$\log\mathbb E\Pi$。
-
-取$a_0=b_0=1$，两个样本的似然比分别为$4$和$1/4$。从$q(\pi)=\operatorname{Beta}(1,1)$开始，局部更新给出$r_1=0.8,r_2=0.2$；全局更新得到$\operatorname{Beta}(2,2)$。由于新的两个期望对数概率仍相等，再次局部更新不变。这次更新通过两个软计数和两个期望完成，避免枚举$(Z_1,Z_2,\Pi)$的联合状态。相应的表达代价是$q$将$\Pi$与各$Z_i$独立化，丢失它们的后验相关性。
-
-\subsection{从批量优化到随机与摊销推断}
-\label{sec:pgm-variational-stochastic-amortized}
-\label{sec:pgm-variational-scalable}
-\label{sec:pgm-variational-svi}
-
-即使每个局部更新便宜，遍历全部$n$个样本才能改变一次全局参数，也会拖慢大数据推断。设全局潜变量为$\bm u$，样本局部潜变量为$\bm z_i$，
-\[
-  p(\bm u,\bm z_{1:n},\bm x_{1:n})
-    =p(\bm u)\prod_{i=1}^n p(\bm x_i,\bm z_i\mid\bm u),
-  \qquad
-  q=q_{\bm{\lambda}}(\bm u)\prod_iq_{\bm{\phi}_i}(\bm z_i).
-\]
-假设共轭使全局完整条件分布的自然参数等于$\bm{\lambda}_0+\sum_i\bm s(\bm x_i,\bm z_i)$。固定局部因子时，最优全局自然参数为$\bm{\lambda}^\star=\bm{\lambda}_0+\sum_i\mathbb E_{q_i}\bm s_i$。
-
-普通欧氏梯度没有考虑不同参数方向会引起多大的分布变化。\term{自然梯度}（natural gradient）用Fisher信息矩阵校正梯度，使更新按分布的局部几何衡量。在最小、正则指数族内部，记全局对数配分函数为$A_q$，则$\bm F(\bm{\lambda})=\nabla^2 A_q(\bm{\lambda})$。全局ELBO中依赖$\bm{\lambda}$的部分为
-\[
-  \langle\bm{\lambda}^\star-\bm{\lambda},
-            \nabla A_q(\bm{\lambda})\rangle+A_q(\bm{\lambda})+C.
-\]
-求导得到$\nabla_{\bm{\lambda}}\mathcal L=\bm F(\bm{\lambda})(\bm{\lambda}^\star-\bm{\lambda})$，从而
-\begin{equation}
-  \widetilde\nabla_{\bm{\lambda}}\mathcal L
-    =\bm{\lambda}_0+\sum_i\mathbb E_{q_i}\bm s_i-\bm{\lambda}.
-  \label{eq:pgm-variational-natural-gradient}
-\end{equation}
-若局部因子已经达到给定全局参数下的最优值，在可微等条件下，包络定理允许用这同一偏导计算优化掉局部变量后的目标梯度。
-
-均匀抽取大小为$b$的小批量$B$，更新其中局部因子后，用
-\begin{equation}
-  \begin{aligned}
-    \widehat{\bm{\lambda}}
-      &=\bm{\lambda}_0+\frac{n}{b}
-           \sum_{i\in B}\mathbb E_{q_i}\bm s_i,\\
-    \bm{\lambda}^{(t+1)}
-      &=(1-\rho_t)\bm{\lambda}^{(t)}
-          +\rho_t\widehat{\bm{\lambda}}
-  \end{aligned}
-  \label{eq:pgm-variational-svi}
-\end{equation}
-即可得到\term{随机变分推断}（stochastic variational inference, SVI）。在给定当前全局参数并精确求解相应局部问题时，缩放的统计量和是全数据和的无偏估计。非均匀抽样需要按纳入概率加权；局部问题未充分求解时，估计中还包含局部优化误差，精确局部解下的无偏结论需要相应调整\scite{pgm-variational-hoffman2013}。
-
-在式~\eqref{eq:pgm-variational-beta-bernoulli}中，若$n=1000$，抽到的$10$个样本的$r_i$之和为$7$，先验仍为$\operatorname{Beta}(1,1)$，则小批量给出的目标分布是$\operatorname{Beta}(701,301)$。若当前分布为$\operatorname{Beta}(501,501)$，取步长$0.1$，更新为$\operatorname{Beta}(521,481)$。缩放发生在统计量而不是先验上，否则会把先验重复计算。
-
-随机更新以有噪声的小批量方向替代全数据方向，因此单步ELBO可能下降。常用递减步长满足$\sum_t\rho_t=\infty$、$\sum_t\rho_t^2<\infty$，如$\rho_t=(t+t_0)^{-\kappa}$、$1/2<\kappa\leq1$。在光滑性、迭代有界、噪声矩受控等随机逼近条件下，可以分析迭代趋向驻点的行为。局部计算解释当前批次的样本，全局计算汇总缩放后的统计量，这一分工使每次更新只需读取部分数据。
-
-近似族的选择取决于需要估计的量。主要计算单变量边缘且内存有限时，完全平均场提供成本较低的起点；其遗漏的相关性仍可能影响这些边缘。若查询涉及相邻状态的联合概率或整段轨迹，保留链或小块依赖能直接表达所需的联合事件，代价是块内推断。是否增加结构，需要比较相关查询的误差和计算成本。
-
-计算方式可以叠加在选定的近似族上。条件共轭且统计量期望可算时，VMP组织解析更新；模型还具有可分解的局部统计量和全局更新时，SVI通过小批量减少一次遍历的数据量。例如，每个样本是一段序列时，可在$q_{\bm\phi_i}(\bm z_i)$中保留整条链，精确计算链内统计量，再用小批量更新共轭的全局参数。这一组合同时保留局部结构并降低数据遍历成本，单条链内部的推断复杂度仍由链的模型决定。
-
-\label{sec:pgm-variational-amortized}
-
-小批量减少了每次读取的数据，却仍需为每个新样本求解局部优化。若样本不断到来，可以学习一个共享映射$\bm{\phi}_i=f_{\bm{\omega}}(\bm x_i)$，直接输出$q_{\bm{\phi}_i}(\bm z_i)$的参数。\term{摊销推断}（amortized inference）把许多样本的推断计算转移到一次共享训练中；测试时主要执行前向计算，也可以在其输出上继续作样本级优化。
-
-非共轭模型下，ELBO的期望通常用采样估计。对于能够写成$\bm z=g_{\bm{\phi}}(\bm\epsilon)$、$\bm\epsilon\sim r(\bm\epsilon)$且$r$不依赖$\bm{\phi}$的分布，随机性可以与参数分开。例如高斯分布可写为$\bm z=\bm m+\bm L\bm\epsilon$，$\bm\epsilon\sim\mathcal N(\bm0,\bm I)$，$\bm L\bm L^\top$为协方差。令$F_{\bm{\phi}}(\bm z)=\log p(\bm x,\bm z)-\log q_{\bm{\phi}}(\bm z)$，在可交换微分与期望的可积支配条件下，
-\begin{equation}
-  \begin{aligned}
-    \nabla_{\bm{\phi}}\mathcal L
-      =\mathbb E_r\big[
-        &(\nabla_{\bm{\phi}}g_{\bm{\phi}})^\top
-           \nabla_{\bm z}F_{\bm{\phi}}
-                (g_{\bm{\phi}}(\bm\epsilon))\\
-        &+\left.\nabla_{\bm{\phi}}F_{\bm{\phi}}(\bm z)
-          \right|_{\bm z=g_{\bm{\phi}}(\bm\epsilon)}
-        \big].
-  \end{aligned}
-  \label{eq:pgm-variational-pathwise}
-\end{equation}
-第二行对$\bm z$保持固定，只微分$F$的显式参数依赖；第一行则跟踪样本位置随参数移动的影响。这是\term{重参数化梯度}（reparameterization gradient），也称路径导数估计：先把期望写到固定噪声上，再用链式法则求导。样本位置的参数依赖由第一项显式保留；模型含待学习参数时，还需计算对应的显式偏导。第~\ref{chap:pgm-generative}章将在VAE中使用这一梯度估计\scite{kingma2013}。
-
-以$q=\mathcal N(m,s^2)$、$s>0$和$f(z)=z^2$为例，$z=m+s\epsilon$，路径导数的单样本估计分别是$2(m+s\epsilon)$与$2(m+s\epsilon)\epsilon$，期望为$2m$与$2s$，恰与$\partial_m(m^2+s^2)$、$\partial_s(m^2+s^2)$一致。这些单样本导数的期望给出正确梯度，但有限样本估计仍有方差。与其他估计器的方差比较，需要固定目标函数和分布。
-
-离散变量的普通采样映射对参数通常是阶梯函数，几乎处处导数为零，直接套用路径导数不能得到正确梯度。若支持集固定，可改用
-\begin{equation}
-  \nabla_{\bm{\phi}}\mathbb E_{q_{\bm{\phi}}}f_{\bm{\phi}}(\bm Z)
-    =\mathbb E_q\!\left[
-       f_{\bm{\phi}}(\bm Z)\nabla_{\bm{\phi}}\log q_{\bm{\phi}}(\bm Z)
-       +\nabla_{\bm{\phi}}f_{\bm{\phi}}(\bm Z)\right].
-  \label{eq:pgm-variational-score-function}
-\end{equation}
-这称为\term{分数函数估计}（score-function estimator），其中“分数”指对数密度对参数的导数。它从$\nabla q=q\nabla\log q$直接得到。减去不依赖所采变量的基线不改变第一项期望，因为$\mathbb E_q\nabla\log q=0$，却可能降低方差。小状态空间也可以精确求和；连续松弛则用可微随机变量替代离散变量，一般改变了目标或引入偏差。支持集随参数变化时，求导还涉及积分边界，上式需要加入相应的边界处理。
-
-共享映射减少了逐样本优化，也限制了各样本的局部参数如何取值。为分解其逐样本误差，以下改用固定生成参数$\bm\theta$、样本间相互独立的局部潜变量模型，并定义局部ELBO：
-\[
-  \begin{aligned}
-    p_{\bm\theta}(\bm x_{1:n},\bm z_{1:n})
-      &=\prod_i p_{\bm\theta}(\bm x_i,\bm z_i),\\
-    \mathcal L_i(\bm\phi)
-      &=\mathbb E_{q_{\bm\phi}}
-          \log p_{\bm\theta}(\bm x_i,\bm Z_i)+H(q_{\bm\phi}).
-  \end{aligned}
-\]
-前面的SVI层次模型包含共享随机量$\bm u$，积分掉它通常产生样本间依赖，联合对数证据因而不能逐样本相加，其ELBO还包括全局因子的贡献。
-
-在上述独立模型中，令$\mathcal L_i^\star=\sup_{\bm{\phi}}\mathcal L_i(\bm{\phi})$；设共享网络达到其最优参数$\bm{\omega}^\star$，实际训练结果为$\widehat{\bm{\omega}}$。假设以下各目标值有限，对同一批样本有
-\begin{equation}
-  \begin{aligned}
-    &\sum_i\log p_{\bm\theta}(\bm x_i)
-       -\sum_i\mathcal L_i(f_{\widehat{\bm{\omega}}}(\bm x_i))\\
-    ={}&\sum_i[\log p_{\bm\theta}(\bm x_i)-\mathcal L_i^\star]\\
-     &+\left[\sum_i\mathcal L_i^\star
-          -\sum_i\mathcal L_i(f_{\bm{\omega}^\star}(\bm x_i))\right]\\
-     &+\left[\sum_i\mathcal L_i(f_{\bm{\omega}^\star}(\bm x_i))
-          -\sum_i\mathcal L_i(f_{\widehat{\bm{\omega}}}(\bm x_i))\right].
-  \end{aligned}
-  \label{eq:pgm-variational-amortization-gap}
-\end{equation}
-三项分别是近似族误差、共享映射限制带来的摊销误差和网络优化误差，按定义均非负。若最优值未取得，改用上确界解释。网络最优性针对同一固定模型下的样本总目标，个别样本上的ELBO可能低于实际训练结果。关于近似与摊销两类误差的区分，可参见Cremer等人的分析\scite{pgm-variational-cremer2018}。
-
-式~\eqref{eq:pgm-variational-amortization-gap}衡量近似结果对模型后验的偏离。生成模型遗漏现实中的因素时，精确后验也可能产生失准预测，这属于模型失配。若共享训练同时调整生成参数，后验和近似族会共同变化，ELBO的改善也同时包含模型和推断两方面的变化。
-
-\subsection{从Bethe到Kikuchi局部自由能}
 \label{sec:pgm-variational-bethe-kikuchi}
 \label{sec:pgm-variational-local-free-energy}
 \label{sec:pgm-variational-bethe}
@@ -568,15 +433,13 @@ $F_{\mathrm B}$是\term{Bethe自由能}（Bethe free energy），即负的期望
 
 成对图的Bethe熵将每条边的互信息减去一次。在含环图上，这组系数通常无法成为生成树分布的边出现率，因此上述树熵上界论证不适用。TRW控制的是最优配分函数目标值，其边缘误差仍需单独检查。TRW用树熵的凸组合获得可控上界，Kikuchi用更大区域加强局部依赖约束；两者改变的机制不同。
 
-\subsection{拉普拉斯近似与期望传播}
-\label{sec:pgm-variational-laplace-ep}
+\subsubsection{基于矩匹配的近似}
+
 \label{sec:pgm-variational-ep}
 
-连续后验的近似还受到密度形状和因子函数形式的限制。拉普拉斯近似用一个众数附近的整体曲率构造高斯；期望传播逐个放回难处理的因子，以其引起的矩变化修正近似。两者常得到高斯分布，但分别使用局部导数和分布矩，适用于不同的计算条件。
+除了限制变量依赖，也可以用容易计算的分布匹配目标的局部特征。若难处理的因子使完整密度的计算成本过高，可以用易计算的指数族因子替代它们。每次暂时恢复一个真实因子，计算它对重要矩的影响，再将这些矩纳入近似分布。
 
-先看逐因子的修正。若难处理的因子使完整密度的计算成本过高，可以用易计算的指数族因子替代它们。每次暂时恢复一个真实因子，计算它对重要矩的影响，再将这些矩纳入近似分布。
-
-设目标$p(\bm z)\propto p_0(\bm z)\prod_a f_a(\bm z)$，其中$p_0$容易处理，近似取$q(\bm z)\propto p_0(\bm z)\prod_a\widetilde f_a(\bm z)$。站点$\widetilde f_a$是不必单独归一化的指数族因子。\term{期望传播}（expectation propagation, EP）循环执行如下替换：
+设目标$p(\bm z)\propto p_0(\bm z)\prod_a f_a(\bm z)$，其中$p_0$容易处理，近似取$q(\bm z)\propto p_0(\bm z)\prod_a\widetilde f_a(\bm z)$。站点$\widetilde f_a$是替代真实因子$f_a$的指数族因子，不必单独归一化。若直接将$f_a$乘入当前$q$，真实因子与它的近似替身就会同时出现，相当于重复计入同一份作用。因此先除去$\widetilde f_a$，再放回$f_a$，得到仅在这一处恢复真实因子的临时分布。计算这个分布的均值、方差等所需矩，再寻找能够复现这些矩的近似分布，最后将修正写回站点。\term{期望传播}（expectation propagation, EP）依次在各站点重复这一过程；下面四行分别对应移除、恢复、投影和写回：
 \begin{equation}
   \begin{aligned}
     q^{\setminus a}(\bm z)&\propto q(\bm z)/\widetilde f_a(\bm z),\\
@@ -624,6 +487,8 @@ $F_{\mathrm B}$是\term{Bethe自由能}（Bethe free energy），即负的期望
 
 EP每次投影的$\widehat p_a$依赖其他近似站点，所以其局部投影目标也随迭代变化。固定点可以与特定自由能的驻点联系起来，普通站点更新的单调性和收敛性则需要另外分析。高斯站点是不归一化的指数族因子，其精度允许为负；总体$q$以及实际使用的空腔和倾斜分布仍需合法。计算中可以采用自然参数阻尼，并检查协方差正定性和矩匹配残差。EP的站点替换与矩匹配构造来自Minka\scite{pgm-variational-minka2001}。
 
+\subsubsection{基于局部曲率的近似}
+
 \label{sec:pgm-variational-laplace}
 
 与逐因子修正的EP并行，若连续后验的主要质量集中在一个光滑峰附近，可以直接近似整个对数密度的局部形状。\term{拉普拉斯近似}（Laplace approximation）在众数附近作二阶展开，用峰的位置和曲率决定一个高斯。令$\ell(\bm z)=\log p(\bm x,\bm z)$，$\widehat{\bm z}$是内部严格局部极大点，且$\bm H=-\nabla^2\ell(\widehat{\bm z})$正定，则
@@ -646,14 +511,190 @@ EP每次投影的$\widehat p_a$依赖其他近似站点，所以其局部投影�
 
 局部二阶展开近似整个积分，还需要主峰支配和尾部可控。若$\ell_n$随样本量$n$集中，唯一主峰附近的曲率按$n$增长，且高阶导数与尾部满足相应正则性，拉普拉斯法可给出渐近展开。有限样本误差则取决于峰外质量、偏斜和尾部等性质。单个高斯会遗漏其他模态；将多个峰的贡献相加时，需要找到相关峰并避免重复计数。拉普拉斯法依据局部曲率构造近似，一般没有ELBO最优性或证据上下界保证\scite{bishop2006}。
 
-\subsection{结果含义、收敛与诊断}
+\subsection{近似的计算}
+\label{sec:pgm-variational-stochastic-amortized}
+\label{sec:pgm-variational-complexity}
+
+\label{sec:pgm-variational-scalable}
+选定近似对象后，还需要把更新公式变成可执行的计算。局部更新中的期望可能难算，一次全局更新可能需要遍历全部数据，新观测到来时还可能需要重新优化后验。下面按这些计算问题展开：先利用局部结构计算更新，再降低数据遍历成本，随后处理难解期望的梯度，最后减少新观测的重复优化。满足各自条件时，这些办法可以组合使用。
+
+\subsubsection{计算局部更新}
+
+\label{sec:pgm-variational-coordinate-vmp}
+\label{sec:pgm-variational-vmp}
+
+式~\eqref{eq:pgm-variational-coordinate}虽然形式简洁，指数中的期望仍可能难算。若完整条件分布属于指数族，
+\[
+  \log p(z_i\mid\bm{z}_{-i},\bm{x})
+    =\log h_i(z_i)
+      +\langle\bm{\eta}_i(\bm{z}_{-i},\bm{x}),\bm T_i(z_i)\rangle
+      +c(\bm{z}_{-i},\bm{x}),
+\]
+且相关期望存在，则更新后的$q_i$保持同一家族，自然参数为
+\begin{equation}
+  \bm{\lambda}_i
+    =\mathbb E_{q_{-i}}\bm{\eta}_i(\bm{Z}_{-i},\bm{x}).
+  \label{eq:pgm-variational-conjugacy}
+\end{equation}
+这就是条件共轭带来的计算闭合：期望改变参数，不改变函数形式。这里不要求$\bm{\eta}_i$对其他变量线性，但必须能够计算其期望，并确认结果落在合法自然参数域内。
+
+在因子图中，设每个邻接因子的对数中与$z_i$有关的部分能写成$\langle\bm{\eta}_{a\to i}(\bm z_{S_a\setminus\{i\}}),\bm T_i(z_i)\rangle$。把$\log h_i$只计入一次，定义消息
+\[
+  \bm m_{a\to i}
+    =\mathbb E_{q_{S_a\setminus\{i\}}}\bm{\eta}_{a\to i},
+  \qquad
+  \bm{\lambda}_i=\sum_{a:\,i\in S_a}\bm m_{a\to i}.
+\]
+变量再把$\mathbb E_{q_i}\bm T_i$发给邻接因子，以供后续期望计算。\term{变分消息传递}（variational message passing, VMP）就是这种以充分统计量和自然参数交换实现坐标优化的方式。消息不必是归一化概率表，也不同于和积算法对原因子先乘后求和的消息。闭式VMP利用所选因子化及条件共轭求出期望；非共轭模型则需结合局部界、数值积分或梯度更新完成这一计算\scite{pgm-variational-winn2005}。
+
+例如，全局成功率$\Pi\sim\operatorname{Beta}(a_0,b_0)$，$Z_i\mid\Pi\sim\operatorname{Bernoulli}(\Pi)$，观测因子为$p(x_i\mid z_i)$。取$q(\pi)\prod_iq_i(z_i)$，记$r_i=q_i(Z_i=1)$，便有
+\begin{equation}
+  \begin{aligned}
+    q(\pi)&=\operatorname{Beta}(a,b),\\
+    a&=a_0+\sum_i r_i,\qquad
+    b=b_0+\sum_i(1-r_i),\\
+    \log\frac{r_i}{1-r_i}
+      &=\mathbb E_q\log\Pi-\mathbb E_q\log(1-\Pi)
+         +\log\frac{p(x_i\mid1)}{p(x_i\mid0)}.
+  \end{aligned}
+  \label{eq:pgm-variational-beta-bernoulli}
+\end{equation}
+其中$\mathbb E\log\Pi=\psi(a)-\psi(a+b)$、$\mathbb E\log(1-\Pi)=\psi(b)-\psi(a+b)$，$\psi(u)=d\log\Gamma(u)/du$是双伽马函数。局部变量向全局因子发送的是软计数$(r_i,1-r_i)$，全局变量返回的是期望对数概率，而不是$\log\mathbb E\Pi$。
+
+取$a_0=b_0=1$，两个样本的似然比分别为$4$和$1/4$。从$q(\pi)=\operatorname{Beta}(1,1)$开始，局部更新给出$r_1=0.8,r_2=0.2$；全局更新得到$\operatorname{Beta}(2,2)$。由于新的两个期望对数概率仍相等，再次局部更新不变。这次更新通过两个软计数和两个期望完成，避免枚举$(Z_1,Z_2,\Pi)$的联合状态。相应的表达代价是$q$将$\Pi$与各$Z_i$独立化，丢失它们的后验相关性。
+
+近似方法的单轮成本取决于需要存储和更新的局部对象。设有限离散成对图有$d$个节点、$m$条边，每节点至多$k$个状态。存储一般的稠密边势需$O(mk^2)$。一次完全平均场扫描在直接计算全部边期望时通常需$O(mk^2)$，变分边缘本身只需$O(dk)$空间；Ising等特殊代数结构可以更快。一次成对LBP扫描也通常需$O(mk^2)$，但需要$O(mk)$条目保存有向消息，若显式保存边伪边缘则另需$O(mk^2)$。在这一稠密成对设定下，两者单轮成本量级相近；总成本还取决于迭代轮数，近似误差还取决于所保留的依赖。
+
+对于作用域$S_a$的稠密高阶因子，单次朴素局部求和本身就可能涉及$k^{|S_a|}$个配置。VMP可利用充分统计量期望的简洁形式减少枚举，其实际代价取决于这些期望的计算方式。块变分若内部树宽为$w$，表格推断通常带有$k^{w+1}$因子；Kikuchi最大区域有$r$个变量时，至少要面对$k^r$级区域表。区域方法的通信按交集状态数增长，增加区域既增加局部成本，也增加一致性校正工作。
+
+连续近似的瓶颈常在矩阵运算。一个$d$维稠密高斯的协方差需要$O(d^2)$空间，通用Cholesky分解需$O(d^3)$时间；拉普拉斯近似与高斯EP都可能遇到它。稀疏精度、低秩更新、分块或对角表示能改变实际代价，但也可能改变近似族。EP若每个站点作用于低维投影，可局部计算倾斜矩并利用低秩更新；此时一次站点替换的代价由局部矩计算和低秩更新决定。
+
+\subsubsection{降低数据遍历成本}
+
+\label{sec:pgm-variational-svi}
+
+即使每个局部更新便宜，遍历全部$n$个样本才能改变一次全局参数，也会拖慢大数据推断。设全局潜变量为$\bm u$，样本局部潜变量为$\bm z_i$，
+\[
+  p(\bm u,\bm z_{1:n},\bm x_{1:n})
+    =p(\bm u)\prod_{i=1}^n p(\bm x_i,\bm z_i\mid\bm u),
+  \qquad
+  q=q_{\bm{\lambda}}(\bm u)\prod_iq_{\bm{\phi}_i}(\bm z_i).
+\]
+假设共轭使全局完整条件分布的自然参数等于$\bm{\lambda}_0+\sum_i\bm s(\bm x_i,\bm z_i)$。固定局部因子时，最优全局自然参数为$\bm{\lambda}^\star=\bm{\lambda}_0+\sum_i\mathbb E_{q_i}\bm s_i$。
+
+普通欧氏梯度没有考虑不同参数方向会引起多大的分布变化。\term{自然梯度}（natural gradient）用Fisher信息矩阵校正梯度，使更新按分布的局部几何衡量。在最小、正则指数族内部，记全局对数配分函数为$A_q$，则$\bm F(\bm{\lambda})=\nabla^2 A_q(\bm{\lambda})$。全局ELBO中依赖$\bm{\lambda}$的部分为
+\[
+  \langle\bm{\lambda}^\star-\bm{\lambda},
+            \nabla A_q(\bm{\lambda})\rangle+A_q(\bm{\lambda})+C.
+\]
+求导得到$\nabla_{\bm{\lambda}}\mathcal L=\bm F(\bm{\lambda})(\bm{\lambda}^\star-\bm{\lambda})$，从而
+\begin{equation}
+  \widetilde\nabla_{\bm{\lambda}}\mathcal L
+    =\bm{\lambda}_0+\sum_i\mathbb E_{q_i}\bm s_i-\bm{\lambda}.
+  \label{eq:pgm-variational-natural-gradient}
+\end{equation}
+若局部因子已经达到给定全局参数下的最优值，在可微等条件下，包络定理允许用这同一偏导计算优化掉局部变量后的目标梯度。
+
+均匀抽取大小为$b$的小批量$B$，更新其中局部因子后，用
+\begin{equation}
+  \begin{aligned}
+    \widehat{\bm{\lambda}}
+      &=\bm{\lambda}_0+\frac{n}{b}
+           \sum_{i\in B}\mathbb E_{q_i}\bm s_i,\\
+    \bm{\lambda}^{(t+1)}
+      &=(1-\rho_t)\bm{\lambda}^{(t)}
+          +\rho_t\widehat{\bm{\lambda}}
+  \end{aligned}
+  \label{eq:pgm-variational-svi}
+\end{equation}
+即可得到\term{随机变分推断}（stochastic variational inference, SVI）。在给定当前全局参数并精确求解相应局部问题时，缩放的统计量和是全数据和的无偏估计。非均匀抽样需要按纳入概率加权；局部问题未充分求解时，估计中还包含局部优化误差，精确局部解下的无偏结论需要相应调整\scite{pgm-variational-hoffman2013}。
+
+在式~\eqref{eq:pgm-variational-beta-bernoulli}中，若$n=1000$，抽到的$10$个样本的$r_i$之和为$7$，先验仍为$\operatorname{Beta}(1,1)$，则小批量给出的目标分布是$\operatorname{Beta}(701,301)$。若当前分布为$\operatorname{Beta}(501,501)$，取步长$0.1$，更新为$\operatorname{Beta}(521,481)$。缩放发生在统计量而不是先验上，否则会把先验重复计算。
+
+随机更新以有噪声的小批量方向替代全数据方向，因此单步ELBO可能下降。常用递减步长满足$\sum_t\rho_t=\infty$、$\sum_t\rho_t^2<\infty$，如$\rho_t=(t+t_0)^{-\kappa}$、$1/2<\kappa\leq1$。在光滑性、迭代有界、噪声矩受控等随机逼近条件下，可以分析迭代趋向驻点的行为。局部计算解释当前批次的样本，全局计算汇总缩放后的统计量，这一分工使每次更新只需读取部分数据。
+
+SVI将每次全数据局部计算从$n$个样本改为$b$个样本，代价约为$bC_{\mathrm{local}}+C_{\mathrm{global}}$，其中两项分别是单样本局部更新和全局更新成本。若无需保留所有局部因子，还可避免$O(n)$份局部状态存储；总训练成本仍取决于达到目标精度所需的小批量数。
+
+近似族的选择取决于需要估计的量。主要计算单变量边缘且内存有限时，完全平均场提供成本较低的起点；其遗漏的相关性仍可能影响这些边缘。若查询涉及相邻状态的联合概率或整段轨迹，保留链或小块依赖能直接表达所需的联合事件，代价是块内推断。是否增加结构，需要比较相关查询的误差和计算成本。
+
+计算方式可以叠加在选定的近似族上。条件共轭且统计量期望可算时，VMP组织解析更新；模型还具有可分解的局部统计量和全局更新时，SVI通过小批量减少一次遍历的数据量。例如，每个样本是一段序列时，可在$q_{\bm\phi_i}(\bm z_i)$中保留整条链，精确计算链内统计量，再用小批量更新共轭的全局参数。这一组合同时保留局部结构并降低数据遍历成本，单条链内部的推断复杂度仍由链的模型决定。
+
+\subsubsection{估计难解期望的梯度}
+\label{sec:pgm-variational-gradient-estimation}
+
+小批量抽样减少了需要处理的数据量，但每个样本的ELBO仍可能包含无法解析计算的期望。非共轭模型中，局部更新因而常需改为梯度优化，并通过潜变量采样估计梯度。困难在于：改变近似参数时，$q$既改变被平均的函数，也改变样本落在哪里。若把已经抽到的样本当成固定输入，只对函数求导，就可能漏掉分布变化的影响。为了保留这一影响，可以先抽取分布固定的噪声，再把噪声变换为$q$的样本；改变参数时，沿同一份噪声追踪样本位置的变化。对于能够写成$\bm z=g_{\bm{\phi}}(\bm\epsilon)$、$\bm\epsilon\sim r(\bm\epsilon)$且$r$不依赖$\bm{\phi}$的分布，随机性可以与参数分开。例如高斯分布可写为$\bm z=\bm m+\bm L\bm\epsilon$，$\bm\epsilon\sim\mathcal N(\bm0,\bm I)$，$\bm L\bm L^\top$为协方差。令$F_{\bm{\phi}}(\bm z)=\log p(\bm x,\bm z)-\log q_{\bm{\phi}}(\bm z)$，在可交换微分与期望的可积支配条件下，
+\begin{equation}
+  \begin{aligned}
+    \nabla_{\bm{\phi}}\mathcal L
+      =\mathbb E_r\big[
+        &(\nabla_{\bm{\phi}}g_{\bm{\phi}})^\top
+           \nabla_{\bm z}F_{\bm{\phi}}
+                (g_{\bm{\phi}}(\bm\epsilon))\\
+        &+\left.\nabla_{\bm{\phi}}F_{\bm{\phi}}(\bm z)
+          \right|_{\bm z=g_{\bm{\phi}}(\bm\epsilon)}
+        \big].
+  \end{aligned}
+  \label{eq:pgm-variational-pathwise}
+\end{equation}
+第二行对$\bm z$保持固定，只微分$F$的显式参数依赖；第一行则跟踪样本位置随参数移动的影响。这是\term{重参数化梯度}（reparameterization gradient），也称路径导数估计：先把期望写到固定噪声上，再用链式法则求导。样本位置的参数依赖由第一项显式保留；模型含待学习参数时，还需计算对应的显式偏导。第~\ref{chap:pgm-generative}章将在VAE中使用这一梯度估计\scite{kingma2013}。
+
+以$q=\mathcal N(m,s^2)$、$s>0$和$f(z)=z^2$为例，$z=m+s\epsilon$，路径导数的单样本估计分别是$2(m+s\epsilon)$与$2(m+s\epsilon)\epsilon$，期望为$2m$与$2s$，恰与$\partial_m(m^2+s^2)$、$\partial_s(m^2+s^2)$一致。这些单样本导数的期望给出正确梯度，但有限样本估计仍有方差。与其他估计器的方差比较，需要固定目标函数和分布。
+
+离散变量的普通采样映射对参数通常是阶梯函数，几乎处处导数为零，直接套用路径导数不能得到正确梯度。若支持集固定，可改用
+\begin{equation}
+  \nabla_{\bm{\phi}}\mathbb E_{q_{\bm{\phi}}}f_{\bm{\phi}}(\bm Z)
+    =\mathbb E_q\!\left[
+       f_{\bm{\phi}}(\bm Z)\nabla_{\bm{\phi}}\log q_{\bm{\phi}}(\bm Z)
+       +\nabla_{\bm{\phi}}f_{\bm{\phi}}(\bm Z)\right].
+  \label{eq:pgm-variational-score-function}
+\end{equation}
+这称为\term{分数函数估计}（score-function estimator），其中“分数”指对数密度对参数的导数。它从$\nabla q=q\nabla\log q$直接得到。减去不依赖所采变量的基线不改变第一项期望，因为$\mathbb E_q\nabla\log q=0$，却可能降低方差。小状态空间也可以精确求和；连续松弛则用可微随机变量替代离散变量，一般改变了目标或引入偏差。支持集随参数变化时，求导还涉及积分边界，上式需要加入相应的边界处理。
+
+\subsubsection{降低重复推断成本}
+
+\label{sec:pgm-variational-amortized}
+
+小批量减少了每次读取的数据，却仍需为每个新样本求解局部优化。若样本不断到来，可以学习一个共享映射$\bm{\phi}_i=f_{\bm{\omega}}(\bm x_i)$，直接输出$q_{\bm{\phi}_i}(\bm z_i)$的参数。\term{摊销推断}（amortized inference）把许多样本的推断计算转移到一次共享训练中；测试时主要执行前向计算，也可以在其输出上继续作样本级优化。
+
+摊销推断将测试时的迭代换成网络前向计算，共享训练还需计入反向传播和模型存储。两者可以结合，分别减少每次处理的数据量和每个样本的优化量。
+
+共享映射减少了逐样本优化，也限制了各样本的局部参数如何取值。为分解其逐样本误差，以下改用固定生成参数$\bm\theta$、样本间相互独立的局部潜变量模型，并定义局部ELBO：
+\[
+  \begin{aligned}
+    p_{\bm\theta}(\bm x_{1:n},\bm z_{1:n})
+      &=\prod_i p_{\bm\theta}(\bm x_i,\bm z_i),\\
+    \mathcal L_i(\bm\phi)
+      &=\mathbb E_{q_{\bm\phi}}
+          \log p_{\bm\theta}(\bm x_i,\bm Z_i)+H(q_{\bm\phi}).
+  \end{aligned}
+\]
+前面的SVI层次模型包含共享随机量$\bm u$，积分掉它通常产生样本间依赖，联合对数证据因而不能逐样本相加，其ELBO还包括全局因子的贡献。
+
+在上述独立模型中，令$\mathcal L_i^\star=\sup_{\bm{\phi}}\mathcal L_i(\bm{\phi})$；设共享网络达到其最优参数$\bm{\omega}^\star$，实际训练结果为$\widehat{\bm{\omega}}$。假设以下各目标值有限，对同一批样本有
+\begin{equation}
+  \begin{aligned}
+    &\sum_i\log p_{\bm\theta}(\bm x_i)
+       -\sum_i\mathcal L_i(f_{\widehat{\bm{\omega}}}(\bm x_i))\\
+    ={}&\sum_i[\log p_{\bm\theta}(\bm x_i)-\mathcal L_i^\star]\\
+     &+\left[\sum_i\mathcal L_i^\star
+          -\sum_i\mathcal L_i(f_{\bm{\omega}^\star}(\bm x_i))\right]\\
+     &+\left[\sum_i\mathcal L_i(f_{\bm{\omega}^\star}(\bm x_i))
+          -\sum_i\mathcal L_i(f_{\widehat{\bm{\omega}}}(\bm x_i))\right].
+  \end{aligned}
+  \label{eq:pgm-variational-amortization-gap}
+\end{equation}
+三项分别是近似族误差、共享映射限制带来的摊销误差和网络优化误差，按定义均非负。若最优值未取得，改用上确界解释。网络最优性针对同一固定模型下的样本总目标，个别样本上的ELBO可能低于实际训练结果。关于近似与摊销两类误差的区分，可参见Cremer等人的分析\scite{pgm-variational-cremer2018}。
+
+式~\eqref{eq:pgm-variational-amortization-gap}衡量近似结果对模型后验的偏离。生成模型遗漏现实中的因素时，精确后验也可能产生失准预测，这属于模型失配。若共享训练同时调整生成参数，后验和近似族会共同变化，ELBO的改善也同时包含模型和推断两方面的变化。
+
+\subsection{近似的可靠性}
+
 \label{sec:pgm-variational-results-diagnostics}
 \label{sec:pgm-variational-analysis}
 \label{sec:pgm-variational-convergence}
-\label{sec:pgm-variational-complexity}
 \label{sec:pgm-variational-diagnostics}
 
-近似结果的表达能力首先取决于输出对象。平均场和结构化VI定义合法的全局$q$，可在其下计算联合事件，但可表达的依赖受近似族限制。Bethe和Kikuchi维护局部一致的伪边缘，联合查询还需确认这些表能否来自共同的全局分布。拉普拉斯法与高斯EP输出高斯或指数族近似，其支持、尾部和多峰结构需要与目标比较。诊断所检查的概率或期望，应与这些对象实际能回答的查询一致。
+得到近似结果后，需要判断它能否可靠地回答所需的概率或期望查询。检查首先要与输出对象相符。平均场和结构化VI定义合法的全局$q$，可在其下计算联合事件，但可表达的依赖受近似族限制。Bethe和Kikuchi维护局部一致的伪边缘，联合查询还需确认这些表能否来自共同的全局分布。拉普拉斯法与高斯EP输出高斯或指数族近似，其支持、尾部和多峰结构需要与目标比较。诊断所检查的概率或期望，应与这些对象实际能回答的查询一致。
 
 求解近似目标涉及另一层误差。精确平均场坐标更新使ELBO单调且有界，因此目标值收敛。若要进一步证明迭代点趋向驻点，还需连续性、紧的水平集、坐标子问题解的适当唯一性等条件；一般非凹的联合目标也可能有多个坐标最优点。随机变分允许单步ELBO下降，其收敛分析还需控制梯度噪声，通常得到相应条件下的渐近驻点结论。
 
@@ -680,14 +721,6 @@ EP每次投影的$\widehat p_a$依赖其他近似站点，所以其局部投影�
   \label{tab:pgm-variational-objectives}
 \end{table*}
 \FloatBarrier
-
-近似方法的单轮成本取决于需要存储和更新的局部对象。设有限离散成对图有$d$个节点、$m$条边，每节点至多$k$个状态。存储一般的稠密边势需$O(mk^2)$。一次完全平均场扫描在直接计算全部边期望时通常需$O(mk^2)$，变分边缘本身只需$O(dk)$空间；Ising等特殊代数结构可以更快。一次成对LBP扫描也通常需$O(mk^2)$，但需要$O(mk)$条目保存有向消息，若显式保存边伪边缘则另需$O(mk^2)$。在这一稠密成对设定下，两者单轮成本量级相近；总成本还取决于迭代轮数，近似误差还取决于所保留的依赖。
-
-对于作用域$S_a$的稠密高阶因子，单次朴素局部求和本身就可能涉及$k^{|S_a|}$个配置。VMP可利用充分统计量期望的简洁形式减少枚举，其实际代价取决于这些期望的计算方式。块变分若内部树宽为$w$，表格推断通常带有$k^{w+1}$因子；Kikuchi最大区域有$r$个变量时，至少要面对$k^r$级区域表。区域方法的通信按交集状态数增长，增加区域既增加局部成本，也增加一致性校正工作。
-
-SVI将每次全数据局部计算从$n$个样本改为$b$个样本，代价约为$bC_{\mathrm{local}}+C_{\mathrm{global}}$，其中两项分别是单样本局部更新和全局更新成本。若无需保留所有局部因子，还可避免$O(n)$份局部状态存储；总训练成本仍取决于达到目标精度所需的小批量数。摊销推断将测试时的迭代换成网络前向计算，共享训练还需计入反向传播和模型存储。两者可以结合，分别减少每次处理的数据量和每个样本的优化量。
-
-连续近似的瓶颈常在矩阵运算。一个$d$维稠密高斯的协方差需要$O(d^2)$空间，通用Cholesky分解需$O(d^3)$时间；拉普拉斯近似与高斯EP都可能遇到它。稀疏精度、低秩更新、分块或对角表示能改变实际代价，但也可能改变近似族。EP若每个站点作用于低维投影，可局部计算倾斜矩并利用低秩更新；此时一次站点替换的代价由局部矩计算和低秩更新决定。
 
 分布诊断需要覆盖实际查询。单峰$q$可能遗漏目标的其他模态，独立$q$可能丢失强相关性，支持不相容还可能使反向KL为无穷大。三角图已经显示，正确的单节点边缘可以与错误的联合依赖同时出现。因此，变量组合的概率、预测尾部或相关系数等所需统计量，应直接进入检查。
 
@@ -716,9 +749,11 @@ SVI将每次全数据局部计算从$n$个样本改为$b$个样本，代价约�
 \term{后验预测检查}（posterior predictive check）将推断结果接回观测模型。先从近似后验抽取潜变量或参数，再生成复制数据，比较复制数据与真实数据中有意义的统计量。若某种结构未被复现，问题可能来自模型失配，也可能来自推断误差。在小规模问题上改用精确推断，或对同一模型比较不同近似方法，有助于区分这两个来源\scite{pgm-murphy2012}。
 
 \section{近似MPE}
+
 \label{sec:pgm-variational-mpe}
 
-\subsection{从整数规划到局部多面体松弛}
+\subsection{完整配置的连续松弛}
+
 \label{sec:pgm-variational-ilp-local-polytope}
 \label{sec:pgm-variational-lp}
 
@@ -782,7 +817,13 @@ LP近似保留原配置得分，放宽可行域，其上界直接来自集合包
 \]
 左侧取最大的一项，右侧把每一项都用最大项控制，故$\tau\downarrow0$时夹逼到$M$。由熵对偶，中间量等于$\max_{\bm{\mu}\in\mathcal M}\{\langle\bm{\theta},\bm{\mu}\rangle+\tau H^\star(\bm{\mu})\}$。这说明分布推断与配置推断为何共享几何工具，也说明两者并非同一个查询：正温度下要计入全部配置的质量，零温度下只关心最大值。
 
-\subsection{从整体优化到对偶分解}
+\subsection{松弛问题的分解求解}
+\label{sec:pgm-variational-decomposed-solving}
+
+连续松弛仍可能包含大量变量和约束。将目标分到可求解的因子或树上，再协调重复变量，可以把整体求解转为局部计算，并保留用于评价配置的上界。
+
+\subsubsection{基于因子分解的求解}
+
 \label{sec:pgm-variational-dual-decomposition}
 \label{sec:pgm-variational-dual-trw}
 
@@ -814,7 +855,8 @@ LP近似保留原配置得分，放宽可行域，其上界直接来自集合包
 \end{equation}
 强对偶使LP最优值与其对偶最优值相等，整数问题与LP之间的松弛间隙仍可能存在。若全部子问题有一个共同的最优配置，代入便同时达到$D$，于是获得精确MPE证书；若没有协调成功，则需另外构造可行配置作为下界。三角例中零乘子已经给出$D=3\beta=U_{\mathrm{LP}}$，继续优化乘子不能消除$\beta$的整数松弛间隙。
 
-\subsection{树重加权上界}
+\subsubsection{基于树分解的求解}
+
 \label{sec:pgm-variational-trw-mpe}
 
 单因子分解以节点和因子为子问题；树分解则把多条边组合成仍可精确求解的子问题，改变上界的计算与协调方式。以下限于成对模型，且先假设原图连通；不连通时可分别处理各连通分量。令$T$遍历覆盖原图边的若干生成树，权重$\rho_T>0$满足$\sum_T\rho_T=1$。在各树上选取得分参数$\bm{\theta}^T$，树外边的参数为$0$，并要求$\bm{\theta}=\sum_T\rho_T\bm{\theta}^T$。加权关系保证各树得分之和恢复原配置得分。于是
@@ -859,7 +901,10 @@ LP近似保留原配置得分，放宽可行域，其上界直接来自集合包
 
 树一致证书要求同一完整配置在每棵树上最优。节点候选标签的逐点交集只能检查部分兼容性，平局下仍需整体回溯构造配置。三角图有三棵生成树，各取权重$1/3$，每条边出现概率为$2/3$。将出现的边参数放大为$3\beta/2$后，加权和恢复原参数。每棵树都能使两条边不同，最优得分为$3\beta$；但三个树问题没有共同最优配置，所以其上界$3\beta$不紧。TRW的最优性证书及其与LP的关系见Wainwright等人\scite{pgm-variational-wainwright2005map}。
 
-\subsection{图割与可精确求解的特殊情形}
+\subsection{特殊能量结构的图割求解}
+
+\subsubsection{二元次模能量的精确求解}
+
 \label{sec:pgm-variational-graph-cut-special}
 \label{sec:pgm-variational-graph-cuts}
 
@@ -891,18 +936,8 @@ LP近似保留原配置得分，放宽可行域，其上界直接来自集合包
   \label{fig:pgm-variational-cut}
 \end{figure}
 
-\subsection{紧性、取整与最优性诊断}
-\label{sec:pgm-variational-tightness-rounding}
-
-共同阈值取整可以直接证明这类能量的局部LP松弛是紧的。令$m_i=\mu_i(1)$。对任何局部一致的边表，$\Pr(Z_i\ne Z_j)\geq|m_i-m_j|$，因为$m_i-m_j=\mu_{i,j}(1,0)-\mu_{i,j}(0,1)$。非负$w_{i,j}$使松弛能量不小于
-\[
-  C+\sum_i[(1-m_i)D'_i(0)+m_iD'_i(1)]
-       +\sum_{(i,j)}w_{i,j}|m_i-m_j|.
-\]
-
-令所有节点共用$U\sim\operatorname{Uniform}(0,1)$，取$z_i=\mathbb I[U<m_i]$，则节点均值为$m_i$，不同值概率恰为$|m_i-m_j|$。这个全局分布的期望能量等于上式，所以至少有一个阈值配置的能量不高于原LP解。用于LP最优解时，结合松弛下界便得到整数最优值等于LP最优值。因此LP存在整数最优解；存在平局时，若干整数最优解的分数混合也可能达到同一最优值。按排序后的$m_i$检查至多$d+1$个阈值区间即可寻找相应配置。
-
-树图上的局部LP同样是紧的。局部一致表可以构造全局树分布，其期望得分不超过某个配置的得分，因此松弛最优值等于整数最优值，并存在整数最优解。树上的一般边缘仍可以是分数。含环图的紧性需要结合结构、势函数与参数判断，消息收敛本身只说明更新的状态。
+\subsubsection{多标签能量的局部优化}
+\label{sec:pgm-variational-multilabel-cuts}
 
 对多标签变量，一次$s$--$t$割只能表达两个选项。\term{$\alpha$扩展}（$\alpha$-expansion）固定当前标签$\ell_i$，让每个节点选择保留$\ell_i$或改为$\alpha$，把这一步化为二元问题。若成对项为$w_{i,j}d(k,l)$，$w_{i,j}\geq0$且$d$是标签上的度量，三角不等式给出
 \[
@@ -913,7 +948,23 @@ LP近似保留原配置得分，放宽可行域，其上界直接来自集合包
 
 $\alpha$--$\beta$交换只让当前标为这两个标签的节点互换，可处理某些不满足三角不等式的非负对称成对代价。对于非负一元项、非负边权的Potts能量，完全达到扩展局部最优的配置有不超过全局最优能量两倍的经典保证。其他度量或不同停止状态需要相应的近似比分析；能量平移也会改变比值。更一般的扩展、交换与近似比结果参见Boykov等人\scite{pgm-variational-boykov2001}。
 
-有序标签与特定凸相邻代价还可通过多层图精确求解；一般多标签或非次模能量则需要其他松弛与搜索方法。某些非次模二次伪布尔松弛能固定部分变量，其余标签仍需补全。对于一般LP分数解，可以逐点选择最大伪边缘、联合取整、局部搜索，或使用切平面和分支定界。逐点选择可能破坏变量之间的协调；存在硬约束时，还需检查恢复的配置是否可行，并在原目标下计算其得分。
+有序标签与特定凸相邻代价还可通过多层图精确求解；一般多标签或非次模能量则需要其他松弛与搜索方法。某些非次模二次伪布尔松弛能固定部分变量，其余标签仍需补全。
+
+\subsection{可行配置恢复与最优性诊断}
+
+\label{sec:pgm-variational-tightness-rounding}
+
+对于二元次模能量，共同阈值取整可以直接证明局部LP松弛是紧的。令$m_i=\mu_i(1)$。对任何局部一致的边表，$\Pr(Z_i\ne Z_j)\geq|m_i-m_j|$，因为$m_i-m_j=\mu_{i,j}(1,0)-\mu_{i,j}(0,1)$。非负$w_{i,j}$使松弛能量不小于
+\[
+  C+\sum_i[(1-m_i)D'_i(0)+m_iD'_i(1)]
+       +\sum_{(i,j)}w_{i,j}|m_i-m_j|.
+\]
+
+令所有节点共用$U\sim\operatorname{Uniform}(0,1)$，取$z_i=\mathbb I[U<m_i]$，则节点均值为$m_i$，不同值概率恰为$|m_i-m_j|$。这个全局分布的期望能量等于上式，所以至少有一个阈值配置的能量不高于原LP解。用于LP最优解时，结合松弛下界便得到整数最优值等于LP最优值。因此LP存在整数最优解；存在平局时，若干整数最优解的分数混合也可能达到同一最优值。按排序后的$m_i$检查至多$d+1$个阈值区间即可寻找相应配置。
+
+树图上的局部LP同样是紧的。局部一致表可以构造全局树分布，其期望得分不超过某个配置的得分，因此松弛最优值等于整数最优值，并存在整数最优解。树上的一般边缘仍可以是分数。含环图的紧性需要结合结构、势函数与参数判断，消息收敛本身只说明更新的状态。
+
+对于一般LP分数解，可以逐点选择最大伪边缘、联合取整、局部搜索，或使用切平面和分支定界。逐点选择可能破坏变量之间的协调；存在硬约束时，还需检查恢复的配置是否可行，并在原目标下计算其得分。
 
 对得分最大化，保留已找到的最好可行值$L=S(\widehat{\bm z})$及一个经验证的对偶上界$U$，则
 \begin{equation}
@@ -931,6 +982,7 @@ MPE近似需要另一套记录：原约束是否满足、可行配置得分是�
 原始--对偶间隙直接控制当前配置相对于最优得分的损失。后验是否集中在该配置附近，以及各变量的边缘概率，还需由分布查询回答。间隙较大时，可分别检查对偶优化误差、取整损失和松弛间隙，再选择继续求解、加强一致性约束或接受已量化的误差范围。配置推断的结果应同时包含合法配置及其得分证书。
 
 \section{本章小结}
+
 \label{sec:pgm-variational-summary}
 
 本章以已知模型下的两类查询组织近似推断。对于后验分布，ELBO用反向KL连接近似分布与目标；平均场和结构化VI通过限制$q$的依赖，使期望和真实熵可计算。共轭消息、小批量更新与摊销映射分别减少局部期望计算、数据遍历和逐样本优化的成本，近似族误差则取决于所保留的结构。

@@ -707,7 +707,7 @@ $\phi_r$输出标量，$c_i$是与坐标变换无关的归一化系数，$\bm{h}
 \section{理论分析}
 \label{sec:gnn-theory}
 
-图结构改变了信息的传播路径，也改变了训练数据的依赖方式。讨论理论性质时，需要明确是在固定参数下计算状态、比较输入表示，还是从有限样本学习参数。这些对象分别对应状态求值、表示能力和参数学习，结论按其条件在本地建立。
+图结构限制了哪些输入关系能够进入预测，也影响训练样本之间的依赖。下面先给出候选能够与不能够拟合的目标，再区分参数训练与循环状态求值的收敛，最后对独立整图抽样给出期望风险界。
 
 \subsection{表达能力}
 \label{sec:gnn-expressivity}
@@ -715,7 +715,19 @@ $\phi_r$输出标量，$c_i$是与坐标变换无关的归一化系数，$\bm{h}
 
 消息传递每轮只接触相邻表示；相同初始特征和相同邻域聚合结果可能使不同图始终不可区分。聚合是否保留多重集的数量与内容、传播轮次是否到达目标关系、读出是否保留所需结构，共同决定候选空间。GIN通过适当的单射聚合分析这类区分能力；特征域、更新及读出的条件共同确定它能区分的图对\scite{xu2019gin}
 
-\subsubsection{过平滑：节点区分信息消失}
+\begin{theorem}[求和消息传递对度目标的表达与连通性目标的限制]
+\label{thm:gnn-degree-connectivity-expression}
+设节点初始特征均为$1$，图为无向简单图，最大度不超过预先固定的整数$D$。
+允许保留邻居求和结果并接ReLU前馈读出，则一轮消息传递即可准确表示任意给定的节点度函数$g(\deg v)$。
+但若各层只用共享节点更新和邻居多重集聚合，整图读出只使用最终节点表示的多重集，不加入节点标识或其他结构特征，则任何层数都无法区分六节点环$C_6$和两个不相交的三节点环$C_3\sqcup C_3$。对在两张图上分别取$1$与$0$的连通性目标，任意标量候选至少在一张图上有$1/2$的绝对逼近误差。
+\end{theorem}
+\begin{proof}
+邻居特征求和恰等于度数。对有限整数$0,\ldots,D$指定$g$的值，分段线性插值可由ReLU读出准确表示。
+两张环图则都有六个节点，每个节点有两个邻居。从相同初始特征出发，各轮节点都收到由两个相同向量组成的多重集，所以两张图的全部节点始终得到同一表示。整图读出相同，其输出不能同时距$0$和$1$小于$1/2$。
+\end{proof}
+求和能够保留数量信息，平均聚合在常数特征上却把不同度数都映为$1$。这解释了为何聚合方式直接影响候选空间。更强的GIN区分结论以单射更新与读出为条件，仍受相应图对的可区分性限制\scite{xu2019gin} 连通性反例针对上述消息传递族，并不覆盖加入高阶关系或结构位置特征的扩展。
+
+\paragraph{反复传播对目标信息的影响}
 \label{sec:gnn-oversmoothing}
 
 传播扩大感受野，却可能把不同节点的表示反复混在一起。\term{过平滑}（oversmoothing）指传播加深后，与节点差异有关的信息不断减少，以致任务需要的区分难以保留。不同层使用不同参数时也可能发生这种现象，任务需要的差异可以在各坐标尚未完全相等时已经受损。
@@ -746,7 +758,7 @@ $\phi_r$输出标量，$c_i$是与坐标变换无关的归一化系数，$\bm{h}
 
 残差连接可以为旧表示保留额外路径，跨层拼接或读出可以直接读取较浅表示，初始特征注入则持续补充原始节点差异。这些设计改变了反复纯混合的形式。若恒等分支加入后又与传播共同归一化，表示仍可能持续混合；残差实际保留多少差异，取决于完整更新。
 
-\subsubsection{过压缩：远处信息通过狭窄通路}
+\paragraph{窄通路对查询目标的限制}
 \label{sec:gnn-oversquashing}
 
 另一种困难是节点需要利用许多远处对象，但这些信息只能经少量中间状态到达。\term{过压缩}（oversquashing）指大量关系信息沿传播路径汇入有限维状态或狭窄连接时，任务所需的远处影响难以有效传递。这里关注远期影响通过哪些通路、汇入多大状态；Alon与Yahav从这一信息瓶颈出发分析了长程图任务\scite{alon2021oversquashing}
@@ -767,18 +779,40 @@ $\phi_r$输出标量，$c_i$是与坐标变换无关的归一化系数，$\bm{h}
 \subsection{收敛性}
 \label{sec:gnn-convergence}
 
-参数训练关心经验目标怎样随更新改进：有限层消息传递通常形成非凸经验目标。光滑、有下界且梯度按完整计算图求得时，合适步长可给出趋近驻点的速率；邻域采样、离散结构更新和非光滑算子需要额外分析。驻点速率控制所计算的梯度尺度，全局最优需要更强的目标条件。更新规则与速率条件见第\ref{chap:neural-network-training}章。
+先看有限轮消息传递的参数学习：图与输入固定，完整计算图给出训练目标。若更新、激活和损失连续，非空紧参数域上至少取得一个最小值；若损失非负，并在无约束目标中对全部参数加入正的二次惩罚，也能保证最小值存在。通常没有唯一参数解或任意初始化下到达全局最优的保证。
+
+\begin{theorem}[有限层图网络光滑目标的驻点收敛速度]
+\label{thm:gnn-stationary-rate}
+固定训练集、网络结构和确定性的前向计算，记全批量训练目标为$J(\bm\theta)$。假设$J\geq J_{\inf}$，且梯度在包含迭代点及更新线段的区域内为$\beta$-Lipschitz，其中$\beta>0$。采用完整梯度下降
+$\bm\theta^{(k+1)}=\bm\theta^{(k)}-\eta\nabla J(\bm\theta^{(k)})$，步长满足$0<\eta\leq1/\beta$。对任意$K\geq1$，
+\begin{equation}
+ \frac1K\sum_{k=0}^{K-1}\lVert\nabla J(\bm\theta^{(k)})\rVert_2^2
+ \leq\frac{2[J(\bm\theta^{(0)})-J_{\inf}]}{\eta K}\text{。}
+ \label{eq:gnn-stationarity-rate}
+\end{equation}
+对任意$\varepsilon>0$，至少有一个已计算迭代点的梯度范数不超过$\varepsilon$，只需
+$K\geq2[J(\bm\theta^{(0)})-J_{\inf}]/(\eta\varepsilon^2)$。
+\end{theorem}
+证明与定理~\ref{thm:ffn-stationary-rate}相同：沿完整计算图求出梯度，使用下降引理并对更新次数求和。
+
+该界回答了接近一阶驻点需要多少次更新。它不保证驻点是全局最小点，也不保证参数序列存在唯一极限。若还满足$\lVert\nabla J\rVert_2^2\geq2\mu(J-J_*)$，其中$\mu>0$、$J_*$为最小值，再限制$\eta\leq1/\mu$，则有
+$J(\bm\theta^{(K)})-J_*\leq(1-\eta\mu)^K[J(\bm\theta^{(0)})-J_*]$。这一条件需要对具体训练问题验证，不能由网络名称推得。
+
+邻居采样、离散图结构更新、ReLU拐点和随机Dropout改变定理的条件。固定图特征上的岭读出属于凸二次特例；多层端到端训练通常不属于该特例。下面的不动点结论解决另一项可解性问题：给定参数后，循环图网络能否得到唯一的预测状态。
 
 \subsubsection{状态收敛及其条件}
 \label{sec:gnn-state-convergence}
 
 不动点模型需要知道反复更新是否会停在确定的状态。\term{压缩映射}（contraction mapping）条件要求：对同一输入，两份状态经过更新后距离按小于1的固定比例缩小。比较距离针对整张图的状态，消息聚合和所有节点的更新共同进入这个比例。
 
+\begin{theorem}[收缩循环图网络的状态解唯一性与收敛速度]
+\label{thm:gnn-state-solution}
 固定图、输入与参数，若更新把非空闭状态域映回自身，并在同一范数下以非负统一比例$c<1$收缩，则任意该域内初态都趋于唯一状态$\bm h^*$，且
 \begin{equation}
- \lVert\bm h^{(t)}-\bm h^*\rVert\leq c^t\lVert\bm h^{(0)}-\bm h^*\rVert.
+ \lVert\bm h^{(t)}-\bm h^*\rVert\leq c^t\lVert\bm h^{(0)}-\bm h^*\rVert\text{。}
  \label{eq:gnn-contraction-error}
 \end{equation}
+\end{theorem}
 这给出了状态存在、唯一和迭代误差的结论（参考\BookTheoremRef{thm:analysis-banach-fixed-point}{卷1《数学准备：计算、分析与几何》第3章“测度与分析”第3.2.3.1节“压缩迭代与停止误差”}）。
 
 在同一收缩条件下，相邻状态差还给出可检查的后验误差证书：对$t\geq1$，$\lVert\bm{h}^{(t)}-\bm{h}^*\rVert\leq c(1-c)^{-1}\lVert\bm{h}^{(t)}-\bm{h}^{(t-1)}\rVert$。$c$接近1时，误差证书中的放大系数较大，同一相邻差对应较宽的最终误差上界；迭代速度与停止容差由此联系起来。
@@ -796,6 +830,47 @@ $\phi_r$输出标量，$c_i$是与坐标变换无关的归一化系数，$\bm{h}
 
 \subsection{泛化性}
 \label{sec:gnn-generalization}
+
+\subsubsection{从参数约束到风险界}
+\label{sec:gnn-risk-bound}
+
+对整图属性预测，需要估计由训练图选出的网络在新图上的期望误差。下面固定参数范围，并要求参数变化引起的损失变化具有统一上界，再用有限覆盖把经验风险连接到期望风险；抽样单位是整张图，图内节点可以相关。
+
+\begin{theorem}[有界参数图网络在独立整图样本下的期望风险界]
+\label{thm:gnn-cover-generalization}
+设$Z_1,\ldots,Z_N$是独立同分布的整图及标签样本。预先固定的参数域$\bm{\Theta}\subseteq\mathbb{R}^{p}$包含在半径$B_\theta>0$的欧氏球内，损失$\ell_{\bm{\theta}}(Z)\in[0,1]$关于样本可测，且对全部允许的样本与参数有
+\[
+  |\ell_{\bm{\theta}}(Z)-\ell_{\widetilde{\bm{\theta}}}(Z)|
+    \leq a\lVert\bm{\theta}-\widetilde{\bm{\theta}}\rVert_2
+\]
+其中$a>0$为预先给定的统一常数。记期望风险$R(\bm{\theta})=\mathbb{E}\ell_{\bm{\theta}}(Z)$与经验风险$\widehat R_N(\bm{\theta})=N^{-1}\sum_q\ell_{\bm{\theta}}(Z_q)$。对任意预先固定的$\varepsilon>0$与$\delta\in(0,1)$，以至少$1-\delta$的概率，
+\begin{equation}
+  \begin{aligned}
+    \sup_{\bm{\theta}\in\bm{\Theta}}
+      |R(\bm{\theta})-\widehat R_N(\bm{\theta})|
+      &\leq2\varepsilon\\
+      &\quad+\sqrt{\frac{p\log(1+2B_\theta a/\varepsilon)
+        +\log(2/\delta)}{2N}}\text{。}
+  \end{aligned}
+  \label{eq:gnn-cover-risk}
+\end{equation}
+\end{theorem}
+\begin{proof}
+欧氏球内的参数集合有半径$\varepsilon/a$的覆盖，中心取自$\bm{\Theta}$，覆盖数至多为$(1+2B_\theta a/\varepsilon)^p$。对每个中心的有界损失使用Hoeffding不等式，再用并合界，得到平方根项。任意参数到最近中心的损失差不超过$\varepsilon$，期望风险与经验风险各增加至多$\varepsilon$，合计得到$2\varepsilon$。
+\end{proof}
+
+记式\eqref{eq:gnn-cover-risk}的右侧为$\Delta_N$。定理同时控制全部候选，故任何满足约束的训练输出$\widehat{\bm\theta}$都有
+$R(\widehat{\bm\theta})\leq\widehat R_N(\widehat{\bm\theta})+\Delta_N$。若其经验风险至多比候选内最小经验风险高$\xi$，进一步有
+$R(\widehat{\bm\theta})\leq\inf_{\bm\theta\in\bm\Theta}R(\bm\theta)+2\Delta_N+\xi$。前者估计训练模型的期望误差，后者比较它与同一候选族的最优期望误差。
+
+这个界把独立图数、参数自由度、参数范围和统一敏感度放在同一表达式中。下文的范数推导可以在限定图规模、特征尺度与网络结构后帮助构造$a$；图拓扑及度会通过传播算子进入它。统一常数须覆盖全部允许样本和参数；训练图上测到的局部梯度，只描述其中一部分状态，分析还需建立共同尺度界。
+
+原始交叉熵无上界，超出上述$[0,1]$损失范围；可使用有界替代损失，或在额外概率下界及尺度处理后重新分析。参数覆盖界给出满足这些条件时的统一保证，数值可能较松；实际测试误差仍由对应数据评价。Rademacher复杂度可以更细地利用样本和函数约束，算法稳定性则研究替换一个完整图样本后学习结果的变化；采用哪一种工具，都必须与样本单位和损失条件对应。
+
+结构设计还影响拟合偏差。更强的对称性减少无关自由度，却可能排除任务需要的方向差异；聚合保留更多输入差异，可以让后续函数利用这些差异，实际预测仍需要数据与学习过程支持。残差提供额外路径时，其Lipschitz上界常出现$1+$分支尺度，梯度直达路径与候选函数族的复杂度分别计量，分支相加的尺度仍需纳入上界。
+
+测试图比训练图更大、节点度分布不同，或关系类型及标签机制变化时，已经改变了输入分布。共享更新可以在新规模上执行，仍不保证超出训练范围的误差保持不变。同分布整图泛化、固定图直推以及跨规模或分布预测，对应不同数据条件；比较结果据各自信息范围和样本来源解释。
+
 
 \subsubsection{样本单位与图上的依赖}
 \label{sec:gnn-sample-units}
@@ -824,42 +899,6 @@ $\phi_r$输出标量，$c_i$是与坐标变换无关的归一化系数，$\bm{h}
 读出又带来规模差别。平均读出满足$\lVert n^{-1}\bm{1}^{\top}\bm{H}\rVert_2\leq\lVert\bm{H}\rVert_F/\sqrt n$，求和读出的对应系数为$\sqrt n$。若每个节点输入范数不超过$B_x$，则$\lVert\bm{X}\rVert_F\leq B_x\sqrt n$；平均与求和对应的输出上界分别消去或保留节点规模。宽度、偏置、注意力评分和关系参数还会改变其余常数，需按实际模型计入。
 
 对权重扰动也可逐层计算。只改变第$k$层权重时，当前误差至多为$\lVert\bm{S}\rVert_2\lVert\bm{H}^{(k)}\rVert_F\lVert\Delta\bm{W}^{(k)}\rVert_2$，后续层再乘各自的尺度界。逐个替换所有层并用三角不等式，可以建立输出对全部参数的统一Lipschitz上界。深度影响重复传播和误差累积，参数共享限制自由度，却不取消同一参数反复使用的敏感度。
-
-\subsubsection{从参数约束到风险界}
-\label{sec:gnn-risk-bound}
-
-把敏感度接到泛化分析，还需要给出样本怎样抽取、允许哪些参数以及损失怎样计量。下面给出一个便于检查条件的整图预测界，承接统计学习部分的一致收敛思路，不假定独立节点。
-
-\begin{theorem}[有界参数图预测的覆盖界]
-\label{thm:gnn-cover-generalization}
-设$Z_1,\ldots,Z_N$是独立同分布的整图及标签样本。预先固定的参数域$\bm{\Theta}\subseteq\mathbb{R}^{p}$包含在半径$B_\theta>0$的欧氏球内，损失$\ell_{\bm{\theta}}(Z)\in[0,1]$关于样本可测，且对全部允许的样本与参数有
-\[
-  |\ell_{\bm{\theta}}(Z)-\ell_{\widetilde{\bm{\theta}}}(Z)|
-    \leq a\lVert\bm{\theta}-\widetilde{\bm{\theta}}\rVert_2
-\]
-其中$a>0$为预先给定的统一常数。记期望风险$R(\bm{\theta})=\mathbb{E}\ell_{\bm{\theta}}(Z)$与经验风险$\widehat R_N(\bm{\theta})=N^{-1}\sum_q\ell_{\bm{\theta}}(Z_q)$。对任意预先固定的$\varepsilon>0$与$\delta\in(0,1)$，以至少$1-\delta$的概率，
-\begin{equation}
-  \begin{aligned}
-    \sup_{\bm{\theta}\in\bm{\Theta}}
-      |R(\bm{\theta})-\widehat R_N(\bm{\theta})|
-      &\leq2\varepsilon\\
-      &\quad+\sqrt{\frac{p\log(1+2B_\theta a/\varepsilon)
-        +\log(2/\delta)}{2N}}\text{。}
-  \end{aligned}
-  \label{eq:gnn-cover-risk}
-\end{equation}
-\end{theorem}
-\begin{proof}
-欧氏球内的参数集合有半径$\varepsilon/a$的覆盖，中心取自$\bm{\Theta}$，覆盖数至多为$(1+2B_\theta a/\varepsilon)^p$。对每个中心的有界损失使用Hoeffding不等式，再用并合界，得到平方根项。任意参数到最近中心的损失差不超过$\varepsilon$，期望风险与经验风险各增加至多$\varepsilon$，合计得到$2\varepsilon$。
-\end{proof}
-
-这个界把独立图数、参数自由度、参数范围和统一敏感度放在同一表达式中。前面的范数推导可以在限定图规模、特征尺度与网络结构后帮助构造$a$；图拓扑及度会通过传播算子进入它。统一常数须覆盖全部允许样本和参数；训练图上测到的局部梯度，只描述其中一部分状态，分析还需建立共同尺度界。
-
-原始交叉熵无上界，超出上述$[0,1]$损失范围；可使用有界替代损失，或在额外概率下界及尺度处理后重新分析。参数覆盖界给出满足这些条件时的统一保证，数值可能较松；实际测试误差仍由对应数据评价。Rademacher复杂度可以更细地利用样本和函数约束，算法稳定性则研究替换一个完整图样本后学习结果的变化；采用哪一种工具，都必须与样本单位和损失条件对应。
-
-结构设计还影响拟合偏差。更强的对称性减少无关自由度，却可能排除任务需要的方向差异；聚合保留更多输入差异，可以让后续函数利用这些差异，实际预测仍需要数据与学习过程支持。残差提供额外路径时，其Lipschitz上界常出现$1+$分支尺度，梯度直达路径与候选函数族的复杂度分别计量，分支相加的尺度仍需纳入上界。
-
-测试图比训练图更大、节点度分布不同，或关系类型及标签机制变化时，已经改变了输入分布。共享更新可以在新规模上执行，仍不保证超出训练范围的误差保持不变。同分布整图泛化、固定图直推以及跨规模或分布预测，对应不同数据条件；比较结果据各自信息范围和样本来源解释。
 
 \section{常见应用}
 \label{sec:gnn-applications}

@@ -1,0 +1,1263 @@
+\chapter{多智能体协作和博弈}
+\label{chap:rl-multi-agent}
+
+两个人从窄通道的两端相向而行。一人决定前进，如果另一人等待，通道便能放行；如果另一人也前进，两人可能堵在入口。这里没有改变通道的物理规则，改变的只是另一个决策者的行为。单智能体价值学习仍能计算长期后果，却不能独自回答三个问题：谁的收益应当增加，行动时究竟能知道什么，以及对方会不会随着自己的变化而调整策略？
+
+本章沿用第\ref{chap:rl-overview}章的策略、回报和价值，以及第\ref{chap:rl-learning}章的采样与更新工具。多个参与者带来的新困难，不只是联合动作空间变大，还包括信息分散、目标冲突和共同学习。图\ref{fig:rl-multi-agent-map}给出这些问题的联系：收益关系规定行为标准，信息权限限定可实现策略；联合经验支持后果估计，策略更新又改变经验来源。估计时可以同时使用联合价值、反事实基线和伙伴模型；更新时也可以同时采用策略梯度、历史响应和策略群体。这些选择不能排成互斥算法的演进链。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/rl-multi-agent-map}
+  \caption{本章的问题关系。实线标出约束、数据或估计的用途，外侧回路表示更新后的策略改变经验；底部的适配与评价检验的是声明的参与者范围和行为标准。}
+  \label{fig:rl-multi-agent-map}
+\end{figure}
+
+% Outline: 7.1
+\section{收益、信息与参与者的共同设定}
+\label{sec:rl-multi-agent-setting}
+
+% Outline: 7.1.1
+\subsection{用联合动作、转移与个体回报定义决策过程}
+\label{sec:rl-multi-agent-process}
+
+先把窄通道压缩成一个可手算的教学任务。两人尚未通过时处于状态$s_{\text{入口}}$，每人可选前进$F$或等待$W$。$(F,W)$使第一人通过，$(W,F)$使第二人通过；随后未通过者再前进一步，两人都到达吸收终点。$(W,W)$保持原位，$(F,F)$也保持原位并记一次碰撞。这是确定性简化，不是前几章随机网格的数值解。若每步时间成本为$-1$，碰撞另扣$3$，第一人在入口前进的即时收益便随对方行为从$-1$变成$-4$。
+
+\begin{definition}[多参与者序贯决策]
+\label{def:rl-multi-agent-game}
+参与者集合为$\mathcal N=\{1,\ldots,m\}$，$-i$表示除$i$以外的参与者。联合动作为$\bm a=(a_1,\ldots,a_m)\in\prod_i\mathcal A_i(s)$。共同转移核为$P(s'\mid s,\bm a)$，参与者$i$的期望奖励为$R_i(s,\bm a)$。局部历史$h_{i,t}$记录$i$在动作$t$之前获准使用的观测、自身动作、可见奖励和已收到的消息，策略$\pi_i(a_i\mid h_i)$据此选择动作。联合策略记为$\bm\pi$，其未归一化折扣目标为
+\[
+ J_i(\bm\pi)=\mathbb E_{\rho_0,\bm\pi}
+ \left[\sum_{t=0}^{\infty}\gamma^t r_{i,t}\right],
+ \qquad 0\leq\gamma<1.
+\]
+\end{definition}
+
+若给定联合历史$\bm h$后各人独立随机化，则$\bm\pi(\bm a\mid\bm h)=\prod_i\pi_i(a_i\mid h_i)$。若在该历史后广播公共随机信号$c$，只在给定$c$后作乘积分解；边缘联合分布是$\sum_c p(c\mid\bm h)\prod_i\pi_i(a_i\mid h_i,c)$，通常不等于各边缘分布的乘积。随机博弈（stochastic game）用共同状态和转移把矩阵收益关系延伸到多步决策，其经典完全可观测形式由Shapley建立\scite{rl1-shapley1953-games}
+
+在其他参与者使用固定的状态条件策略，且给定$s$后其联合动作与$i$的动作独立随机化时，参与者$i$可以把他们的动作边缘化：
+\begin{align}
+ P_i^{\bm\pi_{-i}}(s'\mid s,a_i)
+ &=\sum_{\bm a_{-i}}\bm\pi_{-i}(\bm a_{-i}\mid s)
+ P(s'\mid s,a_i,\bm a_{-i}),\label{eq:rl-multi-agent-induced}\\
+ R_i^{\bm\pi_{-i}}(s,a_i)
+ &=\sum_{\bm a_{-i}}\bm\pi_{-i}(\bm a_{-i}\mid s)
+ R_i(s,a_i,\bm a_{-i}).\nonumber
+\end{align}
+例如，对方在入口以概率$q$等待，自己前进后的通过概率就是$q$，即时期望收益为$-4+3q$。对方把$q$从$0.8$改成$0.2$，通过概率与收益随之改变，但$P$和$R_i$并未改变。共同学习的非平稳性可以产生于这个边缘化过程，而不必来自物理环境漂移。
+
+式\eqref{eq:rl-multi-agent-induced}不要求其他人彼此独立，却要求$\mathbb P(\bm a_{-i}\mid s,a_i)=\bm\pi_{-i}(\bm a_{-i}\mid s)$。若公共信号使双方动作相关，应把该信号加入条件，再检查这一等式；不能直接用边缘分布替代给定自身动作后的条件分布。对方若根据过去的碰撞次数调整让行概率，仅有当前位置也不足以预测下一动作。此时应把记忆或类型纳入充分状态，或者在历史上定义过程；不能直接套用平稳MDP的收敛结论。
+
+% Outline: 7.1.2
+\subsection{不同收益关系下的合作、零和与一般和问题}
+\label{sec:rl-multi-agent-payoffs}
+
+在同一入口上可以规定不同目标，而不改变动作空间。完全合作时，两人共享奖励，例如碰撞$-2$、都等$-1$、恰好一人前进$2$。两人零和时，只评价谁先通过：$(F,W)$给第一人$1$，$(W,F)$给第一人$-1$，其余为$0$，第二人收益取相反数。一般和时，每人承担自己的时间成本，等待者可能比先行者付出更多，碰撞却损害双方。上述数字均是教学设定。
+
+\term{完全合作}指所有人的回报目标一致；\term{两人零和}指每个结果中$r_{1,t}+r_{2,t}=0$，因而$J_2=-J_1$；\term{一般和}允许任意收益关系。团队奖励共享不等于观测共享，也不保证两套独立更新能发现同一种让行约定。表\ref{tab:rl-multi-agent-payoffs}说明，先规定收益关系，才能选择后面要验证的标准。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 收益关系 & 标准与单方偏离 & 额外社会选择\\
+ \midrule
+ 完全合作 & 在可行信息下最大化共同$J$；单方改动也按共同收益计 & 若存在多个最优策略，仍需选择兼容约定\\
+ 两人零和 & 最大化最坏收益；偏离检验可被利用的程度 & 价值标准已给定，风险限制可另设\\
+ 一般和 & 各自偏离是否获利；可另优化福利 & 必须另定福利、公平及取舍\\
+ \bottomrule
+ \end{tabularx}
+ \caption{固定任务接口，只改变收益关系时的行为标准。一般和没有默认的共同最大化目标。}
+ \label{tab:rl-multi-agent-payoffs}
+\end{table}
+
+一般和不是“每人各自最大化，然后把结果加起来”。一个结果可以总收益很高，却使一人愿意立即偏离；另一个结果无人愿意偏离，却让双方都不满意。福利、分配和稳定性回答不同问题，不能靠奖励求和消除它们的冲突。
+
+% Outline: 7.1.3
+\subsection{不同行动、观测与通信时序下的信息结构}
+\label{sec:rl-multi-agent-information}
+
+通道中的消息“我先走”只有在对方行动前到达，才可能帮助本轮协调。图\ref{fig:rl-multi-agent-timing}把观测、发信、收信、行动和反馈分开。同一条消息若延迟一轮，只能进入$h_{i,t+1}$；训练日志最后收集到了它，并不意味着行动$t$时能够使用。顺序行动也要另作说明：后行动者可能看见先行动作，同时行动者则不能。
+
+\Needspace{16\baselineskip}
+程序接口的调用次序也不一定表示可观察的行动次序。PettingZoo统一了多类多智能体环境的调用接口；其智能体—环境循环（agent environment cycle, AEC）接口依次调用参与者，但实现同时行动任务时，仍须屏蔽本轮其他参与者尚未共同提交的动作\scite{rl7-terry2021}
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-timing}
+ \caption{同轮通信与延迟通信的可见时刻。实线表示本轮可用信息，虚线表示下一轮才收到的消息。顺序行动还可开放对先行动作的观测，不能与同时行动混用。}
+ \label{fig:rl-multi-agent-timing}
+\end{figure}
+
+通信内容也会改变可用信息。CommNet通过连续向量及聚合形成协作输入，让参与者在动作前利用同伴传来的表示；这些表示只有按约定及时送达，才属于本轮策略输入\scite{rl7-sukhbaatar2016}
+
+\term{部分可观测随机博弈}（partially observable stochastic game, POSG）在定义\ref{def:rl-multi-agent-game}上增加联合观测核$O(\bm o'\mid s',\bm a)$及初始观测分布。局部观测$o_i$只是状态生成的一个信号，不等于$s$。当各人共享团队奖励，且策略仅使用各自历史时，得到\term{分散部分可观测马尔可夫决策过程}（decentralized POMDP, Dec-POMDP）。通信可加入动作或显式消息阶段，顺序行动可用状态中的行动者标记表示；任何表示都须保留原信息限制。分散控制的困难不仅是状态不可见，还在于每人不能任意合并他人的信息\scite{rl7-bernstein2002}
+
+为说明“看不见”如何限制策略，另定义一个有限隐藏牌面游戏。它不是标准扑克规则，以下规则已给出全部随机性与收益。机会方以各$1/2$的概率发高牌$H$或低牌$L$给参与者1，仅1看见牌。两人各先投入一单位。1可下注$B$或过牌$K$；若1下注，2可弃牌$F$或跟注$C$。若1过牌，2可过牌$K$或下注$B$；若2也过牌，立即摊牌；若2下注，1再选择弃牌$F$或跟注$C$。此后结束。摊牌时，高牌由1赢、低牌由2赢；无人加注的摊牌使胜者净得$1$，跟注后的摊牌使胜者净得$2$，有人弃牌时未弃牌者净得$1$。另一人净收益取负值。不设折扣，只有终局收益。
+
+图\ref{fig:rl-multi-agent-card-tree}给出了完整历史树。圆节点是决策，顶部机会节点生成私有牌面，叶节点标第一人的净收益。参与者2面对首次下注时，不能分辨高牌分支和低牌分支；这两个节点组成同一\term{信息集}（information set），即行动者凭现有信息无法区分的一组历史。2在这两个节点必须使用相同的跟注概率，否则策略就偷看了牌。2在观察到过牌后处于另一个信息集，不能把“对方已下注”和“对方已过牌”合并。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-card-tree}
+ \caption{教学隐藏牌面游戏的完整树。虚线分别连接2面对下注和面对过牌的信息集；1知道自己的牌，故其节点不跨牌面合并。叶节点均为1的收益，2取相反数。}
+ \label{fig:rl-multi-agent-card-tree}
+\end{figure}
+
+\term{完全回忆}（perfect recall）要求同一信息集中的历史具有相同的自身过去信息集及自身动作序列，也就是参与者不会忘记自己曾知道什么、做过什么。本游戏满足该条件：1在“过牌、2下注”后仍记得牌面与自己的过牌。若错误地把1首次行动的节点与“自己过牌后再次行动”的节点合并，即使牌面相同，也抹去了自己的动作历史；这不是另一种压缩实现，而是破坏了完全回忆。后面的CFR遗憾分解与平均行为策略公式都依赖这一条件。
+
+% Outline: 7.1.4
+\subsection{信息权限与联合策略表示}
+\label{sec:rl-multi-agent-permissions}
+
+训练时可以让服务器看见双方位置和动作，但部署时每人可能只有局部传感器。\term{集中训练、分散执行}（centralized training with decentralized execution, CTDE）规定的正是这个信息契约：训练器可利用额外信息估计价值，执行策略只能使用当时确实可得的输入。图\ref{fig:rl-multi-agent-ctde}将集中评论家与局部行动者分开。删除训练专用的状态和梯度线后，图中仍须存在完整的动作生成路径。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-ctde}
+ \caption{CTDE的信息与梯度路径。局部历史生成各自动作，集中状态只供训练评论家；虚线是训练梯度，部署时删除。评论家可为联合动作价值$Q_i$，也可为不以当前动作为输入的状态价值$V_i$。}
+ \label{fig:rl-multi-agent-ctde}
+\end{figure}
+
+若两人的观测、动作和角色语义兼容，可以共享$\pi_{\bm\theta}(a_i\mid h_i)$的参数；共享的是函数，不是输入观测。身份编码$e_i$使同一网络学习“1先走、2等待”，却可能在身份重排后失效。独立参数则允许不同动作接口或角色，但参数量、训练数据需求和协调搜索空间通常增加。是否使用身份应当服从任务，而不是默认把固定编号当作可迁移的行为特征。
+
+DIAL在训练时利用可微信道传递梯度，执行时则使用受限的离散消息。训练近似与部署信道并不相同，量化后仍须检查传递的信息是否支持原来的协调行为\scite{rl7-foerster2016}
+
+通信还需要一份比“允许发消息”更具体的约定。表\ref{tab:rl-multi-agent-communication}中的四种接口都可能与CTDE组合；训练中能反向传播消息，并不使部署链路的延迟、带宽和接收权限消失。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 接口 & 发送者、接收者与内容 & 时序、带宽及训练／执行条件\\
+ \midrule
+ 固定协议 & 每人向指定邻居发角色或让行码 & 动作前收信；固定比特数；两阶段协议均保持\\
+ 可微通信 & 所有人向聚合器或同伴发实向量 & 每轮一至多次交换；向量维数固定；执行须保留信道\\
+ 离散消息 & 每人向获准接收者发有限字母表符号 & 训练可用连续松弛；执行量化后重新核验\\
+ 图消息传递 & 节点向图邻居发嵌入或定向消息 & 边数与轮数决定带宽；部署只能使用可发现的边\\
+ \bottomrule
+ \end{tabularx}
+ \caption{消息接口的比较。每一行都必须同时确定发送与接收权限、消息内容、送达时刻和通信成本。}
+ \label{tab:rl-multi-agent-communication}
+\end{table}
+
+接收对象还可以由消息决定。TarMAC通过定向寻址计算接收权重，使不同接收者聚合不同内容。这一选择作用于“消息给谁”，与前述消息内容和训练信道的选择可以组合\scite{rl7-das2019}
+
+% Outline: 7.1.5
+\subsection{不同数据访问与参与者变化方式下的学习问题}
+\label{sec:rl-multi-agent-access}
+
+面对固定避让规则，学习者可以通过探索识别其响应；面对共同训练的伙伴，刚识别出的规则下一轮可能已经改变；从历史策略库抽样，则还要知道每场抽到了谁。这三种条件中的参与者数都是二，但经验分布与可验证声明不同。表\ref{tab:rl-multi-agent-access}把数据权限和参与者变化分开，表中“可改变”均指学习者按协议有权改变，不能把第三方对手的主动变化算作自己的采集能力。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 参与者条件 & 在线访问 & 固定联合日志 & 有限批次访问\\
+ \midrule
+ 固定伙伴 & 可改自身行为，伙伴不变 & 不可重采；还原固定版本 & 批间改自身，批内固定\\
+ 同步学习者 & 可按约定更新双方 & 仅观察历史更新，不能重放新响应 & 批间同步更新，批内冻结\\
+ 群体抽样 & 可改获准的抽样分布 & 只能使用已记录群体支持 & 批间改抽样，批内固定\\
+ 主动适应者 & 自身动作可诱发其响应，未必可控 & 响应机制可能不可识别 & 须声明对方是否随批内历史更新\\
+ \bottomrule
+ \end{tabularx}
+ \caption{数据访问与参与者条件的交叉。有限批次中若对方仍会适应，就不能声称整批由固定联合策略生成。}
+ \label{tab:rl-multi-agent-access}
+\end{table}
+
+学习对象可以只有一个策略，也可以是多个策略，只要结果由多方行为共同决定，便需要多智能体建模。反过来，运行多个固定规则代理或多个语言模型角色，并不自动构成多智能体强化学习。还应指出哪个策略在优化、反馈由何种交互产生、更新针对哪个回报；“多人对话”只是交互接口，不是学习目标。
+
+% Outline: 7.2
+\section{不同收益关系下的行为标准}
+\label{sec:rl-multi-agent-solutions}
+
+“学得更好”必须有比较对象。本节在同一有限两动作接口上分别规定团队最优、最坏情形价值和单方偏离稳定性。它们是不同收益关系下的并列标准，不是一个算法必须依次达到的等级。
+
+% Outline: 7.2.1
+\subsection{共同目标下的联合最优标准}
+\label{sec:rl-multi-agent-team}
+
+共享回报时，团队希望最大化$J(\bm\pi)$，但最大化必须在实际可执行的策略集合$\Pi_{\text{分散}}$上进行。该集合同时受局部信息、消息时序和公共随机性的限制。训练期间看见更多信息，只能改善求解或估计，并不能自动扩大部署集合。
+
+\begin{theorem}[集中与分散策略的可行集合]
+\label{thm:rl-multi-agent-inclusion}
+设奖励有界且$0\leq\gamma<1$。若集中控制器在每个决策时刻能取得分散系统的全部可用历史，并模拟其私有随机性、公共随机性及合法通信，则每个分散策略都可由集中策略实现相同轨迹分布。按实现的分布识别策略时，
+\[
+ \Pi_{\text{分散}}\subseteq\Pi_{\text{集中}},
+ \qquad
+ \sup_{\bm\pi\in\Pi_{\text{分散}}}J(\bm\pi)
+ \leq
+ \sup_{\pi\in\Pi_{\text{集中}}}J(\pi).
+\]
+\end{theorem}
+\begin{proof}
+任选分散策略$\bm\pi$。集中控制器保存每人的局部历史；每一时刻按原协议产生公共信号，再按原联合随机机制生成各人的私有随机数与消息，调用各个$\pi_i$得到联合动作。初始历史分布与原系统相同。若直到$t$的联合历史分布相同，模拟器在该历史下产生相同的条件动作分布，而环境转移与观测核未变，故$t+1$的联合历史分布也相同。归纳得到全部有限轨迹分布相同；有界奖励和$\gamma<1$保证折扣回报期望相同。于是每个分散可达回报都能集中实现，对集合取上确界即得不等式。若有限问题中最优策略存在，可将上确界写成最大值。
+\end{proof}
+
+包含关系可能严格。设一次通行前随机出现公平信号$c\in\{0,1\}$，团队只有在两人都选择$c$时得$1$，其他情况得$0$。集中控制器看得见$c$，总能得$1$；分散双方各自的观测均与$c$独立，不允许互传观测，随机数则独立于$c$及双方观测。即使允许公共随机数，每个人的动作仍与$c$独立，所以
+\[
+ \mathbb P(a_1=a_2=c)\leq\mathbb P(a_1=c)=\frac12.
+\]
+这个论证不要求联合观测或联合动作与$c$独立，也不从逐个独立推出联合独立。固定都选0即可达到上界；若及时广播$c$，两人便都能按信号行动，分散最优值才恢复为1。
+
+团队最优因此既是收益标准，也是信息条件下的可实现性问题。找到一次成功协调或参数空间中的局部最优，都不能替代全局最大化；一般和问题更不能未经授权直接改成团队目标。
+
+% Outline: 7.2.2
+\subsection{零和对抗下的极小极大标准}
+\label{sec:rl-multi-agent-minimax}
+
+窄通道也可抽出一个“猜对方选哪侧”的对抗子任务。第一人选左右，第二人猜左右；选择相同给第一人$1$，不同给第一人$-1$。令行对应第一人的选择、列对应第二人的选择，其收益矩阵为
+\begin{equation}
+ \bm A=
+ \begin{pmatrix}1&-1\\-1&1\end{pmatrix}.
+ \label{eq:rl-multi-agent-matching}
+\end{equation}
+第一人固定左或固定右，都有一个使其收益为$-1$的对手纯动作；均匀随机时，对任意列的期望均为0。随机化并非让轨迹更确定，而是让对手无法利用确定的行动偏好。
+
+一般地，令$\bm A\in\mathbb R^{p\times q}$，混合策略$\bm x\in\Delta_p$、$\bm y\in\Delta_q$是纯动作上的概率分布，第一人的期望收益为$\bm x^\top\bm A\bm y$。第一人最大化它，第二人最小化它。给定对方策略时的最优选择称为\term{最佳响应}（best response）；\term{鞍点}要求双方分别固定对方后都不能改进自己的目标。
+
+\begin{theorem}[有限零和博弈的极小极大等式]
+\label{thm:rl-multi-agent-minimax}
+有限动作集合、允许全部混合策略且收益双线性时，
+\[
+ \max_{\bm x\in\Delta_p}\min_{\bm y\in\Delta_q}
+ \bm x^\top\bm A\bm y
+ =
+ \min_{\bm y\in\Delta_q}\max_{\bm x\in\Delta_p}
+ \bm x^\top\bm A\bm y.
+\]
+双方均存在达到共同价值的策略，且构成鞍点。
+\end{theorem}
+\begin{proof}
+对固定$\bm x$，线性函数在单纯形上的最小值是某一列收益的最小值，故左侧等于线性规划
+\[
+ \max_{\bm x,v}v,\qquad
+ \bm A^\top\bm x\geq v\bm 1,\quad
+ \bm 1^\top\bm x=1,\quad \bm x\geq0.
+\]
+对不等式引入$\bm y\geq0$，对归一化等式引入自由变量$w$，拉格朗日式为
+\[
+ v+\bm y^\top(\bm A^\top\bm x-v\bm1)
+       +w(1-\bm1^\top\bm x)
+ =w+v(1-\bm1^\top\bm y)
+       +\bm x^\top(\bm A\bm y-w\bm1).
+\]
+对自由$v$及非负$\bm x$取上确界有限，当且仅当$\bm1^\top\bm y=1$且$\bm A\bm y\leq w\bm1$。因此对偶为
+\[
+ \min_{\bm y,w}w,\qquad
+ \bm A\bm y\leq w\bm1,\quad
+ \bm1^\top\bm y=1,\quad \bm y\geq0,
+\]
+恰好是右侧。任意概率向量配以$v=\min_{r,c}A_{r,c}$使原问题可行，任意概率向量配以$w=\max_{r,c}A_{r,c}$使对偶可行。所有期望收益落在这两个有限数之间，两问题均有界。由有限维线性规划强对偶及最优解存在性，最优目标相等，记为$v^*$。最优$\bm x^*,\bm y^*$满足对任意$\bm y,\bm x$，
+$\bm x^{*\top}\bm A\bm y\geq v^*$且$\bm x^\top\bm A\bm y^*\leq v^*$；取彼此得到等号，正是鞍点。
+\end{proof}
+
+这一证明承接第\ref{chap:rl-planning}章的线性规划工具。紧凸的混合策略集合是关键；若策略被限制为非凸神经网络参数类，不能直接搬用等式。
+
+回到完全可观测、两人零和的折扣随机博弈，令$Q(s,\cdot,\cdot)$为状态$s$的阶段收益矩阵，记其极小极大值为$\operatorname{val}Q(s)$，则
+\begin{equation}
+ (\mathcal T Q)(s,\bm a)
+ =R_1(s,\bm a)+\gamma\sum_{s'}P(s'\mid s,\bm a)
+           \operatorname{val}Q(s').
+ \label{eq:rl-multi-agent-minimax-backup}
+\end{equation}
+Minimax-Q用$r_{1,t}+\gamma\operatorname{val}Q(s_{t+1})$作样本目标，再以步长$\alpha_t$更新当前表项。例如奖励1、后继博弈价值0、旧值0.4、步长0.5时，新值为0.7。每次求后继价值需要解阶段线性规划，而非只取一个动作最大值。原始Minimax-Q由此将单智能体备份扩展到对抗决策\scite{rl7-littman1994}
+
+目标式正确不等于任何采样实现都收敛。表格收敛还要求有界奖励、各状态联合动作充分访问、适当随机逼近步长及正确求解阶段价值；深度逼近、局部观测或共同变化的数据覆盖均需另行分析。
+
+% Outline: 7.2.3
+\subsection{一般和博弈下的均衡与社会目标}
+\label{sec:rl-multi-agent-equilibria}
+
+若两人都希望通行，稳定性也不意味着敌对。令两人选择左右让行，选择相同约定时收益为$(2,2)$，不同为$(0,0)$。两个对角纯策略都稳定：在对方不变时，自己换边会把2变成0。但在另一个教学矩阵中，双方合作为$(3,3)$，单方抢行为$(5,0)$或$(0,5)$，双方抢行为$(1,1)$。逐行逐列比较可知抢行严格优于合作，稳定结果却比$(3,3)$的总收益低。
+
+\begin{definition}[有限阶段博弈的偏离标准]
+\label{def:rl-multi-agent-equilibria}
+令$u_i(\bm a)$为固定有限阶段博弈的收益。\term{Nash均衡}是独立混合策略$\bm\pi$，满足对任意$i$和替代混合策略$\pi_i'$，
+$\mathbb E_{\bm\pi}u_i\geq\mathbb E_{\pi_i',\bm\pi_{-i}}u_i$。
+对联合建议分布$q(\bm a)$，\term{粗相关均衡}（coarse correlated equilibrium, CCE）要求
+\[
+ \mathbb E_q[u_i(\bm a)-u_i(b_i,\bm a_{-i})]\geq0
+ \quad\text{对所有 }i,b_i.
+\]
+\term{相关均衡}（correlated equilibrium, CE）要求
+\[
+ \sum_{\bm a_{-i}}q(a_i,\bm a_{-i})
+ [u_i(a_i,\bm a_{-i})-u_i(b_i,\bm a_{-i})]\geq0
+ \quad\text{对所有 }i,a_i,b_i.
+\]
+\end{definition}
+
+CCE比较“收到建议前就改用一个固定动作”，CE允许“看见自己收到的建议后再决定如何替换”。CE约束更强；这里写的是未条件化形式，罕见建议也按其发生概率计权。Nash使用边缘策略乘积，CE和CCE允许相关建议。协调博弈中，以各$1/2$概率建议双方都左或都右是CE；若把它换成两个边缘的独立乘积，便有一半概率失配。联合分布携带的协调信息不能随意丢掉。
+
+有限参与者、有限纯策略的博弈至少存在一个混合Nash均衡。证明的关键桥梁是：各人混合策略单纯形非空、紧且凸；收益对自身混合策略线性，故最佳响应集合非空且凸；收益连续使最佳响应对应具有闭图。对有限维紧集合，这些条件允许应用Kakutani不动点定理，得到每个人都是其他人最佳响应的不动点。Nash的存在性工作支持的是这一步，不是高效计算或任意学习过程的收敛\scite{rl7-nash1950}
+
+表\ref{tab:rl-multi-agent-equilibria}汇总了要报告的对象。若问题跨越多步，“替代动作”应改成从全部相关历史到动作的\emph{完整策略}，或者明确仅检验某种受限状态条件偏离。某个访问状态上的阶段CE，不能自动保证整条轨迹无人能通过改变后续行为获利。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 标准 & 偏离对象与信号 & 保证与未规定部分\\
+ \midrule
+ Nash & 固定对手后换自身策略；独立随机化 & 无单方收益改进；未最大化福利\\
+ CE & 根据自己收到的建议换动作 & 无建议条件偏离；需合法相关信号\\
+ CCE & 看建议前改为固定动作 & 无事前固定偏离；不排除条件偏离\\
+ 福利目标 & 按给定聚合函数选联合结果 & 可比较社会收益；不自动保证稳定或公平\\
+ \bottomrule
+ \end{tabularx}
+ \caption{均衡与社会目标的区别。表中动作约束属于固定阶段博弈；序贯问题必须另行声明完整策略或受限偏离类。}
+ \label{tab:rl-multi-agent-equilibria}
+\end{table}
+
+Nash-Q在每个后继状态的多张价值矩阵中选取一个阶段Nash均衡$\bm\sigma^*(s')$，再令
+\[
+ y_i=r_i+\gamma\sum_{\bm a'}\bm\sigma^*(\bm a'\mid s')
+                         Q_i(s',\bm a').
+\]
+例如后继协调矩阵选“都左”时，各人后继值为2；若即时奖励为0且$\gamma=0.9$，目标为1.8。问题在于多个均衡可能给不同收益，选取规则的不连续还会改变更新动态。Nash-Q原文的收敛分析有特殊的阶段均衡条件，不能由存在性推出一般深度Nash-Q必然收敛\scite{rl7-hu2003}
+
+% Outline: 7.3
+\section{多智能体的联合经验获取}
+\label{sec:rl-multi-agent-data}
+
+一个团队每人都探索过，不等于团队探索过每种配合方式。联合经验获取要从待估量出发，记录谁与谁在什么信息下采取了什么行为，再决定这些数据支持哪些结论。固定日志使用者不能重做采集，只能从已有生成条件开始检查。
+
+% Outline: 7.3.1
+\subsection{联合经验需求与采集方案的确定}
+\label{sec:rl-multi-agent-collection-plan}
+
+评价现有让行团队，只需在部署伙伴分布和当前策略下估计回报；改进自己，需要比较尚未采用的自身行为；检验单方偏离，还需让替代策略访问它可能到达的后续状态。相同轨迹数量对这三个任务的支持程度不同。表\ref{tab:rl-multi-agent-data-needs}把估计需求转成可操作的采集选择。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 待估量 & 所需联合行为与参与者范围 & 可控因素与预算\\
+ \midrule
+ 当前团队回报 & 当前联合策略及部署伙伴分布 & 固定策略，重复独立回合，预算按回合计\\
+ 自身改进价值 & 固定或条件化伙伴下的候选自身动作 & 探索强度与起点；按联合环境步计\\
+ 单方偏离收益 & 原对手固定，完整候选响应的轨迹 & 响应训练、验证分开；计对手查询\\
+ 新伙伴协调 & 留出伙伴及允许探测的历史 & 伙伴抽样、角色与通信；计适应步数\\
+ \bottomrule
+ \end{tabularx}
+ \caption{经验需求决定采集方案，而不是用轨迹总数替代覆盖条件。预算还须报告每类参与者的分配。}
+ \label{tab:rl-multi-agent-data-needs}
+\end{table}
+
+具体方案应规定伙伴或群体分布$q(k)$、各行为策略$\mu_i^{(k)}$、角色分配、行动时序及探索噪声。身份是“谁”，版本是“采用哪一套参数”，学习状态是“本回合是否还会更新”，三者应分别记录。选择均匀抽样只意味着预期支持较广，不能证明采到的数据已覆盖罕见联合事件。固定日志缺少来源时，只能列明确知条件，不能根据轨迹看起来像均匀探索就补上行为概率。
+
+\Needspace{24\baselineskip}
+OpenAI Five提供了按版本组织采样的实际例子：其报告中的训练对局有80\%面向最新参数、20\%面向历史版本，历史版本的抽样分布还随对局表现改变。因此，“保留历史对手”仍不足以恢复数据来源，还需知道当时如何抽样\scite{rl7-berner2019}
+
+% Outline: 7.3.2
+\subsection{联合轨迹采集与生成条件记录}
+\label{sec:rl-multi-agent-records}
+
+一条联合转移至少记录$(s_t\text{或}\bm o_t,\bm a_t,\bm r_t,\bm o_{t+1},\text{终止})$，并关联动作前后的消息、各人身份、策略版本和合法动作集合。为了离策略校正，还需记录伙伴抽样概率、给定实际可用历史的动作概率，以及公共信号或相关采样机制。仅保存版本号不足以重建概率：还应保留参数检查点、探索噪声规则和动作屏蔽逻辑。
+
+设通道只有双方同时选择“按按钮”才打开，每人独立以0.1概率探索该动作。一次成功触发的概率为$0.1^2=0.01$，100次独立尝试仍一次也未触发的概率为$0.99^{100}\approx0.366$。若合法公共信号以0.1概率指示双方同时按，边缘探索率仍为0.1，联合触发率却升为0.1。图\ref{fig:rl-multi-agent-exploration}展示这一区别；相关性要由执行时真正共享的信息产生，不能由未授权的中央动作控制暗中实现。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-exploration}
+ \caption{四种探索路径。独立噪声不产生共同事件保证；公共信号、角色条件与通信分别提供不同的协调依据。箭头标出执行者实际接收的信息。}
+ \label{fig:rl-multi-agent-exploration}
+\end{figure}
+
+上述公共信号例中$\mathbb P(a_1=\text{按},a_2=\text{按})=0.1$，而边缘乘积为0.01。把后者写进行为日志会使重要性权重错十倍。通信依赖或同一随机数驱动的动作也有同样问题；应记录真实联合概率，或记录足以使条件独立成立的信号后再分解。
+
+% Outline: 7.3.3
+\subsection{经验分布变化与目标覆盖检验}
+\label{sec:rl-multi-agent-coverage}
+
+式\eqref{eq:rl-multi-agent-induced}可用于比较版本。若版本$k$的对手等待概率为$q^{(k)}$，自身前进的诱导奖励为$-4+3q^{(k)}$。版本差$\Delta q$对应奖励差$3\Delta q$，并可能通过通过概率改变后续状态占用。但“版本变了”只表明分布可能变化；实际漂移的证据应来自分层统计、预测残差或已知策略概率，而不是仅凭版本编号宣布环境变坏。
+
+最容易漏掉的是联合支持。设日志生成机制仅以各$1/2$概率选择$(0,0)$和$(1,1)$，两个非对角动作的概率均为0。每人的两个动作都有支持，但$(0,1)$和$(1,0)$没有联合支持。构造两个奖励模型，使它们在对角线上均给0、在非对角线上分别给$10$与$-10$，便得到相同日志分布却相反的候选偏离收益。没有额外结构假设时，边缘覆盖不能识别这些联合效果。
+
+表\ref{tab:rl-multi-agent-support}把覆盖对象细分。样本零频率不等于总体零概率，有限数据可给出频率及其不确定性，却无法仅凭“尚未见过”断言绝对不可能；同理，未检出漂移也不能证明机制恒定。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 估计对象 & 所需支持 & 典型缺失\\
+ \midrule
+ 目标联合价值 & 目标到达状态及联合动作，目标伙伴 & 某种配合从未采到\\
+ 最佳响应 & 固定对手下候选完整策略的状态与动作 & 只记录原策略的到达状态\\
+ 个体反事实优势 & 固定其他动作后的自身候选动作 & 对角数据不能估非对角值\\
+ 消息条件价值 & 对应消息历史、角色、策略类型 & 未记消息使条件分布不可恢复\\
+ \bottomrule
+ \end{tabularx}
+ \caption{不同待估量需要不同支持。集中状态可以增加条件信息，但不能补出未发生的联合行为。}
+ \label{tab:rl-multi-agent-support}
+\end{table}
+
+% Outline: 7.3.4
+\subsection{覆盖充分时的可用经验构造}
+\label{sec:rl-multi-agent-reweight}
+
+确认目标支持被行为支持覆盖后，仍需处理“有数据但来源不匹配”。最近窗口减少版本跨度，却丢弃较旧数据；按参与者分层可以控制伙伴组成；对手条件价值把类型或版本作为估计输入；重要性校正则用概率比改变期望的测度。它们调整的对象不同，可以组合，不能把任何一种叫作自动消除非平稳性。
+
+令$k$表示一次回合抽取的策略群体身份，$\tau$为长度$H$的完整记录轨迹，$q_\mu,q_\pi$为行为和目标伙伴分布。在初始分布、转移与反馈核及终止协议相同，且目标联合轨迹分布对行为分布绝对连续时，
+\begin{equation}
+ w(\tau,k)=\frac{p_\pi(\tau,k)}{p_\mu(\tau,k)}
+ =\frac{q_\pi(k)}{q_\mu(k)}
+   \prod_{t=0}^{H-1}
+   \frac{\bm\pi(\bm a_t\mid\bm h_t,k)}
+        {\bm\mu(\bm a_t\mid\bm h_t,k)}.
+ \label{eq:rl-multi-agent-is}
+\end{equation}
+环境转移和观测项相消，策略生成的消息若未含在动作内，还要保留消息概率比。只有给定记录历史及公共信号后各人条件独立时，每个联合动作比才等于$\prod_i\pi_i(a_{i,t}\mid h_{i,t},k)/\mu_i(a_{i,t}\mid h_{i,t},k)$。若公共信号的分布也改变，还需它的概率比。对完整轨迹函数$f$有$\mathbb E_\pi f=\mathbb E_\mu[wf]$；逐决策估计则使用截至相应奖励时刻的前缀比。
+
+这给出了可执行的构造：按来源分层取样，恢复真实条件概率，计算权重，再用加权回报或损失估计目标。其成本是每条长度$H$轨迹至少计算$mH$个个体策略概率，以及伙伴和信号概率。若每个个体概率比均为2，十人同一步的乘积即为1024；长轨迹会进一步放大权重波动。截断$w$为$\min(w,c)$可控制极端样本影响，却将期望改为$\mathbb E_\mu[\min(w,c)f]$，产生需要报告的偏差。行为概率为零的事件不能靠设“无限大权重”恢复。
+
+策略指纹把训练轮次、探索率等生成条件送入价值网络，帮助区分旧数据；它不是概率比，不能据此声称无偏。经验回放中的多智能体重要性校正与指纹方法已有直接比较，但原结果依赖其具体任务及实现条件\scite{rl7-foerster2017replay}
+
+% Outline: 7.3.5
+\subsection{覆盖不足时的经验补充与学习边界}
+\label{sec:rl-multi-agent-data-boundary}
+
+发现缺口后，动作取决于访问权限。未见参与者可通过调整伙伴抽样补充；未见联合动作可用合法公共信号或通信协调探索；未达状态需要改变到达策略，而不只是入口增加噪声；未记录信息则要修改后续日志字段，已经丢失的历史通常不能追补。图\ref{fig:rl-multi-agent-data-loop}把这一判断接回经验闭环。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-data-loop}
+ \caption{覆盖检验后的权限分支。在线访问可继续采集；有限批次只能在批间调整方案；固定日志必须限制目标或引入可检验假设，不能沿采集回路继续交互。}
+ \label{fig:rl-multi-agent-data-loop}
+\end{figure}
+
+有限批次的一个明确协议是总共$B$批，每批$N_b$个联合环境步。第$b$批内冻结行为策略、伙伴抽样及探索规则，批结束后才用反馈选择第$b+1$批方案。若对手有内部在线适应，则须把它声明为策略的一部分并记录相应历史，不能再当作状态条件的固定对手。在固定日志条件下，只能限制策略落在有支持区域、增加可检验结构假设，或采用第\ref{chap:rl-information}章的悲观评价。增大网络并不能使未见联合动作的效果变得可识别。
+
+% Outline: 7.4
+\section{不同参与者依赖下的行为后果估计}
+\label{sec:rl-multi-agent-estimation}
+
+现在固定可用经验，考虑从中估计什么。联合价值保留所有人的当前动作，个体反事实固定别人而比较自己，局部组合约束价值怎样分解，对方模型保留策略类型，相互响应则保留别人如何随自己变化。这五个视角可以重叠：一个集中评论家既可以条件于伙伴类型，又可以输出COMA的候选动作价值；一个群体学习器也可以用单调分解计算近似响应。
+
+% Outline: 7.4.1
+\subsection{基于联合行为的后果估计}
+\label{sec:rl-multi-agent-joint-value}
+
+固定联合策略$\bm\pi$后，价值评价的对象不再含糊。令$x_t$为训练时足以预测后继过程的集中信息：完全可观测、无记忆策略时可取$s_t$；使用历史策略时可取$(s_t,\bm h_t)$。记其转移核为$P_x$，奖励条件均值为$R_i(x,\bm a)$，并令$G_{i,t}=\sum_{k\geq0}\gamma^k r_{i,t+k}$，定义
+\begin{align}
+ Q_i^{\bm\pi}(x,\bm a)
+ &=\mathbb E[G_{i,t}\mid x_t=x,\bm a_t=\bm a],\\
+ V_i^{\bm\pi}(x)
+ &=\sum_{\bm a}\bm\pi(\bm a\mid x)Q_i^{\bm\pi}(x,\bm a).
+\end{align}
+这里$\bm\pi(\bm a\mid x)$仍由各合法局部策略产生，不是允许行动者读取整个$x$。$Q_i$回答“本次联合动作已固定，之后照旧执行会怎样”，$V_i$则连本次动作也按现有策略平均。即使$\bm\pi$不选择某个合法联合动作，其$Q_i$仍按从$x$强制执行该动作、随后遵循$\bm\pi$的过程定义，而不靠零概率事件上的条件期望确定。
+
+把即时回报与下一步分开，得到固定策略的Bellman评价
+\begin{equation}
+ Q_i^{\bm\pi}(x,\bm a)=R_i(x,\bm a)+
+ \gamma\sum_{x'}P_x(x'\mid x,\bm a)
+       \sum_{\bm a'}\bm\pi(\bm a'\mid x')Q_i^{\bm\pi}(x',\bm a').
+ \label{eq:rl-multi-agent-joint-bellman}
+\end{equation}
+离散求和在连续空间中改为积分。训练时，一条联合转移给出目标
+$y_i=r_i+\gamma(1-z)V_{i,\text{目标}}(x')$，$z$表示真实终止；最小化$(Q_{i,\bm\phi}(x,\bm a)-y_i)^2$即可得到一个TD更新。截断采样而未终止时不能把$z$误设为1。
+
+Minimax-Q把内层策略平均换成零和阶段价值，Nash-Q换成选定的阶段均衡收益；这是更换行为标准后的控制备份，不是同一个固定策略评价式的不同记号。表\ref{tab:rl-multi-agent-critics}还说明，集中训练本身并未规定评论家必须输入联合动作。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 方法 & 训练输入与评价对象 & 策略更新与执行\\
+ \midrule
+ MADDPG & 集中信息$x$及$\bm a$；各自$Q_i(x,\bm a)$ & 对自身动作求价值梯度；执行仅用局部输入的确定性行动者\\
+ MAPPO & 集中状态或联合观测，可补个体信息；$V_i(x)$或团队$V(x)$ & 用回报与$V$构造优势；执行仅用局部输入的随机行动者\\
+ \bottomrule
+ \end{tabularx}
+ \caption{两种集中评论家的接口。输入联合观测是否足以成为Markov状态，需要另行论证；集中状态价值不以当前联合动作为必需输入。}
+ \label{tab:rl-multi-agent-critics}
+\end{table}
+
+MADDPG把确定性行动者与集中动作价值结合，可用于合作和竞争收益；MAPPO研究则在合作任务中考察集中状态价值与PPO的配合，给出的是相应实现条件下的经验结果\scite{rl7-lowe2017,rl7-yu2022}
+
+两种方法都要从联合轨迹估计目标，成本包括集中输入传输、价值网络前后向和数据存储。输入更充分可减少把他人动作误当噪声的程度，却不会冻结其他策略，也不会消除函数逼近误差。若$x$只包含当前观测而遗漏对方记忆，式\eqref{eq:rl-multi-agent-joint-bellman}中的Markov解释仍可能不成立；执行权限也仍受第\ref{sec:rl-multi-agent-permissions}节约束。
+
+% Outline: 7.4.2
+\subsection{基于个体行为反事实的后果估计}
+\label{sec:rl-multi-agent-counterfactual}
+
+团队得到2分时，不能只给每人同样的强化信号便认为贡献已经分清。本小节的信用分配数值例及下一小节的单调表示反例，把入口截成一次联合动作后立即结束的独立矩阵任务，因此动作价值等于即时奖励。沿用合作奖励表：$(F,F)$得$-2$，$(W,W)$得$-1$，恰好一人前进得2。观察到$(F,W)$后，固定2的等待，1从$F$改成$W$会把奖励从2降到$-1$；固定1的前进，2从$W$改成$F$会把奖励从2降到$-2$。一次成功包含两种不同作用：1启动通过，2避免冲突。
+
+若有一个明确定义的参照动作$c_i$，\term{差分奖励}（difference reward）可写成
+$D_i=R(x,\bm a)-R(x,(c_i,\bm a_{-i}))$。在上述已知一步奖励表中，令$c_1=W$，便有$D_1=3$。实际系统往往没有第二次实测结果，替代动作也可能改变后继状态；这时必须说明差分来自模型、额外试验还是价值估计，不能把它当作日志中天然存在的字段。
+
+长期个体优势比较的是动作价值，而不只是即时奖励。COMA保持$\bm a_{-i}$不变，对$i$的候选动作按当前策略加权：
+\begin{align}
+ b_i(x,\bm a_{-i})
+ &=\sum_{\tilde a_i}\pi_i(\tilde a_i\mid h_i)
+       Q^{\bm\pi}(x,(\tilde a_i,\bm a_{-i})),\\
+ A_i^{\text{COMA}}(x,\bm a)
+ &=Q^{\bm\pi}(x,\bm a)-b_i(x,\bm a_{-i}).
+ \label{eq:rl-multi-agent-coma}
+\end{align}
+在上述单步任务中，若1以$1/4$概率前进、$3/4$概率等待，在2等待的条件下，基线为
+$\tfrac14(2)+\tfrac34(-1)=-1/4$，实际前进的优势为$9/4$。这与参照固定等待得到的差分3不同，因为比较对象不同。
+
+这种基线为什么可以依赖别人的实际动作？把获准使用的公共信号纳入各自$h_i$，并假设给定充分信息$x$及其他动作$\bm a_{-i}$后，$i$的条件动作分布仍为$\pi_i(\cdot\mid h_i)$。在策略可微、支持固定且相关乘积可积的条件下，基线$b_i(x,\bm a_{-i})$不依赖本次抽到的$a_i$；更新时将其视为常数，不通过它反向传播。于是
+\begin{align}
+ &\mathbb E_{a_i\mid x,\bm a_{-i}}
+   [\nabla_{\bm\theta_i}\log\pi_i(a_i\mid h_i)b_i(x,\bm a_{-i})]\nonumber\\
+ &\quad=b_i(x,\bm a_{-i})
+       \sum_{a_i}\nabla_{\bm\theta_i}\pi_i(a_i\mid h_i)=0.
+ \label{eq:rl-multi-agent-baseline-zero}
+\end{align}
+再对$(x,\bm a_{-i})$取期望即得到零均值结论。这正是定理\ref{thm:rl-learning-baseline}的多智能体条件版。若两人共享未记录的随机信号，给定$\bm a_{-i}$后$i$的分布可能已不等于$\pi_i$，上述替换便不合法。应在真实联合策略中显式处理相关信号，并重新推导得分与基线；仅把得分换成另一个条件分布的对数梯度，不能保证仍在估计原目标梯度。
+
+COMA的评论家可一次输出所有自身候选动作的价值，避免对每个候选重新运行完整网络；但输出维度仍随$|\mathcal A_i|$增长，连续动作还需积分近似。目标与采样仍来自联合轨迹，候选价值是模型估计，不是未执行动作的新事实。原方法将这一基线用于集中评论家和分散行动者\scite{rl7-foerster2018coma}
+
+零均值只表明减去基线不改变精确策略梯度的期望，不保证方差必然降低；差的评论家还会使优势估计失真。这里的“反事实”是固定其他当前动作后的候选价值比较，不等于在因果结构模型中识别唯一真实的个体因果贡献。
+
+% Outline: 7.4.3
+\subsection{基于局部行为组合的后果估计}
+\label{sec:rl-multi-agent-factorization}
+
+集中价值能给联合动作打分，却未必能让分散执行者自己选出这个动作。假设每人只计算局部效用$q_i(h_i,a_i)$，执行$a_i^*\in\arg\max_{a_i}q_i(h_i,a_i)$。这里$q_i$是为组合团队行为而学习的内部量，不必等于参与者$i$的环境回报。所需的\term{个体与整体最大化一致性}（individual-global-max, IGM）至少要求这些局部贪心动作能组合成联合贪心动作。
+
+\Needspace{24\baselineskip}
+图\ref{fig:rl-multi-agent-mixers}比较两种组合结构。VDN直接令$Q_{\text{tot}}=\sum_i q_i$；QMIX让训练状态决定混合器参数，并用非负权重及单调激活限制$\partial Q_{\text{tot}}/\partial q_i\geq0$。部署时只保留局部效用的贪心选择，不需要取得状态。两者分别约束可表示联合价值的加和性与单调性\scite{rl7-sunehag2018,rl7-rashid2018}
+
+这些结构为何能让各人独立选动作？下面的充分条件把局部选择与联合最优连接起来。
+
+\begin{theorem}[单调组合的局部贪心充分性]
+\label{thm:rl-multi-agent-monotone}
+固定训练信息$x$和所有局部历史，动作集合为笛卡尔积，且各局部最大值存在。若
+\[
+ Q_{\text{tot}}(x,\bm a)
+ =f_x(q_1(h_1,a_1),\ldots,q_m(h_m,a_m))
+\]
+对每个局部效用逐坐标非减，则
+\[
+ \prod_i\arg\max_{a_i}q_i(h_i,a_i)
+ \ \subseteq\ \arg\max_{\bm a}Q_{\text{tot}}(x,\bm a).
+\]
+\end{theorem}
+\begin{proof}
+任选一组局部最大化动作$\bm a^*$和任意联合动作$\bm a$。将$\bm a$的第一分量换成$a_1^*$时，第一局部效用不会下降，其余效用不变；$f_x$的第一坐标非减，故联合价值不下降。接着把第二分量换成$a_2^*$，同理价值不下降。逐一替换完$m$个分量后得到
+$Q_{\text{tot}}(x,\bm a)\leq Q_{\text{tot}}(x,\bm a^*)$。任意$\bm a$都满足此式，故$\bm a^*$为联合最大化动作。$\bm a^*$可任取自局部最大集合的笛卡尔积，包含关系成立。
+\end{proof}
+
+不能把这里的包含号无条件改为等号。例如$f_x$为常数，所有联合动作都最优，而$q_1$可以只有一个最大化动作。平台区间和并列效用也会产生同样差别。若存在耦合动作限制，使各人合法动作的乘积包含非法联合动作，证明中的逐分量替换也须重新检查。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-mixers}
+ \caption{VDN与QMIX的价值组合。实线为计算输入，虚线为联合TD损失返回局部效用的训练梯度；状态只进入QMIX训练混合器。执行时读取每个$q_i$的局部最大化动作。}
+ \label{fig:rl-multi-agent-mixers}
+\end{figure}
+
+单调性也限制了表达能力。沿用前一小节的单步终止约定，入口奖励表的两列分别要求
+$Q(F,F)<Q(W,F)$和$Q(F,W)>Q(W,W)$。若$q_1(F)>q_1(W)$，第一列违反非减性；若小于，第二列违反；若相等，两列都无法得到严格差别。因此同一历史下的标量局部效用与单调混合器不能精确表示这张表。不过固定约定“1前进、2等待”仍然可执行且最优。最优动作可执行、整张价值表可表示、训练能找到该动作，是三个不同问题。
+
+\Needspace{16\baselineskip}
+表\ref{tab:rl-multi-agent-factorization}中的方法放松或改写了表示约束，而不是把训练信息权限自动放宽。QTRAN用保持最优动作的变换及一致性约束；QPLEX用优势分解刻画更一般的IGM结构。它们的表示论证须与约束是否实际满足、函数逼近及优化误差分开\scite{rl7-son2019,rl7-wang2021qplex}
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 结构 & 保留的限制或分解 & 代价与边界\\
+ \midrule
+ VDN & 联合价值为局部效用之和 & 组合便宜；不能表达一般相互作用\\
+ QMIX & 状态条件的逐坐标非减混合 & 增加混合器；局部排序不能随他人动作反转\\
+ QTRAN & 联合价值与易分解变换在贪心处相等、其他动作满足不等式 & 需拟合联合值并施加约束；近似惩罚不保证精确满足\\
+ QPLEX & 局部优势$q_i-\max q_i\leq0$以正权组合，另建联合基准值 & 优势与权重结构增加表达力；表示充分性不等于优化收敛\\
+ \bottomrule
+ \end{tabularx}
+ \caption{改变局部组合约束的几种方式。它们可与伙伴条件化、回放管理及群体训练组合。}
+ \label{tab:rl-multi-agent-factorization}
+\end{table}
+
+这些方法都可从联合转移构造团队TD目标并反传到局部网络；区别是目标最大化如何实现、哪些价值模式能被结构容纳。若每人有$A$个动作，直接枚举联合动作要处理$A^m$个组合，局部贪心只需比较$mA$个效用再调用混合器。节省的是这一计算环节，并不证明同等样本就足以学好所有效用。
+
+% Outline: 7.4.4
+\subsection{基于其他参与者策略的行为后果估计}
+\label{sec:rl-multi-agent-opponent-model}
+
+同一前进动作面对主动让行者和坚持前进者，后果并不相同。设伙伴类型$z$在整个教学回合内固定，取“让行型”$G$或“坚持型”$S$，等待概率分别为0.8、0.2；给定类型，各次入口动作独立且可观察，先验各为$1/2$。观察到$W,W,F$后，两类似然为$0.8^2\cdot0.2=0.128$和$0.2^2\cdot0.8=0.032$，故后验$\mathbb P(G\mid h)=0.8$。预测下一次等待概率变为$0.8(0.8)+0.2(0.2)=0.68$，自己的前进即时期望收益为$-4+3(0.68)=-1.96$。
+
+一般地，伙伴信念$b_t(z)=\mathbb P(z\mid h_{i,t})$是给定获准历史后对行为类型的分布。自己的动作$a_{i,t}$会影响随后可见证据$e_{t+1}$，因此似然应写成$\ell(e_{t+1}\mid h_{i,t},a_{i,t},z)$。若自身动作仅由已记录历史和独立随机数产生，则其概率在候选类型间相同，归一化时可以消去：
+\[
+ b_{t+1}(z)=
+ \frac{\ell(e_{t+1}\mid h_{i,t},a_{i,t},z)b_t(z)}
+      {\sum_{\tilde z}\ell(e_{t+1}\mid h_{i,t},a_{i,t},\tilde z)b_t(\tilde z)}.
+\]
+分母须大于0。若动作选择还利用了未记录的类型线索，就不能直接消去动作概率。未直接看见伙伴动作时，似然须对隐藏动作、状态或消息求和，不能把其真实动作当作可见训练标签使用于部署辨识。若类型外生转移，还应先通过类型转移核预测，再用新证据校正。这与式\eqref{eq:rl-transfer-belief-update}使用相同的贝叶斯步骤，推断对象改成了参与者行为。
+
+候选动作的价值可以按类型取平均，但所有类型下必须评价同一套后续策略及信念更新规则。令$Q_i(h_i,b,a_i,z)$表示在类型$z$下执行$a_i$、随后按该共同规则行动的条件回报，则
+$Q_i(h_i,b,a_i)=\sum_z b(z)Q_i(h_i,b,a_i,z)$。
+每一项都要对尚未观察到的伙伴动作和状态作相应条件平均，不能分别使用“已知真实类型”的最优策略。若后续还会辨识类型，价值状态及递推必须保留信念更新；冻结信念的近似会漏掉探测的信息价值。
+
+策略表示不必是有限标签，也可用从历史预测下一动作分布的嵌入。训练目标可以是可见动作的负对数似然，再将表示送入条件评论家或策略；一次更新的成本包括历史编码、类型似然及候选动作评价。它不要求读取对方网络参数。身份、检查点版本与潜在类型仍要分开：同一身份可改变策略，不同身份也可表现相同。此处把未知对手视为固定或外生变化；自己更新所诱发的响应需要额外建模。
+
+% Outline: 7.4.5
+\subsection{基于参与者相互响应的行为后果估计}
+\label{sec:rl-multi-agent-response-model}
+
+更激进的通行者可能迫使伙伴让行，也可能促使伙伴采取更强硬的规则。若只拟合伙伴当前等待率，就遗漏了“我改变后，对方也改变”的途径。作为教学响应模型，令自身前进概率为$p$，伙伴等待率为$q(p)=0.8-0.6p$，则碰撞率为$p(1-q(p))=0.2p+0.6p^2$；冻结$q=0.8$时只会预测$0.2p$。这不是对真实人类行为的假设，只用于展示漏项。
+
+以两人问题为例，用$\bm\psi=\mathcal R(\bm\theta_i)$表示对方在看到$i$的策略或交互后采用的参数，$J_{-i}$为另一人的目标。固定对方相当于$\mathcal R$为常数；一步预期响应可以规定
+$\mathcal R(\bm\theta_i)=\bm\psi+\eta\nabla_{\bm\psi}J_{-i}(\bm\theta_i,\bm\psi)$，其中对方知道自己的目标、当前策略以及用于估计该梯度的数据。再增加一层，必须进一步规定对方是否知道$i$将如何更新，以及它是否也在预测$i$；递归深度不是免费增加的准确性。
+
+若$J_i$和$\mathcal R$在所考察邻域可微，链式法则给出
+\begin{equation}
+ \nabla_{\bm\theta_i}J_i(\bm\theta_i,\mathcal R(\bm\theta_i))
+ =
+ \partial_{\bm\theta_i}J_i+
+ [D\mathcal R(\bm\theta_i)]^\top
+       \nabla_{\bm\psi}J_i.
+ \label{eq:rl-multi-agent-response-gradient}
+\end{equation}
+第一项固定对方参数，只计自身动作分布改变的效果；第二项通过对方响应传递。在上述碰撞例的当前点$p_0$，直接项为$1-q(p_0)=0.2+0.6p_0$，间接项为$-p_0q'(p_0)=0.6p_0$，合计$0.2+1.2p_0$。这与从一开始就固定$q=0.8$、只预测导数0.2的模型不同。一步学习响应通常需要对对方更新求导，涉及梯度的导数；若只观察交互，必须先拟合响应模型，再承担模型误差。LOLA给出利用对方学习步骤来构造此类更新的具体方法\scite{rl7-foerster2018lola}
+
+式\eqref{eq:rl-multi-agent-response-gradient}把$\mathcal R$视为确定映射。若对方用随机采样数据更新，对固定数据求导只是条件导数；当采样分布也依赖$\bm\theta_i$时，完整期望梯度还须计入该分布的导数。这与第\ref{sec:rl-transfer-value-training}节元学习目标中的采样分布项是同一类区别。
+
+最佳响应可能多解或不连续，未知对手也未必按假定规则学习，此时不能照搬式\eqref{eq:rl-multi-agent-response-gradient}。层数增加会放大推理成本与错设风险。准确预测下一次响应、在可承诺且可观察的先后行动条件下求得Stackelberg式承诺解、以及同时行动时达到Nash均衡，分别需要不同的协议和验证标准。
+
+% Outline: 7.5
+\section{多智能体的策略更新与学习动态}
+\label{sec:rl-multi-agent-learning}
+
+价值和优势只提供更新所需的量，还没有规定所有学习者如何一起变化。本节组合三个视角：更新计算规定怎样从批次产生参数变化，相互响应规定每人追随当前还是历史行为，群体组织规定本轮同谁训练。例如PSRO可以从策略库抽样对手，用策略梯度训练一个近似最佳响应，再把新策略加入库。它同时使用三个选择，而不是属于其中一个互斥家族。
+
+% Outline: 7.5.1
+\subsection{由价值与梯度计算策略更新}
+\label{sec:rl-multi-agent-update}
+
+先冻结本轮其他策略及目标评论家。对批次$\mathcal B$中的每条联合转移计算后继目标，再拟合价值或构造优势，最后产生新动作规则或策略参数。表\ref{tab:rl-multi-agent-value-updates}把几种价值更新放在同一接口上。只有输入包含充分状态且诱导环境平稳等条件成立时，才能援引表格型单智能体Q学习的保证；共同更新、局部历史压缩和函数逼近都可能使这些前提失效。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 方法 & 价值输入 & 后继备份 & 动作与执行信息\\
+ \midrule
+ 独立Q & $h_i,a_i$ & 自身$\max Q_i$ & 局部贪心；他人行为被边缘化\\
+ Minimax-Q & $s,\bm a$ & 零和矩阵价值 & 按解出的混合策略抽样；需状态\\
+ Nash-Q & $s,\bm a$的各人收益 & 选定阶段均衡收益 & 按同一均衡选择约定；需状态\\
+ VDN & 局部$h_i,a_i$再求和 & 局部最大值之和 & 每人局部贪心\\
+ QMIX & 局部效用与训练状态 & 单调混合的局部最大值 & 每人局部贪心；执行无须状态\\
+ \bottomrule
+ \end{tabularx}
+ \caption{价值到动作的更新接口。各行还需相应的联合采样、终止处理和目标网络；阶段博弈求解并不自动满足分散信息约束。}
+ \label{tab:rl-multi-agent-value-updates}
+\end{table}
+
+一个批次可以小到只有一条教学样本。设通道中采到$r=2$、未终止，目标网络给后继联合值1，$\gamma=0.9$，则$y=2.9$。若当前$Q=1$，对$\tfrac12(Q-y)^2$作步长0.1的表格梯度下降，得到$Q'=1.19$。VDN中若当前两个效用为0.4和0.6，各自都收到残差$-1.9$，一次同步梯度步后变为0.59和0.79，合计1.38。它不等于直接更新联合表得到的1.19，因为参数化改变了有效步长。QMIX还要乘混合器对各效用的导数；Minimax-Q和Nash-Q则把计算成本放在后继阶段求解器上。
+
+随机策略可以直接用收益梯度更新。令$\bm\pi_{\bm\theta}=\prod_i\pi_{\bm\theta_i}(a_i\mid h_i)$，各参数暂不共享，其他参数与环境机制固定；策略可微且支持固定，并沿用式\eqref{eq:rl-learning-policy-gradient}中交换求导与折扣求和所需的可积支配条件。对轨迹概率取对数后，只有$i$的动作项依赖$\bm\theta_i$。将每个奖励之前的得分项合并为从该动作开始的回报，得到
+\begin{align}
+ \nabla_{\bm\theta_i}J_i(\bm\pi)
+ &=\sum_{t\geq0}\gamma^t
+   \mathbb E_{\bm\pi}
+   [\nabla_{\bm\theta_i}\log\pi_i(a_{i,t}\mid h_{i,t})G_{i,t}]
+ \nonumber\\
+ &=\frac{1}{1-\gamma}
+   \mathbb E_{x,\bm a\sim d^{\bm\pi}}
+   [\nabla_{\bm\theta_i}\log\pi_i(a_i\mid h_i)
+           Q_i^{\bm\pi}(x,\bm a)].
+ \label{eq:rl-multi-agent-policy-gradient}
+\end{align}
+这里$d^{\bm\pi}$是集中充分信息及联合动作上的归一化折扣占用度量，$J_i$仍未归一化，因此不能省去$1/(1-\gamma)$。从$Q_i$减去合法基线可得到相应优势；相关策略须从真实联合概率重新推导得分，并检查第\ref{sec:rl-multi-agent-counterfactual}节的条件，不能直接沿用个体边缘得分。
+
+局部得分只需要行动者自身输入，集中评论家负责给这个动作赋予长期后果。对一次终止的入口教学样本，若1的前进概率$p=1/4$由logit参数生成，采到$(F,W)$并使用前节精确优势$9/4$，得分为$1-p=3/4$，梯度样本为$27/16$。步长0.1将logit从$\log(1/3)$提高到$\log(1/3)+27/160$，前进概率约为0.283。这里只计算一个有限一步任务的样本更新，不额外乘折扣占用系数。
+
+\Needspace{7\baselineskip}
+PPO类更新令概率比$\zeta_{i,t}=\pi_i(a_{i,t}\mid h_{i,t})/
+\pi_i^{\text{旧}}(a_{i,t}\mid h_{i,t})$，最大化下式的批次均值：
+\[
+ \min\{\zeta_{i,t}\widehat A_{i,t},
+       \operatorname{clip}(\zeta_{i,t},1-\epsilon,1+\epsilon)
+                      \widehat A_{i,t}\}.
+\]
+独立PPO用局部价值估优势，MAPPO用集中状态价值估优势。该自身概率比不等于整条联合轨迹的重要性比；同一批次反复更新所有人后，对手和状态分布都可能漂移。裁剪是限制更新的机制，不是共同学习时的单调改进证明。
+
+对可微连续动作的确定性行动者$a_i=f_{\bm\theta_i}(h_i)$，精确同策略梯度把得分换成
+$\nabla_{\bm\theta_i}f_{\bm\theta_i}(h_i)\nabla_{a_i}Q_i^{\bm f}(x,\bm a)$，在归一化$d^{\bm f}$下也带$1/(1-\gamma)$。MADDPG从联合回放中估计这一局部方向，用目标行动者产生后继动作、TD损失更新$Q_i$；以回放分布代替$d^{\bm f}$时得到实践中的离策略代理更新，不能未经校正称其为原始$J_i$的无偏梯度。COMA则保留随机行动者，用式\eqref{eq:rl-multi-agent-coma}替换优势。表\ref{tab:rl-multi-agent-policy-updates}汇总这些差异。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 方法 & 价值、采样与策略方向 & 主要成本或失效处\\
+ \midrule
+ 独立PPO & 近期联合轨迹中的局部$V_i$与裁剪得分梯度 & 价值遗漏他人信息；同时更新漂移\\
+ MADDPG & 联合回放$Q_i$与确定性动作梯度 & 集中动作输入、回放失配、评论家动作梯度误差\\
+ MAPPO & 近期轨迹中的集中$V_i$与裁剪得分梯度 & 集中状态传输、优势误差、批内复用漂移\\
+ COMA & 联合$Q$与固定其他动作的候选基线 & 枚举自身候选；未见动作价值估错\\
+ \bottomrule
+ \end{tabularx}
+ \caption{策略梯度的计算接口与信息需求。合作或竞争决定使用哪个$J_i$，并不由梯度算法的名字决定。}
+ \label{tab:rl-multi-agent-policy-updates}
+\end{table}
+
+图\ref{fig:rl-multi-agent-ctde}中的实线负责部署动作，虚线负责训练更新。若团队共享参数$\bm\theta$，轨迹得分为$\sum_i\nabla_{\bm\theta}\log\pi_{\bm\theta}(a_i\mid h_i)$，共同$J$的梯度据此汇总各人贡献。若各人的$J_i$不同，却只维护一组共享参数，必须另定加权目标或更新调度；把相冲突梯度直接平均已是一项社会选择，而不是无损的实现技巧。
+
+% Outline: 7.5.2
+\subsection{多个学习者之间的相互适应}
+\label{sec:rl-multi-agent-mutual-learning}
+
+同一更新公式放进不同响应规则，会产生不同轨迹。对式\eqref{eq:rl-multi-agent-matching}，令$p,q$为双方选择第一动作的概率，第一人收益为$u(p,q)=(2p-1)(2q-1)$。投影梯度的同时更新为
+\[
+ p^{(k+1)}=[p^{(k)}+\eta(4q^{(k)}-2)]_{[0,1]},\qquad
+ q^{(k+1)}=[q^{(k)}-\eta(4p^{(k)}-2)]_{[0,1]}.
+\]
+交替更新先算$p^{(k+1)}$，再用它替代第二式中的$p^{(k)}$。图\ref{fig:rl-multi-agent-trajectories}固定$\eta=0.1$、初值$(0.7,0.5)$，直接迭代上述规则；历史响应曲线则对截至上轮的平均对手取精确最佳响应，平局选$1/2$。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-trajectories}
+ \caption{同一匹配硬币博弈的三种响应规则，各运行120次更新。曲线由图源中的递推式生成，不是实验成绩；圆点为初值，十字为均衡$(1/2,1/2)$。历史响应面板画累计平均策略。}
+ \label{fig:rl-multi-agent-trajectories}
+\end{figure}
+
+未触及边界前，令$x=p-1/2,y=q-1/2$，同时更新满足
+$(x')^2+(y')^2=(1+16\eta^2)(x^2+y^2)$，因而绕均衡旋转时距离还会增大。每人针对旧对方的局部改进，不推出两人共同接近均衡。历史响应比较的对象也不同：它试图对整个过去对手分布取得高收益，而不是只赢最近一个版本。
+
+为量化这种长期比较，设第$k$轮其他行为为$\bm a_{-i}^{(k)}$，定义累计外部遗憾
+\begin{equation}
+ R_i^{(n)}
+ =\max_{b_i}\sum_{k=1}^{n}
+   [u_i(b_i,\bm a_{-i}^{(k)})
+        -u_i(\bm a^{(k)})].
+ \label{eq:rl-multi-agent-external-regret}
+\end{equation}
+替代动作$b_i$必须在所有轮次固定。每轮分别取最佳响应再相加，得到的是更强的动态比较，不是同一个量。混合策略版本把每轮收益写成相应期望。
+
+令$R_i^{(n)}(a)$为不取最大值的各动作累计遗憾，$[r]_+=\max(r,0)$。\term{遗憾匹配}（regret matching）用
+\[
+ \pi_i^{(n+1)}(a)=
+ \begin{cases}
+ [R_i^{(n)}(a)]_+/\sum_b[R_i^{(n)}(b)]_+,
+       &\sum_b[R_i^{(n)}(b)]_+>0,\\
+ 1/|\mathcal A_i|,&\text{否则}.
+ \end{cases}
+\]
+例如累计动作遗憾为$(3,-1,1)$时，新分布为$(3/4,0,1/4)$。若全非正，本章统一回退到均匀分布。这种全信息计算需要所有未选动作的收益；已知矩阵可直接查表，只有实际动作奖励时则须探索并构造合适估计，不能直接填入未观测收益。遗憾驱动的适应规则可追溯到相关均衡学习的原始工作，外部与内部偏离的区别将在第\ref{sec:rl-multi-agent-deviations}节验证\scite{rl7-hart2000}
+
+序贯不完全信息任务还需要避免枚举指数多的完整策略。可以在每个信息集分别评价动作，再把局部改进联系到整套策略的收益。即使自身旧策略很少到达某个信息集，也需要判断改走这条路线后该怎样行动，因此这里计算局部价值时将暂时去掉自身的先前到达概率。
+
+这里的“反事实”与前文几种比较有不同的计算含义。规划中查询$P(\cdot\mid s,a)$，是在固定环境规律下预测一个候选动作的后果；COMA固定其他参与者的当前动作，对自身候选动作求策略加权平均，用作个体优势的基线；接下来CFR则保留对方与机会的先前到达概率，去掉自身的先前到达因子，用局部动作遗憾控制完整策略的遗憾。这些量服务于不同的决策计算，都不直接给出“同一次已发生事件若改选动作会出现哪个具体结果”的个体反事实；后者还需要第\ref{sec:rl-overview-frontiers}节所述的跨动作随机结果耦合。
+
+回到图\ref{fig:rl-multi-agent-card-tree}，令$\rho_i^{\bm\pi}(h)$表示到达历史$h$之前仅由$i$自己的动作产生的概率乘积，$\rho_{-i}^{\bm\pi}(h)$包括对方与机会的概率乘积。令$\mathcal Z$为终局历史集合，$P^{\bm\pi}(z\mid ha)$为在$h$强制选$a$后按原策略到达$z$的后续概率，非后继终局取0。信息集的未归一化反事实动作价值为
+\begin{align}
+ v_i^{\bm\pi}(I,a)
+ &=\sum_{h\in I}\rho_{-i}^{\bm\pi}(h)
+         \sum_{z\in\mathcal Z}P^{\bm\pi}(z\mid ha)u_i(z),\\
+ v_i^{\bm\pi}(I)&=\sum_a\pi_i(a\mid I)v_i^{\bm\pi}(I,a).
+ \label{eq:rl-multi-agent-cfr-value}
+\end{align}
+这一价值保留了对方与机会到达各段历史的权重，没有乘自身的先前到达因子，也没有除以$\sum_{h\in I}\rho_{-i}(h)$作归一化。因此它不是“已到达$I$”的普通条件期望；后面的遗憾分解会说明为何需要这种加权。
+
+例如1持$H$，自己先过牌、2随后下注时，假定各动作原本都均匀。该末级信息集的真实到达概率为
+$\tfrac12\cdot\tfrac12\cdot\tfrac12=1/8$，反事实权重却为
+$\tfrac12\cdot\tfrac12=1/4$，删去了1自己的过牌因子。即使1很少先过牌，也应学习若来到这里是跟注还是弃牌。图\ref{fig:rl-multi-agent-cfr-reach}把被保留和被去掉的因子分开；这与COMA只边缘化当前自身动作不是同一个操作。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-cfr-reach}
+ \caption{高牌分支上信息集$HKB$的两种到达权重。CFR保留机会与2的因子，暂不计1自己的前序选择；平均行为策略反而需要按自身前序到达因子加权。}
+ \label{fig:rl-multi-agent-cfr-reach}
+\end{figure}
+
+\term{反事实遗憾最小化}（counterfactual regret minimization, CFR）在每个信息集分别运行局部遗憾匹配。一次完整遍历冻结当前$\bm\pi^{(k)}$，从根到叶计算到达因子，从叶到根汇总式\eqref{eq:rl-multi-agent-cfr-value}，再累加
+\[
+ R_i^{(k)}(I,a)=R_i^{(k-1)}(I,a)+
+        v_i^{\bm\pi^{(k)}}(I,a)-v_i^{\bm\pi^{(k)}}(I).
+\]
+完成遍历后，累加当前策略的平均权重，再统一生成下一轮局部策略。
+
+表\ref{tab:rl-multi-agent-cfr-round}从零遗憾、全部均匀策略开始，列出隐藏牌游戏的一轮结果。每行按列出的动作顺序排列，原策略的期望收益为$J_1=1/8$。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabular}{@{}llll@{}}
+ \toprule
+ 行动者与信息集 & 动作 & 本轮反事实遗憾 & 下一轮分布\\
+ \midrule
+ 1，持$H$首次行动 & $(B,K)$ & $(3/16,-3/16)$ & $(1,0)$\\
+ 1，持$L$首次行动 & $(B,K)$ & $(3/16,-3/16)$ & $(1,0)$\\
+ 1，$HKB$ & $(F,C)$ & $(-3/8,3/8)$ & $(0,1)$\\
+ 1，$LKB$ & $(F,C)$ & $(1/8,-1/8)$ & $(1,0)$\\
+ 2，面对$B$ & $(F,C)$ & $(-1/4,1/4)$ & $(0,1)$\\
+ 2，面对$K$ & $(K,B)$ & $(-1/8,1/8)$ & $(0,1)$\\
+ \bottomrule
+ \end{tabular}
+ \caption{已知完整树、全遍历、同步更新的一轮CFR教学计算。2的遗憾使用其自身收益$u_2=-u_1$，不是沿用1的符号。}
+ \label{tab:rl-multi-agent-cfr-round}
+\end{table}
+
+以$HKB$行为例，$v_1(F)=-1/4$、$v_1(C)=1/2$、当前$v_1=1/8$，相减得到$(-3/8,3/8)$。2面对$B$时，高低牌各有对方与机会权重$1/4$；弃牌值为$-1/2$，跟注值为0，当前值$-1/4$，所以更新为必跟注。剩余各行可按同样方式从已给终局收益复算，不需要额外游戏规则。
+
+为何局部改进能控制完整策略偏离？有限、完全回忆博弈中有
+\begin{equation}
+ R_i^{(n)}
+ \leq\sum_{I\in\mathcal I_i}
+        \left[\max_a R_i^{(n)}(I,a)\right]_+,
+ \label{eq:rl-multi-agent-cfr-bound}
+\end{equation}
+此处左侧把式\eqref{eq:rl-multi-agent-external-regret}的替代动作改成一套固定完整策略。证明思路是按自身信息集的先后顺序递归分解：在某处改动动作，先计该动作在原后续策略下的增益，再把尚未计入的后续改动交给后继信息集。每个终局收益的中间项抵消，只留下新旧策略的差。完全回忆使同一信息集有一致的自身前序行动，因此固定偏离$\pi_i'$的到达因子$\rho_i^{\pi_i'}(I)$可提出该组历史的求和。具体得到
+\[
+ u_i(\pi_i',\bm\pi_{-i}^{(k)})-u_i(\bm\pi^{(k)})
+ =\sum_I\rho_i^{\pi_i'}(I)
+       \sum_a\pi_i'(a\mid I)
+       [v_i^{\bm\pi^{(k)}}(I,a)-v_i^{\bm\pi^{(k)}}(I)].
+\]
+对$k$求和，固定偏离的权重不随$k$变化；内层加权平均至多为最大动作累计遗憾。又因$0\leq\rho_i^{\pi_i'}(I)\leq1$，每项至多为该最大值的正部。最后对$\pi_i'$取最大即得式\eqref{eq:rl-multi-agent-cfr-bound}。所以有限个信息集各自的遗憾为$o(n)$，总体也为$o(n)$。原始CFR给出了这一分解及局部遗憾界\scite{rl7-zinkevich2007}
+
+全树遍历每轮成本随访问节点数增长，存储至少包括$\sum_I|\mathcal A(I)|$个遗憾和平均策略累加量。采样CFR可以减少单轮访问量，但其采样概率、支持及无偏反事实估计或误差界须单独给出；任意丢弃罕见分支不自动继承全遍历结论，深度近似也增加拟合误差。
+
+用于保证的是适当平均策略，而不是最后一轮。在完全回忆下，$\rho_i^{(k)}(I)$表示任取$h\in I$时相同的自身前序概率乘积，不是把该因子在$I$内重复求和。平均行为策略为
+\begin{equation}
+ \bar\pi_i^{(n)}(a\mid I)=
+ \frac{\sum_{k=1}^{n}\rho_i^{(k)}(I)\pi_i^{(k)}(a\mid I)}
+      {\sum_{k=1}^{n}\rho_i^{(k)}(I)}.
+ \label{eq:rl-multi-agent-average-behavior}
+\end{equation}
+分母为零时规定任意合法分布，本章取均匀；该信息集在平均实现计划中不可达。公式来自平均自身序列实现概率：分子是“到达$I$且选$a$”的平均概率，分母是“到达$I$”的平均概率。逐层使用比值可恢复均匀抽取整套历史策略所产生的自身序列概率，而简单逐信息集算术平均通常不能。
+
+例如两个版本先过牌概率分别0.1和0.9，在$HKB$处跟注概率分别1和0，平均跟注率应为0.1，不是0.5；前者使“过牌再跟注”的自身序列概率为$0.5(0.1)=0.05$，与两版本序列概率平均$\tfrac12(0.1\cdot1+0.9\cdot0)$相同。若两人零和且各自平均外部遗憾至多$\varepsilon$，这些平均策略的总偏离间隙至多$2\varepsilon$，从而各人的偏离收益也至多$2\varepsilon$。第\ref{sec:rl-multi-agent-deviations}节给出零和消去证明；该结论既不保证当前策略收敛，也不推广为一般和Nash保证。
+
+% Outline: 7.5.3
+\Needspace{24\baselineskip}
+\subsection{自我对弈与策略群体的迭代组织}
+\label{sec:rl-multi-agent-population}
+
+只训练来击败当前对手，会使学习者忘记更早的弱点。窄通道的一套“总让行”规则可被“总前进”利用；如果下一代又专门惩罚总前进，丢掉旧策略后就难以检查循环。自我对弈（self-play）表示利用自身或同源学习者组织对局，具体实现既可只用当前版本，也可保留历史。虚构自我对弈（fictitious self-play）则明确以历史策略分布为响应对象，用累计行为表示平均策略；深度版本中的响应与平均策略拟合都可能是近似的\scite{rl7-heinrich2015,rl7-heinrich2016}
+
+\term{策略空间响应预言机}（policy-space response oracles, PSRO）把保留与抽样显式组织成外循环。参与者$i$的策略库为$\mathcal P_i=\{\pi_i^1,\ldots,\pi_i^{K_i}\}$。库索引是经验元博弈的纯策略，组合收益表
+$U_i(k_1,\ldots,k_m)$由相应策略对局估计，元混合策略$\sigma_i$是库索引上的分布。它与原环境中的$\pi_i(a_i\mid h_i)$不是同一层对象：通常一回合先抽一次索引，再执行整套行为策略，而不是每个动作重新换网络。
+
+图\ref{fig:rl-multi-agent-psro}展开这个外循环。固定元对手$\bm\sigma_{-i}$后，响应训练器最大化
+\[
+ \mathbb E_{\bm k_{-i}\sim\bm\sigma_{-i}}
+       J_i(\pi_i,\bm\pi_{-i}^{\bm k_{-i}}).
+\]
+它可以调用第\ref{sec:rl-multi-agent-update}节的策略梯度或价值更新；元策略可以来自零和求解器、遗憾更新或另定的群体选择规则。训练出$\hat\pi_i$后，估计新增收益表项，扩充策略库并重新计算元策略。原始PSRO正是将近似响应与经验博弈求解组合起来，而不是为响应训练规定唯一底层算法\scite{rl7-lanctot2017}
+
+\Needspace{28\baselineskip}
+大规模系统采用了不同的群体维护取舍。与第\ref{sec:rl-multi-agent-collection-plan}节介绍的OpenAI Five版本抽样相比，AlphaStar的league training设置主学习者及专门寻找其弱点的不同对手角色，并从保留的历史策略中选择训练对手\scite{rl7-vinyals2019}
+
+OpenAI Five主要维护共同训练的队伍，并混入历史版本对局以减少遗忘，不是每个队员各自建立独立均衡策略库。这两种组织分别强调多角色寻找弱点和在主训练过程中保留历史检验。角色更多、库更大都意味着新的对局和维护成本；它们把底层强化学习放在特定抽样及保留机制中，系统规模本身不替代完整最佳响应证据。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-psro}
+ \caption{PSRO的群体外循环。对局预算用于估计收益表，交互与梯度预算用于训练响应；元策略和响应器分别承接相互适应与更新计算两种选择。}
+ \label{fig:rl-multi-agent-psro}
+\end{figure}
+
+用三种抽象教学策略$\alpha,\beta,\chi$构造零和收益表
+\[
+ \bm U=
+ \begin{pmatrix}0&-1&1\\1&0&-1\\-1&1&0\end{pmatrix}.
+\]
+行策略$\beta$对当前$\alpha$必胜，但$\chi$又必胜$\beta$，并不存在单一的最强纯策略。库只有$\{\alpha,\beta\}$时，元解选择$\beta$，在库内无法被利用；完整三策略空间中的$\chi$却能获利1。扩库后均匀混合才使各行对该混合的收益都为0。这个算例把“赢当前对手”“解好现有收益表”“覆盖所有响应”明确分开。
+
+若双方各有$K$个库策略、每格评价$E$局，则完整两人收益表需要$K^2E$场，新增一行一列也需相应对局；多方全组合表还会按$\prod_iK_i$增长。响应网络、检查点存储和抽样数据同样消耗预算。收益表有统计误差、响应器未找到最佳策略或库遗漏关键类型时，元博弈最优不能认证完整博弈不可利用。
+
+% Outline: 7.5.4
+\subsection{学习动态的稳定性与保证对象}
+\label{sec:rl-multi-agent-stability}
+
+评价联合学习，必须同时说明更新接口、响应规则和群体。表\ref{tab:rl-multi-agent-dynamics}按这三项列出保证对象；一行中只替换一个模块，也可能使结论不再适用。例如从精确表格遗憾换成误差未受控的神经近似，不能保留原来的收敛定理。
+
+\begin{table*}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l l l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 更新接口 & 响应规则 & 训练群体 & 当前策略表现 & 平均策略表现 & 保证条件\\
+ \midrule
+ 梯度 & 同时追随 & 当前双方 & 可旋转或发散 & 不能仅由局部改进断言 & 另需步长、博弈与算子条件\\
+ 精确响应 & 历史平均 & 历史策略 & 可持续变化 & 有限两人零和的经典虚构博弈平均可收敛 & 精确响应、完整有限博弈；近似误差另计\\
+ 局部遗憾 & 同步CFR & 当前与平均 & 不要求收敛 & 适当平均的零和间隙受遗憾界控制 & 有限、完全回忆、正确价值或采样误差控制\\
+ 梯度响应器 & 元策略响应 & PSRO策略库 & 新响应未必稳健 & 元混合只解受限经验博弈 & 收益表误差、响应误差及策略类限制均需报告\\
+ \bottomrule
+ \end{tabularx}
+ \caption{组合后的学习动态和保证对象。当前策略、平均行为策略、元混合策略不是可互换的报告项。}
+ \label{tab:rl-multi-agent-dynamics}
+\end{table*}
+
+图\ref{fig:rl-multi-agent-stability}继续使用匹配硬币和同一初值，取交替更新轨迹。对任意$(p,q)$，总单方偏离间隙为
+$g(p,q)=|2p-1|+|2q-1|$；平均策略将$p,q$替换为历轮均值。图中还计算
+\[
+ \frac1n\max\!\left\{0,\
+ \left|\sum_k(2q^{(k)}-1)\right|-\sum_k u^{(k)},\
+ \left|\sum_k(2p^{(k)}-1)\right|+\sum_k u^{(k)}\right\},
+\]
+即两人的累计平均外部遗憾正部的较大者。三条曲线由同一策略序列直接算出，当前间隙持续波动时，平均间隙仍可下降；有限步长下遗憾曲线还可能保留偏差，不应从图形形状宣称任意精度收敛。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-stability}
+ \caption{交替梯度教学序列的当前间隙、平均策略间隙与累计平均遗憾。所有量使用精确矩阵收益计算，图源保留递推和统计公式；不是学习基准的实验结果。}
+ \label{fig:rl-multi-agent-stability}
+\end{figure}
+
+保证中的误差应放回产生它的位置。评论家和采样误差进入收益或梯度估计；近似响应误差进入每轮与最佳响应的差；共同学习改变下一批经验分布；不完全回忆破坏信息集分解；库外策略则超出经验元博弈的比较类。只有两人零和的收益抵消，才能把双方低外部遗憾转成平均边际策略的Nash间隙。一般和通常只能获得联合经验分布的相关性结论，不能按同一证明宣称平均独立策略达到Nash均衡。
+
+赢过训练对手、解好元博弈、抵御完整策略空间中的最佳响应，需要依次扩大验证范围，但不构成必然实现的训练阶段。恶意通信、对抗攻击和安全约束还会引入不同目标，留到第\ref{chap:rl-trustworthy}章讨论；训练曲线稳定不能替代这些保证。
+
+% Outline: 7.6
+\section{多智能体的参与者变化适配}
+\label{sec:rl-multi-agent-adaptation}
+
+前面通常固定一组参与者及其接口。部署时，通道可能从两人变为多人，熟悉的伙伴可能被陌生合作者替换，对手也可能换一种策略。第\ref{chap:rl-transfer}章的训练分布、留出条件和适应预算仍然适用，但现在变化的是决策者。跨规模、跨伙伴和跨对手是并列的问题，一种协调成功不能同时回答三者。
+
+% Outline: 7.6.1
+\subsection{参与者规模变化下的跨规模适配}
+\label{sec:rl-multi-agent-scale}
+
+两人策略若把对方位置拼成固定长度输入，遇到第三人就没有对应输入槽位；“1先走、2后走”的约定也没有规定第三人何时行动。仅交换原来两人的编号则不一样：参与者数量和物理任务都未变，只检验策略是否不必要地依赖排列。
+
+连续控制中的参与者划分同样属于任务定义。例如，FACMAC采用的多智能体MuJoCo任务按关节分组控制同一系统；更换分组或观测半径，会同时改变各人的动作与信息范围，不能只按参与者数量比较\scite{rl7-peng2021facmac}
+
+令$\bm X$的各行是参与者的局部特征及合法角色信息，$\bm B$为交互图的邻接矩阵，$\bm M$为置换矩阵。\term{置换等变性}要求策略输出随参与者重排而相应重排：
+\[
+ F(\bm M\bm X,\bm M\bm B\bm M^\top)=\bm M F(\bm X,\bm B).
+\]
+这不是让所有人得到相同动作，而是让物理参与者仍得到原来对应的动作。一个共享图策略可令
+\[
+ \bm z_i=\operatorname{Agg}_{j\in\mathcal N_i}
+           \phi(h_i,h_j,e_i,e_j),\qquad
+ \pi_i(\cdot)=f_{\bm\theta}(h_i,e_i,\bm z_i),
+\]
+其中$e_i$是可见角色，$\operatorname{Agg}$用求和、均值或对邻居集合归一化的注意力。空邻域必须定义固定合法输出，例如零向量；带身份槽位的拼接一般不满足上述性质。图\ref{fig:rl-multi-agent-graph}显示同一物理图重编号后的对应关系，进入汇聚器的只能是本轮确实获得的邻居信息。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-graph}
+ \caption{邻域聚合与身份置换。左图边上的消息送入中心参与者的共享聚合器；右图只把同一物理节点换编号，角色和输出随节点一起置换，不改变通行任务。}
+ \label{fig:rl-multi-agent-graph}
+\end{figure}
+
+均场多智能体强化学习进一步用群体或邻域的平均行为近似逐个相互作用。例如，对具有共同离散动作语义的非空邻域，取
+\[
+ \bar{\bm a}_{-i}
+ =|\mathcal N_i|^{-1}\sum_{j\in\mathcal N_i}\bm e(a_j),
+\]
+其中$\bm e(a_j)$为动作独热向量。空邻域约定$\bar{\bm a}_{-i}=\bm0$，作为“无邻居”的标记，而不是概率分布。学习器估计$Q_i(h_i,a_i,\bar{\bm a}_{-i})$，再用观察到的聚合行为和后继聚合预测构造TD目标。原始均场方法给出了相应Q学习及行动者—评论家机制\scite{rl7-yang2018meanfield}
+
+共享图策略的训练仍可复用联合轨迹与团队目标，只需在训练中覆盖不同图或规模，执行时按当前邻域构造输入。每轮一次边消息计算的成本为$O(|\mathcal E|)$次消息函数调用，$L$轮传递则再乘$L$；表示可接受变长输入并不保证新的$m$上回报不降。求和随邻居数变化，均值会丢掉人数信息，故即使满足置换等变性，也可能需要显式计数或密度特征。
+
+均场近似尤其需要个体影响较弱、交互可由聚合量描述等条件；“人数多”不是充分条件。窄通道只有一个关键参与者就能完全堵塞，平均前进率可能无法区别谁占据瓶颈。异质角色、强配合及拓扑突变都会使聚合量不充分，须在留出规模上检验这项近似。
+
+% Outline: 7.6.2
+\subsection{未见合作者条件下的零样本协调与在线适配}
+\label{sec:rl-multi-agent-new-partners}
+
+把通道改为可向任一侧避让的窄路：两套独立训练的队伍分别约定都按自己的左侧、都按自己的右侧行走，各自内部可以顺利通过。混配之后，两人可能挤向同一物理侧。问题不在于任何一套策略不会行走，而在于它们建立了不兼容的约定。
+
+Overcooked的共享烹饪任务也区分这两种能力：同一厨房布局下，与共同训练的伙伴完成分工，并不保证与新伙伴配合成功。评价需要明确伙伴的来源及双方能否适应\scite{rl7-carroll2019}
+
+本章沿用第\ref{sec:rl-transfer-budget}节的预算口径：\term{零样本协调}不利用新伙伴反馈进行伙伴特定的参数更新、记忆适应、类型辨识或模型选择。策略仍可读取给定角色、约定和正常控制所需的观测；在已给定任务与伙伴模型下估计当前位置，属于普通状态估计。利用伙伴动作或回报更新其行为类型，即使只发生在首个回合内、网络参数始终不变，也属于适应。
+
+\term{临时团队协作}（ad hoc teamwork）关注没有预先共同训练或充分协调的新队伍，可按协议允许根据交互辨识和适配伙伴。具体实验必须写明是否共享左右约定、能否通信、角色是否可见、允许试探几步及试探失败的代价；任务名称本身不规定这些权限。
+
+不同机制使用的共同信息不同。扩大训练伙伴群体需要得到多类伙伴的交互；约定或对称性处理需要知道哪些变换保持任务不变；伙伴条件策略需要部署时可观察的类型线索；在线信念更新则需要能区分候选类型的历史。Other-Play通过对任务对称性的处理减少只在某次自我对弈中成立的任意约定，但它依赖所声明的对称性和协调条件，不保证兼容任意未知伙伴\scite{rl7-hu2020otherplay}
+
+可执行的在线方案是冻结基础策略和类型模型，在前$B$步内从获准的通行动作或消息收集证据，按第\ref{sec:rl-multi-agent-opponent-model}节更新信念，再以伙伴条件价值选择动作。若允许梯度适配，另计更新次数和数据来源；零样本、仅记忆或信念适应、参数适应应分别报告，并写明回合内与跨回合的记忆保留规则。评价适应后策略时，可以继续估计物理状态，但若仍利用反馈修正伙伴类型，就仍在适应；两者无法分开时须如实计入协议。没有足够可辨识证据时，多次交互也可能无法判断两种伙伴类型。
+
+完全对称的信息还限制角色分配。若双方使用同一确定性策略、收到同一历史，又无身份、方位或公共破缺信号，就会输出相同动作，不能保证“恰好一人前进”。独立随机化可以有机会破缺对称，但不能保证本轮必定形成指定分工。合法的公共角色信号可改变可行集合，评价时应明确给出。
+
+% Outline: 7.6.3
+\subsection{未见竞争者条件下的策略适应}
+\label{sec:rl-multi-agent-new-opponents}
+
+第\ref{sec:rl-multi-agent-population}节的三策略矩阵说明了针对性与稳健性的差别。面对固定$\alpha$，改用$\beta$把收益从0提高到1；一旦对方换成$\chi$，同一$\beta$的收益又变成$-1$。相反，均匀混合对三个纯对手都得0，但也没有充分利用固定$\alpha$的弱点。
+
+一种对手条件策略在训练群体中学习行为表示，部署时根据可见动作、回合结果或消息更新类型信念，再选择相应响应。它的目标可以是给定对手分布下的收益，也可以加入对已知策略类的最坏情形限制，两者不能只用“适应得更快”概括。表\ref{tab:rl-multi-agent-opponent-adaptation}规定比较对象，并区分固定目标与反应型对手。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 问题 & 对手、历史及允许更新 & 比较对象\\
+ \midrule
+ 固定对手最佳响应 & 目标固定；可交互观测；按给定预算更新 & 同一对手下可行最佳响应收益\\
+ 群体内适应 & 见过类型的新抽样；允许历史辨识或少量更新 & 同预算的群体条件基线及零样本策略\\
+ 跨对手泛化 & 未见行为类型；历史与反馈权限明确 & 留出类型的平均、尾部及最坏已测收益\\
+ 反应型对手适应 & 对方可随自身行为改变；响应历史需记录 & 声明响应协议下的序贯收益，非固定对手值\\
+ \bottomrule
+ \end{tabularx}
+ \caption{竞争者适应必须同时说明类型留出、数据权限和比较对象。更换同一对手的随机种子不等于更换类型。}
+ \label{tab:rl-multi-agent-opponent-adaptation}
+\end{table}
+
+例如允许20场探测后再评价100场，应固定探测动作是否计分、是否重置记忆、梯度步上限及对手在120场中是否保持不变；这些是教学预算，不是性能结果。训练响应时用过的对局不能又冒充独立测试。对手还可能先表现温和诱导错误信念，再切换行为，或随探测继续学习。此时应回到第\ref{sec:rl-multi-agent-response-model}节建模响应机制，不能延用固定类型识别的保证。
+
+% Outline: 7.6.4
+\subsection{参与者变化适配的泛化与扩展边界}
+\label{sec:rl-multi-agent-generalization}
+
+一次泛化测试需要一份清楚的变化表。表\ref{tab:rl-multi-agent-splits}在第\ref{chap:rl-transfer}章任务关系的基础上加入参与者留出、公共约定及通信权限。训练集用于学习，验证集用于选择机制和检查点，测试集用于一次既定协议评价；将测试伙伴反复送入验证回路，会改变“未见”的含义。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 变化因素 & 可声明的留出方式 & 必须控制或记录\\
+ \midrule
+ 数量与密度 & 训练2至4人，测试6人等独立设定 & 通道容量、拥挤度、邻域大小，不能只改$m$\\
+ 身份与组合 & 已见类型的新排列、新搭配 & 角色是否同构；是否共享编号约定\\
+ 合作者或对手类型 & 留出训练流程、策略家族或行为机制 & 零样本／适应预算；伙伴是否继续学习\\
+ 收益关系 & 固定关系内的新参数，或另测关系改变 & 团队转竞争已改变目标，不能仅称身份泛化\\
+ 通信与拓扑 & 留出图、延迟、带宽或接收范围 & 部署消息是否可得；公共信号是否保留\\
+ \bottomrule
+ \end{tabularx}
+ \caption{参与者适配的训练、验证与测试划分。支持内的新组合与未见行为类型需要不同的覆盖及可辨识条件。}
+ \label{tab:rl-multi-agent-splits}
+\end{table}
+
+同一批伙伴更换环境种子，只检验这些伙伴下的运行随机性；同一策略更换编号，最多检验身份依赖。若人数、角色、奖励和通信同时改变，失败无法仅归因于规模，成功也不能辨明究竟适应了什么。应先单因素留出，再报告明确的组合变化。泛化结论的范围不能超出实际留出的因素。
+
+% Outline: 7.7
+\section{多智能体的行为评价和验证}
+\label{sec:rl-multi-agent-evaluation}
+
+多智能体评价依次回答不同问题：取得了哪些收益，是否满足选定的行为标准，能否适应声明范围内的新参与者，以及付出了多少资源。基准回报、均衡偏离、交叉协调和计算成本不是同一种证据，不能压成一个没有条件的排名。
+
+% Outline: 7.7.1
+\subsection{共同评价目标下的效用、福利与公平评价}
+\label{sec:rl-multi-agent-welfare}
+
+完全合作可报告共同回报$J$及成功率；一般和应保留收益向量$(J_1,\ldots,J_m)$，再按已声明的权重计算福利$\sum_iw_iJ_i$。若目标还涉及分配，可另报告最小个体收益、等待时间分位数或收益差距，但这些统计量不自动给出规范性的公平结论。两人零和的收益和恒为0，把它用作进步指标没有意义。
+
+例如教学结果$(10,0)$与$(5,5)$的收益和同为10，最小收益却分别为0和5，个体收益的总体方差分别为25和0。如果第一种结果总使同一人承担成本，团队总分会掩盖分配差异；如果角色每轮公平轮换，还应区分单回合分配和长期分配。实际报告至少给出均值、分布及失败率，并明确失败是碰撞、超时还是某人的任务未完成。
+
+表\ref{tab:rl-multi-agent-benchmarks}选取具体接口，而不把环境库当作单一问题。SMAC围绕局部观测下的团队微操，地图与敌人脚本共同决定评价条件\scite{rl7-samvelyan2019}
+
+\begin{table*}[t]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 具体接口 & 合作或竞争结构 & 可用观测 & 通信条件 & 主要指标\\
+ \midrule
+ SMAC，3m & 三个受控单位合作，对抗脚本敌人 & 各单位视野内信息；训练可给全局状态 & 原任务无额外学习消息，新增须声明 & 地图胜率、回报、超时率\\
+ MPE，simple\_spread & 多个体覆盖地标；局部碰撞项与共享项比例需指定 & 自身及其他实体的配置相关特征 & 此任务的静默体无消息；不能外推至其他MPE任务 & 覆盖距离、碰撞及所定奖励\\
+ Overcooked，cramped\_room & 两人完成共享烹饪与交付任务 & 厨房布局、物品及参与者状态的指定编码 & 原动作接口无自由语言频道 & 交付数、团队回报、分工及等待\\
+ PettingZoo，rps & 两人石头剪刀布，零和 & 本轮选择在双方提交前相互隐藏 & 无显式消息；AEC调用次序不等于看见先行动作 & 各自收益及偏离间隙\\
+ 多智能体MuJoCo，分组HalfCheetah & 不同关节组共同控制同一系统 & 分组关节特征及指定观测半径 & 消息或额外关节信息需另列 & 回报、稳定性、推理时延\\
+ \bottomrule
+ \end{tabularx}
+ \caption{具体任务接口决定可比较的指标。软件版本、地图、观测包装器、奖励配置和回合上限均属于复现协议。}
+ \label{tab:rl-multi-agent-benchmarks}
+\end{table*}
+
+MPE包含不同收益和通信配置，不能把一个任务的静默动作接口推广到整个环境族。Overcooked则应分别报告共同训练伙伴与新伙伴的配合表现，对应第\ref{sec:rl-multi-agent-new-partners}节区分的评价对象。
+
+PettingZoo中的石头剪刀布还须检查信息屏蔽：调用者已经保存一人的选择，不等于另一人的策略可以读取它。这个检查直接对应第\ref{sec:rl-multi-agent-information}节的信息时序约定。
+
+连续多智能体控制须按第\ref{sec:rl-multi-agent-scale}节的划分记录关节分组及每组可见信息，不能只写“MuJoCo”。参与者数量和观测半径改变后，控制与协调条件也随之改变。
+
+这些接口的动作粒度、回合长度和奖励尺度不同，原始分数不能直接相加。评价时应复用部署权限，不能给待测策略额外全局状态或免费通信。若训练采用奖励塑形，最好同时报告原任务指标及实际优化回报，免得把塑形收益当作真正完成任务的证据。
+
+% Outline: 7.7.2
+\subsection{行为标准下的偏离收益、遗憾与可利用性验证}
+\label{sec:rl-multi-agent-deviations}
+
+固定其他完整策略时，参与者$i$的单方偏离收益定义为
+\[
+ \delta_i(\bm\pi)=
+ \sup_{\pi_i'\in\Pi_i}J_i(\pi_i',\bm\pi_{-i})-J_i(\bm\pi).
+\]
+策略类$\Pi_i$必须保留原信息与行动权限，并包含当前$\pi_i$，所以$\delta_i\geq0$。两人零和时，本章以$g=\delta_1+\delta_2$表示总偏离间隙；有些软件把$g/2$称为可利用性，报告时须注明约定。
+
+对匹配硬币取$p=0.7,q=0.4$，当前$u_1=-0.08$。1改为第二动作可得0.2，故$\delta_1=0.28$；2改为第二动作使1得$-0.4$，2由0.08升至0.4，故$\delta_2=0.32$。总间隙0.6，按半间隙约定则为0.3。均匀对手下取得零回报，不足以辨认这样的可利用性。
+
+第\ref{sec:rl-multi-agent-mutual-learning}节给出了生成低遗憾策略的机制，下面直接从定义验证它支持什么结论。
+
+\begin{theorem}[阶段遗憾与联合经验分布]
+\label{thm:rl-multi-agent-regret-ce}
+固定有限阶段博弈重复$n$轮，记实际联合动作为$\bm a^{(k)}$，联合经验分布为
+$\hat q_n(\bm a)=n^{-1}\sum_{k=1}^n\mathbf1\{\bm a^{(k)}=\bm a\}$。
+若每人对每个固定替代动作的累计外部遗憾均不超过$n\varepsilon$，则$\hat q_n$满足$\varepsilon$粗相关均衡约束。若对每对动作$a_i,b_i$，内部遗憾
+\[
+ \sum_{k=1}^n\mathbf1\{a_i^{(k)}=a_i\}
+ [u_i(b_i,\bm a_{-i}^{(k)})-u_i(\bm a^{(k)})]
+ \leq n\varepsilon,
+\]
+则$\hat q_n$满足每对动作采用未条件化偏离约束的$\varepsilon$相关均衡。
+\end{theorem}
+\begin{proof}
+固定$i,b_i$。将其外部遗憾不等式除以$n$，并按相同联合动作合并项，得到
+\[
+ \sum_{\bm a}\hat q_n(\bm a)
+ [u_i(b_i,\bm a_{-i})-u_i(\bm a)]\leq\varepsilon.
+\]
+这正是在收到任何动作建议之前改成固定$b_i$的粗相关偏离约束。它对每个$i,b_i$成立，故得到第一项结论。
+
+对内部遗憾同样除以$n$并合并，只保留实际建议为$a_i$的轮次，得到
+\[
+ \sum_{\bm a_{-i}}\hat q_n(a_i,\bm a_{-i})
+ [u_i(b_i,\bm a_{-i})-u_i(a_i,\bm a_{-i})]\leq\varepsilon.
+\]
+这正是“仅在收到$a_i$建议时改为$b_i$”的未条件化约束。它对每一对动作成立，即为所声明的近似相关均衡。整个推导保留联合频率，没有假设各人的经验独立。
+\end{proof}
+
+若希望把第二个约束写成收到$a_i$后的条件收益，右端应除以$\hat q_{n,i}(a_i)$；罕见建议的条件误差可能很大。零概率建议无需检查条件期望。多个建议同时映射到替代动作时，相加的误差还会累积；不能把每对动作的$\varepsilon$不加说明地称为任意交换映射的同一$\varepsilon$界。
+
+相关经验分布不能用边缘乘积替代。若两种协调约定$(L,L)$和$(R,R)$各出现一半，经验分布从不失配，而各边缘都均匀；把它们独立相乘后，失配概率却变成$1/2$。在一般和中，低遗憾控制的是这种保留相关性的分布，并不通常控制边际平均策略的Nash偏离。
+
+\begin{theorem}[零和平均策略的鞍点间隙]
+\label{thm:rl-multi-agent-average-gap}
+有限两人零和矩阵$\bm A$中，第$k$轮混合策略为$\bm x^{(k)},\bm y^{(k)}$。若双方按期望收益计算的累计外部遗憾分别不超过$n\varepsilon_1,n\varepsilon_2$，令
+$\bar{\bm x}=n^{-1}\sum_k\bm x^{(k)}$、
+$\bar{\bm y}=n^{-1}\sum_k\bm y^{(k)}$，则
+\[
+ \max_{\bm x}\bm x^\top\bm A\bar{\bm y}
+ -\min_{\bm y}\bar{\bm x}^\top\bm A\bm y
+ \leq\varepsilon_1+\varepsilon_2.
+\]
+左侧等于$(\bar{\bm x},\bar{\bm y})$的总单方偏离间隙。
+\end{theorem}
+\begin{proof}
+记实际各轮期望收益之和为
+$S=\sum_k(\bm x^{(k)})^\top\bm A\bm y^{(k)}$。
+对第一人，外部遗憾界和对$\bm y$的线性性给出
+\[
+ n\max_{\bm x}\bm x^\top\bm A\bar{\bm y}-S
+ \leq n\varepsilon_1.
+\]
+第二人最大化的是负收益，故其界为
+\[
+ S-n\min_{\bm y}\bar{\bm x}^\top\bm A\bm y
+ \leq n\varepsilon_2.
+\]
+相加后$S$严格抵消，再除以$n$即得所述不等式。另一方面，平均策略的两项偏离收益分别是
+\[
+ \max_{\bm x}\bm x^\top\bm A\bar{\bm y}
+       -\bar{\bm x}^\top\bm A\bar{\bm y},
+ \qquad
+ \bar{\bm x}^\top\bm A\bar{\bm y}
+       -\min_{\bm y}\bar{\bm x}^\top\bm A\bm y.
+\]
+它们非负且相加正好为左侧，因此每一项也不超过$\varepsilon_1+\varepsilon_2$。
+\end{proof}
+
+若使用实际纯动作及其实际遗憾，亦可把纯动作视为单纯形顶点应用此论证；若只有期望遗憾界，要作高概率经验声明还需集中界。一般和的两人收益不是相反数，中间实际收益项无法如此消去，所以不能照此推出Nash结论。
+
+有限扩展式博弈可把完整确定性应对计划看成纯策略，并在完全回忆下用式\eqref{eq:rl-multi-agent-average-behavior}恢复平均实现计划。随机博弈则必须明确检验完整策略偏离、状态条件偏离还是给定轨迹上的局部替换。改变策略会改变后续状态访问，不能把原轨迹上各步动作遗憾相加，就宣布约束了任意完整策略的收益。表\ref{tab:rl-multi-agent-guarantees}将这些验证对象并列。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 指标 & 对象与计算权限 & 可支持的结论\\
+ \midrule
+ 固定对手回报 & 对某对手的重复对局 & 该对手分布下的收益，非均衡认证\\
+ 阶段外部／内部遗憾 & 固定阶段收益；需替代动作收益或受控估计 & 联合经验的CCE／相应CE约束\\
+ 平均策略间隙 & 两人零和；完整比较类的双方遗憾或响应 & 该平均策略及策略类下的偏离界\\
+ 当前策略可利用性 & 固定当前对方，分别搜索并评价最佳响应 & 精确响应给间隙；近似响应通常只揭示下界\\
+ \bottomrule
+ \end{tabularx}
+ \caption{不同评价量的对象、访问要求与结论范围。平均策略保证不能替当前策略认证。}
+ \label{tab:rl-multi-agent-guarantees}
+\end{table}
+
+若响应搜索只找到$\tilde\pi_i$，其真实偏离收益至多为$\delta_i$，所以“没有找到强响应”不等于不存在强响应。只有另外证明搜索误差$\eta_i$，即最佳响应值至多比已找到值高$\eta_i$，才得到对应上界；有限对局估值还要加统计不确定性。响应训练、响应筛选和最终收益评价最好用分离数据，防止把搜索过程的偶然高分当作真实漏洞，也防止用搜索失败认证不可利用。
+
+% Outline: 7.7.3
+\subsection{基于交叉对局与留出参与者的泛化验证}
+\label{sec:rl-multi-agent-cross-play}
+
+self-play评价同一训练系统产生的配合，cross-play把独立训练种子的策略混配，主要检查约定兼容性。群体内留出排除某些训练伙伴或组合，检验支持内泛化；未见行为类型测试则排除整个策略家族或生成机制，检验更强的分布变化。四者的对局都可以很多，但样本数量不能替代留出定义。
+
+图\ref{fig:rl-multi-agent-cross-play}使用明确的两约定教学任务：双方选择同一约定得团队分10，不同得0；独立训练来源A、B固定约定$L$，来源C固定约定$R$。行列都是来源，而非同一网络不同回合的随机数。主对角都得10，A、B对C却得0，因此只看主对角会误判协调能力。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-cross-play}
+ \caption{两约定教学任务的精确交叉配合矩阵。每格均为团队分，深边框标同来源对角；A、B的$L$约定与C的$R$约定不兼容，数值由规则直接得到，不是实测成绩。}
+ \label{fig:rl-multi-agent-cross-play}
+\end{figure}
+
+测试协议应先固定训练群体、检查点选择和每种伙伴的对局预算。对每个留出伙伴先报告零样本结果，再在预设预算$B\in\{0,5,20\}$等教学网格上测适应后表现；横轴计实际交互，梯度步和记忆是否重置另列。反复查看测试对手结果再选检查点，相当于把测试对手用于开发，应重新留出而不是仍称其未见。
+
+均匀抽取图中九格的平均分为$50/9$，最差格为0；仅取三格对角的平均为10。不同伙伴分布会改变加权平均，故需同时给出矩阵、权重、平均及最坏已测表现。有限对局不能穷尽全部对手，最坏已测值也不是完整策略空间的最坏值；群体平均成绩不提供不可利用性上界。
+
+% Outline: 7.7.4
+\subsection{固定样本、通信与计算预算下的效率评价}
+\label{sec:rl-multi-agent-efficiency}
+
+一次环境转移同时包含$m$个动作时，联合环境步数增加1，参与者动作数增加$m$。两者都可报告，但不能为不同算法选择有利口径。训练梯度步还要记录批次大小、复用次数和每步更新了几个网络；对手查询按响应训练及评价实际发起的对局计，不能藏进“免费环境”。部署成本则包括消息字节数、同步轮次、单人及系统动作时延。
+
+表\ref{tab:rl-multi-agent-resources}固定每人$A$个离散动作、图边集$\mathcal E$和消息维度$d_c$，比较结构性成本。采样量统一用联合步数$N$报告，但不同方法达到某一回报所需的$N$必须实际测量，不能由表中的计算阶数推导。
+
+\begin{table*}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 结构 & 人数与动作计算 & 采样及训练权限 & 训练通信／存储 & 部署推理与通信\\
+ \midrule
+ 联合价值枚举 & $m$人，$A^m$组合 & $N$联合步；集中输入 & 联合转移、动作与价值表或网络 & 若集中选动作，须具备实时集中权限\\
+ VDN／QMIX & 局部比较$mA$次 & $N$联合步；QMIX混合器用状态 & 联合TD目标及训练反传 & $m$次局部网络；无必需执行消息\\
+ 集中评论家、局部行动者 & 每人一次动作输出 & $N$联合步；声明评论家状态／动作输入 & 回放或近期轨迹及集中特征 & 局部推理；共享参数不等于共享观测\\
+ 图消息策略 & $m$节点、$|\mathcal E|$条边 & $N$联合步；合法训练图 & 消息及历史按实现记录 & $L|\mathcal E|d_c$量级消息元素，$L$轮同步\\
+ PSRO群体 & 双方各$K$个库策略 & 响应样本加收益表对局；权限继承响应器 & $K^2$表项及多个检查点 & 回合抽索引再执行；未必同时运行全部网络\\
+ \bottomrule
+ \end{tabularx}
+ \caption{资源口径中的训练与部署区分。复杂度项只描述所列操作，不等于总运行时间或样本复杂度定理。}
+ \label{tab:rl-multi-agent-resources}
+\end{table*}
+
+图\ref{fig:rl-multi-agent-scaling}用一个串行通信模型说明跨规模代价：每条有向边处理一条消息需0.01毫秒，计算节点动作另需$0.05m$毫秒。全连接边数为$m(m-1)$，每人最多4个出邻居时边数取$m\min(4,m-1)$，故
+\[
+ \begin{aligned}
+ T_{\text{全连}}(m)&=0.05m+0.01m(m-1),\\
+ T_{\text{局部}}(m)&=0.05m+0.01m\min(4,m-1).
+ \end{aligned}
+\]
+这是指定串行模型下的解析时延，不是硬件测试。$m=20$时两者分别4.8和1.8毫秒；真实并行设备、拥塞和同步代价可能改变结果。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/rl-multi-agent-scaling}
+ \caption{固定串行消息处理假设下的教学扩展曲线。全连接和最多4邻居的局部交互使用同一单节点及单边成本；稀疏图节省通信，但不保证保留任务所需信息。}
+ \label{fig:rl-multi-agent-scaling}
+\end{figure}
+
+参数共享可减少模型存储，却仍需为不同局部历史计算动作；集中信息可能减少估计难度，却增加训练传输；通信可能提高协调回报，却增加部署时延。比较新规模时还要控制拥挤程度、瓶颈容量和信息权限，否则资源增长与任务变难混在一起，曲线无法解释。
+
+% Outline: 7.7.5
+\subsection{行为评价与复现所需的协议信息}
+\label{sec:rl-multi-agent-protocol}
+
+复现一次多智能体结果，需要恢复的不只是参数和种子，还包括谁同谁在何种权限下交互。表\ref{tab:rl-multi-agent-protocol}把容易改变结论的实现项落到训练或执行环节。尤其是退出参与者：继续输出占位动作、移出联合动作空间、仅屏蔽损失，三者会改变不同对象，不能共用一个未解释的“死亡屏蔽”开关。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}X@{}}
+ \toprule
+ 协议项 & 必须记录的内容 & 主要影响环节\\
+ \midrule
+ 参数共享与身份 & 共享哪些模块；编号、角色编码及重排规则 & 参数梯度汇总与执行约定\\
+ 集中状态与屏蔽 & 评论家输入；合法动作信息来自何处 & 训练权限及执行动作分布\\
+ 死亡、退出与终止 & 占位观测、动作、损失屏蔽；全局或个体终止 & 价值目标、占用统计和人数\\
+ 回放与版本 & 来源检查点、窗口、概率字段、校正与采样权重 & 联合经验的目标匹配\\
+ 对手与伙伴抽样 & 库版本、保留及淘汰、抽样概率、是否在线学习 & 训练和评价的参与者分布\\
+ 通信 & 发送／接收权限、载荷、时序、延迟、带宽 & 部署可行性与成本\\
+ 回报与评价 & 奖励尺度、塑形、回合上限、偏离类及间隙约定 & 行为标准和比较口径\\
+ \bottomrule
+ \end{tabularx}
+ \caption{多智能体结果的最小协议信息。每一项都可能改变被评价的策略或环境，不能只附超参数表。}
+ \label{tab:rl-multi-agent-protocol}
+\end{table}
+
+此外应保存伙伴与对手的生成流程、策略库及检查点标识、选择检查点所用的验证参与者、各组合评估场数。训练初始化、环境随机性和伙伴抽样随机性应使用可追踪的独立随机源。若报告5次独立训练、每次1000局，不能把5000局当成5000个独立训练样本；同一检查点或同一适应链上的对局往往相关，区间估计应保留训练运行和伙伴层级。
+
+无法恢复的第三方对手、外部游戏版本或消息服务条件应明确列为限制。复现材料可以支持“在这些保存的伙伴及接口下重现”，却未必支持“对所有未知参与者都成立”。评价的可信程度取决于声明、协议和证据是否指向同一个对象。
+
+% Outline: 7.8
+\section{本章小结}
+\label{sec:rl-multi-agent-summary}
+
+窄通道中的一次让行，把本章的三个起点连在一起：收益关系规定什么叫做好，信息权限规定动作能依赖什么，其他参与者是否学习则决定行为后果会不会随之改变。团队最优、极小极大、单方偏离稳定与社会分配目标不能互换；集中训练也不能把执行时不可见的信息变成合法输入。
+
+联合经验必须保留动作、消息和参与者来源，边缘动作都出现过并不代表联合效果可识别。估计时可以同时保留联合动作、个体替代、局部组合、伙伴类型与响应依赖；更新时再组合价值或梯度计算、相互适应规则和群体组织。单次局部改进不保证联合动态稳定，局部贪心的一致性不保证整张价值表可表达，近似响应和有限策略库也不保证完整博弈不可利用。
+
+验证要把对象分开：外部与内部遗憾约束不同的联合经验分布，零和条件下才能进一步控制适当平均策略的鞍点间隙；当前策略不因此自动收敛。训练对手上的胜率、留出伙伴的协调、跨规模表现及资源成本也各有边界；利用伙伴反馈更新记忆或类型属于适应，不能只因参数固定就记为零样本。只有将行为标准、参与者范围、信息契约和预算一起报告，结果才可解释。第\ref{chap:rl-trustworthy}章从行为要求这一并列维度讨论风险、扰动和安全约束；已有性能证据不会自动成为安全保证，涉及多方时还须保留本章的联合行为与信息条件。

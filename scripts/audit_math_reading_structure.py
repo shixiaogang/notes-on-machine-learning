@@ -22,9 +22,9 @@ CURRENT_VOLUMES = (
     Path("tex/01-mathematical-preliminaries-upper"),
     Path("tex/02-mathematical-preliminaries-lower"),
 )
-OUTLINE = Path("plans/mathematical-preliminaries-reading-structure.md")
-CONTRACT = Path("plans/mathematical-preliminaries-chapter-map.md")
-RETIRED_LABELS = Path("plans/chapter17-retired-labels.json")
+OUTLINE_DIRECTORIES = tuple(Path("plans") / volume.name for volume in CURRENT_VOLUMES)
+CONTRACT = Path("tests/fixtures/math-reading-structure/chapter-map.md")
+RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter17-retired-labels.json")
 CHAPTER17_BASELINE_SOURCE = Path(
     "05-dynamical-systems-control-and-decision/06-mathematics-and-future-research.tex"
 )
@@ -130,6 +130,22 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
                 "title": match[2], "outline_line": line_no,
             })
     return result
+
+
+def reading_structure(root: Path) -> tuple[list[Path], str]:
+    """Read the six current part outlines, retaining historical audit numbers."""
+    paths = []
+    texts = []
+    for number, directory in enumerate(OUTLINE_DIRECTORIES, 1):
+        parts = sorted((root / directory).glob("*.md"))
+        if len(parts) != 3:
+            raise ValueError(f"Expected 3 part outlines in {directory}, found {len(parts)}")
+        if number == 2:
+            texts.append("## 卷二")
+        for path in parts:
+            paths.append(path.relative_to(root))
+            texts.append(path.read_text())
+    return paths, "\n\n".join(texts)
 
 
 def tex_headings(text: str) -> list[dict]:
@@ -452,7 +468,7 @@ def main() -> int:
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
     root = args.root.resolve()
-    text = (root / OUTLINE).read_text()
+    outline_paths, text = reading_structure(root)
     expected = outline_headings(text)
     rows = assignments(root)
     selected = [row for row in rows if not args.chapter or row["chapter"] in args.chapter]
@@ -526,7 +542,7 @@ def main() -> int:
         if label not in retirements["approved_baseline_retirements"]
     }
     result = {
-        "outline": str(OUTLINE),
+        "outlines": [str(path) for path in outline_paths],
         "outline_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "scope": "Mechanical checks only; content and PDF require independent review.",
         "baseline_revision": baseline_revision,
