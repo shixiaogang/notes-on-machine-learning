@@ -1323,7 +1323,7 @@
 
 1. 定义（相对于DAG的忠实性）：分布$P$相对于DAG $\mathcal G$满足忠实性（faithfulness），若对任意两两不交的节点集$A,B,S$，$\boldsymbol V_A\perp\boldsymbol V_B\mid\boldsymbol V_S \quad\Longrightarrow\quad A\perp_{\mathcal G}B\mid S$。
 2. 忠实性要求分布中出现的条件独立能由图结构解释，不是由特殊参数抵消、确定性约束或未处理的误差相关造成。因果Markov性给出正向蕴含，忠实性补上反向蕴含，两者不能互相替代。
-3. 定义（Markov等价与等价类）：同一节点集上的两张DAG若具有完全相同的d-分离关系，就称它们Markov等价（Markov equivalent）。与给定图Markov等价的全部DAG组成其Markov等价类（Markov equivalence class, MEC）。
+3. 定义（Markov等价与等价类）：同一节点集上的两张DAG若具有完全相同的d-分离关系，就称它们Markov等价（Markov equivalent）。与给定图Markov等价的全部DAG组成其Markov等价类（Markov equivalence class, MEC）。以三个二元变量的链$X\to Z\to Y$为例，取$\mathbb P(X=1)=0.4$、$\mathbb P(Z=1\mid X=0)=0.2$、$\mathbb P(Z=1\mid X=1)=0.7$，并按$Z$给出$Y$的条件分布；把中间因子按Bayes公式重排成$Z\to X$与$Z\to Y$后，八个联合概率逐一相同，说明两套机制给出同一观测分布却对“改变$X$是否改变$Y$”给出相反答案，方向须靠干预或环境变化识别。
 4. 有限样本中的关系发现还要通过检验或评分近似总体判断。以$H_0:V_i\perp V_j\mid\boldsymbol V_S$为原假设，若约束型算法在未拒绝独立时删除候选边，那么第一类错误把真实独立误判为依赖，可能保留虚假边；第二类错误把实际依赖误判为独立，可能删除真实边。
 
 ##### 3.6.1.2 干预与环境变化下的方向识别
