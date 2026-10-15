@@ -14,6 +14,26 @@ SPEC.loader.exec_module(AUDIT)
 
 
 class CurrentChapterStructureTests(unittest.TestCase):
+    def test_part_outlines_keep_volume_local_and_historical_numbers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for volume, folder in enumerate(AUDIT.OUTLINE_DIRECTORIES, 1):
+                (root / folder).mkdir(parents=True)
+                for part in range(1, 4):
+                    title = f"卷{volume}部分{part}"
+                    (root / folder / f"{part:02d}-part.md").write_text(
+                        f"# {title}\n## 第{part}章 {title}\n"
+                        f"### {part}.1 本章小结\n\n说明本章得到的结论。\n"
+                    )
+            paths, text = AUDIT.reading_structure(root)
+            self.assertEqual(len(paths), 6)
+            headings = AUDIT.outline_headings(text)
+            self.assertEqual(list(headings), [1, 2, 3, 10, 11, 12])
+            self.assertEqual(headings[10][1]["number"], "1.1")
+            (root / paths[-1]).unlink()
+            with self.assertRaisesRegex(ValueError, "Expected 3 part outlines"):
+                AUDIT.reading_structure(root)
+
     def test_current_chapter_numbers_include_nested_titles(self):
         headings = AUDIT.outline_headings(
             "## 第8章 信号的表示与计算\n"
@@ -46,7 +66,7 @@ class Chapter17RetirementTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        (self.root / "plans").mkdir()
+        (self.root / AUDIT.RETIRED_LABELS).parent.mkdir(parents=True)
         self.source = "tex/02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning/01-mathematics-and-future-research.tex"
         self.revision = "a" * 40
         self.baseline = {

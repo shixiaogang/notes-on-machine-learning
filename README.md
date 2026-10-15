@@ -1,6 +1,6 @@
 # 机器学习笔记
 
-基于 `tufte-book` 的中文 LaTeX 机器学习笔记，按十二卷独立组织与出版，不生成全集。卷目与分部见[全书结构](plans/book-structure.md)，章纲与进度见[计划索引](plans/README.md)，构建目录由 [tex/volumes.json](tex/volumes.json) 登记。每卷总页数不超过600页。
+基于 `tufte-book` 的中文 LaTeX 机器学习笔记，按十二卷独立组织与出版，不生成全集。卷目、分部、章纲与正文进度见[正文大纲索引](plans/README.md)，构建目录由 [tex/volumes.json](tex/volumes.json) 登记。每卷总页数不超过600页。
 
 ## 构建
 
@@ -29,6 +29,8 @@ git config --local core.hooksPath .githooks
 
 提交前运行 `./build.sh build`、`./build.sh check-target` 及与变更范围对应的检查，将源文件、变化的 PDF 和清单一并暂存。提交钩子只构建受影响卷，并校验全部成品与暂存源文件一致。
 
+每次修改正文都须按[正文大纲与计划目录规范](specs/plans.md)核对对应大纲，同步标题、顺序及主要段落提要；正文与需要更新的大纲、索引作为同一项变更交付与提交。
+
 ```sh
 make test
 bash tests/check-book-editions.sh
@@ -40,7 +42,7 @@ bash tests/check-book-editions.sh
 | --- | --- |
 | `tex/` | 十二卷正文、卷目录登记与共享样式；各卷 `main.tex` 共用 `book.tex` |
 | `specs/` | 开发、LaTeX、写作、图像及样式规范 |
-| `plans/` | 现行结构、章纲、选材资料与待办 |
+| `plans/` | 按卷与部分组织的当前正文大纲及段落提要 |
 | `figures/` | 与正文卷、部分对应的图源、数据与生成记录 |
 | `fonts/` | 固定字体、校验清单与上游许可证 |
 | `build/` | 当前 worktree 的编译缓存，不纳入 Git |
