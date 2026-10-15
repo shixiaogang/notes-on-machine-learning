@@ -442,7 +442,7 @@
 
 论证与表述逻辑：
 
-1. 对$Y_i\overset{\mathrm{iid}}{\sim}\mathcal{N}(\theta,\sigma^2)$，且$\sigma^2>0$已知，$-\log L(\theta;\boldsymbol{y}) =\frac{1}{2\sigma^2}\sum_{i=1}^n(y_i-\theta)^2+C$对$\theta$求导并令其为零，得到$\widehat\theta=\overline y$。
+1. 以两个二元坐标、第二列缺失只依赖第一列的教学例说明MAR下的似然分解：观测似然等于不含$\theta$的机制因子乘以每行第一列的似然，说明“对缺失坐标积分”与“丢掉整行”的差别，并指出缺失机制依赖缺失值本身时该分解失效。对$Y_i\overset{\mathrm{iid}}{\sim}\mathcal{N}(\theta,\sigma^2)$，且$\sigma^2>0$已知，$-\log L(\theta;\boldsymbol{y}) =\frac{1}{2\sigma^2}\sum_{i=1}^n(y_i-\theta)^2+C$对$\theta$求导并令其为零，得到$\widehat\theta=\overline y$。
 2. 定义（影响函数）：设$T$为定义在概率分布上的实值或向量值统计泛函，$\Delta_z$为全部质量集中在$z$的概率测度。假定充分小的正$\epsilon$所对应的污染分布仍在$T$的定义域内；若右侧极限存在且有限，定义影响函数（influence function）为$\operatorname{IF}(z;T,P)=\lim_{\epsilon\downarrow0} \frac{T((1-\epsilon)P+\epsilon\Delta_z)-T(P)}{\epsilon}$。
 3. 有限维推断的目标也可以是一组总体分位数。设$Y_1,\ldots,Y_n$独立同分布且$0<q<1$，经验分布$\widehat F_n(y)=n^{-1}\sum_i\mathbb I_{\{Y_i\leq y\}}$的广义逆给出$\widehat q=Y_{(\lceil nq\rceil)}$。
 
