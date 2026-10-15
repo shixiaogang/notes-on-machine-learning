@@ -4,7 +4,7 @@
 
 ## 开始任务
 
-开始任何修改前必须阅读 [开发要求](specs/development.md)，检查 `git status --short` 与 `git worktree list`。每个独立任务使用自己的 worktree 和分支；继续任务时复用原工作区，所有编辑、资源生成、构建、测试和提交均在该工作区执行。不得覆盖、暂存或清理其他任务的成果，不共享可写的 `build/`、`target/`。
+开始任何修改前必须阅读 [开发要求](specs/development.md)，检查 `git status --short` 与 `git worktree list`。每个独立任务默认使用自己的 worktree 和分支；继续任务时复用原工作区，同一任务的多个 writer 可在该 worktree 中协作。所有编辑、资源生成、构建、测试和提交均在该工作区执行，提交与构建串行处理。不得覆盖、暂存或清理其他任务的成果，不共享可写的 `build/`、`target/`。
 
 按任务阅读并遵循相关规范，完整索引见 [specs/README.md](specs/README.md)：
 
