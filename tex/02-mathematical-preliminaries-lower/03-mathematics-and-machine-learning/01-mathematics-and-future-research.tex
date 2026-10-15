@@ -202,8 +202,12 @@ $v_D^{(k+1)}=T_{D,k}(v_D^{(k)},U_k)$，再从状态读出$\bm\theta^{(k)}$和$h_
 学习规则记为结构$\mathcal L=(\mathcal H,\Phi,B,\mathscr A)$。
 对阶段$r\in\{\mathrm{tr},\mathrm{va},\mathrm{te}\}$，用
 $\mathcal G_r=(\mathcal E_r,\mathcal O_r,\Gamma_r)$记录该阶段的环境、观测与采样规则族；
-样本生成设定为$\mathcal D=(\mathcal G_{\mathrm{tr}},\mathcal G_{\mathrm{va}},\mathcal G_{\mathrm{te}})$。
-因此$\mathcal D$记录三类样本的生成规律，与一批实现样本$D$不同。完整学习设定记为
+仅给出三阶段的边缘规律还不足以确定联合实验。例如训练记录与验证记录各为一个均匀二元标签，预测器照抄训练标签：若验证标签就是训练标签，验证错误率为零；若二者独立，期望验证错误率为$1/2$。两种实验的阶段边缘完全相同。
+因此还指定联合生成规则族$\Gamma_{\mathrm{joint}}$：对各阶段样本数，在三批记录与算法随机源$U$的乘积可测空间上给出联合概率律，各阶段样本边缘与$\Gamma_r$一致，$U$的边缘为$\nu$。
+它同时说明数据划分、共享记录、自适应采样及算法随机源之间的依赖；基准实验可取三批样本相互独立，且与$U$独立。
+样本生成设定为
+$\mathcal D=(\mathcal G_{\mathrm{tr}},\mathcal G_{\mathrm{va}},\mathcal G_{\mathrm{te}},\Gamma_{\mathrm{joint}})$。
+因此$\mathcal D$记录联合生成规律，与一批实现样本$D$不同。完整学习设定记为
 \begin{equation}
   \mathcal M=(\mathcal D,\mathcal T,\mathcal L).
   \label{eq:future-unified-learning-problem}
@@ -239,6 +243,17 @@ $\mathcal G_r=(\mathcal E_r,\mathcal O_r,\Gamma_r)$记录该阶段的环境、�
 若测试集实际来自另一分布，还须说明两者的联系，不能仅凭样本平均代表指定的测试风险。
 同一分布下两批有限样本不同，可以只是抽样波动；
 训练分布与测试分布不同，则需要增加分布之间的假设与分析。
+
+用一个可算的温度预测器把三种解连起来。设记录$Y_1,\ldots,Y_n$独立同分布，均值为$m$、方差为$\sigma^2<\infty$，只允许输出常数温度$\theta\in\mathbb R$，以平方误差评价。记$\bar Y=n^{-1}\sum_iY_i$，则
+\[
+ F_D(\theta)=\frac1n\sum_i(Y_i-\bar Y)^2+(\theta-\bar Y)^2,
+ \qquad R(\theta)=\sigma^2+(\theta-m)^2.
+\]
+总体最优是$\theta^*=m$，样本最优是$\widehat\theta_D=\bar Y$。有限步输出若为$\theta_D^{(k)}=\bar Y+e_k$，它的训练目标差为$e_k^2$，总体超额风险却为
+\[
+ R(\theta_D^{(k)})-R(\theta^*)=(\bar Y-m+e_k)^2.
+\]
+即使优化误差$e_k$已经为零，抽样误差$\bar Y-m$仍在；此时对训练样本取期望，超额风险为$\sigma^2/n$。优化过程只消除前一个误差，不会把有限样本均值变成已知总体均值。这里的简单候选类没有表达误差，因而可以单独看清抽样与计算的作用。
 
 \paragraph{行动反馈下的轨迹生成}
 \label{sec:future-interactive-learning-process}
@@ -534,7 +549,7 @@ $\bm F_D:\mathcal K_D\to\mathbb R^q$，$q$为目标数。
 且至少一项严格变小，从而定义支配与不可改进的候选集合。
 关心极端高温时，可以另给风险泛函$\rho:\mathsf L\to\mathbb R$，
 其中$\mathsf L$是指定的一族损失随机变量，研究$h\mapsto\rho(\ell(h,Z))$。
-它的对象是随机损失的分布特征，须明确选择哪一种尾部准则。
+期望、VaR与CVaR只依赖损失分布；一般风险泛函还可能使用损失与固定事件或当前信息的关系。若要求仅由分布计算，就须另加“同分布损失有相同评价值”的条件；采用条件或动态风险时，还须给出相应概率空间与信息结构。尾部准则的选择也应明确。
 若采用便于训练的代理目标，则给出同一候选类上的两个泛函
 $\widetilde R,R:\mathcal H\to\mathbb R$，比较
 $\widetilde R(h)-\inf_g\widetilde R(g)$与$R(h)-\inf_gR(g)$，分析前者能否控制后者。
@@ -579,6 +594,14 @@ $\widetilde R(h)-\inf_g\widetilde R(g)$与$R(h)-\inf_gR(g)$，分析前者能否
 比较量是随机变量
 $\sup_{f\in\mathcal F_\ell}|\int f\,\mathrm d\widehat P_D-\int f\,\mathrm dP|$。
 它同时控制一个函数类上的积分，因而可以支持类内依据训练样本的选择。
+具体地，若该共同误差至多为$u$，且可行输出$h_D$满足
+$\widehat R_D(h_D)\leq\inf_{h\in\mathcal H_{\mathcal C}}\widehat R_D(h)+\varepsilon_{\mathrm{opt}}$，
+则在总体风险下确界有限时，把经验风险作为中间项比较，得到
+\[
+ R_P(h_D)-\inf_{h\in\mathcal H_{\mathcal C}}R_P(h)
+ \leq 2u+\varepsilon_{\mathrm{opt}}.
+\]
+两次$u$分别控制输出与总体近似最优候选的经验偏差；若总体极小值未达到，就先选任意逼近下确界的候选，再令其剩余误差趋于零。前述常数温度例子展示两类误差怎样进入同一平方项，这里给出适用于整个候选类的上界。
 独立、连续相关和按历史选择记录的机制对应不同$Q_n$；仅对固定$f$的估计保证不能直接代替这个共同界。
 
 独立测试则在训练及模型选择完成后固定$h$，
@@ -1134,7 +1157,8 @@ $J_i(\bm\pi)\leq J_i(\pi_i',\bm\pi_{-i})$；允许信息与偏离范围是定义
 逼近分析把“模型够不够用”变成空间中的距离问题。
 若候选构成Hilbert空间中的闭线性子空间，并以该空间的范数衡量误差，最佳逼近就是把目标正交投影到该子空间；
 若候选由有限基或低秩矩阵表示，就可以用秩与谱分解查看哪些方向被保留、哪些被舍弃。
-这些路线分别来自\BookChapterRef{chap:functional-analysis-and-approximation}{卷1《数学准备：计算、分析与几何》第7章“函数空间”}、\BookChapterRef{chap:linear-algebra-and-matrix-analysis}{卷1《数学准备：计算、分析与几何》第5章“线性空间”}。
+这些路线分别来自函数空间理论、线性代数。
+相关工具可参考\BookChapterRef{chap:functional-analysis-and-approximation}{卷1《数学准备：计算、分析与几何》第7章“函数空间”}、\BookChapterRef{chap:linear-algebra-and-matrix-analysis}{卷1《数学准备：计算、分析与几何》第5章“线性空间”}。
 
 非线性网络、核空间和图上的表示仍沿用“目标空间、候选限制、误差尺度”的问法，但可用的逼近结论随结构改变。
 压缩、蒸馏和量化还要说明保留的是原模型行为、重构质量还是下游风险；一种距离小，未必使另一种代价也小。
@@ -1544,7 +1568,8 @@ Laplace近似利用局部二阶结构，矩匹配保留指定积分，Monte Carl
 
 要判断信息是否足够，可以先暂时假设已经知道完整观测分布，排除有限样本带来的误差。
 如果两种环境在此时仍不可区分，却要求不同答案，那么困难出在观测接口，增加同类样本或更换优化器都不能消除它。
-\BookChapterRef{chap:sets-functions-and-proofs}{卷1《数学准备：计算、分析与几何》第1章“数学对象与逻辑”}的等价关系正好把这些环境分组；识别问题就是检查目标在每组内是否保持同一个值。
+数学对象与逻辑的等价关系正好把这些环境分组；识别问题就是检查目标在每组内是否保持同一个值。
+相关工具可参考\BookChapterRef{chap:sets-functions-and-proofs}{卷1《数学准备：计算、分析与几何》第1章“数学对象与逻辑”}。
 
 在线性观测中，这种歧义可以沿零空间来寻找：
 哪些真实变化没有改变读数？图像恢复、潜变量模型和隐藏状态估计都可能遇到这一问题。
@@ -2417,7 +2442,7 @@ $v$把训练目标权重和约束阈值映为最优值，$S$把它们映为解�
 \endfoot
 \bottomrule
 \caption{数学对象、分析问题与前文知识的对应。对象单元格合并同一对象上的问题，
-问题单元格合并同一问题的不同分析路线；括号给出前文节或小节位置。
+问题单元格合并同一问题的不同分析路线；括号给出本卷的细分入口，卷一工具的章级入口已在正文首次调用处给出。
 每条路线的条件须分别核对，列出的基础工具不替代后续场景中的专门结论。}
 \label{tab:future-theory-trust-math-map}
 \label{tab:future-condition-method-links}\\

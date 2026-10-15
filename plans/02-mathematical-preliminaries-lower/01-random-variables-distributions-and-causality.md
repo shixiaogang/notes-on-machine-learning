@@ -90,13 +90,14 @@
 
 #### 1.1.5 随机序列与过程的表示
 
-主要内容：反复测量得到的$X_1,X_2,\ldots$必须一起定义，才能说明两次读数是否共享噪声。索引$n$记录测量轮次；把轮次换成连续时间后，同样的思路给出随机过程。
+主要内容：先在同一概率空间上组织重复读数，再约定误差缩小的收敛方式及概率阶，最后把离散序列扩展到一般索引集上的过程。
 
 论证与表述逻辑：
 
-1. 例如取相互独立的噪声$(\varepsilon_i)$，并取与全部噪声独立的非退化可积背景变量$\Theta$。
-2. 随机过程允许索引取自更一般的集合。时间索引可以离散或连续，空间索引也可以标记图上的顶点或欧氏空间的位置；指定索引集合后，各坐标仍须作为同一概率空间上的随机变量共同定义。
-3. 定义（随机过程）：给定概率空间$(\Omega,\mathcal F,\mathbb P)$、索引集$T$和状态可测空间$(\mathcal X,\mathcal A)$，随机过程（stochastic process）是一族随机变量$(X_t)_{t\in T}$，其中每个$X_t:\Omega\to\mathcal X$均可测。
+1. 用独立噪声、共享背景的读数与累计和比较三种联合关系，说明各项边缘相同不保证可以使用独立平均结论。
+2. 为后文二次变差和统计展开预先定义依概率、几乎必然、L^p与依分布收敛；前三者比较同一空间上的变量，依分布收敛比较边缘规律。此处约定判据，蕴含关系和反例留到1.6节。
+3. 用尾概率约束定义概率有界与$O_{\mathbb P}$、$o_{\mathbb P}$，明确缩放量是确定正数列；有限的逐次取值不能替代统一尾部控制。
+4. 把索引从测量轮次扩展到时间或空间，再定义随机过程，并分别以有限维分布与样本路径描述同一个过程。
 
 ##### 1.1.5.1 基于有限维分布的过程表示
 
@@ -159,13 +160,14 @@
 
 ##### 1.2.2.2 条件信息下的分布关系
 
-主要内容：当条件变量连续时，事件$\{X=x\}$常有零概率，直接相除不再可行。需要把“每个条件值对应一个分布”组织成能继续积分的对象。
+主要内容：在零概率读数处不能作普通比值；条件核必须同时满足点态概率性、条件值的可测性与重新积分后的联合规律。
 
 论证与表述逻辑：
 
-1. 可测并不等于连续。例如取$X\sim\mathcal N(0,1)$、$Y=\mathbb I\{X\geq0\}$，则$K(x,\{1\})=\mathbb I\{x\geq0\}$是合法概率核在事件$\{1\}$上的取值，却在$x=0$处跳变。
-2. 总体分位数来自混合不同输入后的边缘分布；若不同$x$对应不同位置或尾部，还需要按输入报告条件分位数。
-3. 定义（条件分位数）：给定$Y$关于$X=x$的正则条件分布，记$F_x(y)=\mathbb P(Y\leq y\mid X=x)$。对$0<q<1$，下条件$q$分位数为$F_x^{-1}(q)=\inf\{y:F_x(y)\geq q\}$；完整条件分位数集合为$\{a:F_x(a^-)\leq q\leq F_x(a)\}$。
+1. 以标准Borel空间说明正则条件分布的存在范围；一般可测空间中的条件期望存在，不自动保证点条件分布存在。
+2. 对有理阈值先取$Z_q=\mathbb E[\mathbb I\{Y\leq q\}\mid\sigma(X)]$，经可测因子分解写成$H_q(X)$。简单函数逼近解释从基础空间随机变量到条件值函数的桥梁，避免循环使用尚未构造的核。
+3. 利用有理阈值可数排除共同零测集，组织分布函数，再用单调类把半无限区间上的可测性与条件恒等式扩展到Borel事件。
+4. 给出离散和连续密度的比值特例、多元高斯条件分布及条件分位数；强调可测性不同于连续性，零边缘密度处不能直接相除。
 
 #### 1.2.3 随机变量的独立关系
 
@@ -240,12 +242,13 @@
 
 ##### 1.3.1.1 随机变量的分布变换
 
-主要内容：若$X$取值于$(E,\mathcal E)$，$g:E\to F$可测，则$Y=g(X)$的分布是$P_Y=g_\#P_X$，即$P_Y(B)=P_X(g^{-1}(B)),\qquad \mathbb E h(Y)=\int_E h(g(x))\,P_X(\mathrm dx)$对非负可测$h$或可积$h$成立。
+主要内容：先用可测映射的推送统一处理分布变换，再在同维、具有Lebesgue密度的条件下使用Jacobian换元。
 
 论证与表述逻辑：
 
-1. 设$\mathcal X,\mathcal Y$为$\mathbb R^d$中的开域，$\boldsymbol X$取值于$\mathcal X$且具有相对于$d$维Lebesgue测度的密度。
-2. 若映射可分为有限或可数个一一对应的$C^1$分支，各分支Jacobian非零，则在正则值处把各逆像分支的换元密度相加。
+1. 一般推送$P_Y(B)=P_X(g^{-1}(B))$不要求密度或可逆性，积分关系对非负或可积测试函数成立。
+2. 密度公式限定到$\mathbb R^d$中的开集、输入的$d$维Lebesgue密度，以及映射和逆映射均连续可微的双射；逆Jacobian行列式补偿体积变化。
+3. 多分支变换在正则值处累加各逆像贡献，用平方变换和极坐标核对分支及归一化；低维或奇异推送仍回到测度定义。
 
 ##### 1.3.1.2 数值随机变量的组合运算
 
@@ -469,6 +472,7 @@
 1. 对$K$个类别，令真实概率向量为$\boldsymbol p$，报告为$\boldsymbol q$，Brier评分可写成$S(\boldsymbol q,Y)=\sum_{k=1}^K(q_k-\mathbb{I}\{Y=k\})^2$。
 2. 定义（二元概率校准）：设$Y\in\{0,1\}$，预测概率为随机变量$Q\in[0,1]$。若$\mathbb E[Y\mid Q]=Q\quad\text{几乎必然},$则称预测相对于当前联合总体分布是校准（calibration）的。等价地，$\mathbb P(Y=1\mid Q=q)=q$对$P_Q$-几乎每个$q$成立。
 3. 后处理校准与评价条件温度缩放把分类器输出的未归一化实数得分$\boldsymbol z$（logit）先除以$T>0$，再使用归一化指数映射$\operatorname{softmax}(\boldsymbol z/T)$得到类别概率：对各分量取指数，再除以共同的指数和。
+4. 后处理校准先说明分类器的实数得分与softmax概率，再比较$(2,0)$在温度1和2下的概率约0.881与0.731；正温度保持排序，但不自动保证校准。校准集、模型训练与独立评价须分工，保序与分箱也各有样本及分布限制。
 
 ##### 1.5.3.2 预测集合的构造与覆盖
 
@@ -562,13 +566,14 @@
 
 ##### 1.6.1.1 随机结果的收敛
 
-主要内容：逐个时刻的尾概率还不足以判断一条样本路径是否反复进入坏事件。记$\limsup_{n\to\infty}A_n = \bigcap_{m=1}^{\infty}\bigcup_{n\geq m}A_n,$它表示事件$A_n$发生无穷多次。
+主要内容：回用随机序列表示处已经给出的收敛定义，证明蕴含关系，区分路径、概率、分布与矩的极限要求。
 
 论证与表述逻辑：
 
-1. 命题（二阶矩有界鞅的收敛）：若$(M_n,\mathcal F_n)$是平方可积鞅且$\sup_n\mathbb E M_n^2<\infty$，则存在$M_\infty\in L^2$，使$M_n\to M_\infty$几乎必然且在$L^2$中成立，并且$M_n=\mathbb E[M_\infty\mid\mathcal F_n]$。
-2. 推导：对$m\geq n$，条件均值性质给出$\mathbb E[M_n(M_m-M_n)]=0$，所以$\mathbb E(M_m-M_n)^2=\mathbb EM_m^2-\mathbb EM_n^2$右侧来自单调有界数列，故$M_n$在$L^2$中Cauchy，有$L^2$极限$M_\infty$。还需将均方极限提升到整条序列的几乎必然极限。对有限鞅$Y_j$及$Y^*=\max_{j\leq N}|Y_j|$，按首次越过水平$a$的时刻分解事件，并用$|Y_j|\leq\mathbb E[|Y_N|\mid\mathcal F_j]$，得$a\,\mathbb P(Y^*\geq a) \leq\mathbb E[|Y_N|\mathbb I_{\{Y^*\geq a\}}]$积分并用Cauchy--Schwarz，得到$\begin{aligned} \mathbb E(Y^*)^2 &\leq2\mathbb E(|Y_N|Y^*)\\ &\leq2\|Y_N\|_2\|Y^*\|_2, \end{aligned}$故$\mathbb E(Y^*)^2\leq4\mathbb E Y_N^2$。
-3. 随机逼近将用平方可和步长控制累计鞅噪声；状态本身是否收敛，还要结合稳定性与漂移，不能只用这一定理替代。
+1. 先用Borel--Cantelli解释反复发生事件与路径极限，再比较几乎必然、依概率、L^p和依分布收敛；定义不在这里重复。
+2. 用支配收敛证明几乎必然推出依概率，用事件夹逼证明依概率推出依分布，Markov界给出L^p推出依概率；反例说明反向蕴含及期望交换并不自动成立。
+3. 用特征函数的Lévy连续性定理判断分布极限，再用一致可积控制尾部质量，说明小概率高尖峰为何可阻止期望收敛。
+4. 回用概率阶记号，接到连续映射、Slutsky与Delta方法；可测性、极限连续点及随机余项条件分别核验。
 
 ##### 1.6.1.2 概率分布的弱收敛
 
@@ -721,6 +726,7 @@
 1. 有时需要对称地比较密度形状，又希望使用Hilbert空间的几何。把密度开平方便得到单位$L^2$范数的函数。
 2. 定义（Hellinger距离）：在共同支配测度$\mu$下，定义平方Hellinger距离为$d_{\mathrm H}^2(P,Q)=\tfrac12\int(\sqrt p-\sqrt q)^2\,\mathrm d\mu =1-\int\sqrt{pq}\,\mathrm d\mu,$距离本身为其非负平方根。
 3. 更换共同支配测度时，两个平方根都乘以同一密度因子的平方根，积分换元后不变。对三个分布可统一使用其和作支配测度，从$L^2$三角不等式得到$d_{\mathrm H}$的三角不等式。
+4. Hellinger距离先把$(1,0)$与$(1/2,1/2)$开平方成单位向量，再用$\int p=1$解释根密度总有单位L^2范数；定义距离后比较其与TV的上下界，不假定密度本身平方可积。
 
 ##### 2.2.1.2 函数期望的差异
 
@@ -728,9 +734,10 @@
 
 论证与表述逻辑：
 
-1. 再生性质给出$|f(x)|\leq\|f\|_{\mathcal H}\sqrt{k(x,x)}$，所以$f\mapsto\mathbb E_Pf$是有界线性泛函。
-2. 定义（核的特征性）：在核均值均存在的指定分布类$\mathcal P$上，若$\boldsymbol\mu_P=\boldsymbol\mu_Q$蕴含$P=Q$，即核均值映射为单射，则称核$k$在$\mathcal P$上具有特征性（characteristic）。
-3. 零MMD能否推出同分布，取决于这个条件。取同一对分布$P=\delta_0$、$Q=(\delta_{-1}+\delta_1)/2$。
+1. 函数类的尺度是度量的一部分：非零期望差可随测试函数倍乘而无限放大，因此再限制上确界范数或核空间单位球。随后由再生性质、有界泛函与Riesz表示得到MMD的核均值范数。
+2. 再生性质给出$|f(x)|\leq\|f\|_{\mathcal H}\sqrt{k(x,x)}$，所以$f\mapsto\mathbb E_Pf$是有界线性泛函。
+3. 定义（核的特征性）：在核均值均存在的指定分布类$\mathcal P$上，若$\boldsymbol\mu_P=\boldsymbol\mu_Q$蕴含$P=Q$，即核均值映射为单射，则称核$k$在$\mathcal P$上具有特征性（characteristic）。
+4. 零MMD能否推出同分布，取决于这个条件。取同一对分布$P=\delta_0$、$Q=(\delta_{-1}+\delta_1)/2$。
 
 ##### 2.2.1.3 质量位置的差异
 
@@ -881,9 +888,10 @@
 
 论证与表述逻辑：
 
-1. 命题（有限配置上的配分函数与最大熵对偶）：设$D$为有限非空配置集，$\boldsymbol T:D\to\mathbb R^m$，基准权重恒为$1$。定义$A(\boldsymbol\theta)=\log\sum_{z\in D}e^{\langle\boldsymbol\theta,\boldsymbol T(z)\rangle}, \qquad\mathcal M=\operatorname{conv}\{\boldsymbol T(z):z\in D\}$对$\boldsymbol\mu\in\mathcal M$，令$H^\star(\boldsymbol\mu)=\max_{q:\,\mathbb E_q\boldsymbol T=\boldsymbol\mu}H(q),$其中$q$遍历$D$上的全部概率质量函数。则在整个$\mathcal M$上有$A^\star(\boldsymbol\mu)=-H^\star(\boldsymbol\mu)$，在外部有$A^\star=+\infty$，且$A(\boldsymbol\theta)=\max_{\boldsymbol\mu\in\mathcal M} \{\langle\boldsymbol\theta,\boldsymbol\mu\rangle+H^\star(\boldsymbol\mu)\}$。
-2. 推导：有限概率单纯形紧；给定可行均值后的约束闭且非空，熵在单纯形上连续，因此每个$H^\star(\boldsymbol\mu)$都能达到。对任意质量函数$q$，展开有限KL得到$\langle\boldsymbol\theta,\mathbb E_q\boldsymbol T\rangle+H(q) =A(\boldsymbol\theta)-D_{\mathrm{KL}}(q\Vert p_{\boldsymbol\theta}) \leq A(\boldsymbol\theta),$且在$q=p_{\boldsymbol\theta}$处取等号。
-3. 在$\{0,1,2\}$上要求$\mathbb EX=1/2$时，最大熵分布为$p_j=t^j/(1+t+t^2)$。
+1. 一般共轭之前先反解Bernoulli均值$0<\tau<1$：$A(\eta)=\log(1+e^\eta)$给出$\eta=\log\{\tau/(1-\tau)\}$，代入得到负熵。再讨论一般指数族的均值参数、最小表示，以及有限配置上包含边界的最大熵对偶。
+2. 命题（有限配置上的配分函数与最大熵对偶）：设$D$为有限非空配置集，$\boldsymbol T:D\to\mathbb R^m$，基准权重恒为$1$。定义$A(\boldsymbol\theta)=\log\sum_{z\in D}e^{\langle\boldsymbol\theta,\boldsymbol T(z)\rangle}, \qquad\mathcal M=\operatorname{conv}\{\boldsymbol T(z):z\in D\}$对$\boldsymbol\mu\in\mathcal M$，令$H^\star(\boldsymbol\mu)=\max_{q:\,\mathbb E_q\boldsymbol T=\boldsymbol\mu}H(q),$其中$q$遍历$D$上的全部概率质量函数。则在整个$\mathcal M$上有$A^\star(\boldsymbol\mu)=-H^\star(\boldsymbol\mu)$，在外部有$A^\star=+\infty$，且$A(\boldsymbol\theta)=\max_{\boldsymbol\mu\in\mathcal M} \{\langle\boldsymbol\theta,\boldsymbol\mu\rangle+H^\star(\boldsymbol\mu)\}$。
+3. 推导：有限概率单纯形紧；给定可行均值后的约束闭且非空，熵在单纯形上连续，因此每个$H^\star(\boldsymbol\mu)$都能达到。对任意质量函数$q$，展开有限KL得到$\langle\boldsymbol\theta,\mathbb E_q\boldsymbol T\rangle+H(q) =A(\boldsymbol\theta)-D_{\mathrm{KL}}(q\Vert p_{\boldsymbol\theta}) \leq A(\boldsymbol\theta),$且在$q=p_{\boldsymbol\theta}$处取等号。
+4. 在$\{0,1,2\}$上要求$\mathbb EX=1/2$时，最大熵分布为$p_j=t^j/(1+t+t^2)$。
 
 #### 2.5.2 表示约束下的分布逼近
 
@@ -1028,7 +1036,7 @@
 
 论证与表述逻辑：
 
-1. 定义（处理一致性与无干扰）：对明确的处理版本，一致性（consistency）要求实际处理对应的结果满足$Y=Y(T)$几乎必然成立；特别地，$\begin{gathered} T=t\Longrightarrow Y=Y(t),\\ \text{二元处理时，}\quad Y=TY(1)+(1-T)Y(0). \end{gathered}$对$n$个单位，无干扰要求：每个$i$及任意两个处理向量$\boldsymbol t,\boldsymbol t'$，只要$t_i=t_i'$，就有$Y_i(\boldsymbol t)=Y_i(\boldsymbol t')$几乎必然成立。因此单位$i$的潜在结果才可简记为$Y_i(t_i)$。
+1. 定义（处理一致性与无干扰）：对明确的处理版本，一致性（consistency）要求实际处理对应的结果满足$Y=Y(T)$几乎必然成立；特别地，$\begin{gathered} T=t\Longrightarrow Y=Y(t),\\ \text{二元处理且结果为实数或实向量时，}\quad Y=TY(1)+(1-T)Y(0). \end{gathered}$对$n$个单位，无干扰要求：每个$i$及任意两个处理向量$\boldsymbol t,\boldsymbol t'$，只要$t_i=t_i'$，就有$Y_i(\boldsymbol t)=Y_i(\boldsymbol t')$几乎必然成立。因此单位$i$的潜在结果才可简记为$Y_i(t_i)$。
 2. 一致性连接自然记录与行动响应，没有把未采取行动的结果变成可见记录。若模型给出自然处理$T=F_{M,T}(\boldsymbol U)$，这一条件要求自然结果与$R_M(F_{M,T}(\boldsymbol U),\boldsymbol U)$相合；不能任意拼接不相容的自然函数与响应族。
 3. 通常所说的稳定单位处理值假设把处理版本唯一性和无干扰合在一起。即使处理版本清楚且单位互不干扰，主动选择培训的人也可能具有不同背景。
 
@@ -1091,6 +1099,7 @@
 1. 命题（平均响应的求导）：设$I$是包含$t_0$的开区间，$R_M(t_0,\boldsymbol U)$可积。若对几乎每个$\boldsymbol u$，$R_M(\cdot,\boldsymbol u)$在$I$可微，且存在非负可积函数$g(\boldsymbol U)$，使$|\partial_tR_M(t,\boldsymbol u)|\leq g(\boldsymbol u), \qquad t\in I,$则$m$在$t_0$可微，且$m'(t_0)=\mathbb E[\partial_tR_M(t_0,\boldsymbol U)]$。
 2. 推导：对足够小的非零$h$，中值定理给出$\left| \frac{R_M(t_0+h,\boldsymbol u)-R_M(t_0,\boldsymbol u)}{h} \right|\leq g(\boldsymbol u)$因而$R_M(t_0+h,\boldsymbol U)$可积，且差商几乎处处收敛到$\partial_tR_M(t_0,\boldsymbol U)$。可积的$g$统一控制这些差商，支配收敛定理允许将极限移入期望，得到$\lim_{h\to0}\frac{m(t_0+h)-m(t_0)}{h} = \mathbb E\!\left[ \lim_{h\to0} \frac{R_M(t_0+h,\boldsymbol U)-R_M(t_0,\boldsymbol U)}{h} \right],$即所述结论。
 3. 局部响应导数也不等于观测回归斜率$\partial_t\mathbb E[Y\mid T=t,X=x]$。因此模型的光滑性支持局部计算，却不同时保证这个导数能由观测识别或能外推到大幅行动。
+4. 局部因果导数、观测条件均值的逐点导数及总体线性投影系数是不同对象；后面的敏感性分析只以第三者计算线性混杂偏差，不能承诺它等于第二者。
 
 ### 3.3 给定事实后的因果响应
 
@@ -1199,12 +1208,14 @@
 
 ##### 3.4.2.3 未观测混杂下的敏感性范围
 
-主要内容：另一种缺口不是某类记录完全没有，而是相同已观测背景下仍存在未观测选择差异。敏感性分析不强行断言该差异为零，而是规定其允许强度，检查结论随强度怎样变化。
+主要内容：在已观测背景相同但仍有未观测选择差异时，限定允许的偏差强度，给出因果结论随该强度变化的范围。
 
 论证与表述逻辑：
 
-1. 先用一个最小线性模型定位偏差。设变量中心化，$T=\alpha U+\varepsilon_T,\qquad Y=\beta T+\gamma U+\varepsilon_Y,$其中$U,\varepsilon_T,\varepsilon_Y$两两独立、方差有限，且$\operatorname{Var}(T)>0$。
-2. 跨世界配对不同的模型可能同样解释试验边缘，却改变行动成功概率或公平判断。此时应传播这些模型差异，而不是仅报告选定生成模型内的模拟精度。
+1. 对中心化线性结构$T=\alpha U+\varepsilon_T$、$Y=\beta T+\gamma U+\varepsilon_Y$，在背景与两噪声两两独立、方差有限及处理方差为正时，计算总体投影系数$\beta_{\mathrm{obs}}=\beta+\gamma\alpha\operatorname{Var}(U)/\operatorname{Var}(T)$。
+2. 取等概率正负一背景与独立标准高斯处理噪声，得到条件均值$\tanh t$；其零点导数为1，投影系数为1/2。这个反例明确逐点回归导数与总体投影的边界。
+3. 对线性投影偏差加绝对值界得到$\beta$的区间；异质或非线性响应则另给选择偏差函数，用条件均值关系表达敏感性，不把条件均值交换性扩大为完整分布交换性。
+4. 若多个跨世界配对同样相容，仍须传播模型差异；敏感性范围和有限样本估计误差承担不同职责。
 
 #### 3.4.3 有限样本下的响应估计
 

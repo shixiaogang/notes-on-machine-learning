@@ -80,9 +80,10 @@
 
 论证与表述逻辑：
 
-1. 窗口本身移动时，状态变化不全来自新输入。
-2. 所以有限个历史特征不自动形成能独立接续演化的有限维状态；需要额外状态、特别的基与权重，或对边界项作近似。
-3. HiPPO一类方法正是通过历史投影设计状态坐标它保存哪些变化，由窗口、权重和基共同决定。投影理论给出相应度量下的逼近误差，不意味着一般历史被无损保存，也不自动保证所构造递推对扰动稳定。
+1. 投影固定$t>0$并使用非负权重测度$\mu_t$，输入与基函数取自L^2等价类。有限维子空间中的基线性无关，使Gram二次型成为非零函数的正平方范数，从而保证坐标唯一；$t=0$的退化区间另给初始化。
+2. 窗口本身移动时，状态变化不全来自新输入。
+3. 所以有限个历史特征不自动形成能独立接续演化的有限维状态；需要额外状态、特别的基与权重，或对边界项作近似。
+4. HiPPO一类方法正是通过历史投影设计状态坐标它保存哪些变化，由窗口、权重和基共同决定。投影理论给出相应度量下的逼近误差，不意味着一般历史被无损保存，也不自动保证所构造递推对扰动稳定。
 
 ### 4.2 路径的累计运算与状态变换
 
@@ -396,9 +397,10 @@
 
 论证与表述逻辑：
 
-1. 引理（固定有限链的加权Poisson分解）：设$P$为固定的有限不可约非周期核，参数递推$\theta^{(t+1)}=\theta^{(t)}+\alpha_tH(\theta^{(t)},Z_t)$始终位于紧集$K$，$H$在$K$上一致有界且关于参数一致Lipschitz。特别地，任意向晚期移动的有限算法时间窗上的尾和趋零。
-2. 推导：有限不可约非周期链几何收敛，且$\pi q_\theta=0$，所以$g_\theta=\sum_{j=0}^\infty P^jq_\theta$绝对一致收敛，并满足$g_\theta-Pg_\theta=q_\theta$。对$q_\theta-q_{\theta'}$应用相同几何界，得到有限常数$G,L_g$使$|g_\theta(z)|\leq G$、$|g_\theta(z)-g_{\theta'}(z)|\leq L_g|\theta-\theta'|$。
-3. 再用标量递推核对平均稳定与噪声条件怎样配合。设$\theta^{(t+1)}=\theta^{(t)}+\alpha_t[b-a\theta^{(t)}+\xi_{t+1}]$，$a>0$，噪声为条件均值零且条件二阶矩不超过$\sigma^2$，初值二阶矩有限。
+1. 固定步长的均值例在递推前定义$e_t=\theta^{(t)}-\mu$和$v_t=\operatorname{Var}(e_t)$；确定初值与独立同分布噪声给出稳态方差$\alpha\sigma^2/(2-\alpha)$，说明减小步长降低波动也延缓响应。
+2. 引理（固定有限链的加权Poisson分解）：设$P$为固定的有限不可约非周期核，参数递推$\theta^{(t+1)}=\theta^{(t)}+\alpha_tH(\theta^{(t)},Z_t)$始终位于紧集$K$，$H$在$K$上一致有界且关于参数一致Lipschitz。特别地，任意向晚期移动的有限算法时间窗上的尾和趋零。
+3. 推导：有限不可约非周期链几何收敛，且$\pi q_\theta=0$，所以$g_\theta=\sum_{j=0}^\infty P^jq_\theta$绝对一致收敛，并满足$g_\theta-Pg_\theta=q_\theta$。对$q_\theta-q_{\theta'}$应用相同几何界，得到有限常数$G,L_g$使$|g_\theta(z)|\leq G$、$|g_\theta(z)-g_{\theta'}(z)|\leq L_g|\theta-\theta'|$。
+4. 再用标量递推核对平均稳定与噪声条件怎样配合。设$\theta^{(t+1)}=\theta^{(t)}+\alpha_t[b-a\theta^{(t)}+\xi_{t+1}]$，$a>0$，噪声为条件均值零且条件二阶矩不超过$\sigma^2$，初值二阶矩有限。
 
 #### 4.4.4 双时间尺度下的迭代序列收敛
 
@@ -445,6 +447,7 @@
 
 1. 长期演化的谱判据：离散齐次系统为$\boldsymbol x_{t+1}=\boldsymbol A\boldsymbol x_t,\qquad \boldsymbol x_t=\boldsymbol A^t\boldsymbol x_0$这里用矩阵幂和Jordan分解把长期轨迹问题化成谱的位置；下面对各Jordan块的幂逐项给出长期估计。 命题（离散线性系统的渐近稳定性）：在此条件下，原点实际上全局指数稳定。
 2. 有限时间的瞬态放大：取$\boldsymbol A=\begin{bmatrix}1/2&K\\0&1/2\end{bmatrix},\qquad K>0$无论$K$多大，谱半径均为$1/2$，而$\boldsymbol A^t= \begin{bmatrix} 2^{-t}&tK\,2^{-(t-1)}\\0&2^{-t} \end{bmatrix}$从$\boldsymbol x_0=(0,1)^\top$出发，第一步即为$(K,1/2)^\top$，欧氏范数可以大幅增长；之后$t2^{-t}\to0$才使状态趋零。 $K\neq0$时，$\boldsymbol A^\top\boldsymbol A\neq\boldsymbol A\boldsymbol A^\top$，矩阵非正规。
+3. 同谱的非正规矩阵例显示有限时间放大与长期衰减可以并存；伪谱用同维复矩阵小扰动下所有可能特征值的位置解释，反映谱敏感性，不把谱稳定等同于欧氏范数逐步收缩。
 
 ##### 4.5.1.2 非线性演化下的轨迹稳定性
 
@@ -582,9 +585,10 @@
 
 论证与表述逻辑：
 
-1. 命题（Popov--Belevitch--Hautus（PBH）可控性判据）：矩阵对$(\boldsymbol A,\boldsymbol B)$可控，当且仅当对每个复特征值$\lambda\in\sigma(\boldsymbol A)$，$\operatorname{rank}[\lambda\boldsymbol I-\boldsymbol A\ \boldsymbol B]=n$等价地，不存在非零左特征向量$\boldsymbol q^\ast$同时满足$\boldsymbol q^\ast\boldsymbol A=\lambda\boldsymbol q^\ast$和$\boldsymbol q^\ast\boldsymbol B=\boldsymbol0$。
-2. 推导：若存在这样的向量，则$\boldsymbol q^\ast\boldsymbol A^k\boldsymbol B=\lambda^k\boldsymbol q^\ast\boldsymbol B=\boldsymbol0$对所有$k\geq0$成立，所以可控性矩阵不可能满行秩。反之，其列空间$\boldsymbol R_{\mathrm{reach}}$若不满维，便是一个真$\boldsymbol A$不变子空间。正交补$\boldsymbol R_{\mathrm{reach}}^{\perp}$在$\boldsymbol A^\ast$下不变。
-3. 终点可控仍不保证任意指定的中间状态都能实现。给定整条参考$\boldsymbol r_t$，离散系统要求每一步$\boldsymbol r_{t+1}-\boldsymbol A\boldsymbol r_t\in\operatorname{col}(\boldsymbol B)$，并且解出的输入位于允许集合；连续系统则要求参考绝对连续且$\dot{\boldsymbol r}_t-\boldsymbol A\boldsymbol r_t=\boldsymbol B\boldsymbol u_t^r$几乎处处成立。
+1. 区分任意初态到零与任意初态到任意终态：A可逆是零可控推出可控的充分条件，A=B=0说明一般逆推失败，A=0、B=1说明可逆性并非具体系统可控的必要条件。
+2. 命题（Popov--Belevitch--Hautus（PBH）可控性判据）：矩阵对$(\boldsymbol A,\boldsymbol B)$可控，当且仅当对每个复特征值$\lambda\in\sigma(\boldsymbol A)$，$\operatorname{rank}[\lambda\boldsymbol I-\boldsymbol A\ \boldsymbol B]=n$等价地，不存在非零左特征向量$\boldsymbol q^\ast$同时满足$\boldsymbol q^\ast\boldsymbol A=\lambda\boldsymbol q^\ast$和$\boldsymbol q^\ast\boldsymbol B=\boldsymbol0$。
+3. 推导：若存在这样的向量，则$\boldsymbol q^\ast\boldsymbol A^k\boldsymbol B=\lambda^k\boldsymbol q^\ast\boldsymbol B=\boldsymbol0$对所有$k\geq0$成立，所以可控性矩阵不可能满行秩。反之，其列空间$\boldsymbol R_{\mathrm{reach}}$若不满维，便是一个真$\boldsymbol A$不变子空间。正交补$\boldsymbol R_{\mathrm{reach}}^{\perp}$在$\boldsymbol A^\ast$下不变。
+4. 终点可控仍不保证任意指定的中间状态都能实现。给定整条参考$\boldsymbol r_t$，离散系统要求每一步$\boldsymbol r_{t+1}-\boldsymbol A\boldsymbol r_t\in\operatorname{col}(\boldsymbol B)$，并且解出的输入位于允许集合；连续系统则要求参考绝对连续且$\dot{\boldsymbol r}_t-\boldsymbol A\boldsymbol r_t=\boldsymbol B\boldsymbol u_t^r$几乎处处成立。
 
 #### 5.1.3 观测条件下的状态可区分性
 
@@ -633,9 +637,10 @@
 
 论证与表述逻辑：
 
-1. 命题（无限时域LQR的稳定化解）：设$\boldsymbol Q\succeq\boldsymbol0$、$\boldsymbol R\succ\boldsymbol0$，$(\boldsymbol A,\boldsymbol B)$可稳定且$(\boldsymbol Q^{1/2},\boldsymbol A)$可检测。相应反馈使闭环渐近稳定，并在所有允许控制序列中给出无折扣二次总成本的最优值$V(\boldsymbol x)=\boldsymbol x^\top\boldsymbol P\boldsymbol x$。
-2. 推导：取长度$N$、终端代价为零的有限问题，记其初始价值矩阵为$\boldsymbol P^{(N)}$。增加一个非负阶段成本不能降低最优成本，故$\boldsymbol0\preceq\boldsymbol P^{(N)}\preceq\boldsymbol P^{(N+1)}$。可稳定性提供$\overline{\boldsymbol K}$使$\overline{\boldsymbol F}=\boldsymbol A-\boldsymbol B\overline{\boldsymbol K}$稳定。
-3. 连续时间也可以直接用代数方程构造稳定反馈，无须先推导有限时域价值。
+1. 在有限时域期望二次成本之前说明风险中性：确定成本10与等概率成本0或20打平。评价只看期望，并非否认波动；随后用终端价值反向配方得到Riccati递推，再说明无限时域稳定化所需条件。
+2. 命题（无限时域LQR的稳定化解）：设$\boldsymbol Q\succeq\boldsymbol0$、$\boldsymbol R\succ\boldsymbol0$，$(\boldsymbol A,\boldsymbol B)$可稳定且$(\boldsymbol Q^{1/2},\boldsymbol A)$可检测。相应反馈使闭环渐近稳定，并在所有允许控制序列中给出无折扣二次总成本的最优值$V(\boldsymbol x)=\boldsymbol x^\top\boldsymbol P\boldsymbol x$。
+3. 推导：取长度$N$、终端代价为零的有限问题，记其初始价值矩阵为$\boldsymbol P^{(N)}$。增加一个非负阶段成本不能降低最优成本，故$\boldsymbol0\preceq\boldsymbol P^{(N)}\preceq\boldsymbol P^{(N+1)}$。可稳定性提供$\overline{\boldsymbol K}$使$\overline{\boldsymbol F}=\boldsymbol A-\boldsymbol B\overline{\boldsymbol K}$稳定。
+4. 连续时间也可以直接用代数方程构造稳定反馈，无须先推导有限时域价值。
 
 #### 5.2.4 输出反馈下的估计与闭环稳定
 
@@ -769,7 +774,8 @@
 论证与表述逻辑：
 
 1. 示例（一维积分器上的安全投影）：考虑$\dot x_t=u_t$、$S=[0,\infty)$、$h(x)=x$及$\alpha(h)=\gamma h$。
-2. 于是$x_1=1$，而不是无约束的$1.153$；此时$e_1=1-[2+0.4\sin(\pi/8)]\approx-1.153$，不再等于$0.5e_0=-1$。
+2. 固定状态时，正定二次目标的强制性阻止最小化序列逃向无穷，闭可行域保证取到最小值，凸性与严格凸性保证唯一。约束$xu\geq|x|^{3/2}$下唯一最优动作$\operatorname{sgn}(x)\sqrt{|x|}$仍非局部Lipschitz；约束梯度在零退化，说明调用闭环不变性前必须另验反馈规则性。
+3. 于是$x_1=1$，而不是无约束的$1.153$；此时$e_1=1-[2+0.4\sin(\pi/8)]\approx-1.153$，不再等于$0.5e_0=-1$。
 
 #### 5.4.4 扰动与离散执行下的安全保证
 
@@ -880,6 +886,7 @@
 1. 定义（条件风险价值）：对$L\in L^1(P)$和$\alpha\in(0,1)$，定义$\operatorname{CVaR}_\alpha(L) =\inf_{\eta\in\mathbb R} \left\{\eta+\frac{1}{1-\alpha}\mathbb E[(L-\eta)_+]\right\}, \qquad (z)_+=\max\{z,0\}$。
 2. 候选阈值$\eta$提高时，第一项直接增加，超过阈值的剩余损失却会减少。记花括号中的函数为$\phi(\eta)$。
 3. 横轴最优点$2$是VaR，纵轴最小值$5.2$才是CVaR；两个数在计算中承担不同角色。
+4. 一般损失分布在分位点处可有原子；用严格超阈值损失加上分位原子的部分质量补齐最坏$1-\alpha$尾部，并引用适用一般损失分布的后续论文。整个超阈值事件的条件均值只在相应质量条件下可直接代入。
 
 ##### 6.2.2.3 基于风险包络的尾部评价
 
@@ -924,9 +931,10 @@
 
 论证与表述逻辑：
 
-1. 定义（一步条件风险映射）：在同一概率空间上，一步条件风险映射（conditional risk mapping）$\rho_t:L^\infty(\mathcal F_{t+1})\longrightarrow L^\infty(\mathcal F_t)$把下一时刻可知的有界随机损失转成当前信息下的风险。输入与输出均按几乎处处相等的等价类理解。
-2. 定义（递归意义下的时间一致性）：动态风险族$(\mathcal R_t)$具有时间一致性（time consistency），是指对每个$t<H$、任意两组从$t+1$开始的有界适应损失和同一当前损失$C_t$，只要$\mathcal R_{t+1}(C_{t+1:H})\leq\mathcal R_{t+1}(C'_{t+1:H})$几乎处处成立，就有$\mathcal R_t(C_t,C_{t+1:H})\leq\mathcal R_t(C_t,C'_{t+1:H})$几乎处处成立。
-3. 回到两节点例，先固定承诺$F$或$R$。在$B$分别得到风险值$3.5$或$4$，在$N$均为$2$；根节点再对这两个等概率节点值计算CVaR$_{0.5}$，得到$3.5$或$4$。
+1. 静态常数阈值改成当前信息可测的阈值规则：有限树上各当前节点可用不同阈值，但不能偷看未来。单点取负一、其余为零的函数族逐点下确界为负一、本质下确界为零，解释为何必须按几乎处处等价类比较；嵌套风险再由节点向前递归。
+2. 定义（一步条件风险映射）：在同一概率空间上，一步条件风险映射（conditional risk mapping）$\rho_t:L^\infty(\mathcal F_{t+1})\longrightarrow L^\infty(\mathcal F_t)$把下一时刻可知的有界随机损失转成当前信息下的风险。输入与输出均按几乎处处相等的等价类理解。
+3. 定义（递归意义下的时间一致性）：动态风险族$(\mathcal R_t)$具有时间一致性（time consistency），是指对每个$t<H$、任意两组从$t+1$开始的有界适应损失和同一当前损失$C_t$，只要$\mathcal R_{t+1}(C_{t+1:H})\leq\mathcal R_{t+1}(C'_{t+1:H})$几乎处处成立，就有$\mathcal R_t(C_t,C_{t+1:H})\leq\mathcal R_t(C_t,C'_{t+1:H})$几乎处处成立。
+4. 回到两节点例，先固定承诺$F$或$R$。在$B$分别得到风险值$3.5$或$4$，在$N$均为$2$；根节点再对这两个等概率节点值计算CVaR$_{0.5}$，得到$3.5$或$4$。
 
 ### 6.3 策略的轨迹价值计算
 
@@ -1037,9 +1045,10 @@
 
 论证与表述逻辑：
 
-1. 为每条不等式引入$d(s,a)\geq0$。
-2. 定义（归一化折扣占用度量）：给定初始分布$\mu_0$、$0\leq\gamma<1$和允许策略$\pi$，归一化折扣占用度量（occupancy measure）为$d_\pi(s,a)=(1-\gamma)\mathbb E_{S_0\sim\mu_0}^\pi \left[\sum_{t=0}^\infty\gamma^t \mathbb I\{S_t=s,A_t=a\}\right]$。
-3. 互补松弛给出$d^\star(s,a)>0\ \Longrightarrow\ V^\star(s)=c(s,a)+\gamma\sum_{s'}P(s'\mid s,a)V^\star(s')$最优访问中实际使用的行动必须达到Bellman最小值。
+1. 在线性规划前先算单状态、单行动、折扣0.9的访问总量10；乘$1-\gamma$后总质量为1，阶段成本2的折扣成本20也缩放为2。随后推导价值不等式的对偶流量守恒，证明合法占用流量可由策略实现，并保持两端使用同一归一化目标。
+2. 为每条不等式引入$d(s,a)\geq0$。
+3. 定义（归一化折扣占用度量）：给定初始分布$\mu_0$、$0\leq\gamma<1$和允许策略$\pi$，归一化折扣占用度量（occupancy measure）为$d_\pi(s,a)=(1-\gamma)\mathbb E_{S_0\sim\mu_0}^\pi \left[\sum_{t=0}^\infty\gamma^t \mathbb I\{S_t=s,A_t=a\}\right]$。
+4. 互补松弛给出$d^\star(s,a)>0\ \Longrightarrow\ V^\star(s)=c(s,a)+\gamma\sum_{s'}P(s'\mid s,a)V^\star(s')$最优访问中实际使用的行动必须达到Bellman最小值。
 
 ##### 6.4.2.4 线性二次成本下的有限时域策略
 
@@ -1098,9 +1107,10 @@
 
 论证与表述逻辑：
 
-1. 定义（连续价值函数的黏性解）：设$V$在方程作用域内连续。对任意光滑测试函数$\varphi$，若$V-\varphi$在内点$(\boldsymbol x,t)$取局部最大值时均有$F(\boldsymbol x,t,\partial_t\varphi,\nabla_{\boldsymbol x}\varphi)\leq0$，称$V$为黏性次解。若局部最小值处均有相应的$F\geq0$，称为黏性上解。同时满足两项，并按当前问题满足终端或边界条件的$V$称为黏性解。
-2. 可将测试函数平移常数使接触时$V=\varphi$。局部最大对应$\varphi$从上方接触，局部最小对应从下方接触；不是任取一个斜率代入。
-3. HJB比较累计成本，前章的屏障约束限定安全行动。将屏障二次规划用于修正一个性能反馈，通常会改变原成本最优性；在HJB中直接加入约束则是另一个受约束优化问题。
+1. 测试函数定义前先看$\dot x=u,|u|\leq1$的固定终点任务：可达区间给出价值$\max\{|x|-(T-t),0\}$及延续域内部折点。后续用上下接触导数检验黏性条件，与到达原点即退出时的边界折点分开，再讨论状态约束与信念状态。
+2. 定义（连续价值函数的黏性解）：设$V$在方程作用域内连续。对任意光滑测试函数$\varphi$，若$V-\varphi$在内点$(\boldsymbol x,t)$取局部最大值时均有$F(\boldsymbol x,t,\partial_t\varphi,\nabla_{\boldsymbol x}\varphi)\leq0$，称$V$为黏性次解。若局部最小值处均有相应的$F\geq0$，称为黏性上解。同时满足两项，并按当前问题满足终端或边界条件的$V$称为黏性解。
+3. 可将测试函数平移常数使接触时$V=\varphi$。局部最大对应$\varphi$从上方接触，局部最小对应从下方接触；不是任取一个斜率代入。
+4. HJB比较累计成本，前章的屏障约束限定安全行动。将屏障二次规划用于修正一个性能反馈，通常会改变原成本最优性；在HJB中直接加入约束则是另一个受约束优化问题。
 
 #### 6.4.4 受限信息下的策略选择
 
@@ -1355,7 +1365,8 @@
 
 1. 定义（粗相关均衡与相关均衡）：设$\mu$为有限战略式博弈中联合行动集$\prod_i A_i$上的概率分布。分布$\mu$是粗相关均衡（coarse correlated equilibrium, CCE），若对每个参与者$i$和任意固定行动$a_i'$，$\mathbb{E}_{\boldsymbol{A}\sim\mu}[u_i(\boldsymbol{A})] \geq \mathbb{E}_{\boldsymbol{A}\sim\mu} [u_i(a_i',\boldsymbol{A}_{-i})]$偏离者必须在看到建议之前承诺改用同一个固定行动。若允许他看到建议$A_i$后按映射$\phi_i(A_i)$改动，则要求$\mathbb{E}_{\boldsymbol{A}\sim\mu}[u_i(\boldsymbol{A})] \geq \mathbb{E}_{\boldsymbol{A}\sim\mu} [u_i(\phi_i(A_i),\boldsymbol{A}_{-i})]$对所有映射$\phi_i:A_i\to A_i$成立，这定义相关均衡（correlated equilibrium, CE）。
 2. 在有限行动集上，CE条件等价于对每对$a_i,a_i'\in A_i$要求$\sum_{\boldsymbol{a}_{-i}} \mu(a_i,\boldsymbol{a}_{-i}) \bigl[ u_i(a_i,\boldsymbol{a}_{-i}) - u_i(a_i',\boldsymbol{a}_{-i}) \bigr] \geq0$它把“收到$a_i$建议后改成$a_i'$”的条件收益比较乘上收到该建议的概率，因此$\mu(A_i=a_i)=0$时无需另外定义条件概率。
-3. 矩阵博弈中的联合分布也需要与各人的边缘分布区分。收益差来自行动间的相关性，并非某个参与者改变了单独的混合概率。
+3. 三行动共同收益矩阵以等概率推荐对角组合：遵从收益0，任一事先固定偏离的收益为-1/3，所以是CCE；第1方收到A后改C可得1，所以不是CE。与后面的二行动协调例共同说明偏离的信息时机和相关随机化的职责。
+4. 矩阵博弈中的联合分布也需要与各人的边缘分布区分。收益差来自行动间的相关性，并非某个参与者改变了单独的混合概率。
 
 #### 7.3.5 合作分配下的偏离与稳定
 
@@ -1455,6 +1466,7 @@
 1. 定义（反事实价值）：给定上述联合行为策略及到达权重，参与者$i$在信息集$I$采取行动$a\in A(I)$的反事实价值（counterfactual value）定义为$v_i^{\boldsymbol{\sigma}}(I,a) = \sum_{h\in I} \pi_{-i}^{\boldsymbol{\sigma}}(h) \sum_{z\succeq ha} \pi^{\boldsymbol{\sigma}}(ha,z)u_i(z)$信息集当前策略的反事实价值为$v_i^{\boldsymbol{\sigma}}(I) = \sum_{a\in A(I)} \sigma_i(a\mid I) v_i^{\boldsymbol{\sigma}}(I,a)$。
 2. 在均衡牌面策略下，参与者2的信息集包含高牌质询与低牌质询两个节点。
 3. 在第$k$轮扩展式博弈中，联合策略记为$\boldsymbol{\sigma}^{(k)}$。
+4. 牌面例中反事实加权和除以正的到达质量才变成条件均值；一般反事实权重删去本人到达因素，不能无条件与实际到达后的条件期望互换。零概率到达时比值公式不可用，策略给定的反事实加权和仍有定义。
 
 ##### 7.5.3.2 完全回忆下的局部遗憾汇总
 
@@ -1491,8 +1503,9 @@
 
 论证与表述逻辑：
 
-1. 行为策略不能在每个信息集直接做普通算术平均。某轮中一个信息集若几乎不会被参与者自己到达，该处局部概率不应与频繁到达轮次具有同样权重。
-2. 把平均遗憾转成均衡结论时，还要保留产生平均的联合样本。
+1. 行为策略一般须按本人到达概率加权，不能逐信息集随意等权；各轮本人到达权重相同等特殊情形可以等权。完全回忆保证本人行动前缀一致，据此恢复平均实现权重，再由双方外部遗憾界推出平均策略鞍点差距。
+2. 行为策略不能在每个信息集直接做普通算术平均。某轮中一个信息集若几乎不会被参与者自己到达，该处局部概率不应与频繁到达轮次具有同样权重。
+3. 把平均遗憾转成均衡结论时，还要保留产生平均的联合样本。
 
 ### 7.6 本章小结
 
