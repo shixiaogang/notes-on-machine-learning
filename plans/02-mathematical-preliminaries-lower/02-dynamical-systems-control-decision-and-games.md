@@ -2,11 +2,13 @@
 
 正文入口：[tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/part.tex](../../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/part.tex)。章号按本卷连续编号，以下标题和顺序对应当前入口实际接入的正文。
 
-由状态演化进入可实施策略，分别研究轨迹控制、价值优化和多方响应；区分动态、观测、目标与交互带来的条件。
+承接前一部分对行动响应计算与识别的区分，本部分先在更新规律、输入和噪声规律给定时研究状态怎样形成轨迹，再研究观测与执行限制下的策略实现、价值优化和多方响应。若动态规律来自观测拟合，把不同输入下的模拟解释为实际改变行动的后果，仍需检查机制保持与识别条件；给定模型下的轨迹求解不代替这一核验。
 
 ## 第4章 动力系统
 
 正文：[01-action-and-state.tex](../../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/01-action-and-state.tex)。
+
+章首主线：从同样加热量在不同初温下产生不同后继温度，引出用状态保存历史作用的需要；承接前章的行动响应，说明逐次行动的作用须先累计为轨迹。本章给定更新规律、输入序列及所需噪声分布，依次研究状态演化、轨迹与分布求解、收敛、扰动稳定性和观测推断；观测拟合模型的行动解释仍受机制保持与识别条件约束，如何选择行动再交由后续控制与价值优化研究。
 
 ### 4.1 状态演化的建模
 
@@ -16,7 +18,7 @@
 
 1. 状态、输入与初值的界定：把当前房间温差记作状态，是因为这个模型只需要它和下一段加热量，就能继续计算未来。若历史还通过其他未记录因素起作用，状态就需要扩充。
 2. 离散时间下的状态更新：设$\mathcal X$是允许的状态集合，$\mathcal U$是输入集合。一步更新映射$F_t:\mathcal X\times\mathcal U\longrightarrow\mathcal X,\qquad \boldsymbol x_{t+1}=F_t(\boldsymbol x_t,\boldsymbol u_t)$直接规定下一状态。
-3. 连续时间下的状态变化：若关注相邻采样时刻之间发生了什么，需要规定瞬时变化率，而不仅是相隔一步的差值。以泄漏记忆为例，离散系数$a=1-\lambda\Delta t$在极限下给出$\dot x=-\lambda x+u$；取$\lambda=0.2$、$u=0.4$时，连续平衡点$u/\lambda=2$与离散平衡点$bu/(1-a)=2$相同，一步衰减因子$e^{-0.2}\approx0.819$接近$a=0.8$，$t=5$处连续解$1.264$与离散递推$1.345$相差约$0.08$，$t=20$时缩到$0.014$，说明离散与连续参数对应以步长足够小为条件；反过来，给定的一步系数$0.8$不能断言来自某个确定$\lambda$下的精确采样。
+3. 连续时间下的状态变化：若关注相邻采样时刻之间发生了什么，需要规定瞬时变化率，而不仅是相隔一步的差值。以泄漏记忆为例，冻结左端变化率得到Euler系数$a=1-\lambda\Delta t,b=\Delta t$，再由差商进入$\dot x=-\lambda x+u$。固定同一初值与物理时刻，比较$\Delta t=1$及$0.5$的误差，说明缩小步长改善这一近似；$\lambda>0$且区间输入恒定时，精确系数则为$a=e^{-\lambda\Delta t},b=(1-e^{-\lambda\Delta t})/\lambda$，不要求步长足够小。反推连续参数时，须先约定所用规则、步长及输入单位，单凭$a=0.8$不能唯一决定整个连续模型。
 4. 随机扰动下的状态演化：给定相同初温与加热量，开门、风速等未显式建模的作用仍可能改变真实温度。把这些作用表示成过程噪声后，更新公式不再只产生一条确定轨迹，而是把噪声的联合规律转换为状态的联合规律。
 5. 历史依赖下的状态表示：另一种构造从希望保留的历史特征出发。例如为一段输入保留平均值与线性趋势，就可把投影坐标当作状态。
 
@@ -27,7 +29,7 @@
 论证与表述逻辑：
 
 1. 若同一室温下，不同墙体蓄热会导致不同的下一步温度，室温一个坐标就不再足够，需要加入墙体温度。传感器滞后同样可能需要独立的内部状态。
-2. 把温度递推继续算出$x_4$至$x_6$，并由$x_{t+1}-2=0.8(x_t-2)$说明与平衡值的差距每步乘$0.8$，因此平衡位置由输入决定、收敛速度由系数决定；改变系数或输入会分别改变两者，只报最终温度不足以描述轨迹。初始条件规定轨迹从哪里开始，输入规定沿途施加什么作用，演化规律规定这些作用怎样改变状态。输出则是模型对外显示的量。
+2. 把温度递推继续算出$x_4$至$x_6$，并由$x_{t+1}-2=0.8(x_t-2)$说明与平衡值的差距每步乘$0.8$。平衡由系数与输入共同决定；固定系数时改变恒定输入，会移动平衡而不改变偏差的衰减倍率，改变系数则还会改变接近平衡的速度。初始条件规定轨迹从哪里开始，输入规定沿途施加什么作用，演化规律规定这些作用怎样改变状态。输出则是模型对外显示的量。
 
 #### 4.1.2 离散时间下的状态更新
 
@@ -40,12 +42,14 @@
 
 #### 4.1.3 连续时间下的状态变化
 
-主要内容：若关注相邻采样时刻之间发生了什么，需要规定瞬时变化率，而不仅是相隔一步的差值。常微分方程（ordinary differential equation, ODE）初值问题写为$\dot{\boldsymbol x}(t)=\boldsymbol f(t,\boldsymbol x(t),\boldsymbol u(t)),\qquad \boldsymbol x(t_0)=\boldsymbol x_0$给定输入后，右侧是作用在当前状态上的向量场。
+主要内容：若关注相邻采样时刻之间发生了什么，需要规定瞬时变化率，而不仅是相隔一步的差值。常微分方程（ordinary differential equation, ODE）初值问题写为$\dot{\boldsymbol x}(t)=\boldsymbol f(t,\boldsymbol x(t),\boldsymbol u(t)),\qquad \boldsymbol x(t_0)=\boldsymbol x_0$给定输入后，右侧是作用在当前状态上的向量场。先用单粒子位置、动量更新和势能坡度说明两条方程如何由总能量的不同偏导组织，再给出向量Hamilton表达。
 
 论证与表述逻辑：
 
-1. 定义（可分Hamilton系统）：令$\boldsymbol q,\boldsymbol p\in\mathbb R^d$分别为位置与动量，$U$为连续可微的势能，$\boldsymbol M$为对称正定的质量矩阵。可分Hamilton量为$H(\boldsymbol q,\boldsymbol p)=U(\boldsymbol q)+\frac12\boldsymbol p^\top\boldsymbol M^{-1}\boldsymbol p$相应的Hamilton方程为$\dot{\boldsymbol q}=\nabla_{\boldsymbol p}H,\qquad \dot{\boldsymbol p}=-\nabla_{\boldsymbol q}H$。
-2. 第一式由动量得到位置速度，第二式由势能坡度得到动量变化。
+1. 将前向Euler明确为冻结左端变化率的近似规则。取$\lambda=0.2,u=0.4$及同一零初值，步长$1$时在$t=5,20$的误差约为$0.08,0.014$；改用步长$0.5$时，输入系数也改为$0.5$，在相同物理时刻分别计算$10,40$步，误差约为$0.038,0.007$。
+2. 对区间恒定输入与$\lambda>0$，先令$z=x-u/\lambda$，由$\dot z=-\lambda z$得到平衡偏差的精确指数衰减，再移项求出精确采样系数。指数的一阶展开恢复Euler关系；从离散系数反推时须区分两种规则，并另核对步长与输入缩放。
+3. 定义（可分Hamilton系统）：令$\boldsymbol q,\boldsymbol p\in\mathbb R^d$分别为位置与动量，$U$为连续可微的势能，$\boldsymbol M$为对称正定的质量矩阵。可分Hamilton量为$H(\boldsymbol q,\boldsymbol p)=U(\boldsymbol q)+\frac12\boldsymbol p^\top\boldsymbol M^{-1}\boldsymbol p$相应的Hamilton方程为$\dot{\boldsymbol q}=\nabla_{\boldsymbol p}H,\qquad \dot{\boldsymbol p}=-\nabla_{\boldsymbol q}H$。
+4. 第一式由动量得到位置速度，第二式由势能坡度得到动量变化。
 
 #### 4.1.4 随机扰动下的状态演化
 
@@ -83,7 +87,7 @@
 1. 投影固定$t>0$并使用非负权重测度$\mu_t$，输入与基函数取自L^2等价类。有限维子空间中的基线性无关，使Gram二次型成为非零函数的正平方范数，从而保证坐标唯一；$t=0$的退化区间另给初始化。
 2. 窗口本身移动时，状态变化不全来自新输入。
 3. 所以有限个历史特征不自动形成能独立接续演化的有限维状态；需要额外状态、特别的基与权重，或对边界项作近似。
-4. HiPPO一类方法正是通过历史投影设计状态坐标它保存哪些变化，由窗口、权重和基共同决定。投影理论给出相应度量下的逼近误差，不意味着一般历史被无损保存，也不自动保证所构造递推对扰动稳定。
+4. 高阶多项式投影（high-order polynomial projection operators, HiPPO）把历史投影到多项式空间，以随时间更新的投影系数作为状态坐标。它保存哪些历史特征，由窗口、权重和基共同决定；投影误差、演化闭合与扰动稳定性须分别检查，不将逼近误差保证扩张为历史无损保存或递推稳定。
 
 ### 4.2 路径的累计运算与状态变换
 
@@ -109,7 +113,7 @@
 
 #### 4.2.2 跳跃路径上的随机积分
 
-主要内容：离散更新只需说明每一步使用哪些已知量。把更新间隔缩到连续时间后，还须说明被积系数在时间与随机结果的联合空间中是否可测。
+主要内容：离散更新只需说明每一步使用哪些已知量。把更新间隔缩到连续时间后，还须说明被积系数在时间与随机结果的联合空间中是否可测。连续累计同时遍历时间与随机结果，需要联合可测性；事件幅度又必须在同次新事件前可用，以此分开引入渐进可测与可预测条件。
 
 论证与表述逻辑：
 
@@ -118,7 +122,7 @@
 
 #### 4.2.3 连续路径上的随机积分
 
-主要内容：以下$\boldsymbol W$是在同一滤过下的$m$维标准Brownian运动，分量独立，其增量独立于过去且协方差为时间长度乘$\boldsymbol I_m$。
+主要内容：以下$\boldsymbol W$是在同一滤过下的$m$维标准Brownian运动，分量独立，其增量独立于过去且协方差为时间长度乘$\boldsymbol I_m$。Brownian增量无法按普通导数或有限变差路径累计，但独立增量允许均方误差相加，因此从简单过程的增量和进入均方延拓。从左右端点累计的非零差别出发，引出对称取样所需的二次协变差修正；先声明连续半鞅对象，再说明Stratonovich约定与普通链式法则的关系。
 
 论证与表述逻辑：
 
@@ -194,7 +198,7 @@
 
 ##### 4.3.2.1 初值约束下的轨迹存在与延拓
 
-主要内容：一个“几乎处处给出斜率”的公式，要能恢复整条曲线，必须排除没有被导数记录的奇异变化。为此采用绝对连续曲线，而非任意连续曲线。
+主要内容：一个“几乎处处给出斜率”的公式，要能恢复整条曲线，必须排除没有被导数记录的奇异变化。为此采用绝对连续曲线，而非任意连续曲线。连续曲线不必由其几乎处处导数恢复，要求初值加可积速度累计等于曲线自身，才使微分与积分表达对应；区分该曲线性质与前章测度间的零集条件。
 
 论证与表述逻辑：
 
@@ -284,7 +288,7 @@
 论证与表述逻辑：
 
 1. 示例（连续稳定与数值稳定不是一回事）：对$\dot x=-\lambda x+u$，其中$\lambda>0$且$u$恒定，精确一步为$x(t+h)=\mathrm e^{-\lambda h}x(t) +\frac{1-\mathrm e^{-\lambda h}}{\lambda}u$Euler一步为$\widehat x_{n+1}=(1-\lambda h)\widehat x_n+hu$。
-2. 当$1<h\lambda<2$，数值状态交替变号但幅值缩小；当$h\lambda>2$，它交替增长。若同一系统包含衰减很快与变化很慢的方向，显式方法可能为压住快方向而被迫采用远小于慢变化尺度的步长，这就是刚性带来的主要计算困难。
+2. 对齐次泄漏递推，当$1<h\lambda<2$，数值状态交替变号但幅值缩小；当$h\lambda>2$，它交替增长。有恒定输入时，这一判断作用于相对平衡点的偏差，原状态不必在零的两侧交替。若同一系统包含衰减很快与变化很慢的方向，显式方法可能为压住快方向而被迫采用远小于慢变化尺度的步长，这就是刚性带来的主要计算困难。
 
 ##### 4.3.5.2 基于精确线性离散的轨迹求解
 
@@ -298,7 +302,7 @@
 
 ##### 4.3.5.3 基于几何离散的保守轨迹求解
 
-主要内容：保守方程的数值计算除了接近状态，还要检查精确演化保持的几何关系。先沿Hamilton方程求出能量和体积的变化，再据此构造离散映射；保持某种结构不等于每一步都精确，也不自动保证任意步长稳定。
+主要内容：保守方程的数值计算除了接近状态，还要检查精确演化保持的几何关系。先沿Hamilton方程求出能量和体积的变化，再据此构造离散映射；保持某种结构不等于每一步都精确，也不自动保证任意步长稳定。由一对位置动量扰动的有向面积扩展到多对共轭坐标的双线性配对，再定义辛形式及其保持条件，说明仅有能量或总体积信息不足。
 
 论证与表述逻辑：
 
@@ -323,12 +327,12 @@
 1. 长时间演化下的状态极限：考虑局部Lipschitz自治方程$\dot{\boldsymbol x}=\boldsymbol f(\boldsymbol x)$。满足$\boldsymbol f(\boldsymbol x^\star)=\boldsymbol0$的状态称为平衡点。以下性质均要求所涉及初值的解对全部$t\geq0$存在。
 2. 步长缩小下的轨迹逼近：固定真实方程、初值和有限时域，改变数值网格的步长$h$。确定性计算比较网格状态与精确轨迹；随机计算可以使用同一噪声比较状态，也可以只比较测试函数的期望。
 3. 随机近似下的迭代序列收敛：有些递推状态不是房间温度，而是希望逐步求出的参数。设未知均值为$\mu$，目标是解平均方程$h(\theta)=\mathbb E[Y-\theta]=\mu-\theta=0$每次只能得到一个含噪观测，仍可沿观测建议的方向作小步移动。
-4. 双时间尺度下的迭代序列收敛：一个参数可能负责快速跟踪另一个参数尚未解释的误差，另一个参数则慢慢改变目标。
+4. 双时间尺度下的迭代序列收敛：承接未知均值$\mu$，先以两个算法变量满足$u+v\approx\mu$为具体任务，让$u$快速估计剩余部分$\mu-v$，让$v$缓慢调整两者的分配。由慢变量改变快变量的目标，引出冻结慢变量的近似分析，再给出两组步长的一般递推与条件。
 5. 长时间采样下的分布与平均收敛：给定一张目标分布，可以设计演化规律，使长时间模拟产生用于积分的相关样本。需要检查两步：目标是否被演化保持，以及从实际初态出发能否接近它。
 
 #### 4.4.1 长时间演化下的状态极限
 
-主要内容：考虑局部Lipschitz自治方程$\dot{\boldsymbol x}=\boldsymbol f(\boldsymbol x)$。满足$\boldsymbol f(\boldsymbol x^\star)=\boldsymbol0$的状态称为平衡点。以下性质均要求所涉及初值的解对全部$t\geq0$存在。
+主要内容：考虑局部Lipschitz自治方程$\dot{\boldsymbol x}=\boldsymbol f(\boldsymbol x)$。满足$\boldsymbol f(\boldsymbol x^\star)=\boldsymbol0$的状态称为平衡点。以下性质均要求所涉及初值的解对全部$t\geq0$存在。先分别提出初值小误差始终小、最终消失和具有指数速度三个问题，再用对邻域全部初值的条件定义稳定性。
 
 论证与表述逻辑：
 
@@ -404,11 +408,11 @@
 
 #### 4.4.4 双时间尺度下的迭代序列收敛
 
-主要内容：一个参数可能负责快速跟踪另一个参数尚未解释的误差，另一个参数则慢慢改变目标。
+主要内容：把未知均值$\mu$分给两个算法变量，使$u+v$接近$\mu$；$u$快速估计$\mu-v$，$v$缓慢调整分配，再将此关系写成一般的两组递推。算法变量与贯穿温度模型的行动、读数分开说明，避免沿用字母造成角色混淆。
 
 论证与表述逻辑：
 
-1. 快时间上把$\boldsymbol v$暂时固定，得到$\dot{\boldsymbol u}=\boldsymbol g(\boldsymbol u,\boldsymbol v)$；若其稳定平衡为$\boldsymbol u^\star(\boldsymbol v)$，慢时间上再使用$\dot{\boldsymbol v}=\boldsymbol f(\boldsymbol u^\star(\boldsymbol v),\boldsymbol v)$。
+1. 在具体分工之后引入快慢步长，要求两组步长各自满足Robbins--Monro条件且$\alpha_t/\beta_t\to0$。快时间上把$\boldsymbol v$暂时固定，得到$\dot{\boldsymbol u}=\boldsymbol g(\boldsymbol u,\boldsymbol v)$；若其稳定平衡为$\boldsymbol u^\star(\boldsymbol v)$，慢时间上再使用$\dot{\boldsymbol v}=\boldsymbol f(\boldsymbol u^\star(\boldsymbol v),\boldsymbol v)$。收敛结论还依赖快慢方程的稳定性、联合迭代有界、噪声矩界和残差条件，尺度分离本身不替代这些假设。
 2. 示例（分解同一个未知均值的快慢更新）：若$\mathbb E[Y_{t+1}\mid\mathcal F_t]=\mu$，取$u^{(t+1)}=u^{(t)}+\beta_t(Y_{t+1}-u^{(t)}-v^{(t)}),\qquad v^{(t+1)}=v^{(t)}+\alpha_t(u^{(t)}-v^{(t)})$冻结$v$后，快方程$\dot u=\mu-v-u$的唯一稳定平衡为$u^\star(v)=\mu-v$。
 3. 尺度分离没有保证快平衡存在，也没有保证其稳定或全局最优。两组步长同阶时，前面的均值拆分例仍可用联合系统分析，却不能继续使用冻结慢变量的论证。
 
@@ -441,7 +445,7 @@
 
 ##### 4.5.1.1 线性演化下的轨迹稳定性
 
-主要内容：离散齐次系统为$\boldsymbol x_{t+1}=\boldsymbol A\boldsymbol x_t,\qquad \boldsymbol x_t=\boldsymbol A^t\boldsymbol x_0$这里用矩阵幂和Jordan分解把长期轨迹问题化成谱的位置；下面对各Jordan块的幂逐项给出长期估计。
+主要内容：离散齐次系统为$\boldsymbol x_{t+1}=\boldsymbol A\boldsymbol x_t,\qquad \boldsymbol x_t=\boldsymbol A^t\boldsymbol x_0$这里用矩阵幂和Jordan分解把长期轨迹问题化成谱的位置；下面对各Jordan块的幂逐项给出长期估计。区分Lyapunov给出的衰减上界与精确模态速率；指数系数约0.38对应时间常数约2.6，减半时间则约为1.8，不能把两者混同。
 
 论证与表述逻辑：
 
@@ -505,7 +509,8 @@
 论证与表述逻辑：
 
 1. 记$\mathcal Y_t=\sigma(\boldsymbol y_1,\ldots,\boldsymbol y_t)$，$\mathcal Y_0$为无观测信息。
-2. 下面的一般核公式只要求前述条件独立结构。
+2. 用无噪二维例核对观测时序：时刻$1$的候选$(1,0)^\top,(0,1)^\top$都有$y_1=1$；随后共同施加已知输入$\boldsymbol u_1=(0.5,0)^\top$，经$\boldsymbol A=\operatorname{diag}(0.5,2)$演化，时刻$2$的候选为$(1,0)^\top,(0.5,2)^\top$，因而$y_2$分别为$1,2.5$。共同输入在候选状态差中抵消，区分来自状态转移把原先看不到的分量差带入后续读数。
+3. 下面的一般核公式只要求前述条件独立结构。
 
 #### 4.6.2 基于历史观测的状态预测
 
@@ -524,7 +529,8 @@
 
 1. 命题（有限时域Kalman滤波）：在上述独立线性高斯模型与创新协方差可逆条件下，预测与校正公式精确给出$\boldsymbol x_t\mid\mathcal Y_t\sim \mathcal N(\boldsymbol m_{t\mid t},\boldsymbol P_{t\mid t})$，对每个有限$t$成立。
 2. 推导：$t=0$时无观测，条件分布就是给定高斯初值。为核对条件化，令$\boldsymbol e=\boldsymbol x_t-\boldsymbol m_{t\mid t-1}-\boldsymbol K_t\boldsymbol r_t$。在$\mathcal Y_{t-1}$条件下，$\operatorname{Cov}(\boldsymbol e,\boldsymbol r_t) =\boldsymbol P_{t\mid t-1}\boldsymbol C_t^\top-\boldsymbol K_t\boldsymbol S_t=\boldsymbol0$。
-3. 两种方法都可能遗漏多峰后验。例如零均值对称先验配上$y=x^2+v$，一个明显正的读数可能支持正负两个状态区间。
+3. 标量直接观测例用上标$-$、$+$分别表示加入当前读数前的预测与加入后的滤波，$m^\pm,p^\pm$分别为均值与方差。由$K=p^-/(p^-+r)$说明预测与读数怎样加权；独立教学例与温度例各自使用自己的噪声方差，不互换设定。
+4. 两种方法都可能遗漏多峰后验。例如零均值对称先验配上$y=x^2+v$，一个明显正的读数可能支持正负两个状态区间。
 
 #### 4.6.4 基于完整观测的状态平滑
 
@@ -534,7 +540,7 @@
 
 1. 命题（有限时域RTS平滑）：在有限时域Kalman条件及每个$\boldsymbol P_{t+1\mid t}$可逆条件下，从终点$(\boldsymbol m_{T\mid T},\boldsymbol P_{T\mid T})$向后递推$\boldsymbol m_{t\mid T} &=\boldsymbol m_{t\mid t}+\boldsymbol J_t(\boldsymbol m_{t+1\mid T}-\boldsymbol m_{t+1\mid t}), \\ \boldsymbol P_{t\mid T} &=\boldsymbol P_{t\mid t} +\boldsymbol J_t(\boldsymbol P_{t+1\mid T}-\boldsymbol P_{t+1\mid t})\boldsymbol J_t^\top,$精确给出$\boldsymbol x_t\mid\mathcal Y_T$的高斯均值与协方差。
 2. 推导：给定$\boldsymbol x_{t+1}$后，未来状态和观测与更早状态条件独立，因此$P(\mathrm d\boldsymbol x_t\mid\boldsymbol x_{t+1},\mathcal Y_T) =P(\mathrm d\boldsymbol x_t\mid\boldsymbol x_{t+1},\mathcal Y_t)$。全概率公式给出后向因子化$P(\mathrm d\boldsymbol x_t\mid\mathcal Y_T) =\int P(\mathrm d\boldsymbol x_t\mid\boldsymbol x_{t+1},\mathcal Y_t) P(\mathrm d\boldsymbol x_{t+1}\mid\mathcal Y_T)$将一步条件均值对$\boldsymbol x_{t+1}\mid\mathcal Y_T$取期望，塔式性质得到平滑均值公式。全协方差公式分成两项：条件内协方差为$\boldsymbol P_{t\mid t}-\boldsymbol J_t\boldsymbol P_{t+1\mid t}\boldsymbol J_t^\top$，条件均值的协方差为$\boldsymbol J_t\boldsymbol P_{t+1\mid T}\boldsymbol J_t^\top$；相加即得平滑协方差。
-3. 标量随机游走教学例逐步核对算术：由预测方差$p_{1\mid0}=2$得增益$K_1=3/4$，读数$y_1=2$使滤波均值移到$3/2$、滤波方差降为$1/2$；再用$J_0=1/2$回传一半偏差，得平滑均值$3/4$与平滑方差$5/8<1$，说明关于$x_0$的不确定性被后续读数缩小。三种结果分别对应先验、只用$y_1$与使用完整窗口，平滑结果含有当时尚未获得的读数，不能替代滤波结果。沿用上述有限时域线性高斯条件，有$\boldsymbol P_{t\mid T}\preceq\boldsymbol P_{t\mid t}$，即滤波协方差减去平滑协方差是半正定矩阵。
+3. 标量随机游走教学例沿用$P,Q,R$表示状态与两类噪声方差，并逐步核对算术：由预测方差$P_{1\mid0}=2$得增益$K_1=3/4$，读数$y_1=2$使滤波均值移到$3/2$、滤波方差降为$1/2$；再用$J_0=1/2$回传一半偏差，得平滑均值$3/4$与平滑方差$5/8<1$。比较时固定目标：$x_1$从预测$(0,2)$变为滤波$(3/2,1/2)$，$x_0$从先验$(0,1)$变为吸收$y_1$后的平滑$(3/4,5/8)$，每一对分别表示均值与方差。在时刻$0$不能使用尚未获得的$y_1$；到时刻$1$估计当前$x_1$与回溯$x_0$是两种查询。窗口$T=1$下$x_1$的平滑等于滤波，要展示它再吸收更晚观测的变化，还须增加$y_2$等读数。沿用上述有限时域线性高斯条件，有$\boldsymbol P_{t\mid T}\preceq\boldsymbol P_{t\mid t}$，即滤波协方差减去平滑协方差是半正定矩阵。
 
 #### 4.6.5 基于完整观测的联合轨迹推断
 
@@ -585,8 +591,8 @@
 
 论证与表述逻辑：
 
-1. 区分任意初态到零与任意初态到任意终态：A可逆是零可控推出可控的充分条件，A=B=0说明一般逆推失败，A=0、B=1说明可逆性并非具体系统可控的必要条件。
-2. 命题（Popov--Belevitch--Hautus（PBH）可控性判据）：矩阵对$(\boldsymbol A,\boldsymbol B)$可控，当且仅当对每个复特征值$\lambda\in\sigma(\boldsymbol A)$，$\operatorname{rank}[\lambda\boldsymbol I-\boldsymbol A\ \boldsymbol B]=n$等价地，不存在非零左特征向量$\boldsymbol q^\ast$同时满足$\boldsymbol q^\ast\boldsymbol A=\lambda\boldsymbol q^\ast$和$\boldsymbol q^\ast\boldsymbol B=\boldsymbol0$。
+1. 区分任意初态到零与任意初态到任意终态：$\boldsymbol A$可逆是零可控推出可控的充分条件，$A=B=0$说明一般逆推失败，$A=0,B=1$说明可逆性并非具体系统可控的必要条件。
+2. 命题（Popov--Belevitch--Hautus（PBH）可控性判据）：矩阵对$(\boldsymbol A,\boldsymbol B)$可控，当且仅当对每个复特征值$\lambda\in\sigma(\boldsymbol A)$都有$\operatorname{rank}[\lambda\boldsymbol I-\boldsymbol A\ \boldsymbol B]=n$；等价地，不存在非零左特征向量$\boldsymbol q^\ast$同时满足$\boldsymbol q^\ast\boldsymbol A=\lambda\boldsymbol q^\ast$和$\boldsymbol q^\ast\boldsymbol B=\boldsymbol0$。
 3. 推导：若存在这样的向量，则$\boldsymbol q^\ast\boldsymbol A^k\boldsymbol B=\lambda^k\boldsymbol q^\ast\boldsymbol B=\boldsymbol0$对所有$k\geq0$成立，所以可控性矩阵不可能满行秩。反之，其列空间$\boldsymbol R_{\mathrm{reach}}$若不满维，便是一个真$\boldsymbol A$不变子空间。正交补$\boldsymbol R_{\mathrm{reach}}^{\perp}$在$\boldsymbol A^\ast$下不变。
 4. 终点可控仍不保证任意指定的中间状态都能实现。给定整条参考$\boldsymbol r_t$，离散系统要求每一步$\boldsymbol r_{t+1}-\boldsymbol A\boldsymbol r_t\in\operatorname{col}(\boldsymbol B)$，并且解出的输入位于允许集合；连续系统则要求参考绝对连续且$\dot{\boldsymbol r}_t-\boldsymbol A\boldsymbol r_t=\boldsymbol B\boldsymbol u_t^r$几乎处处成立。
 
@@ -602,18 +608,18 @@
 
 ### 5.2 策略的轨迹收敛与稳定
 
-主要内容：从可稳定、可检测条件进入状态反馈、二次反馈与输出反馈，检查闭环误差的长期行为。
+主要内容：从可稳定、可检测条件进入状态反馈、二次成本下的反馈设计与输出反馈，检查闭环误差的长期行为。
 
 论证与表述逻辑：
 
 1. 不可控与不可观测模式的稳定条件：反馈$\boldsymbol u=-\boldsymbol K\boldsymbol x$把状态矩阵改为$\boldsymbol A-\boldsymbol B\boldsymbol K$。
 2. 状态反馈下的闭环稳定：可稳定性保证某个增益能够稳定系统；实际设计仍要给出增益，并检验相应闭环。
-3. 二次反馈下的稳定化解：稳定增益通常不唯一：较快纠偏可能需要更大的动作。若用二次型分别计量状态偏差与动作幅值，就能把这种选择写成明确的成本最小化问题。
+3. 二次成本下的稳定化反馈：稳定增益通常不唯一，较快纠偏可能需要更大的动作。以二次型分别计量状态偏差与动作幅值，便能将增益选择写成成本最小化问题；所得反馈律仍是线性的。
 4. 输出反馈下的估计与闭环稳定：反馈需要状态，但传感器可能只提供状态的一部分。可以先根据模型和已执行动作预测状态，再利用当前读数与预测读数的差纠正估计。
 
 #### 5.2.1 不可控与不可观测模式的稳定条件
 
-主要内容：反馈$\boldsymbol u=-\boldsymbol K\boldsymbol x$把状态矩阵改为$\boldsymbol A-\boldsymbol B\boldsymbol K$。
+主要内容：反馈$\boldsymbol u=-\boldsymbol K\boldsymbol x$把状态矩阵改为$\boldsymbol A-\boldsymbol B\boldsymbol K$。观测增益使线性估计误差按$\boldsymbol A-\boldsymbol L\boldsymbol C$传播；因此可检测性检查是否存在使误差消退的校正，而不是要求全部初态均可恢复。
 
 论证与表述逻辑：
 
@@ -623,34 +629,38 @@
 
 #### 5.2.2 状态反馈下的闭环稳定
 
-主要内容：可稳定性保证某个增益能够稳定系统；实际设计仍要给出增益，并检验相应闭环。取线性状态反馈后，动作与状态递推为$\boldsymbol u_t=-\boldsymbol K\boldsymbol x_t, \qquad \boldsymbol x_{t+1}=(\boldsymbol A-\boldsymbol B\boldsymbol K)\boldsymbol x_t$负号只是增益约定。
+主要内容：可稳定性保证某个增益能够稳定系统；实际设计仍要给出增益，并检验相应闭环。取线性状态反馈后，动作与状态递推为$\boldsymbol u_t=-\boldsymbol K\boldsymbol x_t, \qquad \boldsymbol x_{t+1}=(\boldsymbol A-\boldsymbol B\boldsymbol K)\boldsymbol x_t$，负号只是增益约定。
 
 论证与表述逻辑：
 
 1. 非线性系统在不同状态处具有不同的变化方向，固定矩阵的谱一般不足以判断整个区域。可以改用一个随状态变化的标量$V$衡量偏离，再要求所选动作使它沿轨迹下降。
-2. 定义（控制Lyapunov函数接口）：考虑$\dot{\boldsymbol x}_t=\boldsymbol f(\boldsymbol x_t)+\boldsymbol G(\boldsymbol x_t)\boldsymbol u_t$，目标为原点，输入属于$U$。若某邻域内的$C^1$函数$V$满足$V(\boldsymbol0)=0$、$V(\boldsymbol x)>0$（$\boldsymbol x\neq\boldsymbol0$），且有正定连续函数$W$使$\text{对每个 }\boldsymbol x\neq\boldsymbol0\text{，存在 }\boldsymbol u\in U\text{ 使} \quad\nabla V(\boldsymbol x)^\top(\boldsymbol f(\boldsymbol x)+\boldsymbol G(\boldsymbol x)\boldsymbol u) \leq-W(\boldsymbol x),$称$V$提供一个控制Lyapunov函数（control Lyapunov function, CLF）条件：每个非零状态至少应能选择一个使偏离量严格下降的动作。
-3. 点态存在动作不等于已经构造出适定反馈。若进一步有$c_1\|\boldsymbol x\|_2^2\leq V\leq c_2\|\boldsymbol x\|_2^2$和$W\geq c_3\|\boldsymbol x\|_2^2$，便有$V_t\leq e^{-c_3t/c_2}V_0$；全局结论还需全域条件与解的延拓。
+2. 定义（控制Lyapunov函数条件）：考虑$\dot{\boldsymbol x}_t=\boldsymbol f(\boldsymbol x_t)+\boldsymbol G(\boldsymbol x_t)\boldsymbol u_t$，目标为原点，输入属于$U$，并假设$\boldsymbol f,\boldsymbol G$在原点的某邻域内局部Lipschitz。若该邻域内的$C^1$函数$V$满足$V(\boldsymbol0)=0$、$V(\boldsymbol x)>0$（$\boldsymbol x\neq\boldsymbol0$），且有正定连续函数$W$使$\text{对每个 }\boldsymbol x\neq\boldsymbol0\text{，存在 }\boldsymbol u\in U\text{ 使} \quad\nabla V(\boldsymbol x)^\top(\boldsymbol f(\boldsymbol x)+\boldsymbol G(\boldsymbol x)\boldsymbol u) \leq-W(\boldsymbol x),$称$V$提供一个控制Lyapunov函数（control Lyapunov function, CLF）条件：每个非零状态至少应能选择一个使偏离量严格下降的动作。
+3. 点态存在动作不等于已经构造出适定反馈。还须选出取值于$U$的局部Lipschitz反馈，使原点为平衡并保持严格下降；模型与反馈的规则性共同保证闭环右端$\boldsymbol f+\boldsymbol G\kappa$局部Lipschitz，补齐前章Lyapunov定理的条件后才得到局部渐近稳定。
+4. 若进一步有$c_1\|\boldsymbol x\|_2^2\leq V\leq c_2\|\boldsymbol x\|_2^2$和$W\geq c_3\|\boldsymbol x\|_2^2$，便有$V_t\leq e^{-c_3t/c_2}V_0$；全局结论还需全域条件与解的延拓。三次系统的抵消算例展示下降反馈的构造，并以输入限幅说明结论的区域边界。
 
-#### 5.2.3 二次反馈下的稳定化解
+#### 5.2.3 二次成本下的稳定化反馈
 
-主要内容：稳定增益通常不唯一：较快纠偏可能需要更大的动作。若用二次型分别计量状态偏差与动作幅值，就能把这种选择写成明确的成本最小化问题。
+主要内容：稳定增益通常不唯一，较快纠偏可能需要更大的动作。二次成本同时评价状态偏差与动作幅值，通过有限时域配方构造线性反馈，再讨论确定性无限时域下稳定化与成本最优如何联系。
 
 论证与表述逻辑：
 
 1. 在有限时域期望二次成本之前说明风险中性：确定成本10与等概率成本0或20打平。评价只看期望，并非否认波动；随后用终端价值反向配方得到Riccati递推，再说明无限时域稳定化所需条件。
-2. 命题（无限时域LQR的稳定化解）：设$\boldsymbol Q\succeq\boldsymbol0$、$\boldsymbol R\succ\boldsymbol0$，$(\boldsymbol A,\boldsymbol B)$可稳定且$(\boldsymbol Q^{1/2},\boldsymbol A)$可检测。相应反馈使闭环渐近稳定，并在所有允许控制序列中给出无折扣二次总成本的最优值$V(\boldsymbol x)=\boldsymbol x^\top\boldsymbol P\boldsymbol x$。
-3. 推导：取长度$N$、终端代价为零的有限问题，记其初始价值矩阵为$\boldsymbol P^{(N)}$。增加一个非负阶段成本不能降低最优成本，故$\boldsymbol0\preceq\boldsymbol P^{(N)}\preceq\boldsymbol P^{(N+1)}$。可稳定性提供$\overline{\boldsymbol K}$使$\overline{\boldsymbol F}=\boldsymbol A-\boldsymbol B\overline{\boldsymbol K}$稳定。
-4. 连续时间也可以直接用代数方程构造稳定反馈，无须先推导有限时域价值。
+2. 无限时域定理之前先用$\boldsymbol x^\top\boldsymbol Q\boldsymbol x=\|\boldsymbol Q^{1/2}\boldsymbol x\|_2^2$解释成本输出。成本可检测要求沿动态始终不被该输出辨认的模式自行衰减，不能把瞬时零成本方向等同于不可观测模式，也不能用传感器输出的可检测条件替换。
+3. 命题（无限时域LQR的稳定化解）：在确定性、时不变、无折扣条件下，设$\boldsymbol Q\succeq\boldsymbol0$、$\boldsymbol R\succ\boldsymbol0$，$(\boldsymbol A,\boldsymbol B)$可稳定且$(\boldsymbol Q^{1/2},\boldsymbol A)$可检测。DARE存在唯一半正定稳定化解，相应反馈使闭环渐近稳定，并在所有允许控制序列中给出二次总成本的最优值$V(\boldsymbol x)=\boldsymbol x^\top\boldsymbol P\boldsymbol x$。
+4. 推导：由零终端代价有限问题的价值矩阵单调性与稳定反馈提供的上界构造DARE解，再以闭环谱与成本可检测性证明稳定。对任意有限成本控制，先证明状态及终端项趋零，再对累加配方取极限，得到成本最优性与稳定化解唯一性。
+5. $Q=0$的标量反例说明缺少成本可检测时，成本最优可能选择不稳定反馈；持续非零噪声下的无折扣总期望成本通常发散，不能直接沿用确定性定理。
+6. 连续时间借用CARE稳定化解的标准存在性结论，并直接核验闭环谱；连续有限时域Riccati与价值最优性留给后章，不写成此处已经证明。
 
 #### 5.2.4 输出反馈下的估计与闭环稳定
 
-主要内容：反馈需要状态，但传感器可能只提供状态的一部分。可以先根据模型和已执行动作预测状态，再利用当前读数与预测读数的差纠正估计。
+主要内容：反馈需要状态，但传感器可能只提供状态的一部分。可以先根据模型和已执行动作预测状态，再利用当前读数与预测读数的差纠正估计。随机部分区分预测协方差与更新后协方差，在独立零均值噪声及有限初态二阶矩的设定下分析线性滤波误差；联合高斯时再把估计解释为精确条件均值。
 
 论证与表述逻辑：
 
-1. 命题（稳态预测滤波的充分条件）：从任意有限$\boldsymbol\Pi_0\succeq\boldsymbol0$出发的预测协方差递推收敛到$\boldsymbol\Pi$，稳态$\boldsymbol L=\boldsymbol A\boldsymbol M$使$\boldsymbol A-\boldsymbol L\boldsymbol C$稳定。
-2. 推导：对偶代换把本定理的两个结构条件分别变为无限LQR定理的可稳定、可检测条件，故解的存在、唯一与稳定性成立。为说明一般初始协方差的收敛，记滤波Riccati映射为$\Phi$。固定任意合并增益$\boldsymbol L$，定义$\Psi_{\boldsymbol L}(\boldsymbol X) =(\boldsymbol A-\boldsymbol L\boldsymbol C)\boldsymbol X(\boldsymbol A-\boldsymbol L\boldsymbol C)^\top+ \boldsymbol\Sigma_{\mathrm w}+\boldsymbol L\boldsymbol\Sigma_{\mathrm v}\boldsymbol L^\top$配方表明$\Phi(\boldsymbol X)\preceq\Psi_{\boldsymbol L}(\boldsymbol X)$，等号在对应Kalman增益处成立。
-3. 实际控制可使用当前观测更新后的$\widehat{\boldsymbol x}_{t|t}$。
+1. 确定性Luenberger观测器合并模型预测与读数残差校正，负责更新下一时刻的估计；控制器单独按尚未使用当前读数的估计选择当前动作。联合矩阵的上三角分块给出谱分离，说明状态反馈与估计误差可以分别作稳定设计。
+2. 命题（稳态预测滤波的充分条件）：若$(\boldsymbol C,\boldsymbol A)$可检测、$(\boldsymbol A,\boldsymbol\Sigma_{\mathrm w}^{1/2})$可稳定，且$\boldsymbol\Sigma_{\mathrm v}\succ\boldsymbol0$，预测协方差方程有唯一半正定稳定化解。从任意有限$\boldsymbol\Pi_0\succeq\boldsymbol0$出发的递推收敛到$\boldsymbol\Pi$，稳态$\boldsymbol L=\boldsymbol A\boldsymbol M$使$\boldsymbol A-\boldsymbol L\boldsymbol C$稳定。
+3. 推导：对偶代换给出稳态解的存在、唯一与稳定性；固定增益配方给出$\Phi(\boldsymbol X)\preceq\Psi_{\boldsymbol L}(\boldsymbol X)$。在$\boldsymbol X\succeq\boldsymbol Y$时选取在$\boldsymbol X$处取等号的增益，依次用固定增益保序与任意增益上界，展开$\Phi(\boldsymbol X)\succeq\Psi_{\boldsymbol L_{\boldsymbol X}}(\boldsymbol Y)\succeq\Phi(\boldsymbol Y)$，再以零初值和稳态增益两端夹逼一般初始协方差。
+4. 转用当前观测更新后的$\widehat{\boldsymbol x}_{t|t}$控制时，先写残差校正式与更新误差，明确时序改为先用当前读数更新、再确定动作。稳态联合矩阵仍可分块检查；持续噪声下的二阶矩有界与协方差收敛不能解释为路径趋零，也不能仅凭谱分离推出成本最优。
 
 ### 5.3 策略的调节与跟踪
 
@@ -676,27 +686,28 @@
 
 论证与表述逻辑：
 
-1. 定义（目标平衡与调节误差）：对$\boldsymbol x_{t+1}=\boldsymbol A\boldsymbol x_t+\boldsymbol B\boldsymbol u_t$，状态设定值$\boldsymbol r$与常值输入$\boldsymbol u^r$构成目标平衡，若$(\boldsymbol I-\boldsymbol A)\boldsymbol r=\boldsymbol B\boldsymbol u^r$状态调节误差定义为$\boldsymbol e_t=\boldsymbol x_t-\boldsymbol r$。若只指定输出设定值$\boldsymbol q$，还需寻找平衡状态$\boldsymbol r$使$\boldsymbol C\boldsymbol r=\boldsymbol q$，输出误差为$\boldsymbol e_t^y=\boldsymbol C\boldsymbol x_t-\boldsymbol q$。有输入、状态限制时，目标平衡还须满足$\boldsymbol u^r\in U,\boldsymbol r\in S$。
-2. 对只指定输出的任务，可解联立方程$\begin{bmatrix}\boldsymbol I-\boldsymbol A&-\boldsymbol B\\\boldsymbol C&\boldsymbol0\end{bmatrix} \begin{bmatrix}\boldsymbol r\\\boldsymbol u^r\end{bmatrix} =\begin{bmatrix}\boldsymbol0\\\boldsymbol q\end{bmatrix}$方程可能无解或有多个解；输出达到设定值也不自动要求所有内部状态相同。
+1. 定义（目标平衡与调节误差）：对$\boldsymbol x_{t+1}=\boldsymbol A\boldsymbol x_t+\boldsymbol B\boldsymbol u_t$，若状态设定值$\boldsymbol r$与常值输入$\boldsymbol u^r$满足$(\boldsymbol I-\boldsymbol A)\boldsymbol r=\boldsymbol B\boldsymbol u^r$，则称$(\boldsymbol r,\boldsymbol u^r)$构成目标平衡。状态调节误差为$\boldsymbol e_t=\boldsymbol x_t-\boldsymbol r$。若只指定输出设定值$\boldsymbol q$，还需寻找平衡状态$\boldsymbol r$使$\boldsymbol C\boldsymbol r=\boldsymbol q$，输出误差为$\boldsymbol e_t^y=\boldsymbol C\boldsymbol x_t-\boldsymbol q$。有输入、状态限制时，目标平衡还须满足$\boldsymbol u^r\in U,\boldsymbol r\in S$。
+2. 对只指定输出的任务，可解联立方程$\begin{bmatrix}\boldsymbol I-\boldsymbol A&-\boldsymbol B\\\boldsymbol C&\boldsymbol0\end{bmatrix} \begin{bmatrix}\boldsymbol r\\\boldsymbol u^r\end{bmatrix} =\begin{bmatrix}\boldsymbol0\\\boldsymbol q\end{bmatrix}$。方程可能无解或有多个解；输出达到设定值也不自动要求所有内部状态相同。
 3. 示例（非零温度需要维持输入）：在无噪声温度模型中，设定值$r=2$要求$2=0.8\times2+u^r$，所以$u^r=0.4$。若直接使用$u_t=-0.3(x_t-2)$，在$x_t=2$处输入变成零，下一步温差便降为$1.6$，因而$2$不是闭环平衡。
 
 ##### 5.3.1.2 基于误差反馈的轨迹调节
 
-主要内容：目标平衡方程给出了在目标处仍需持续施加的输入。在这个输入上叠加误差反馈，才使控制器在目标处停止纠偏而继续维持平衡：$\boldsymbol u_t=\boldsymbol u^r-\boldsymbol K(\boldsymbol x_t-\boldsymbol r), \qquad \boldsymbol e_{t+1}=(\boldsymbol A-\boldsymbol B\boldsymbol K)\boldsymbol e_t$第二式由原动态减去平衡方程得到。
+主要内容：目标平衡方程给出了在目标处仍需持续施加的输入。在这个输入上叠加误差反馈，才使控制器在目标处停止纠偏而继续维持平衡：$\boldsymbol u_t=\boldsymbol u^r-\boldsymbol K(\boldsymbol x_t-\boldsymbol r), \qquad \boldsymbol e_{t+1}=(\boldsymbol A-\boldsymbol B\boldsymbol K)\boldsymbol e_t$，第二式由原动态减去平衡方程得到。
 
 论证与表述逻辑：
 
-1. 温度反馈的完整计算为$u_t=0.4-0.3(x_t-2), \qquad e_{t+1}=0.5e_t,\quad e_t=0.5^t(x_0-2)$从$x_0=0$出发，状态依次为$0,1,1.5,1.75,\ldots$，输入依次为$1,0.7,0.55,0.475,\ldots$。
+1. 温度反馈的完整计算为$u_t=0.4-0.3(x_t-2), \qquad e_{t+1}=0.5e_t,\quad e_t=0.5^t(x_0-2)$。从$x_0=0$出发，状态依次为$0,1,1.5,1.75,\ldots$，输入依次为$1,0.7,0.55,0.475,\ldots$。
 2. 若改用估计状态$\widehat{\boldsymbol x}_t$，令$\boldsymbol e_t^{\mathrm o}=\boldsymbol x_t-\widehat{\boldsymbol x}_t$，则调节误差成为$\boldsymbol e_{t+1}=(\boldsymbol A-\boldsymbol B\boldsymbol K)\boldsymbol e_t+\boldsymbol B\boldsymbol K\boldsymbol e_t^{\mathrm o}$。
 
 ##### 5.3.1.3 持续扰动下的轨迹调节
 
-主要内容：平衡输入按名义模型计算。
+主要内容：持续扰动在名义误差系统中形成受迫项。先由误差方程区分常值偏差、有界时变扰动与随机噪声，再通过累积输出误差的积分状态讨论常值偏差补偿及其可实现条件。
 
 论证与表述逻辑：
 
-1. 积分器自身带有特征值$1$，不能不经核验就加到控制器上。设计增益前应检查增广对$\left( \begin{bmatrix}\boldsymbol A&\boldsymbol0\\\boldsymbol C&\boldsymbol I\end{bmatrix}, \begin{bmatrix}\boldsymbol B\\\boldsymbol0\end{bmatrix}\right)$可稳定。
-2. 输入饱和后，真实误差不再服从上述线性增广方程，积分状态却可能继续累积，造成解除饱和后的大幅动作。限制或回退积分累积是常见的抗积分饱和处理，但处理后的闭环仍需重新验证。
+1. 积分调节累积的是指定输出误差$\boldsymbol C\boldsymbol e_t$。增广闭环稳定且扰动为常值时，积分方程强制平衡输出误差为零，不要求全部状态误差为零，也不保证任意时变扰动下零误差。
+2. 积分器自身带有特征值$1$，不能不经核验就加到控制器上。设计增益前应检查增广对$\left( \begin{bmatrix}\boldsymbol A&\boldsymbol0\\\boldsymbol C&\boldsymbol I\end{bmatrix}, \begin{bmatrix}\boldsymbol B\\\boldsymbol0\end{bmatrix}\right)$可稳定。
+3. 输入饱和后，真实误差不再服从上述线性增广方程，积分状态却可能继续累积，造成解除饱和后的大幅动作。限制或回退积分累积是常见的抗积分饱和处理，但处理后的闭环仍需重新验证。
 
 #### 5.3.2 运动参考下的轨迹跟踪
 
@@ -715,7 +726,7 @@
 
 1. 定义（可实现参考）：离散线性系统的参考状态、参考输入为$(\boldsymbol r_t,\boldsymbol u_t^r)$。若每一步满足$\boldsymbol r_{t+1}=\boldsymbol A\boldsymbol r_t+\boldsymbol B\boldsymbol u_t^r, \qquad \boldsymbol q_t=\boldsymbol C\boldsymbol r_t,$且参考状态、输入满足所声明的约束，称它为可实现参考。精确从首时刻跟踪还要求$\boldsymbol x_0=\boldsymbol r_0$。连续时间则要求$\boldsymbol r_t$绝对连续，并有$\dot{\boldsymbol r}_t=\boldsymbol A\boldsymbol r_t+\boldsymbol B\boldsymbol u_t^r$几乎处处成立。
 2. 若只给输出曲线，需要先找与其一致的内部状态和输入；不同实现可能具有不同内部行为。有输入变化率、采样周期或执行器动态限制时，也必须把这些约束加入可实现性检查。
-3. 温度参考的前馈输入由系统方程直接给出：$u_t^r=r_{t+1}-0.8r_t$前馈（feedforward）是由已知目标运动与模型预先计算的动作，不靠当前误差产生。
+3. 温度参考的前馈输入由系统方程直接给出：$u_t^r=r_{t+1}-0.8r_t$。前馈（feedforward）是由已知目标运动与模型预先计算的动作，不靠当前误差产生。
 
 ##### 5.3.2.2 基于前馈与反馈的轨迹跟踪
 
@@ -728,12 +739,12 @@
 
 ##### 5.3.2.3 扰动与模型偏差下的轨迹跟踪
 
-主要内容：真实动态与参考规划常有偏差。
+主要内容：将模型矩阵偏差、参考实现残差与外扰写入完整误差方程，再用Lyapunov加权范数建立名义收缩和受迫误差界，说明持续修正对跟踪结论的影响。
 
 论证与表述逻辑：
 
 1. 真实动态与参考规划常有偏差。设实际系统为$\boldsymbol x_{t+1}=(\boldsymbol A+\Delta\boldsymbol A)\boldsymbol x_t+ (\boldsymbol B+\Delta\boldsymbol B)\boldsymbol u_t+\boldsymbol d_t$，名义参考的实现残差为$\boldsymbol\eta_t=\boldsymbol A\boldsymbol r_t+\boldsymbol B\boldsymbol u_t^r-\boldsymbol r_{t+1}$。
-2. 固定一种向量范数及相容矩阵范数，假设$\|\boldsymbol F\|\leq\rho<1$，$\|\Delta\boldsymbol A-\Delta\boldsymbol B\boldsymbol K\|\leq\varepsilon$且$q:=\rho+\varepsilon<1$。
+2. 对稳定的$\boldsymbol F$，先解$\boldsymbol P_{\mathrm F}-\boldsymbol F^\top\boldsymbol P_{\mathrm F}\boldsymbol F=\boldsymbol I$，由$\boldsymbol P_{\mathrm F}\succ\boldsymbol0$构造加权向量范数及其诱导矩阵范数，使$\|\boldsymbol F\|<1$。随后在同一范数下检查$\|\boldsymbol F\|\leq\rho<1$、$\|\Delta\boldsymbol A-\Delta\boldsymbol B\boldsymbol K\|\leq\varepsilon$及$q:=\rho+\varepsilon<1$，展开几何级数得到误差界；这不要求欧氏范数中的名义矩阵也一步收缩。
 3. 在精确温度模型中，若$|d_t|\leq0.1$，则$|e_t|\leq0.5^t|e_0|+0.2(1-0.5^t)$。
 4. 如果安全控制器把名义动作改为$\boldsymbol u_t=\boldsymbol u_t^r-\boldsymbol K\boldsymbol e_t+\Delta\boldsymbol u_t^{\mathrm s}$，精确模型的误差方程还多出$\boldsymbol B\Delta\boldsymbol u_t^{\mathrm s}$。
 
@@ -755,17 +766,18 @@
 论证与表述逻辑：
 
 1. 定义（正向不变集）：若任意$\boldsymbol x_0\in S$所产生的闭环解，在其存在的全部未来时刻均位于$S$，称$S$对该闭环正向不变（forward invariant）。
-2. 若边界$\partial S=\{h=0\}$光滑且其上$\nabla h\neq\boldsymbol0$，内侧对应$h$增大的方向。
+2. 若边界$\partial S=\{h=0\}$光滑且其上$\nabla h\neq\boldsymbol0$，内侧对应$h$增大的方向。在闭集、正则边界与适定闭环等条件下，以闭环速度朝内或相切给出Nagumo边界判据。
+3. 用$h(x)=x^3$表示同一半轴却在零点丢失梯度方向的反例，引出由集合内邻近点逼近速度方向的切锥。半轴的$T_S(0)=[0,\infty)$排除负速度；在已声明的正则边界条件下，切锥简化为梯度半空间。退化边界的方向检查与下一节沿轨迹的CBF比较证明分别处理。
 
 #### 5.4.2 安全条件下的可行动作
 
-主要内容：函数$h$只用符号区分安全与否，不必等于几何距离。
+主要内容：函数$h$只用符号区分安全与否，不必等于几何距离。从边界上的$\dot h\geq0$出发，先用$\dot h\geq-\gamma h$、$\gamma>0$限制内部安全余量的下降，再推广为扩展类$\mathcal K$函数；内部可下降、接近边界时下降限额趋零的机制引出CBF。
 
 论证与表述逻辑：
 
-1. 命题（CBF条件保证正向不变）：若反馈$\boldsymbol u=\kappa(\boldsymbol x)$局部Lipschitz，并在包含$S$的开区域$D$中始终满足$\kappa(\boldsymbol x)\in K_{\mathrm{cbf}}(\boldsymbol x)$，则$S$在相应闭环解存在的时间区间内正向不变。
-2. 推导：沿任意闭环解记$r_t=h(\boldsymbol x_t)$，链式法则和CBF约束给出$\dot r_t\geq-\alpha(r_t)$。考虑比较系统$\dot z_t=-\alpha(z_t),\qquad z_0=r_0\geq0$$\alpha$局部Lipschitz，比较系统局部解唯一，且$z=0$是平衡解；从非负初值出发的解不能穿过零点。又因$\alpha$严格递增且$\alpha(0)=0$，$z_t$留在$[0,z_0]$内，所以比较解在任意有限时间存在。
-3. 回到离散温度系统，令$S=[0,3],U=[0,1]$且无噪声。下一步安全要求$0\leq0.8x+u\leq3$，因此精确的一步安全动作集合为$K_{\mathrm{safe}}(x) =[\,\max\{0,-0.8x\},\ \min\{1,3-0.8x\}\,]$对$x\in[0,3]$，下端为$0$，上端至少为$0.6$，所以每个安全状态都有可行动作。
+1. 命题（CBF条件保证正向不变）：在已声明的动态与安全函数正则条件下，若反馈$\boldsymbol u=\kappa(\boldsymbol x)$局部Lipschitz，并在包含$S$的开区域$D$中始终满足$\kappa(\boldsymbol x)\in K_{\mathrm{cbf}}(\boldsymbol x)$，则$S$在相应闭环解存在的时间区间内正向不变。
+2. 推导：沿任意闭环解记$r_t=h(\boldsymbol x_t)$，链式法则和CBF约束给出$\dot r_t\geq-\alpha(r_t)$。考虑比较系统$\dot z_t=-\alpha(z_t),\qquad z_0=r_0\geq0$；$\alpha$局部Lipschitz，比较系统局部解唯一，且$z=0$是平衡解，从非负初值出发的解不能穿过零点。又因$\alpha$严格递增且$\alpha(0)=0$，$z_t$留在$[0,z_0]$内，所以比较解在任意有限时间存在。
+3. 回到离散温度系统，令$S=[0,3],U=[0,1]$且无噪声。下一步安全要求$0\leq0.8x+u\leq3$，因此精确的一步安全动作集合为$K_{\mathrm{safe}}(x) =[\,\max\{0,-0.8x\},\ \min\{1,3-0.8x\}\,]$；对$x\in[0,3]$，下端为$0$，上端至少为$0.6$，所以每个安全状态都有可行动作。
 
 #### 5.4.3 可行约束下的反馈修正
 
@@ -774,8 +786,8 @@
 论证与表述逻辑：
 
 1. 示例（一维积分器上的安全投影）：考虑$\dot x_t=u_t$、$S=[0,\infty)$、$h(x)=x$及$\alpha(h)=\gamma h$。
-2. 固定状态时，正定二次目标的强制性阻止最小化序列逃向无穷，闭可行域保证取到最小值，凸性与严格凸性保证唯一。约束$xu\geq|x|^{3/2}$下唯一最优动作$\operatorname{sgn}(x)\sqrt{|x|}$仍非局部Lipschitz；约束梯度在零退化，说明调用闭环不变性前必须另验反馈规则性。
-3. 于是$x_1=1$，而不是无约束的$1.153$；此时$e_1=1-[2+0.4\sin(\pi/8)]\approx-1.153$，不再等于$0.5e_0=-1$。
+2. 固定状态时，正定二次目标的强制性阻止最小化序列逃向无穷，非空闭可行域保证取到最小值，凸性与严格凸性保证唯一。约束$xu\geq|x|^{3/2}$下唯一最优动作在零点为零、非零处为$\operatorname{sgn}(x)\sqrt{|x|}$，仍非局部Lipschitz；约束梯度在零退化，说明调用闭环不变性前必须另验反馈规则性。
+3. 对无噪声温度模型，先命名状态相关的安全动作界$\underline u_{\mathrm{safe}}(x)=\max\{0,-0.8x\}$与$\overline u_{\mathrm{safe}}(x)=\min\{1,3-0.8x\}$，再把名义动作投影到已核验非空的安全区间。正弦跟踪的首步投影给出$x_1=1$，而不是无约束的$1.153$；此时$e_1=1-[2+0.4\sin(\pi/8)]\approx-1.153$，不再等于$0.5e_0=-1$。投影保证该区间内的逐步安全，跟踪误差须保留安全修正项重新分析。
 
 #### 5.4.4 扰动与离散执行下的安全保证
 
@@ -783,8 +795,10 @@
 
 论证与表述逻辑：
 
-1. 离散温度系统若$|w_{t+1}|\leq\delta$，最坏扰动下的安全动作集合为$K_{\mathrm{safe}}^\delta(x) =[\,\max\{0,\delta-0.8x\},\ \min\{1,3-\delta-0.8x\}\,]$当$0\leq\delta\leq0.6$，该集合对所有$x\in[0,3]$非空：下端不超过$1$，未截断区间宽度$3-2\delta$非负，且上端在$x=3$也不小于零。
-2. CBF还要求用于计算约束的状态信息可靠。若只有估计值，应先给估计误差集合界或概率模型，再收紧安全集合或构造输出反馈屏障。
+1. 离散温度系统若$|w_{t+1}|\leq\delta$，最坏扰动下的安全动作集合为$K_{\mathrm{safe}}^\delta(x) =[\,\max\{0,\delta-0.8x\},\ \min\{1,3-\delta-0.8x\}\,]$；当$0\leq\delta\leq0.6$，该集合对所有$x\in[0,3]$非空：下端不超过$1$，未截断区间宽度$3-2\delta$非负，且上端在$x=3$也不小于零。
+2. 采样点满足连续CBF条件不自动保证采样间安全；在有效的速度界与Lipschitz区域中预留保持动作所需的裕量，或另以离散屏障作逐步归纳，再检查连续采样间轨迹。
+3. 双积分器的位置约束先显示一阶导数没有动作、二阶导数才出现输入，再命名相对阶。高阶屏障还要求初态同时满足位置与新增速度条件、约束始终可行且闭环适定；制动距离反例说明安全位置不等于可避免后续越界。
+4. CBF还要求用于计算约束的状态信息可靠。若只有估计值，应先给估计误差集合界或概率模型，再收紧安全集合或构造输出反馈屏障。
 
 ### 5.5 本章小结
 
@@ -792,7 +806,7 @@
 
 论证与表述逻辑：
 
-1. 一个可实施策略既要遵守信息时序，也要符合执行器能够改变的方向。可控、可观测要求处理全部状态方向；可稳定、可检测只要求危险的遗漏方向不存在。
+1. 一个可实施策略既要遵守信息时序，也要符合执行器能够改变的方向。可控、可观测要求处理全部状态方向；可稳定只要求不可控模式自行衰减，可检测只要求不可观测模式自行衰减。结构条件仍需由实际闭环矩阵、误差动态或Lyapunov不等式完成行为核验。
 2. 在同一温度模型中，固定目标$2$需要平衡输入$0.4$，再加误差反馈才得到$e_{t+1}=0.5e_t$。运动参考改用$u_t^r=r_{t+1}-0.8r_t$抵消参考变化，同一个稳定误差系统便能服务于跟踪。
 3. Riccati方法在特定二次成本下选择反馈。有限时域的逐步配方保持二次形式；确定性无折扣无限时域还需可稳定、成本可检测及权重条件，才能同时得到稳定化与成本最优性。
 4. 安全性约束全过程。对无噪声温度系统，固定目标反馈已经保持$0\leq u\leq1,0\leq x\leq3$；同一增益的运动参考却可能在初始纠偏时要求过大输入。
@@ -800,6 +814,8 @@
 ## 第6章 策略的价值与优化
 
 正文：[03-policy-value-and-optimization.tex](../../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/03-policy-value-and-optimization.tex)。
+
+本章从温度调节中舒适偏差与能耗的取舍进入，研究可实施策略的后果怎样计价、怎样计算以及怎样优化。初态给定、策略确定且状态演化唯一确定时才得到单条轨迹；初态、行动或环境含随机性时，通常需要评价策略诱导的轨迹分布。期望递推中，固定策略按行动概率加权，优化才改变行动规则；非线性风险还须明确行动随机性是否进入风险映射，不能直接沿用线性加权。
 
 ### 6.1 策略的表示与价值
 
@@ -817,8 +833,9 @@
 
 论证与表述逻辑：
 
-1. 若只能观察$Y_t$，允许信息是$\mathcal I_t=\sigma(Y_0,A_0,\ldots,A_{t-1},Y_t)$，策略不能直接读取$S_t$。
-2. 共同温度模型仍为$x_{t+1}=0.8x_t+u_t+w_{t+1}, \qquad y_t=x_t+v_t$$x_t$是相对于环境温度的温差，$u_t$是加热量。
+1. 由状态行动历史定义历史依赖随机策略，再限制为只读当前状态的Markov策略及不随时间改变的平稳Markov策略。随机数不得包含未来环境噪声，去掉历史依赖也不等于去掉时间依赖。
+2. 若只能观察$Y_t$，允许信息是$\mathcal I_t=\sigma(Y_0,A_0,\ldots,A_{t-1},Y_t)$，策略不能直接读取$S_t$。条件分布$b_t(\mathrm ds)=\mathbb P(S_t\in\mathrm ds\mid\mathcal I_t)$称为信念状态；只有在模型已知且它连同时间足以预测后续观测与成本时，才可用它作为决策状态。
+3. 共同温度模型为$x_{t+1}=0.8x_t+u_t+w_{t+1}$、$y_t=x_t+v_t$，其中$x_t$是相对于环境温度的温差，$u_t$是加热量。无噪声反馈使误差收敛，但尚未给出策略成本；恢复观测噪声后，状态反馈也不能直接当作同一输出反馈。
 
 #### 6.1.2 策略诱导的轨迹
 
@@ -837,26 +854,27 @@
 论证与表述逻辑：
 
 1. 运行到中途，已经支付的成本不再改变，但后续行动仍可比较。对一段末状态为$s$的历史$h_t$，一般历史策略的继续成本定义为$J_t^\pi(h_t)= \mathbb E^\pi_{h_t} \left[\sum_{k=t}^{H-1}c_k(S_k,A_k)+c_H(S_H)\right]$下标$h_t$表示固定已知历史，再用策略和转移核重新生成后续过程。
-2. 只有一次行动时，$L$退化为损失$\ell(a,Y)$，收益为$-\ell(a,Y)$。例如同一阳性概率$0.3$，在对称分类损失与高漏诊损失下会对应不同的行动。
+2. 持续运行的系统可能始终支付能耗，无折扣无限累计因而可能发散。几何折扣让成本每延后一步就乘一次$\gamma$，第$t$步权重为$\gamma^t$；改变$\gamma$可能改变策略排序，这是评价目标的选择。时不变成本满足$|c|\leq C$且$0\leq\gamma<1$时，几何级数保证$|V^\pi(s)|\leq C/(1-\gamma)$；无界二次成本仍需另证可积性或矩界。
+3. 温度例用$(x-2)^2+u^2$计价舒适偏差和总输入；改成偏移输入$(u-0.4)^2$会改变目标。只有一次行动时，$L$退化为损失$\ell(a,Y)$，收益为$-\ell(a,Y)$；同一阳性概率$0.3$在对称分类损失与高漏诊损失下会对应不同的行动。
 
 ### 6.2 策略的轨迹价值与风险
 
-主要内容：固定策略后，比较平均收益、波动、尾部风险、违规概率和动态风险，说明各指标所约束的后果不同。
+主要内容：固定策略后，比较平均损失、损失波动、尾部风险、违规概率和动态风险，说明各指标所约束的后果不同。
 
 论证与表述逻辑：
 
-1. 平均收益与价值波动：固定走稳妥路线的期望损失为$2$，固定走捷径的期望损失为$1.2$。捷径在平均成本上占优，却有$20\%$的概率付出损失$6$。
+1. 平均损失与损失波动：固定走稳妥路线的期望损失为$2$，固定走捷径的期望损失为$1.2$。捷径在平均成本上占优，却有$20\%$的概率付出损失$6$。
 2. 概率约束与模型不确定性：任务也可以直接限制损失超标的概率，将违反要求的策略排除在可行范围之外。固定策略产生损失$L$，给定阈值$b$和$\varepsilon\in(0,1)$，机会约束（chance constraint）为$\mathbb P(L>b)\leq\varepsilon$它控制超标是否发生，不区分超标幅度。
 
-#### 6.2.1 平均收益与价值波动
+#### 6.2.1 平均损失与损失波动
 
-主要内容：固定走稳妥路线的期望损失为$2$，固定走捷径的期望损失为$1.2$。捷径在平均成本上占优，却有$20\%$的概率付出损失$6$。
+主要内容：固定走稳妥路线的期望损失为$2$，固定走捷径的期望损失为$1.2$。捷径在平均成本上占优，却有$20\%$的概率付出损失$6$。均值--方差反例引出评价应尊重的逐场景单调性、确定常数平移、比例缩放与合并损失关系，将相干公理表述为准则要求而非分布自动性质。
 
 论证与表述逻辑：
 
 1. 设随机轨迹损失$L$可积。期望$\mathbb E[L]$按发生概率线性汇总所有后果；对应的期望收益为$-\mathbb E[L]$。
 2. 定义（相干风险）：设风险泛函$\rho:L^1(P)\to\mathbb R$按损失越小越好的方向评价。单调性要求$L\leq L'$几乎处处时$\rho(L)\leq\rho(L')$；平移等变性要求$\rho(L+m)=\rho(L)+m$，其中$m$为确定常数。凸性要求$\rho(\tau L+(1-\tau)L') \leq\tau\rho(L)+(1-\tau)\rho(L'),\qquad 0\leq\tau\leq1$若具有单调性、平移等变性、正齐次性$\rho(\lambda L)=\lambda\rho(L)$（$\lambda\geq0$）和次可加性$\rho(L+L')\leq\rho(L)+\rho(L')$，称为相干风险（coherent risk measure）。
-3. 将正齐次性用于两项按比例承担的损失，再使用次可加性，就得到前面的凸性不等式。策略随机化通常对应后者，不能直接套用这个凸性公式。
+3. 将正齐次性用于同一场景中按比例承担的两份损失，再使用次可加性，得到凸性不等式。策略随机化通常是先抽一个方案、再完整承担该方案损失，与按比例承担不同，不能直接套用该凸性公式。
 
 #### 6.2.2 尾部损失与风险评价
 
@@ -879,7 +897,7 @@
 
 ##### 6.2.2.2 基于尾部平均的条件风险价值
 
-主要内容：分位数给出尾部开始的阈值，却没有计入阈值以上的损失幅度。要比较严重后果，可以取出损失最大、总概率固定的一部分结果，计算它们的平均损失。
+主要内容：分位数给出尾部开始的阈值，却没有计入阈值以上的损失幅度。要比较严重后果，可以取出损失最大、总概率固定的一部分结果，计算它们的平均损失。固定阈值时先计基准再按尾部概率折算超额损失，在全部阈值中最小化；单侧导数将这个构造接到分位数，并在原子处只取补足尾部所需的质量。
 
 论证与表述逻辑：
 
@@ -899,12 +917,13 @@
 
 #### 6.2.3 概率约束与模型不确定性
 
-主要内容：任务也可以直接限制损失超标的概率，将违反要求的策略排除在可行范围之外。固定策略产生损失$L$，给定阈值$b$和$\varepsilon\in(0,1)$，机会约束（chance constraint）为$\mathbb P(L>b)\leq\varepsilon$它控制超标是否发生，不区分超标幅度。
+主要内容：用机会约束限制固定策略损失超标的概率，再用参数族和候选分布集评价模型不确定性。机会约束$\mathbb P(L>b)\leq\varepsilon$控制事件发生概率，最坏模型期望则在允许生成机制中比较平均损失，二者都不同于逐路径最坏损失。
 
 论证与表述逻辑：
 
 1. 必须把违规事件写清楚。温度任务可以限制终端$\{x_H>3\}$、某时刻$\{x_t>3\}$，也可以限制整段$\{\exists t\leq H:x_t\notin[0,3]\}$。
-2. 有限样本空间中，非空闭候选集位于紧致概率单纯形内，线性期望必达到最大值。若集合排除某些结果，保证也只覆盖其允许支持。
+2. 不给参数概率权重时，以$\sup_\theta\mathbb E_{P_\theta}^\pi[L]$覆盖各候选参数；分布鲁棒评价将参数族推广为$\mathcal P$，每个$Q$与固定策略共同生成完整轨迹分布。固定共享参数与逐节点改换最坏模型的候选集合不同，集合构造及真实分布覆盖保证也需另证。
+3. 有限样本空间中，非空闭候选集位于紧致概率单纯形内，线性期望必达到最大值。若集合排除某些结果，保证也只覆盖其允许支持；最坏分布存在不能替代极小极大交换和对偶所需条件。
 
 #### 6.2.4 逐时信息下的动态风险
 
@@ -922,12 +941,12 @@
 论证与表述逻辑：
 
 1. 期望有塔式性质把二者连接起来，静态CVaR一般没有同样的关系。
-2. 承诺$R$时，起点损失以概率$1/4,1/2,1/4$取$0,2,4$，故$\operatorname{CVaR}_{0.5}(L^R) =\frac{(1/4)\times4+(1/4)\times2}{1/2}=3$静态评价因此偏好$R$。
+2. 承诺$R$时，起点损失以概率$1/4,1/2,1/4$取$0,2,4$，故$\operatorname{CVaR}_{0.5}(L^R)=3$，小于承诺$F$的$3.5$；到达$B$后，$R$的条件CVaR变为$4$，$F$仍为$3.5$，因此偏好反转。
 3. 反转不是算错，而是整条轨迹的尾部与当前分支的尾部并非同一批结果。
 
 ##### 6.2.4.2 条件风险与时间一致性
 
-主要内容：前例的排序反转来自整条轨迹尾部与条件尾部的差别。若要求后续节点已有的风险排序传到当前，就可以把评价规则定义为递归：下一节点计算剩余风险，当前节点再汇总这些风险值。
+主要内容：前例的排序反转来自整条轨迹尾部与条件尾部的差别。若要求后续节点已有的风险排序传到当前，就可以把评价规则定义为递归：下一节点计算剩余风险，当前节点再汇总这些风险值。历史可测阈值产生的条件评价是只按几乎处处确定的随机变量，因此取其最大共同下界来最小化，以此说明本质下确界为何先于条件CVaR公式所需。
 
 论证与表述逻辑：
 
@@ -947,15 +966,17 @@
 
 #### 6.3.1 有限时域下的价值递推
 
-主要内容：评价准则确定以后，可以计算指定策略的剩余成本。有限时域的终端没有后续行动，故$V_H^\pi(s)=c_H(s)$；已知下一时刻价值以后，当前只需按策略和环境的概率汇总它。
+主要内容：在期望准则下，从终端价值$V_H^\pi(s)=c_H(s)$向前计算指定策略的剩余成本。给定Markov策略时，先按转移概率汇总后继价值，再按指定行动概率平均；整个求值过程不改变策略。
 
 论证与表述逻辑：
 
-1. 恢复随机扰动后，同一反馈诱导轨迹分布而非上述单一路径。若成本可积，可以沿条件分布求期望；不能只把噪声取均值零后代回非线性的平方成本。
+1. 将累计和拆为当前成本与后续和，使用塔式法则得到固定策略Bellman式。历史依赖策略仍须保留$J_t^\pi(h_t)$；只有继续规则与预测信息都由当前状态概括，才能缩写为状态价值。
+2. 路线例的固定随机比例给出$2-0.8p$，与枚举三条轨迹一致。温度例逐项算出固定反馈成本$6.74$、固定输入成本$8.5184$，说明舒适偏差与输入成本的取舍；两项策略比较不等于全策略最优性证明。
+3. 恢复随机扰动后，须沿条件分布求可积成本的期望。平方成本包含状态方差，不能只将零均值噪声代回确定性轨迹而遗漏该项。
 
 #### 6.3.2 无限折扣时域下的价值计算
 
-主要内容：无限时域没有终端值供反向计算。如果成本有界且折扣小于$1$，远期剩余成本可以统一控制，同一时不变策略的价值便可由“当前成本加折扣后的继续价值”这个固定点关系确定。
+主要内容：无限时域没有终端值供反向计算。在有限状态行动、时不变转移、有界成本、$0\leq\gamma<1$和给定平稳Markov策略下，以“当前成本加折扣继续价值”的算子压缩性确定唯一固定点，再证明该固定点正是策略期望成本。
 
 论证与表述逻辑：
 
@@ -979,8 +1000,9 @@
 论证与表述逻辑：
 
 1. 随机策略需要多说明一层。采取行动之前，$A_t$尚未揭晓；可在联合条件分布$\pi_t(a\mid s)P_t(s'\mid s,a)$上，对行动和下一状态一起评价：$V_t^{\pi,\rho}(s)= \rho^\pi_{t,s}\bigl(c_t(s,A_t)+V_{t+1}^{\pi,\rho}(S_{t+1})\bigr)$这里$\rho^\pi_{t,s}$的输入是$(A_t,S_{t+1})$上的随机损失，连当前阶段成本也必须放在映射内。
-2. 定义（条件分布集合的矩形性）：在有限概率树上，为每个历史行动节点给定非空下一步条件分布集合。若允许的路径分布恰好包括从各节点集合任意选取条件核，再按路径相乘得到的全部分布，则称该不确定集合具有矩形性（rectangularity）。
-3. 若一个未知参数全程固定，矩形性通常不成立。设$Y_1,Y_2\in\{0,1\}$在给定$p\in\{0.2,0.8\}$后独立，两次共用该$p$。
+2. 先评价各行动的环境风险再平均行动，是另一个评价目标。路线$p=1/2$时，联合CVaR$_{0.9}$为$6$，先算行动CVaR$_{0.9}$再平均为$4$。单调性和平移等变性给出一步非扩张，明确约定折扣位置并取$0\leq\gamma<1$后，再得到无限时域压缩与误差界。
+3. 有限维相干风险的支撑表示给出概率单纯形内的非空闭凸包络；一般凸风险还含罚项。若有限树允许从各节点候选集合任取条件核并拼成全部路径模型，称为矩形性，才可用逆向归纳将嵌套风险解释为该集合的局部最坏期望。
+4. 固定共享参数$p\in\{0.2,0.8\}$时，两次Bernoulli结果的事件概率$p(1-p)=0.16$；逐节点改换参数却能给出$0.64$。后者扩大了候选机制，不能当作原固定参数问题的精确求值。
 
 ##### 6.3.3.2 静态尾部风险下的增广计算
 
@@ -988,7 +1010,7 @@
 
 论证与表述逻辑：
 
-1. 把已累计成本记为$B_0=0$、$B_{t+1}=B_t+\gamma^tc_t(S_t,A_t)$。
+1. 把已累计成本记为$B_0=0$、$B_{t+1}=B_t+\gamma^tc_t(S_t,A_t)$。在增广状态上，$W_t^{\pi,\eta}$计算终端正部$(B_H+\gamma^Hc_H(S_H)-\eta)_+$的条件期望；非线性留在终端，递推仍按给定策略与转移概率求和。策略若还读取其他历史，也须继续保留。
 2. 计算完每个阈值的期望以后，该固定策略的风险为$\operatorname{CVaR}_\alpha(L^\pi) =\inf_{\eta\in\mathbb R} \left\{\eta+\frac{1}{1-\alpha} \sum_s\mu_0(s)W_0^{\pi,\eta}(s,0)\right\}$这里优化$\eta$只是计算CVaR定义中的辅助参数，并没有优化策略。
 
 ### 6.4 策略的轨迹价值优化
@@ -1009,7 +1031,9 @@
 
 1. 定义（条件风险与Bayes决策）：给定条件分布核$P(\mathrm dy\mid x)$，假设损失可测且下列期望有限。行动$a$在观测$x$下的条件风险（conditional risk）为$r(a\mid x)=\mathbb E[\ell(a,Y)\mid X=x] =\int_{\mathcal Y}\ell(a,y)P(\mathrm dy\mid x)$若最小值达到，任取$a^\star(x)\in\argmin_{a\in\mathcal A}r(a\mid x)$称为Bayes行动（Bayes action）。若该选择关于$x$可测，映射$\delta^\star(x)=a^\star(x)$称为Bayes决策规则（Bayes decision rule）。
 2. 可测规则$\delta$的总体风险为$R(\delta)=\mathbb E[\ell(\delta(X),Y)]$塔式法则和逐点最小性给出完整的总体比较：$R(\delta^\star) =\mathbb E\!\left[\mathbb E[\ell(\delta^\star(X),Y)\mid X]\right] =\mathbb E[\min_a r(a\mid X)] \leq\mathbb E[r(\delta(X)\mid X)] =R(\delta)$期望存在和可测选择不可省略。
-3. 行动集合确定以后，还可以比较确定选择与随机选择。给定$x$，按概率核$q(\mathrm da\mid x)$选行动的风险为$\int_{\mathcal A}r(a\mid x)q(\mathrm da\mid x)\geq\inf_a r(a\mid x)$有限或可数行动时就是加权和。
+3. 用有限损失表按整行计算期望，说明行动不能在结果揭晓后再逐列挑选。二分类的非对称代价给出阈值$c_{\mathrm{FP}}/(c_{\mathrm{FP}}+c_{\mathrm{FN}})$；只有约定风险并列时选阳性，才将预测阳性写成不小于阈值的充要条件，等号处改用其他并列规则仍最优。
+4. 增加拒答行动后，比较最小分类风险与拒答成本，并区分接受覆盖率和预测集合覆盖率。正覆盖率下优先拒绝条件错误风险较高的输入，可以降低接受风险，却减少接受比例；任意增加拒答不保证风险下降，须同时报告风险和覆盖率。覆盖预算会耦合各观测点，随机规则下的线性规划与确定规则下的整数约束也需分别处理。
+5. 行动集合确定以后，再比较确定选择与随机选择。给定$x$，按概率核$q(\mathrm da\mid x)$选行动的风险为$\int_{\mathcal A}r(a\mid x)q(\mathrm da\mid x)\geq\inf_a r(a\mid x)$；无额外耦合约束且最小值达到时，最佳纯行动已经足够，预算等约束下随机化仍可改变可行比例。
 
 #### 6.4.2 离散演化下的策略优化
 
@@ -1026,7 +1050,7 @@
 
 论证与表述逻辑：
 
-1. 命题（有限时域最优性原理）：各时刻各状态选择一个达到最小值的行动，构成达到该值的确定性Markov策略。
+1. 定理（有限时域最优性原理）：在有限MDP中，最优递推给出全部允许历史依赖随机继续策略的成本下确界；各时刻各状态选择一个达到最小值的行动，构成达到该值的确定性Markov策略。
 2. 推导：用逆向归纳。时刻$H$没有行动，终端成本就是最小继续成本。假设每段末状态为$s'$的历史$h_{t+1}$的最小继续成本均为$V_{t+1}^\star(s')$。
 3. 风险偏好属于任务设定，不能在算完期望最优后将它解释成任意意义下的“最稳妥”。
 
@@ -1037,7 +1061,8 @@
 论证与表述逻辑：
 
 1. 再对任意历史依赖随机策略$\pi$比较。固定点满足每个状态行动的不等式$V^\star(s)\leq c(s,a)+\gamma\sum_{s'}P(s'\mid s,a)V^\star(s')$沿策略实际选择的行动条件化，再把下一步的不等式代入，重复$n$步得到$V^\star(s)\leq\mathbb E_s^\pi \left[\sum_{t=0}^{n-1}\gamma^tc(S_t,A_t)+\gamma^nV^\star(S_n)\right]$该操作不要求$\pi$平稳，因为每一历史选择的行动都满足同一Bellman不等式。
-2. 连续状态或行动中，还需可测转移、适当的成本下半连续性、非空可行动作及紧致性或强制性条件，再用可测选择将点态最小行动拼成策略。
+2. 折扣取$1$不再自动保证压缩或尾项消失。长期平均成本改用每步平均这一目标；有限单链模型的平均成本方程将长期主项$g$与状态偏移$h$分开，其存在性不能由折扣压缩证明推出。
+3. 连续状态或行动中，还需可测转移、适当的成本下半连续性、非空可行动作及紧致性或强制性条件，再用可测选择将点态最小行动拼成策略。
 
 ##### 6.4.2.3 基于价值界与占用流量的最优性验证
 
@@ -1065,20 +1090,20 @@
 
 论证与表述逻辑：
 
-1. 确定性轨迹的价值方程：考虑从$(\boldsymbol x,t)$出发的受控系统与成本$\dot{\boldsymbol x}(s)&=\boldsymbol f(\boldsymbol x(s),\boldsymbol u(s),s),\qquad \boldsymbol x(t)=\boldsymbol x, \\ J_{t,\boldsymbol x}(\boldsymbol u) &=\phi(\boldsymbol x(T))+\int_t^T\ell(\boldsymbol x(s),\boldsymbol u(s),s)\,\mathrm ds$状态属于$\mathbb R^n$，动作属于非空集合$U$。
+1. 确定性轨迹的价值方程：从给定状态与时间出发，在非空动作集合中选择使轨迹存在、成本有限并满足信息与状态约束的控制。先由控制截断和拼接建立动态规划，再在光滑及一致展开条件下得到HJB，沿全程轨迹验证候选价值。
 2. 随机轨迹的价值方程：随机轨迹无法逐条预先选择，但可以优化允许策略的期望成本。
 3. 线性二次成本下的连续策略：在线性动态$\dot{\boldsymbol x}=\boldsymbol A\boldsymbol x+\boldsymbol B\boldsymbol u$下，取$\boldsymbol u\in\mathbb R^m$，阶段成本$\ell(\boldsymbol x,\boldsymbol u)=\boldsymbol x^\top\boldsymbol Q\boldsymbol x+\boldsymbol u^\top\boldsymbol R\boldsymbol u$，终端成本$\phi(\boldsymbol x)=\boldsymbol x^\top\boldsymbol Q_T\boldsymbol x$，其中$\boldsymbol Q,\boldsymbol Q_T\succeq\boldsymbol0$、$\boldsymbol R\succ\boldsymbol0$。
 4. 非光滑与受限信息下的价值方程：不同动作的最优成本可能在某处交会，使价值连续却出现折点。此时轨迹成本仍有定义，但经典HJB所用的梯度无法在交会点直接计算。
 
 ##### 6.4.3.1 确定性轨迹的价值方程
 
-主要内容：考虑从$(\boldsymbol x,t)$出发的受控系统与成本$\dot{\boldsymbol x}(s)&=\boldsymbol f(\boldsymbol x(s),\boldsymbol u(s),s),\qquad \boldsymbol x(t)=\boldsymbol x, \\ J_{t,\boldsymbol x}(\boldsymbol u) &=\phi(\boldsymbol x(T))+\int_t^T\ell(\boldsymbol x(s),\boldsymbol u(s),s)\,\mathrm ds$状态属于$\mathbb R^n$，动作属于非空集合$U$。
+主要内容：对从$(\boldsymbol x,t)$出发的确定性受控轨迹，最小化运行成本积分与终端成本之和。允许控制必须满足信息、动作与状态条件，使轨迹存在且成本有限；由短时动态规划推导HJB，再把局部方程转成全程最优性证书。
 
 论证与表述逻辑：
 
-1. 命题（确定性HJB验证定理）：假设每个允许控制都产生存在到$T$的轨迹，沿轨迹的链式法则和成本积分成立。若有可实现反馈$\boldsymbol u^\star=\kappa(\boldsymbol x,t)$逐点达到HJB下确界，且闭环轨迹存在到$T$并满足所有可行条件，则$V$为最优价值，$\kappa$为最优反馈。
-2. 推导：任取允许控制，HJB的下确界不大于代入该动作的值，所以沿轨迹$\partial_sV(\boldsymbol x(s),s)+ \nabla_{\boldsymbol x}V(\boldsymbol x(s),s)^\top \boldsymbol f(\boldsymbol x(s),\boldsymbol u(s),s) +\ell(\boldsymbol x(s),\boldsymbol u(s),s)\geq0$前两项由链式法则合为$\mathrm dV(\boldsymbol x(s),s)/\mathrm ds$。从$t$积分到$T$，用终端条件得到$J_{t,\boldsymbol x}(\boldsymbol u)\geq V(\boldsymbol x,t)$。因而候选值是所有允许成本的共同下界。
-3. HJB是光滑最优价值满足的局部关系；验证定理则把一个候选解变成全程最优性的证书。只在若干采样点降低方程残差还不够，还需终端或边界条件、极小动作的可实现性、轨迹存在性及整个相关区域上的方程关系。
+1. 动态规划要求允许控制可截断和拼接，并具有可测的近似最优继续选择。常值动作给出HJB不等式的一个方向，短段近似最优控制配合局部一致余项给出反向不等式。Hamilton量是瞬时成本$\ell$与沿状态速度的价值变化率$\nabla V^\top\boldsymbol f$之和，时间导数另计；它是动作比较的目标，不是前章的Hamilton能量函数。
+2. 定理（确定性HJB验证）：候选$V\in C^1$满足HJB与终端条件，且每个允许控制都产生存在到$T$的轨迹，链式法则和成本积分成立。若可实现反馈$\kappa$逐点达到下确界，闭环轨迹存在到$T$并满足所有可行条件，则$V$为最优价值，$\kappa$为最优反馈。
+3. 任意允许控制下，HJB给出沿轨迹$\partial_sV+\nabla V^\top\boldsymbol f+\ell\geq0$。将前两项合为价值导数，从$t$积分到$T$并代入终端条件，得到$J_{t,\boldsymbol x}(\boldsymbol u)\geq V(\boldsymbol x,t)$；达到下确界的反馈使等号成立。只在采样点降低方程残差还不足以验证全程最优。
 
 ##### 6.4.3.2 随机轨迹的价值方程
 
@@ -1087,7 +1112,7 @@
 论证与表述逻辑：
 
 1. 随机轨迹无法逐条预先选择，但可以优化允许策略的期望成本。设$\boldsymbol W_s$为$d$维标准Brownian运动，状态满足$\mathrm d\boldsymbol X_s=\boldsymbol f(\boldsymbol X_s,\boldsymbol u_s,s)\,\mathrm ds +\boldsymbol\Sigma(\boldsymbol X_s,\boldsymbol u_s,s)\,\mathrm d\boldsymbol W_s,$其中$\boldsymbol\Sigma$为$n\times d$矩阵。
-2. 命题（随机HJB验证）：若可容许反馈$\boldsymbol u^\star=\kappa(\boldsymbol x,t)$逐点达到HJB下确界，则$V$等于最优期望成本，$\kappa$达到该值。
+2. 定理（随机HJB验证）：候选价值满足状态二阶、时间一阶连续可微及HJB和终端条件；各允许控制须使过程存在到$T$，成本与有限变差项可积，Itô随机积分为真鞅。可容许反馈若逐点达到下确界，才由验证得到最优期望成本。
 3. 推导：对任意允许控制，HJB给出$\partial_sV+\mathcal L^{\boldsymbol u_s}V+\ell(\boldsymbol X_s,\boldsymbol u_s,s)\geq0$。沿轨迹应用Itô公式、积分并取从$(t,\boldsymbol x)$出发的期望，随机积分因真鞅条件消失，得到$\mathbb E_{t,\boldsymbol x}\left[ \phi(\boldsymbol X_T)+\int_t^T\ell(\boldsymbol X_s,\boldsymbol u_s,s)\,\mathrm ds\right] \geq V(\boldsymbol x,t)$对$\kappa$，生成元不等式取等号，同一计算证明其期望成本等于共同下界$V$。这验证的是期望最优，不是每条噪声实现上的路径最优。
 4. 若扩散依赖动作，它直接参与动作最小化；依赖状态时也可能改变价值形状。因此噪声均值为零并不足以保证反馈不变。
 
@@ -1098,7 +1123,7 @@
 论证与表述逻辑：
 
 1. 有限时域上这些条件也保证不会在中途丢失所需解。矩阵常微分方程先在终端附近有唯一局部对称解；在其存在区间，反馈连续，验证定理说明其二次型为非负最优成本，并不大于零控制的有限成本。
-2. 还可以直接给出成本差证书。
+2. 沿轨迹的二次价值导数与运行成本相加，等于反馈偏差的非负二次型；积分后得到任意策略成本与候选价值之差，最优反馈使它为零。标量例$P(t)=\tanh(T-t)$展示截止时间怎样改变反馈增益。
 3. 连续闭环需要特征值实部为负，离散闭环需要特征值位于单位圆内；CARE与DARE分别服务于这两个问题，不能混用。
 
 ##### 6.4.3.4 非光滑与受限信息下的价值方程
@@ -1133,22 +1158,26 @@
 
 ##### 6.4.4.2 未知收益下的探索价值
 
-主要内容：信息不一定来自独立购买的信号，也可能来自行动自身的结果。考虑两轮选择，每次成功奖励$1$、失败奖励$0$，本小节改用收益最大化，对应成本为奖励的负值。
+主要内容：行动结果既带来即时收益，也可能更新环境认识，从而改变后续选择。两轮先验例计算探索的决策价值，再转向固定环境下与已知参数基准比较的累计伪遗憾，说明可用信息下的最优策略仍可能承担学习代价。
 
 论证与表述逻辑：
 
-1. 自适应查询也改变统计证据的条件。因为过去观察决定下一次试验或停止时间，不能把选中样本无条件视为固定设计下的独立同分布数据。
-2. 遗憾使用另一个比较对象。令$Y_t$为第$t$轮奖励，$\mathcal H_{t-1}$为行动前信息，行动$A_t$在$Y_t$揭晓前选定，并假设对固定环境参数$\theta$，$\mathbb E[Y_t\mid\mathcal H_{t-1},A_t=a,\Theta=\theta] =\mu(a,\theta)\quad\text{几乎处处}$这里平均奖励不随轮次改变；条件均值假设使自适应选择后当前噪声仍正确中心化，却不使访问次数或全部数据变成非自适应。
+1. 两轮选择按成功奖励$1$、失败奖励$0$计收益。已知臂成功概率为$0.6$，未知臂两轮共用参数$\Theta\in\{0.3,0.9\}$，先验各为$1/2$；给定参数奖励条件独立，每轮只观察所选臂。两臂当前均值相同，未知臂成功和失败后却分别给出下一轮成功率$0.75$和$0.375$，从而决定继续或改选已知臂。
+2. 先选未知臂并按首轮结果调整，期望收益为$1.29$；先选已知臂及其最优后续给出$1.2$。比较两项首轮行动及后续后，才确定前者是这个两轮先验问题的最优适应策略。额外$0.09$来自后续信息用途；剩余时域、先验、反馈范围或参数变化都会改变计算。
+3. 过去观察会决定下一次试验或停止时间，选中数据不能无条件视为固定设计的独立同分布样本。置信与识别保证须检查行动的可预测性及序贯误差条件，探索价值计算本身不能代替这些统计证明。
+4. 遗憾改用额外掌握真实参数、每轮选平均奖励最高行动的基准，将两轮先验问题推广为固定环境$\theta$下的$T$轮比较。行动在当前奖励揭晓前选定，且$\mathbb E[Y_t\mid\mathcal H_{t-1},A_t=a,\Theta=\theta]=\mu(a,\theta)$几乎处处成立，才以$\operatorname{Reg}_T(\theta)=\sum_{t=1}^T[\mu(a^\star(\theta),\theta)-\mu(A_t,\theta)]$累计平均奖励差；该量不同于两条实现奖励轨迹之差。
+5. 回到原例，先知在两种参数下的基准期望收益为$1.2$和$1.8$，现有适应策略的条件期望收益为$0.81$和$1.77$。条件均值假设把期望伪遗憾接到收益差，按先验再平均得到$\tfrac12(1.2-0.81)+\tfrac12(1.8-1.77)=0.21=1.5-1.29$。这是先验平均的期望伪遗憾，不是随机变量每次实现的取值；EVSI也不能替代长期伪遗憾的序贯证明。
 
 ##### 6.4.4.3 线性高斯条件下的估计与行动分离
 
-主要内容：探索例中，当前动作改变了未来可获得的信息，因此估计和行动选择必须联合比较。在标准有限时域线性二次高斯控制（linear-quadratic-Gaussian control, LQG）中，已知动作只平移预测均值，不改变估计误差协方差。
+主要内容：探索例中的动作改变未来信息，估计与行动因而需要联合比较。标准有限时域线性二次高斯控制（linear-quadratic-Gaussian control, LQG）在独立高斯噪声、控制无关协方差、不施加输入或状态约束等条件下，所有允许输出策略共享同一误差协方差序列，由此把估计与期望成本优化分开。
 
 论证与表述逻辑：
 
-1. 令$\boldsymbol e_t=\boldsymbol x_t-\widehat{\boldsymbol x}_t$，投影性质说明$\mathbb E[\boldsymbol e_t\mid\mathcal I_t]=\boldsymbol0$，从而$\mathbb E[\boldsymbol x_t^\top\boldsymbol Q_t\boldsymbol x_t\mid\mathcal I_t] =\widehat{\boldsymbol x}_t^\top\boldsymbol Q_t\widehat{\boldsymbol x}_t +\operatorname{tr}(\boldsymbol Q_t\boldsymbol E_t)$交叉项的条件期望为零，因而无条件也有$\mathbb E[\widehat{\boldsymbol x}_t^\top\boldsymbol Q_t\boldsymbol e_t]=0$。
-2. 只看这一项分解还不能证明全程最优，需要把所有未来动作的影响合在一起。令$\boldsymbol P_t,\boldsymbol K_t$取前章有限LQR递推的结果，$\boldsymbol M_t=\boldsymbol R_t+\boldsymbol B^\top\boldsymbol P_{t+1}\boldsymbol B\succ\boldsymbol0$。
-3. 这就是分离原则：Kalman滤波根据观测创新更新条件均值，增益由误差协方差递推确定；LQR根据二次成本权重计算反馈增益，再将状态估计接入反馈。
+1. 控制对当前观测信息$\mathcal I_t$可测且具有有限二阶矩。Kalman条件均值的投影误差满足$\mathbb E[\boldsymbol e_t\mid\mathcal I_t]=\boldsymbol0$，将状态二次成本拆为估计均值的二次项与$\operatorname{tr}(\boldsymbol Q_t\boldsymbol E_t)$，交叉项的条件期望为零。
+2. 给定当前信息，动作是已知平移；扣除预测均值后，下一步误差为$\boldsymbol A\boldsymbol e_t+\boldsymbol w_{t+1}$，预测协方差为$\boldsymbol E_{t+1}^{-}=\boldsymbol A\boldsymbol E_t\boldsymbol A^\top+\boldsymbol W_t$。观测校正使用$\boldsymbol L_{t+1}=\boldsymbol E_{t+1}^{-}\boldsymbol C^\top(\boldsymbol C\boldsymbol E_{t+1}^{-}\boldsymbol C^\top+\boldsymbol N_{t+1})^{-1}$，再得$\boldsymbol E_{t+1}=(\boldsymbol I-\boldsymbol L_{t+1}\boldsymbol C)\boldsymbol E_{t+1}^{-}$。这些式子不含动作值或观测实现值，因此同一初始协方差产生策略共有的协方差序列；校正增益$\boldsymbol L$与LQR行动增益$\boldsymbol K$不同。
+3. 仅拆分单步状态成本不足以证明全程最优。回用有限LQR配方与时间求和，将任意输出策略成本分为策略无关的初态、过程噪声及估计误差迹项，再加非负的$\boldsymbol u_t+\boldsymbol K_t\widehat{\boldsymbol x}_t$二次项。可实施反馈$\boldsymbol u_t^\star=-\boldsymbol K_t\widehat{\boldsymbol x}_t$使余项同时为零，因而在允许输出策略中达到最小期望成本。
+4. 分离原则允许Kalman滤波估计状态、LQR计算行动反馈，既不要求有限时域滤波已达稳态，也不消除估计误差成本。受控观测、动作相关噪声、风险目标或输入状态约束可能破坏分解；温度安全例的有界两点噪声也不能直接替换成本节高斯假设。
 
 #### 6.4.5 风险约束下的策略优化
 
@@ -1156,8 +1185,12 @@
 
 论证与表述逻辑：
 
-1. 若声明风险作用于行动和下一状态的联合损失，则应优化概率分布$q\in\Delta(\mathcal A(s))$：$\inf_q\,\rho^q_{t,s}\bigl(c_t(s,A)+V_{t+1}(S')\bigr)$不能无条件用期望的线性性把它写成动作风险的平均，再声称确定策略最优。
-2. 最坏模型目标为$\inf_{\pi\in\Pi_{\mathrm{adm}}} \sup_{Q\in\mathcal P}\mathbb E_Q^\pi[L]$单步时退化为$\inf_a\sup_Q\mathbb E_Q[\ell(a,Y)]$，参数模型用$Q=P_\theta$。
+1. 有限状态行动、确定策略、充分状态和可逐历史拼接的规则下，用风险映射单调性作逆向归纳，得到嵌套风险的最优递推。若先算每项行动的环境风险再平均行动，线性组合仍由纯行动达到最小；若风险作用于行动和下一状态的联合损失，则应优化$q\in\Delta(\mathcal A(s))$，不能把联合风险直接改成行动风险的平均。
+2. 有界成本、$0\leq\gamma<1$及归一化、单调和平移等变的一步风险，使“后续风险值再乘折扣”的算子成为压缩；固定点还须通过贪心策略达到性及有限截断的全策略比较，才能解释为最优值。包络的局部最坏解释要求矩形机制，非矩形共享参数与凸风险罚项不能省略。
+3. 静态总损失CVaR保留累计成本状态，固定阈值后作行动最小化，再在起点优化常数阈值。两层下确界可以交换，但必须保留增广策略类、可测选择与达到性条件；只允许物理状态策略时，增广递推可能扩大可行域。
+4. 机会约束须明确终端、逐时或全程违规事件，必要时增广违规标记或剩余预算。路线例要求$0.2p\leq0.1$，最优随机比例$p=1/2$给出期望成本$1.6$；仅允许确定行动时只有成本$2$的稳妥路线可行，随机化在此改变可行比例。
+5. 最坏模型目标为$\inf_{\pi\in\Pi_{\mathrm{adm}}}\sup_{Q\in\mathcal P}\mathbb E_Q^\pi[L]$。单步有限行动允许私有随机化，且每个模型给出不随行动改变的结果分布时，目标为$\inf_{q\in\Delta(\mathcal A)}\sup_{Q\in\mathcal P}\sum_aq(a)\mathbb E_Q[\ell(a,Y)]$。固定$Q$后私有随机数与结果独立，模型可针对已确定的$q$取最坏，却不能看到实际抽中行动后再更换；只有限制$q$为点质量时才退化为纯行动公式。
+6. 二结果、二行动的损失分别为$(0,1)$和$(1,0)$，候选模型确定产生其中一个结果。每项纯行动最坏损失为$1$，以概率$p$混合后的最坏期望为$\max\{1-p,p\}$，在$p=1/2$达到$1/2$。该反例说明无约束期望下纯行动足够不能推及最坏模型目标；若模型能观察实际行动再选择，须另行定义信息次序。对偶、极小极大交换和局部递推仍各有条件。
 
 ### 6.5 本章小结
 
@@ -1173,346 +1206,378 @@
 
 正文：[04-multi-agent-response-and-evolution.tex](../../tex/02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games/04-multi-agent-response-and-evolution.tex)。
 
+章首主线：双加热器把给定环境中的单方最优选择扩为相互响应的问题；本章依次明确合法策略与信息、给定策略的收益、获利偏离的检验、指定规则下的更新轨迹，以及轨迹持续变化时的累计保证。
+
 ### 7.1 策略的多方行动与信息
 
-主要内容：从联合行动建立多方决策，明确各方可见历史、纯策略、混合策略、完整计划与行为策略。
+主要内容：从联合行动和可用信息建立多方决策的共同对象，区分单轮随机行动、开局抽取完整计划与信息集上的局部随机化。
 
 论证与表述逻辑：
 
-1. 参与者与联合行动：房间下一时刻的温度取决于两台加热器的合计供热量。因此，评价任一人的行动都要同时给定另一人的行动。
-2. 纯策略与混合策略：在匹配硬币中，双方同时选正面$H$或反面$T$，相同则第1方得$1$，不同则得$-1$，第2方收益相反。固定选择某一面会给对方留下针对它的机会，于是需要随机化：用一个概率分布选择行动，而不是在一局里把两个行动各执行一半。
-3. 行动历史与可用信息：矩阵的一行可以表示一份多步计划，其中包含“若看到某种情况，就采取某个行动”。这份计划是否可执行，取决于参与者在相应时刻能否区分那些情况。
-4. 完整策略与行为策略：三张牌中，第1方的完整纯计划按“高牌时行动、低牌时行动”有$(P,P),(B,P),(P,B),(B,B)$四种，第2方有$F,C$两种。
+1. 双加热器说明一人的行动后果依赖另一人的选择，有限战略式与矩阵形式记录联合行动及各方收益。
+2. 匹配硬币说明固定行动可能被针对，以概率单纯形表示独立混合策略，并把它与共同装置产生的相关建议区分。
+3. 三张牌质询把多步计划展开为历史树，以信息集限制行动规则，再用完全回忆刻画混合计划与行为策略的实现等价。
 
 #### 7.1.1 参与者与联合行动
 
-主要内容：房间下一时刻的温度取决于两台加热器的合计供热量。因此，评价任一人的行动都要同时给定另一人的行动。
+主要内容：以两台加热器共同推动温度为入口，明确参与者、联合行动与各方收益，区分有限行动模型和本章另行计算的连续调温模型。
 
 论证与表述逻辑：
 
-1. 定义（有限矩阵博弈）：有限双人矩阵博弈（matrix game）由两组非空有限行动$A_1=\{1,\ldots,m\}$、$A_2=\{1,\ldots,n\}$和两张收益矩阵$\boldsymbol{U}_1,\boldsymbol{U}_2\in\mathbb{R}^{m\times n}$给出。第1位参与者选择行，第2位参与者选择列，落在$(i,j)$时，两人的收益分别为$\bigl((\boldsymbol{U}_1)_{i,j},(\boldsymbol{U}_2)_{i,j}\bigr)$。若存在矩阵$\boldsymbol{M}$使$\boldsymbol{U}_1=\boldsymbol{M}$、$\boldsymbol{U}_2=-\boldsymbol{M}$，双方收益之和恒为零，就得到零和博弈（zero-sum game）。
-2. 一个人增加的收益正好是另一个人的损失，因此零和情形只需记录第1位参与者的收益矩阵$\boldsymbol{M}$；一般和情形则不能省略第二张矩阵。
-3. 若双方目标同为$2$，维持$x_t=2$要求总输入为$0.4$，并非每人都输入$0.4$。对固定反馈$u_{i,t}=a_i-k_i(x_t-2)$，只有$a_1+a_2=0.4$时，误差才满足$x_{t+1}-2=(0.8-k_1-k_2)(x_t-2)$因此总增益为$0.3$时才复现前章的误差系数$0.5$。
+1. 定义有限战略式博弈，再将双人有限行动写成两张收益矩阵，零和时才可用一张矩阵及其相反数概括双方收益。
+2. 给出双输入温度递推、局内先观察后同时行动的信息约定，以及温差和能耗组成的各方成本，最大化收益取成本的相反数。
+3. 明确前章温度阶段成本按行动前的$x_t$计价，本例改按行动后形成的$x_{t+1}$计价，使本轮两人输入的共同影响直接进入本轮温差成本。后文温度例的单步响应按这一新约定求解；改变计价时点时须重新推导相应的最佳响应。
+4. 在无扰动、目标温差为2的反馈算例中，维持目标要求两人基准输入之和为0.4，状态误差的衰减由总反馈增益决定，此计算不证明反馈是最佳响应。
 
 #### 7.1.2 纯策略与混合策略
 
-主要内容：在匹配硬币中，双方同时选正面$H$或反面$T$，相同则第1方得$1$，不同则得$-1$，第2方收益相反。固定选择某一面会给对方留下针对它的机会，于是需要随机化：用一个概率分布选择行动，而不是在一局里把两个行动各执行一半。
+主要内容：由匹配硬币中固定选面容易被针对，引出在行动上随机化的混合策略，并以概率单纯形给出合法策略域。
 
 论证与表述逻辑：
 
-1. 定义（纯策略与混合策略）：直接选择某一行或某一列称为纯策略（pure strategy）。在行动上选择概率分布称为混合策略（mixed strategy）。记$\Delta_m = \left\{ \boldsymbol{x}\in\mathbb{R}^m: \boldsymbol{x}\geq\boldsymbol{0},\ \boldsymbol{1}^{\top}\boldsymbol{x}=1 \right\}$为$m$个行动上的概率单纯形。双方以各自的混合策略独立抽取行动。
-2. 对一般有限行动集写作$\boldsymbol\sigma_i\in\Delta(A_i)$，联合策略为$\boldsymbol\sigma=(\boldsymbol\sigma_1,\ldots,\boldsymbol\sigma_n)$，其余人的策略组合记为$\boldsymbol\sigma_{-i}$。
-3. 单纯形$\Delta_m$嵌在$\mathbb R^m$中，维数为$m-1$，顶点对应纯行动。匹配硬币只需一个数$p\in[0,1]$表示第1方选$H$的概率，另一个数$q$表示第2方的同类概率。
+1. 纯策略选择一个行动，混合策略选择行动的概率分布，单轮抽样不等于在一局中把不同行动各执行一部分。
+2. 联合策略记录各人的规则，独立抽样产生乘积分布，共同装置的建议则可以相关，边缘相同不保证联合收益相同。
+3. 匹配硬币的两方策略由$p,q\in[0,1]$表示，联合策略空间是概率正方形，四个纯行动组合只是其顶点。
 
 #### 7.1.3 行动历史与可用信息
 
-主要内容：矩阵的一行可以表示一份多步计划，其中包含“若看到某种情况，就采取某个行动”。这份计划是否可执行，取决于参与者在相应时刻能否区分那些情况。
+主要内容：三张牌质询任务用隐藏高、低牌与公共中牌区分真实历史和参与者可见信息，使完整计划的可执行性成为明确约束。
 
 论证与表述逻辑：
 
-1. 定义（有限扩展式博弈的历史树）：扩展式博弈（extensive-form game）用历史树保留这些信息。记$\mathcal H$为非空有限历史集合，空历史为$\varnothing$。不能再延长的历史组成终止集合$Z\subset\mathcal H$。若$h\notin Z$，可选行动集合$A(h)$规定合法后继$ha$，参与者函数$P(h)$指出下一步由哪位参与者行动；机会节点记为$P(h)=c$，其行动概率$\sigma_c(a\mid h)$已给定、非负且在$A(h)$上和为$1$。终止历史$z$为每位参与者给出收益$u_i(z)$。对各参与者，还需指定下面的信息集划分，才能完整确定博弈。
-2. 定义（信息集）：参与者$i$的信息集（information set）族$\mathcal{I}_i$是$\mathcal H_i$的一个划分，每个信息集$I\in\mathcal{I}_i$收集参与者当时无法区分的决策历史。同一信息集中的历史必须具有相同的合法行动集，记这个共同集合为$A(I)=A(h)$，其中$h\in I$。
-3. 参与者2不能规定“高牌质询就应对，低牌质询就退让”，因为他无法区分这两个节点。若公开牌面，信息集就拆成两个单点集合，可实施的策略集合已经改变；不能继续使用隐藏牌博弈的解。
+1. 定义有限前缀封闭历史树、终止历史、行动者与机会概率，再用同一信息集收集参与者当时无法区分的决策历史。
+2. 同一信息集必须有相同合法行动集，参与者2看不见隐藏牌，故高、低牌质询后的应对概率必须相同。
+3. 图表并列实际节点和可见信息，说明信息集不同于用于预测未来的Markov状态，公开牌面会改变合法策略集而成为另一个博弈。
+4. 完整策略还要为零概率到达的信息集规定行动，Nash的事前偏离比较不自动包含序贯理性，后者另需信念及相容条件。
 
 #### 7.1.4 完整策略与行为策略
 
-主要内容：三张牌中，第1方的完整纯计划按“高牌时行动、低牌时行动”有$(P,P),(B,P),(P,B),(B,B)$四种，第2方有$F,C$两种。
+主要内容：比较开局随机抽取完整纯计划与到达信息集后局部随机化，以完全回忆保证二者面对任意固定对手和机会策略时具有相同终局分布。
 
 论证与表述逻辑：
 
-1. 命题（Kuhn实现等价）：在有限完全回忆扩展式博弈中，对任一参与者，任意混合策略都存在一个行为策略，使二者面对任意固定的对手与机会策略时诱导相同的终止历史分布；任意行为策略也存在具有同样性质的混合策略。
-2. 推导：先从混合策略构造行为策略。设$\mu_i$是在有限纯策略集合上的分布。完全回忆保证每个信息集$I$都有唯一的本人前缀$\rho_i(I) = \bigl((I_1,a_1),\ldots,(I_k,a_k)\bigr),$即到达$I$以前本人依次经过的信息集和采取的行动；同一$I$中的所有历史共享这条前缀。
-3. 牌面例满足完全回忆，因为每人只行动一次。比如以概率$2/3$抽取$(B,P)$、以概率$1/3$抽取$(B,B)$，等价于$b_H=1,b_L=1/3$的行为策略；此处只验证表示等价，其价值及最优性将在收益计算和响应条件中分别核对。
+1. 三张牌列出四项完整计划与$b_H,b_L,c$三个行为概率，再定义完全回忆为同一信息集内本人既往信息集和行动序列一致。
+2. Kuhn实现等价的正向构造按唯一本人前缀对混合计划取条件概率，沿路径用链式法则证明终局概率相同，零概率前缀可任意补全。
+3. 反向构造在开局独立抽取各信息集的行动并组成完整计划，未经过的信息集求和后贡献因子1，从而保留各终局概率。
+4. 忘记本人第一步行动的反例展示跨时相关性无法由独立局部随机化复现，三张牌的等价表示只验证实现等价，其价值与最优性留待后文检验。
 
 ### 7.2 策略的多方价值
 
-主要内容：在给定联合策略下计算各方收益，比较零和、共同收益及联盟价值，并讨论合作贡献与分配。
+主要内容：在联合策略固定后计算各方期望收益，分别处理行动表、历史树和另行定义的联盟价值，避免把收益评价混同于后续改进或均衡判断。
 
 论证与表述逻辑：
 
-1. 对抗与共同收益的价值关系：同一行动空间上可以有不同的利益关系。一般和博弈（general-sum game）允许各人收益独立规定；共同收益模型则让所有人使用同一个收益函数。
+1. 行动表按联合行动概率加权，历史树按终局路径概率加权，机会概率只计入一次。
+2. 固定行动集合而改变收益规则，比较零和、一般和与共同收益，并用Pareto改进区分共同改变与单方偏离。
+3. 合作共享信息时先声明联盟能取得的价值及转移语义，再以加入顺序平均边际贡献形成Shapley分配。
 
 #### 7.2.1 给定策略下的收益计算
 
-主要内容：把给定联合策略转成各方期望收益，分别处理单轮行动表和具有历史的信息树。
+主要内容：把已给定的联合行动规则转成各方期望收益，使单步矩阵和多步历史树采用一致的概率加权原则。
 
 论证与表述逻辑：
 
-1. 先按联合行动的概率加权各方收益，明确混合策略与收益矩阵的角色。
-2. 再累计历史到达及终局概率，将完整策略诱导的路径转成整局价值。
+1. 独立混合策略使用各方概率的乘积，相关建议则直接使用联合分布，不能擅自拆成边缘乘积。
+2. 历史树将到达概率按本人、对手及机会归组，再对终止历史求和，以三张牌核对行为式与战略式的同一整局价值。
 
 ##### 7.2.1.1 联合行动下的期望收益
 
-主要内容：$u_i(\boldsymbol{\sigma}) = \sum_{\boldsymbol{a}\in A_1\times\cdots\times A_n} \left( \prod_{j=1}^{n}\sigma_j(a_j) \right) u_i(\boldsymbol{a})$后文仍用$u_i$表示纯行动收益及其混合延拓，参数能区分二者。
+主要内容：独立抽样的联合行动概率为各方概率之积，据此延拓纯行动收益，并在双人矩阵中写成双线性期望收益。
 
 论证与表述逻辑：
 
-1. 若改用相关联合分布$\mu$，应计算$u_i(\mu)=\sum_{\boldsymbol a}\mu(\boldsymbol a)u_i(\boldsymbol a),$不能把$\mu$擅自换成边缘概率的乘积。
-2. 匹配硬币的行方收益矩阵为$\boldsymbol M_{\mathrm{mp}}= \begin{pmatrix}1&-1\\-1&1\end{pmatrix}$按四个联合行动的概率加权，得到混合收益$\begin{aligned} u_1(p,q)&=pq+(1-p)(1-q)\\ &\quad-p(1-q)-(1-p)q\\ &=(2p-1)(2q-1) \end{aligned}$给定$q$，纯行动$H,T$的收益分别为$2q-1,1-2q$。
+1. 一般$n$人收益按所有联合行动求和，双人零和时用$\boldsymbol{x}^{\top}\boldsymbol{M}\boldsymbol{y}$记录行方收益，列方收益取其相反数。
+2. 若共同装置给出相关联合分布$\mu$，应直接按$\mu$加权，不能以各方边缘概率的乘积替换。
+3. 匹配硬币得到$u_1(p,q)=(2p-1)(2q-1)$，以给定概率复算收益，同时明确评价结果尚未检验参与者是否愿意改变策略。
 
 ##### 7.2.1.2 行动历史下的整局价值
 
-主要内容：历史树中，一条终局路径可能包含多次行动。要算整局收益，先把沿途概率相乘，再按各终局收益求和。
+主要内容：沿历史相乘的行动概率确定各终局权重，再以终局收益求和得到整局价值，策略本身定义的续局概率不要求对零概率事件作除法。
 
 论证与表述逻辑：
 
-1. 从历史$h$继续到终止历史$z$的条件路径概率记为$\pi^{\boldsymbol{\sigma}}(h,z)$。
-2. 该矩阵已经对机会发牌取过期望，不能在后续矩阵运算中再乘一次$1/2$。
+1. 把路径概率分成本人行动因子和对手、机会因子，说明这只是按行动者归组乘积，并非额外声称随机变量独立。
+2. 三张牌列出六类终局及其概率，得到$u_1=\tfrac12 b_H(1+c)+\tfrac12 b_L(1-3c)$，再比较事前收益与质询后的条件收益。
+3. 将四份完整计划代入得到战略式收益矩阵，该矩阵已经对发牌取过期望，后续矩阵计算不能再次乘发牌概率。
+4. 回接后续反事实比较将去掉本人到达权重的用途，避免把尚未归一化的局部量误认成条件期望。
 
 #### 7.2.2 对抗与共同收益的价值关系
 
-主要内容：同一行动空间上可以有不同的利益关系。一般和博弈（general-sum game）允许各人收益独立规定；共同收益模型则让所有人使用同一个收益函数。
+主要内容：在相同联合行动集合上改变各方收益，区分零和冲突、一般和利益关系和共同收益，明确共同改善与个人响应是不同判断。
 
 论证与表述逻辑：
 
-1. 一般和行从$(R,R)$换成$(L,L)$能使双方收益由$1$增至$2$，称为Pareto改进：所有人都不变差且至少一人变好。
-2. 温度模型也需要保留这项区别。取$x=0,r_1=r_2=2$、$\lambda_1=\lambda_2=1$，若$(u_1,u_2)=(1,0)$，两人成本分别为$2,1$。
+1. 教学收益表展示零和收益互为相反数、一般和同时具有冲突和共同改善、共同收益逐格相同三种关系。
+2. Pareto改进与最优相对于声明的可行方案集比较共同收益变化，不等于固定其他人后的单方偏离条件。
+3. 协调博弈中相同边缘的独立抽样与相关建议分别给出收益1和2，双加热器的一步算例再说明共同降低成本后仍需检查个人响应。
 
 #### 7.2.3 合作价值的贡献与分配
 
-主要内容：以联盟可取得的价值定义加入者的边际贡献，再按参与次序平均形成贡献分配。
+主要内容：把共享资源或信息带来的联盟价值作为额外模型，先比较加入者的边际增益，再按参与顺序平均这些增益。
 
 论证与表述逻辑：
 
-1. 先固定联盟价值函数，比较某人加入前后的收益增量。
-2. 遍历或平均不同加入次序，说明分配依据及其与单个行动回报的区别。
+1. 声明联盟价值的收益单位、无信息基线与可转移效用假设，区分多方信用分配和单个参与者跨时刻的奖励分配。
+2. 不同前驱联盟产生不同边际贡献，Shapley值通过所有参与顺序的等权平均反映这种互补性，其公理刻画与退出稳定性分别检验。
 
 ##### 7.2.3.1 联盟价值与边际贡献
 
-主要内容：若参与者决定共享信息或资源，问题转为合作能产生多少额外价值，以及如何分给成员。这与把延迟奖励传回同一参与者的不同时刻不同，后者是强化学习中的时序信用分配。
+主要内容：共享信息时先规定每个联盟能取得并在成员之间转移的总收益，再比较一人加入前后的价值增量。
 
 论证与表述逻辑：
 
-1. 定义（可转移效用博弈）：可转移效用合作博弈（transferable-utility cooperative game）由参与者集合$N$和联盟价值函数$v:2^N\to\mathbb{R},\qquad v(\varnothing)=0$组成，$N$为非空有限集合。$v(S)$表示联盟$S$独立合作时可取得并能在成员之间转移的总收益。
-2. 联盟价值不是从单个模型输出自动得到的。对牌面判断任务，可以把$v(S)$定义为联盟$S$共享信号后，相对于无信号基线减少的最优期望损失；也可以定义为收入、正确判断数或节省的核验成本。
-3. 参与者$i$加入已有联盟$S\subseteq N\setminus\{i\}$的边际贡献为$v(S\cup\{i\})-v(S)$它依赖先到者集合$S$。
+1. 可转移效用博弈由有限参与者集合和满足$v(\varnothing)=0$的联盟价值函数组成，预算平衡要求分配总和等于$v(N)$。
+2. 牌面任务可按相对基线减少的最优期望损失定义联盟价值，也可采用收入或成本等口径，不同定义对应不同分配。
+3. 边际贡献$v(S\cup\{i\})-v(S)$依赖先到者集合，收益不能在同一尺度转移时须另用非可转移模型，不能直接相加拆分。
 
 ##### 7.2.3.2 基于参与顺序的贡献分配
 
-主要内容：同一位信息提供者的贡献取决于已有成员：没有其他线索时，一次校验可能没有用；已有线索时，它却能排除一个错误判断。
+主要内容：在所有加入排列中平均某人的边际贡献得到Shapley值，以四项公理及唯一性证明说明分配规则的依据。
 
 论证与表述逻辑：
 
-1. 定义（Shapley值）：对上述可转移效用博弈、$n=|N|$及参与者$i\in N$，其Shapley分配为$\phi_i(v) = \sum_{S\subseteq N\setminus\{i\}} \frac{|S|!(n-|S|-1)!}{n!} \bigl[ v(S\cup\{i\})-v(S) \bigr]$。
-2. 推导：每个排列中，所有参与者的边际贡献沿加入次序望远镜相加为$v(N)-v(\varnothing)=v(N),$取期望得到有效性。交换两位对称参与者不会改变排列分布或边际贡献分布，得到对称性。虚设参与者的每项边际贡献都为零。
-3. 若把价值改成模型预测分数，Shapley公式仍可计算，但解释也随之改变。特征彼此相关时，“缺少某个特征”的联盟输入怎样构造还需要条件分布、边缘分布或干预语义；这些选择分别回答预测归因与因果效应问题，不能只用同一个Shapley名称消除差异。
+1. 公式系数由恰好让联盟$S$先于$i$加入的排列数得到，随机排列解释有效性、对称性、虚设参与者性质和可加性。
+2. 唯一性证明将价值函数展开为一致联盟博弈的有限和，以对称性、虚设参与者性质和有效性直接确定任意实系数项，再由可加性确定一般分配。
+3. 三位信息提供者的教学价值给出$5/3,5/3,2/3$，第三位单独价值为零但具有互补贡献，故不是虚设参与者。
+4. 若价值改为预测分数，公式分配的是声明的相对基线差，特征缺失语义还取决于条件、边缘或干预选择，预测归因不自动成为因果贡献。
 
 ### 7.3 策略的多方响应与均衡
 
-主要内容：由单方最佳响应进入Nash均衡，再比较零和保证、共同建议下的偏离和联盟退出约束。
+主要内容：按偏离者可用的信息和可联合行动的人数检验候选结果，区分单方最佳响应、共同建议下的条件偏离、联盟退出及协商选择。
 
 论证与表述逻辑：
 
-1. 给定其他策略下的最佳响应：在牌面任务中，应对概率决定低牌质询是否有利；在温度任务中，对方供热量决定本人还需要供热多少。把其他参与者的策略固定后求本人的最优策略，得到最佳响应（best response）。
-2. 零和对抗下的保证与均衡：均衡从双方同时响应出发；零和中还可以从一方防御所有对手策略出发。三张牌矩阵的每行最小收益依次为$0,1/2,-1,0$，每列最大收益均为$1$。
-3. 共同建议下的偏离与均衡：Nash均衡要求各人的随机化彼此独立。若一个公共装置先抽取联合行动$\boldsymbol{A}\sim\mu$，再分别向参与者发送建议，建议之间可以相关。
-4. 合作分配下的偏离与稳定：按贡献分得收益的成员仍可能退出：若某个联盟自行合作得到的总收益更多，联盟成员就有共同拒绝分配的理由。收益不能转移时，本节还会在可行收益前沿上按分歧点选择协商结果；这是另一项分配选择任务，不能用它代替联盟不阻挡条件。
+1. 固定其他人策略求本人最佳响应，相互最佳响应形成Nash条件，不动点证明建立有限混合均衡的存在性。
+2. 零和结构把双方最坏情形保证写成线性规划原对偶，给出共同博弈值与Nash鞍点的对应。
+3. 收到建议前的固定偏离和收到建议后的映射偏离分别形成CCE与CE，联盟阻挡形成核心，分歧收益与乘积目标则另行选择协商结果。
 
 #### 7.3.1 给定其他策略下的最佳响应
 
-主要内容：在牌面任务中，应对概率决定低牌质询是否有利；在温度任务中，对方供热量决定本人还需要供热多少。把其他参与者的策略固定后求本人的最优策略，得到最佳响应（best response）。
+主要内容：固定他人策略后在本人合法策略集中最大化收益，以集合保留所有并列最优选择，并用牌面和温度任务核对响应的依赖对象。
 
 论证与表述逻辑：
 
-1. 定义（最佳响应）：在有限战略式博弈中，给定$\boldsymbol\sigma_{-i}$，参与者$i$的最佳响应集合为$\operatorname{BR}_i(\boldsymbol\sigma_{-i}) =\argmax_{\widetilde{\boldsymbol\sigma}_i\in\Delta(A_i)} u_i(\widetilde{\boldsymbol\sigma}_i,\boldsymbol\sigma_{-i})$。
-2. 双人零和时，行方最大化$\boldsymbol x^\top\boldsymbol M\boldsymbol y$，列方最小化同一个式子。
-3. 对温度一步成本，固定$u_j$后严格凸性给出唯一响应。求导并令导数为零：$\frac{\partial J_i}{\partial u_i} =2(0.8x+u_i+u_j-r_i)+2\lambda_i u_i=0$于是$B_i(u_j;x)=\frac{r_i-0.8x-u_j}{1+\lambda_i}$在$x=0,r_i=2,\lambda_i=1$时，对方取$0.8$，本人就愿意改为$0.6$。
+1. 有限博弈的收益对本人混合概率线性，至少有一个纯行动最佳，所有并列纯行动的混合也最佳，零和双方分别最大化与最小化同一标量收益。
+2. 匹配硬币写出随对手概率切换的响应集合，图中整段并列响应属于静态允许集合，不能当作学习轨迹。
+3. 三张牌按应对阈值和高、低牌质询权重求响应，参与者2的概率始终受同一信息集约束。
+4. 连续温度模型由严格凸成本求唯一响应，加入输入区间或状态安全条件后必须重新核对约束与共同可行性。
 
 #### 7.3.2 相互最佳响应下的Nash均衡
 
-主要内容：以所有参与者都无法单方改善定义Nash条件，再用最佳响应映射讨论均衡存在。
+主要内容：把每人的合法单方偏离同时排除定义Nash均衡，再将联合最佳响应的不动点问题与其存在条件分开论证。
 
 论证与表述逻辑：
 
-1. 先固定其他人的策略，写出本人偏离可获得的收益差。
-2. 将各人的最佳响应同时满足解释为不动点，再在相应有限或连续条件下讨论存在性。
+1. 用匹配硬币、三张牌与双加热器具体求解相互响应，区分Nash条件、共同最优和状态稳态。
+2. 收益并列时保留集合值响应，经Sperner、Brouwer、连续近似选择和Kakutani的证明链，逐项验证有限混合博弈的存在条件。
 
 ##### 7.3.2.1 单方偏离与Nash条件
 
-主要内容：只求一人的响应仍没有决定联合结果。把每人的最佳响应条件同时写下，就得到Nash均衡（Nash equilibrium）：只要其他人不变，没有谁能靠单独改策略提高收益。
+主要内容：联合策略满足Nash条件，是指固定所有其他人以后，每位参与者的最大合法单方改进都为零。
 
 论证与表述逻辑：
 
-1. 定义（Nash均衡）：联合混合策略$\boldsymbol\sigma^\star$是Nash均衡，若对每个参与者$i$及每个可实施的替代策略$\widetilde{\boldsymbol\sigma}_i$，$u_i(\boldsymbol\sigma_i^\star,\boldsymbol\sigma_{-i}^\star) \geq u_i(\widetilde{\boldsymbol\sigma}_i,\boldsymbol\sigma_{-i}^\star)$。
-2. 等价地，各方最大单方改进$\max_{\widetilde{\boldsymbol\sigma}_i}u_i(\widetilde{\boldsymbol\sigma}_i,\boldsymbol\sigma_{-i}^\star) -u_i(\boldsymbol\sigma^\star)$均为零。
-3. 三张牌的同时响应要求$b_H=1$、$b_L=1/3$、$c=1/3$。温度一步例则解$2u_1+u_2=2,\ u_1+2u_2=2$，得到唯一解$u_1^\star=u_2^\star=\frac23,\qquad x_1=\frac43,\qquad J_i^\star=\frac89$双方都不愿独改，但共同改成$(0.8,0.8)$可把两人成本降为$0.8<8/9$。
+1. 正式不等式对每位参与者和每项可实施替代策略成立，纯策略与混合策略均以同一偏离口径检验。
+2. 匹配硬币没有纯均衡而有唯一均匀混合均衡，三张牌的同时响应要求$b_H=1,b_L=c=1/3$。
+3. 温度一步模型得到$u_1=u_2=2/3$和成本$8/9$，共同改为$(0.8,0.8)$仍能降低双方成本，故Nash不等于Pareto最优或总成本最优。
 
 ##### 7.3.2.2 响应映射与均衡存在
 
-主要内容：若每个最佳响应都是唯一且连续的，就可以把所有人的响应拼成映射$B(\boldsymbol{\sigma}) = \bigl( \operatorname{BR}_1(\boldsymbol{\sigma}_{-1}),\ldots, \operatorname{BR}_n(\boldsymbol{\sigma}_{-n}) \bigr),$再寻找$B(\boldsymbol{\sigma})=\boldsymbol{\sigma}$。
+主要内容：本节把并列最佳响应保留为集合值对应，按编号择优可能跳跃，收益恒等时却可得到常值连续选择，因而不能靠编号保证连续；随后建立有限混合均衡的存在证明链。
 
 论证与表述逻辑：
 
-1. 命题（有限博弈存在混合Nash均衡）：参与者数有限、各行动集非空且有限的战略式博弈至少存在一个混合策略Nash均衡。
-2. 推导：联合混合策略空间$K=\prod_{i=1}^{n}\Delta(A_i)$是有限维非空紧凸集。定义联合最佳响应对应$F(\boldsymbol{\sigma}) = \prod_{i=1}^{n} \operatorname{BR}_i(\boldsymbol{\sigma}_{-i})$对固定$\boldsymbol{\sigma}_{-i}$，收益关于$\boldsymbol{\sigma}_i$连续，而概率单纯形紧，所以最大值达到，$\operatorname{BR}_i$非空且紧。收益关于自身混合策略线性，两个最佳响应的凸组合仍达到同一最大值，所以最佳响应值集是凸集。
-3. 存在性没有给出唯一性、计算效率或学习动态收敛。即便收益矩阵很小，最佳响应也可能在多个均衡之间切换；在“石头、剪刀、布”一类循环响应中，逐轮选择当前最佳纯行动甚至不会收敛。
+1. 先用二维铺三角形解释相容剖分的覆盖与公共面条件，排除一侧新增顶点而另一侧未切边的情形，由此得到内部小面邻接两块、边界小面邻接一块的计数依据。
+2. Sperner引理按边界允许标签作奇偶计数，以维数归纳得到全标号小单纯形，再令网格直径趋零并取紧性子列，证明单纯形上的Brouwer不动点结论。
+3. 到紧凸集的欧氏投影把Brouwer结论推广到一般非空紧凸域，随后给出上半连续与紧域、紧值条件下闭图性质的等价判据。
+4. 相容细分的公共面使用相同顶点值，重心插值构造连续近似选择，再由Brouwer、紧性、凸值和闭图把近似不动点极限送回原对应，证明Kakutani定理。
+5. 联合混合策略域紧凸，有限博弈的期望收益连续且对本人策略线性，故最佳响应非空、紧、凸并有闭图，Kakutani由此给出混合Nash；存在性不保证唯一、计算效率或任意更新的收敛。
 
 #### 7.3.3 零和对抗下的保证与均衡
 
-主要内容：均衡从双方同时响应出发；零和中还可以从一方防御所有对手策略出发。三张牌矩阵的每行最小收益依次为$0,1/2,-1,0$，每列最大收益均为$1$。
+主要内容：在双方收益互为相反数时，从保证最坏对手下的期望收益进入极小极大问题，用线性规划对偶证明双方保证达到同一博弈值。
 
 论证与表述逻辑：
 
-1. 命题（有限零和博弈的极小极大定理）：对任意有限收益矩阵$\boldsymbol{M}$，有$\max_{\boldsymbol{x}\in\Delta_m} \min_{\boldsymbol{y}\in\Delta_n} \boldsymbol{x}^{\top}\boldsymbol{M}\boldsymbol{y} = \min_{\boldsymbol{y}\in\Delta_n} \max_{\boldsymbol{x}\in\Delta_m} \boldsymbol{x}^{\top}\boldsymbol{M}\boldsymbol{y}$共同数值称为博弈值$v^\star$。等式两侧的最优解分别称为双方的极小极大策略。
-2. 推导：引入第1位参与者要保证的收益下界$v$。条件$(\boldsymbol{M}^{\top}\boldsymbol{x})_j\geq v$对每一列成立，恰好表示任何纯列都不能把收益压到$v$以下。第1位参与者的问题因此是$\begin{aligned} \max_{\boldsymbol{x},v}\quad&v\\ \text{s.t.}\quad& \boldsymbol{M}^{\top}\boldsymbol{x}\geq v\boldsymbol{1},\\ &\boldsymbol{1}^{\top}\boldsymbol{x}=1,\qquad \boldsymbol{x}\geq\boldsymbol{0} \end{aligned}$它的最优值正是$\underline v$。
-3. 鞍点条件恰是双方的Nash条件：行方不能增加收益，列方不能降低行方收益。反过来，任一零和Nash均衡也给出这组鞍点不等式，故其收益等于同一个博弈值。
+1. 三张牌的纯计划上下保证有缺口，混合后分别最大化最低收益与最小化最高收益，先得到弱极小极大不等式。
+2. 行方以概率归一化和逐列收益下界建立线性规划，拉格朗日乘子形成列方混合策略及逐行收益上界，有限可行最优值下用强对偶证明两值相等。
+3. 三张牌的行、列策略分别给出收益下界和上界$2/3$，原对偶可行证书直接确认最优，再将零和鞍点不等式与双方Nash条件对应。
+4. 博弈值唯一不等于最优策略唯一，期望保证不等于单局实现收益，非零和或无限连续行动不能直接沿用有限矩阵的同一证明。
 
 #### 7.3.4 共同建议下的偏离与均衡
 
-主要内容：Nash均衡要求各人的随机化彼此独立。若一个公共装置先抽取联合行动$\boldsymbol{A}\sim\mu$，再分别向参与者发送建议，建议之间可以相关。
+主要内容：公共装置抽取相关联合行动并私下发送建议，偏离发生在看到建议之前或之后，决定需要检验固定替代还是依建议替代。
 
 论证与表述逻辑：
 
-1. 定义（粗相关均衡与相关均衡）：设$\mu$为有限战略式博弈中联合行动集$\prod_i A_i$上的概率分布。分布$\mu$是粗相关均衡（coarse correlated equilibrium, CCE），若对每个参与者$i$和任意固定行动$a_i'$，$\mathbb{E}_{\boldsymbol{A}\sim\mu}[u_i(\boldsymbol{A})] \geq \mathbb{E}_{\boldsymbol{A}\sim\mu} [u_i(a_i',\boldsymbol{A}_{-i})]$偏离者必须在看到建议之前承诺改用同一个固定行动。若允许他看到建议$A_i$后按映射$\phi_i(A_i)$改动，则要求$\mathbb{E}_{\boldsymbol{A}\sim\mu}[u_i(\boldsymbol{A})] \geq \mathbb{E}_{\boldsymbol{A}\sim\mu} [u_i(\phi_i(A_i),\boldsymbol{A}_{-i})]$对所有映射$\phi_i:A_i\to A_i$成立，这定义相关均衡（correlated equilibrium, CE）。
-2. 在有限行动集上，CE条件等价于对每对$a_i,a_i'\in A_i$要求$\sum_{\boldsymbol{a}_{-i}} \mu(a_i,\boldsymbol{a}_{-i}) \bigl[ u_i(a_i,\boldsymbol{a}_{-i}) - u_i(a_i',\boldsymbol{a}_{-i}) \bigr] \geq0$它把“收到$a_i$建议后改成$a_i'$”的条件收益比较乘上收到该建议的概率，因此$\mu(A_i=a_i)=0$时无需另外定义条件概率。
-3. 三行动共同收益矩阵以等概率推荐对角组合：遵从收益0，任一事先固定偏离的收益为-1/3，所以是CCE；第1方收到A后改C可得1，所以不是CE。与后面的二行动协调例共同说明偏离的信息时机和相关随机化的职责。
-4. 矩阵博弈中的联合分布也需要与各人的边缘分布区分。收益差来自行动间的相关性，并非某个参与者改变了单独的混合概率。
+1. CCE排除事前固定行动偏离，CE排除所有行动映射偏离，有限行动下CE还等价于逐对建议替换的线性约束，零概率建议无需定义条件比值。
+2. 固定偏离是映射偏离的特例，独立Nash乘积分布的支持行动又各为最佳响应，因此Nash乘积分布属于CE，CE属于CCE，反向均不普遍成立。
+3. 三行动共同收益例构造CCE而非CE，二行动协调例说明同样边缘的相关建议可优于一个独立混合均衡，但不因此优于每个纯Nash均衡。
+4. 概率图与表分别显示、列出联合质量，后续把固定和依建议偏离改写为累计遗憾时仍须保留这一联合对象。
 
-#### 7.3.5 合作分配下的偏离与稳定
+#### 7.3.5 合作分配的稳定与协商
 
-主要内容：按贡献分得收益的成员仍可能退出：若某个联盟自行合作得到的总收益更多，联盟成员就有共同拒绝分配的理由。收益不能转移时，本节还会在可行收益前沿上按分歧点选择协商结果；这是另一项分配选择任务，不能用它代替联盟不阻挡条件。
+主要内容：先以联盟不能获利退出定义可转移收益的合作稳定性，再转向非可转移收益的Pareto前沿和分歧点，按Nash乘积选择协商结果。
 
 论证与表述逻辑：
 
-1. 命题（Nash乘积的存在、唯一性与Pareto性质）：设$U$非空、紧且凸，并存在$\widehat{\boldsymbol{u}}\in U$满足$\widehat{\boldsymbol{u}}>\boldsymbol{d}$。若每位参与者的效用与分歧收益同时作正仿射变换$u_i'=a_i u_i+b_i$、$d_i'=a_i d_i+b_i$，其中$a_i>0$，变换后的解正是$\boldsymbol{u}^{\star\prime}=(a_i u_i^\star+b_i)_{i=1}^n$。
-2. 推导：个体可接受集合$K=U\cap\{\boldsymbol{u}:\boldsymbol{u}\geq\boldsymbol{d}\}$非空且紧，乘积目标连续，所以最大值能够达到。严格可行点$\widehat{\boldsymbol{u}}$的乘积为正，而任何至少一个坐标等于相应$d_i$的点乘积为零，因此任一最优解都严格满足$\boldsymbol{u}>\boldsymbol{d}$。在这个正增益区域，最大化乘积等价于最大化$F(\boldsymbol{u})=\sum_{i=1}^{n}\log(u_i-d_i)$每个对数项在其坐标上严格凹，故$F$在正增益区域严格凹。
-3. 至此，单方策略偏离、依建议改动和联盟退出都有了各自的比较条件。要研究调整以后会不会回到附近、长期会不会停下来，还需要明确下一轮怎样更新。
+1. 核心要求总收益完全分配且每个联盟所得不少于独立合作价值，三人多数联盟例证明Shapley值可能不在核心，核心本身也可能为空。
+2. Pareto条件通常形成整个前沿，不能唯一选择结果；声明谈判失败收益后，以各人非负合作增益的乘积加入额外协商准则。
+3. 可行收益域非空、紧、凸且存在共同严格正增益时，连续性保证最大值达到，正增益区域的对数严格凹性给出唯一收益向量，乘积递增再证明Pareto性质。
+4. 效用与分歧点同时正仿射变化只给乘积乘上共同正常数，教学三角域中的两个分歧点分别得到$(3,3)$和$(5/2,7/2)$，说明选择相对于退出收益而定。
+5. 非凸域或缺少共同严格增益时不能沿用该唯一性证明，Nash协商解也不因此属于核心或使指定策略更新稳定。
 
 ### 7.4 策略的多方演化与稳定
 
-主要内容：把同时、依次和梯度等更新规则写成策略序列，检查均衡附近的稳定性以及长期收敛或循环。
+主要内容：从候选结果的偏离检验转向明确的策略更新递推，分别研究不动点附近的扰动、长期极限与循环，以及群体模型中的少量策略入侵。
 
 论证与表述逻辑：
 
-1. 更新规则与策略序列：用$t$表示一局内的物理时间，用$k=0,1,\ldots$表示策略更新轮次。第$k$轮的联合策略为$\boldsymbol\sigma^{(k)}$，该轮温度轨迹若需同时标明两种索引，可写成$x_t^{(k)}$。
-2. 均衡邻域内的扰动与稳定：对确定的联合映射$F$，先检查候选均衡$\boldsymbol\theta^\star$是否满足$F(\boldsymbol\theta^\star)=\boldsymbol\theta^\star$。
-3. 长期更新的极限与循环：双加热器的响应矩阵给出了收缩，所以误差递推能证明策略收敛。匹配硬币的响应仍然可以精确求出，但对抗收益会使双方依次追逐新的最佳行动。
+1. 将局内物理时间和跨局更新轮次分开，比较同时响应、交替响应与投影梯度，必要时把历史量和噪声纳入动态状态。
+2. 先确认候选均衡是所选映射的不动点，再以局部线性化或直接递推研究稳定，双加热器展示更新次序和步长的作用。
+3. 匹配硬币的周期与梯度旋转说明存在均衡不保证轨迹收敛，复制动态与ESS另行检验群体比例变化和稀少策略的入侵。
 
 #### 7.4.1 更新规则与策略序列
 
-主要内容：用$t$表示一局内的物理时间，用$k=0,1,\ldots$表示策略更新轮次。第$k$轮的联合策略为$\boldsymbol\sigma^{(k)}$，该轮温度轨迹若需同时标明两种索引，可写成$x_t^{(k)}$。
+主要内容：用$t$表示局内状态时间、$k$表示策略更新轮次，在相同初态、收益和信息条件下定义可实际分析的更新过程。
 
 论证与表述逻辑：
 
-1. 两方的同时最佳响应使用同一个旧组合：$\sigma_1^{(k+1)}\in\operatorname{BR}_1(\sigma_2^{(k)}), \qquad \sigma_2^{(k+1)}\in\operatorname{BR}_2(\sigma_1^{(k)})$若有并列最优，这只是集合值规则，还须声明怎样选择响应。
-2. 精确响应可能代价很高。若第$i$方策略由$\boldsymbol\theta_i\in C_i$参数化、$C_i$非空闭凸，且收益对该参数可微，可采用$\boldsymbol\theta_i^{(k+1)} =\Pi_{C_i}\left( \boldsymbol\theta_i^{(k)} +\eta_i^{(k)} \nabla_{\boldsymbol\theta_i}u_i(\boldsymbol\theta^{(k)}) \right)$这是收益梯度上升；若写成本$J_i=-u_i$，符号改为下降。
-3. 两方加热的一步模型使更新次序可以直接计算。固定$x=0,r_1=r_2=2$、$\lambda_1=\lambda_2=1$，把每轮重新选择的一步输入写成$\boldsymbol u^{(k)}=(u_1^{(k)},u_2^{(k)})^\top$，而非局内输入$u_{i,t}$。
+1. 一般更新可依赖可用历史和估计噪声，采用累计遗憾、历史平均或动量时须把这些内部量加入状态，当前策略未必单独决定下一步。
+2. 同时最佳响应使用同一个旧组合，交替响应让第二人使用第一人的新选择，并列最优还需声明选择规则，因此两者产生不同联合映射。
+3. 投影收益梯度上升保持闭凸策略域的可行性，成本约定则改为下降，投影本身不保证联合收缩或带噪估计满足所需条件。
+4. 固定初态的一步双加热器例列出同时与交替响应的前几轮数值，随后交由误差递推证明收敛，有限步观察本身不作结论。
 
 #### 7.4.2 均衡邻域内的扰动与稳定
 
-主要内容：对确定的联合映射$F$，先检查候选均衡$\boldsymbol\theta^\star$是否满足$F(\boldsymbol\theta^\star)=\boldsymbol\theta^\star$。
+主要内容：候选均衡先须是所选确定更新映射的不动点，稳定才比较附近初值的长期偏差，渐近稳定还要求偏差趋零。
 
 论证与表述逻辑：
 
-1. 在此前提下，稳定问的是初始微小偏差会不会一直小，渐近稳定还要求偏差最终趋零。
-2. 固定反馈下的状态稳定条件是$|0.8-k_1-k_2|<1$，其中$k_i$为反馈增益；上述策略更新的条件却由响应矩阵或梯度步长决定。
+1. 并列响应的任意选择可能移走均衡，投影梯度不动点通常只给一阶条件，各方收益对自身策略凹等条件才支持进一步的最佳响应判断。
+2. 在内点连续可微条件下，Jacobian谱半径小于1给出局部渐近稳定的充分条件，出现模大于1的特征值可判不稳定，单位模情形须进一步分析，边界投影和集合值跳变也不能直接套普通线性化。
+3. 双加热器同时、交替响应的误差矩阵分别具有特征值$\pm1/2$和$0,1/4$，线性递推对任意初值收敛；同时成本梯度下降另需$0<\eta<1/3$。
+4. 这些递推收敛到固定初态的一步Nash输入，状态在固定反馈下的稳定却由$|0.8-k_1-k_2|<1$判断，学习与状态同时运行时须另建联合系统。
 
-#### 7.4.3 长期更新的极限与循环
+#### 7.4.3 长期更新的极限、循环与入侵
 
-主要内容：双加热器的响应矩阵给出了收缩，所以误差递推能证明策略收敛。匹配硬币的响应仍然可以精确求出，但对抗收益会使双方依次追逐新的最佳行动。
+主要内容：以匹配硬币明确展示响应和梯度的非收敛轨迹，再由群体复制动态与ESS比较循环、静止和抗入侵这些不同性质。
 
 论证与表述逻辑：
 
-1. 梯度小步也不能普遍消除对抗导致的旋转。
-2. 定义（演化稳定策略）：设对称双人博弈中使用策略$\boldsymbol p$对阵$\boldsymbol q$的收益为$U(\boldsymbol p,\boldsymbol q)=\boldsymbol p^\top\boldsymbol A\boldsymbol q$。策略$\boldsymbol p^\star$是演化稳定策略（evolutionarily stable strategy, ESS），若对每个$\boldsymbol q\ne\boldsymbol p^\star$，存在$\bar\varepsilon(\boldsymbol q)>0$，使所有$0<\varepsilon<\bar\varepsilon(\boldsymbol q)$都满足$U(\boldsymbol p^\star,(1-\varepsilon)\boldsymbol p^\star+\varepsilon\boldsymbol q) > U(\boldsymbol q,(1-\varepsilon)\boldsymbol p^\star+\varepsilon\boldsymbol q)$。
-3. 逐轮策略是$\boldsymbol\sigma^{(k)}$，某个点的收敛是$\|\boldsymbol\sigma^{(k)}-\boldsymbol\sigma^\star\|\to0$；接近均衡集合仅要求到该集合的距离趋零，若集合不止一点，两者不同。
+1. 同时最佳响应从纯组合产生四周期，交替响应产生两周期；内部离散梯度的平方半径每轮乘$1+16\eta^2$，触边以后必须按投影规则重新分析。
+2. 连续梯度流的非零平面轨道守恒半径且周期为$\pi/2$，$0<r_0<1/2$保证整圆位于合法开概率域，零半径是静止中心，内点$(0.9,0.9)$说明仅有内点初值仍不足以保证整圆合法。
+3. 半径恰为$1/2$的圆切触边界，边界规则须另行核对；复制动态按相对收益改变群体占比，保持单纯形，但纯顶点静止不保证Nash或抗入侵。
+4. 匹配硬币须用双群体复制方程，其守恒水平集给出一般非圆形周期；对称单群体的ESS比较原策略和稀少新策略面对同一混合群体的收益，并推得其蕴含对称Nash。
+5. 两行动ESS算例同时验证内部吸引与顶点可被侵入，结尾区分末次策略、到均衡集合的距离、策略平均和行动经验分布，某条周期的平均正确不保证任意算法低遗憾。
 
 ### 7.5 策略的多方累积表现
 
-主要内容：用固定比较策略定义累计遗憾，讨论投影更新、局部遗憾到整局保证，以及平均策略的行为结论。
+主要内容：策略持续变化时，在同一已记录损失或对手序列上比较累计差距，建立投影更新和局部CFR的保证，再区分经验联合分布与合法平均策略的均衡结论。
 
 论证与表述逻辑：
 
-1. 固定比较策略下的累计差距：以下采用损失越小越好的约定。给定前$K$轮的损失函数，分别累计每一个固定行动在这些轮次中的损失，再取最小值。
-2. 基于投影更新的累计保证：每轮损失可以不同，因此朝当轮下降方向更新后，下一轮损失仍可能增加。累计保证需要另一项递推：把每轮损失差与到同一个固定比较点的距离变化联系起来，距离项跨轮相加后可以消去。
-3. 基于局部遗憾的整局保证：多步计划为每一个可能遇到的信息集指定行动，完整计划数随决策位置迅速增长。如果能在各信息集分别控制局部遗憾，再汇总成整局遗憾，就可以避免直接枚举所有计划。
-4. 累计保证与平均策略表现：累计遗憾控制许多轮次的总收益差，要把它转成一个候选策略的均衡误差，还需指定怎样平均。一般和博弈用联合行动的经验分布保留同轮相关性；两人零和博弈可利用收益对各方策略分别线性的性质，控制平均策略的鞍点间隙。
+1. 外部、内部和交换遗憾分别规定固定行动、逐对原行动替换和整份替换映射，不比较本人改变后对手重新学习的另一套过程。
+2. 凸损失下的投影距离递推给出固定比较点的累计界，有限完全回忆下的反事实分解再把各信息集遗憾汇总为整局保证。
+3. 一般和以同轮联合行动频数保留相关性，零和以双方合法平均策略控制鞍点间隙，扩展式行为策略须从平均本人实现计划恢复。
 
 #### 7.5.1 固定比较策略下的累计差距
 
-主要内容：以下采用损失越小越好的约定。给定前$K$轮的损失函数，分别累计每一个固定行动在这些轮次中的损失，再取最小值。
+主要内容：先以实际损失减事后最佳固定行动损失定义外部遗憾，再允许依本人原行动作固定替换，以区分外部、内部和交换比较类。
 
 论证与表述逻辑：
 
-1. 若$[R_{\mathrm{ext}}^{(K)}]_+/K\to0$，称该序列无外部遗憾，即平均每轮损失渐近不高于任何固定行动。
-2. 定义（内部遗憾）：在同一行动损失序列下，内部遗憾（internal regret）允许把每次实际选择$a$的轮次统一替换成另一行动$b$，对应差距为$R_{a\to b}^{(K)} =\sum_{k=1}^K\mathbb I\{a^{(k)}=a\} [\ell^{(k)}(a)-\ell^{(k)}(b)]$对所有$(a,b)\in A\times A$计算该量，其最大正部称为内部遗憾。
-3. 控制所有这类差距，表示在知道“原本要选$a$”以后，也没有持续更好的统一替换。对任意固定$b$，外部比较差距等于$\sum_aR_{a\to b}^{(K)}$；故有限行动下无内部遗憾蕴含无外部遗憾，反向一般不成立。
+1. 无外部遗憾要求累计差距正部除以轮数趋零，实际序列可能优于所有固定行动，故不要求未经截断的负差距也趋零。
+2. 交替损失的两行动例区分最佳固定行动与逐轮事后先知，分布期望损失和抽样实际损失也需分别处理。
+3. 内部遗憾按原行动$a$分组比较统一换成$b$的增益，有限行动下无内部遗憾蕴含无外部遗憾，反向一般不成立。
+4. 交换遗憾对所有固定映射$\phi:A\to A$比较总改进，恒等映射保证其非负，它同时替换各类原行动但不允许每轮另选事后最佳行动。
+5. 从损失改为收益约定时，差距改写为替代收益减实际收益，正号始终表示偏离有利，后续据此连接CCE和CE条件。
 
 #### 7.5.2 基于投影更新的累计保证
 
-主要内容：每轮损失可以不同，因此朝当轮下降方向更新后，下一轮损失仍可能增加。累计保证需要另一项递推：把每轮损失差与到同一个固定比较点的距离变化联系起来，距离项跨轮相加后可以消去。
+主要内容：当损失逐轮变化时，以同一个固定可行比较点为参照，通过投影非扩张和凸函数次梯度不等式建立累计遗憾界。
 
 论证与表述逻辑：
 
-1. 命题（在线投影次梯度的外部遗憾）：若$D=0$，则$C$只有一个点；若$G=0$，次梯度不等式说明每轮差值都不大于零。两种退化情形的遗憾上界均为零，无需使用这个步长公式。
-2. 推导：当$D,G>0$时，对右侧关于$\eta$配平即得$DG\sqrt{K}$；退化情形按定理后的说明处理。
-3. 若只观察抽中的行动损失，通常无法直接取得完整损失向量。可构造估计量，但须声明探索概率、条件无偏性和二阶矩界；期望界与高概率界也要分别推导。
+1. 可行域非空闭凸且直径至多为$D$，当前行动在当前损失揭晓前确定，随后取得范数至多为$G$的真实次梯度并执行固定正步长$\eta$的投影更新。
+2. 对任意固定比较点，累计损失差不超过$D^2/(2\eta)+\eta G^2K/2$；当$D,G>0$时取$\eta=D/(G\sqrt K)$，得到$DG\sqrt K$及$O(K^{-1/2})$平均遗憾。
+3. 证明展开一次更新到比较点的距离平方，以凸性把内积接到损失差，再跨轮望远镜消去距离项；$D=0$或$G=0$的退化情形另给零上界。
+4. 概率单纯形上的两行动例说明线性期望损失的投影更新，未知时域步长和仅观察抽中行动的反馈都需额外论证，低遗憾本身不保证末次策略收敛。
 
 #### 7.5.3 基于局部遗憾的整局保证
 
-主要内容：多步计划为每一个可能遇到的信息集指定行动，完整计划数随决策位置迅速增长。如果能在各信息集分别控制局部遗憾，再汇总成整局遗憾，就可以避免直接枚举所有计划。
+主要内容：完整多步计划数迅速增长，局部算法要控制任意完整替代计划，就须拆开本人、对手和机会的到达权重。
 
 论证与表述逻辑：
 
-1. 信息集上的反事实收益比较：若局部差距乘上当前自身到达概率，一个目前很少访问的位置几乎得不到纠正；将来改变上游行动后，它却可能变得重要。下面暂时去掉自身前缀概率，保留对手与机会权重，为之后比较任意完整替代策略准备可重用的局部量。
-2. 完全回忆下的局部遗憾汇总：各信息集的局部差距已定义，下一步是表达一份完整替代策略能增加多少收益。对手与机会的到达权重保留在局部量中，本人到达权重则改用这份替代策略的前缀概率。
+1. 两层本人决策说明当前很少访问的位置仍可能被替代计划频繁使用，因此局部反事实比较先去掉当前本人前缀权重，保留对手与机会权重。
+2. 各信息集用遗憾匹配控制局部差距，再由完全回忆确定唯一本人前缀与信息集森林，将固定替代策略的局部偏离汇总成整局外部遗憾界。
 
 ##### 7.5.3.1 信息集上的反事实收益比较
 
-主要内容：若局部差距乘上当前自身到达概率，一个目前很少访问的位置几乎得不到纠正；将来改变上游行动后，它却可能变得重要。下面暂时去掉自身前缀概率，保留对手与机会权重，为之后比较任意完整替代策略准备可重用的局部量。
+主要内容：反事实价值保留对手与机会到达信息集的权重，去掉当前本人前缀权重，使当前不访问的下游位置仍有学习信号。
 
 论证与表述逻辑：
 
-1. 定义（反事实价值）：给定上述联合行为策略及到达权重，参与者$i$在信息集$I$采取行动$a\in A(I)$的反事实价值（counterfactual value）定义为$v_i^{\boldsymbol{\sigma}}(I,a) = \sum_{h\in I} \pi_{-i}^{\boldsymbol{\sigma}}(h) \sum_{z\succeq ha} \pi^{\boldsymbol{\sigma}}(ha,z)u_i(z)$信息集当前策略的反事实价值为$v_i^{\boldsymbol{\sigma}}(I) = \sum_{a\in A(I)} \sigma_i(a\mid I) v_i^{\boldsymbol{\sigma}}(I,a)$。
-2. 在均衡牌面策略下，参与者2的信息集包含高牌质询与低牌质询两个节点。
-3. 在第$k$轮扩展式博弈中，联合策略记为$\boldsymbol{\sigma}^{(k)}$。
-4. 牌面例中反事实加权和除以正的到达质量才变成条件均值；一般反事实权重删去本人到达因素，不能无条件与实际到达后的条件期望互换。零概率到达时比值公式不可用，策略给定的反事实加权和仍有定义。
+1. 两层小树中整局收益为$pq$，当$p=0$时改第二步的实际增益虽为零，同时改变上游和下游的完整计划仍可获益，故先以局部量$1-q$保留改进。
+2. 正式价值对信息集内历史及后续终局求加权和，牌面例中参与者2的反事实价值与正到达条件期望相差归一化因子，零概率到达时前者仍有定义，且此处不提供因果识别。
+3. 将替代行动价值减当前局部价值定义即时反事实遗憾，跨轮累计后按正遗憾归一化产生下一轮策略，并同步累计平均策略所需的本人实现权重。
+4. 若各轮局部行动价值差至多为$\Delta_I$，势函数的平方增量及遗憾匹配的零交叉项给出$R_{i,+}^{(K)}(I)\leq\Delta_I\sqrt{|A(I)|K}$。
+5. 三张牌的一次更新得到应对与退让的即时遗憾$1/4,-1/4$，下一轮纯应对只描述局部响应，不能由该一步推出收敛或均衡。
 
 ##### 7.5.3.2 完全回忆下的局部遗憾汇总
 
-主要内容：各信息集的局部差距已定义，下一步是表达一份完整替代策略能增加多少收益。对手与机会的到达权重保留在局部量中，本人到达权重则改用这份替代策略的前缀概率。
+主要内容：以固定完整替代策略的本人到达概率补回局部反事实差距，在有限完全回忆树上证明整局外部遗憾由各信息集正部遗憾之和上界。
 
 论证与表述逻辑：
 
-1. 命题（CFR的反事实遗憾分解）：在有限完全回忆扩展式博弈中，$R_i^{(K)} \leq \sum_{I\in\mathcal{I}_i} R_{i,+}^{(K)}(I)$。
-2. 推导：固定替代行为策略$\widetilde{\sigma}_i$。证明先在一轮中把整局偏离逐层拆开，再对轮次求和。为看清拆分发生在哪里，对$h\in I$定义当前策略在行动$a$后的条件续局收益$q_i^{(k)}(h,a) = \sum_{z\succeq ha} \pi^{\boldsymbol{\sigma}^{(k)}}(ha,z)u_i(z),$并以$\widetilde q_i^{(k)}(h,a)$表示对手和机会仍采用$\boldsymbol{\sigma}_{-i}^{(k)}$，而参与者$i$从$ha$以后采用$\widetilde{\sigma}_i$时的同一数值，即$\widetilde q_i^{(k)}(h,a) = \sum_{z\succeq ha} \pi^{(\widetilde{\sigma}_i,\boldsymbol{\sigma}_{-i}^{(k)})}(ha,z) u_i(z)$当前策略从$h$出发的续局收益为$q_i^{(k)}(h)=\sum_b\sigma_i^{(k)}(b\mid I)q_i^{(k)}(h,b)$。
-3. 有限树与有界终局收益保证可以为各信息集选择有限的$\Delta_I$。若信息集本身改变、遗忘破坏完全回忆，或采样值存在未控制的偏差，须重新检查分解与局部算法，不能只引用CFR名称。
+1. 两层小树的恒等式把同时改变两步的增益分成当前局部改动与替代前缀下的后续改动，为一般树中的逐层拆分提供可复核入口。
+2. 一般证明先在逐历史收益中加减中间策略，再对信息集内历史加权求和，保留到下一本人决策前的对手和机会概率。
+3. 完全回忆使每个非根信息集有唯一本人前驱，信息集森林的递归因而恰好计算每个位置一次，得到以替代本人前缀权重乘局部差距的整局恒等式。
+4. 固定替代策略后跨轮求和，再对行动和完整替代策略取最大，得到$R_i^{(K)}\leq\sum_I R_{i,+}^{(K)}(I)$，结合局部界得到$O(\sqrt K)$整局及$O(K^{-1/2})$平均正遗憾。
+5. 结论针对有限完全回忆、固定信息结构和准确遍历完整树的反事实值，遗忘、信息集变化或未控制的采样偏差都需重新检查。
 
 #### 7.5.4 累计保证与平均策略表现
 
-主要内容：累计遗憾控制许多轮次的总收益差，要把它转成一个候选策略的均衡误差，还需指定怎样平均。一般和博弈用联合行动的经验分布保留同轮相关性；两人零和博弈可利用收益对各方策略分别线性的性质，控制平均策略的鞍点间隙。
+主要内容：把累计偏离界转成均衡误差前先指定平均对象，一般和使用联合行动经验分布，两人零和使用双方合法平均策略。
 
 论证与表述逻辑：
 
-1. 一般和条件下的经验分布保证：若所有参与者的平均正外部遗憾趋零，有限联合单纯形的紧性保证经验分布的每个极限点都满足CCE条件，也保证其到CCE集合的距离趋零；未必存在唯一的极限分布。
-2. 零和条件下的平均策略保证：矩阵博弈中，$\bar{\boldsymbol x}^{(K)}=K^{-1}\sum_k\boldsymbol x^{(k)}$与$\bar{\boldsymbol y}^{(K)}=K^{-1}\sum_k\boldsymbol y^{(k)}$仍在各自单纯形内。
+1. 一般和的外部、内部或交换遗憾分别控制经验联合分布的CCE或CE偏离，保留同轮相关性是这一经验分布结论的要求。
+2. 零和的收益对双方实现计划分别线性，平均本人序列权重并恢复行为策略以后，双方外部遗憾之和控制平均策略的鞍点间隙。
 
 ##### 7.5.4.1 一般和条件下的经验分布保证
 
-主要内容：若所有参与者的平均正外部遗憾趋零，有限联合单纯形的紧性保证经验分布的每个极限点都满足CCE条件，也保证其到CCE集合的距离趋零；未必存在唯一的极限分布。
+主要内容：把实际联合行动的累计偏离不等式除以轮数，得到经验联合分布的近似CCE或CE条件，极限结论不要求经验分布收敛到唯一点。
 
 论证与表述逻辑：
 
-1. 若每个有向替换$a_i\to b_i$的平均内部遗憾至多$\varepsilon_i$，那么对任意映射$\phi_i:A_i\to A_i$，有$\begin{aligned} &\mathbb E_{\widehat\mu^{(K)}}[ u_i(\phi_i(A_i),\boldsymbol A_{-i})-u_i(\boldsymbol A)]\\ &\qquad=\frac1K\sum_{a_i\in A_i}R_{a_i\to\phi_i(a_i)}^{(K)} \leq |A_i|\varepsilon_i \end{aligned}$这里的$R$已改写为收益约定。
-2. 保留联合相关性确实必要。经验分布是CE。
-3. 若算法控制的是期望损失遗憾，而这里使用抽样行动，还须估计两者之间的随机误差；每轮独立抽样也不消除跨轮共同变化产生的相关性。
+1. 每位参与者的外部遗憾至多$\varepsilon_iK$时，经验联合分布的固定偏离收益至多为$\varepsilon_i$，平均正遗憾趋零和紧性进一步给出CCE极限点及到CCE集合距离趋零。
+2. 每个有向替换的平均内部遗憾至多$\varepsilon_i$时，按原行动分组的任意映射改进至多为$|A_i|\varepsilon_i$；直接控制交换遗憾则得到$\varepsilon_i$松弛。
+3. 两行动教学序列的一半轮次为$(A,A)$、一半为$(B,B)$，其联合经验分布为CE，边缘平均的乘积却不是Nash，说明独立相乘会丢失需要的相关性。
+4. 上述结论针对已记录联合序列，期望损失遗憾转成抽样实际行动遗憾时还需控制随机误差，每轮独立抽样也不消除跨轮共同变化形成的相关性。
 
 ##### 7.5.4.2 零和条件下的平均策略保证
 
-主要内容：矩阵博弈中，$\bar{\boldsymbol x}^{(K)}=K^{-1}\sum_k\boldsymbol x^{(k)}$与$\bar{\boldsymbol y}^{(K)}=K^{-1}\sum_k\boldsymbol y^{(k)}$仍在各自单纯形内。
+主要内容：矩阵策略可直接算术平均，扩展式行为策略一般须按本人到达概率加权，合法平均与零和的分别线性共同把双方遗憾转成鞍点间隙。
 
 论证与表述逻辑：
 
-1. 行为策略一般须按本人到达概率加权，不能逐信息集随意等权；各轮本人到达权重相同等特殊情形可以等权。完全回忆保证本人行动前缀一致，据此恢复平均实现权重，再由双方外部遗憾界推出平均策略鞍点差距。
-2. 行为策略不能在每个信息集直接做普通算术平均。某轮中一个信息集若几乎不会被参与者自己到达，该处局部概率不应与频繁到达轮次具有同样权重。
-3. 把平均遗憾转成均衡结论时，还要保留产生平均的联合样本。
+1. 两层小树中先混合两轮完整计划给出终局概率$1/2$，逐节点等权却给出$1/4$，按本人到达权重平均后恢复$1/2$，本人到达权重各轮相同等特殊情形仍可等权。
+2. 实现权重等于本人前缀权重乘当前行动概率，各行动权重之和等于进入该信息集的本人权重，空序列权重为1，唯一本人前驱使这些流量关系及其平均保持一致。
+3. 用平均行动实现权重除以平均进入权重恢复行为概率，并从本人前缀为空的根信息集归纳，证明得到的策略实现各轮实现计划的平均，零分母位置可任意补全。
+4. 对双方外部遗憾界分别除以轮数，以收益对实现计划的分别线性移入平均，再相加消去逐轮平均收益，得到不超过$\varepsilon_1+\varepsilon_2$的联合可利用度。
+5. 三张牌的本人前缀权重均为1，故可直接平均$b_H,b_L,c$；一般和需保留联合频数或等价相关信息，两人零和需形成双方合法平均策略，完整树CFR不以抽取实际联合样本为前提。
+6. 上述保证针对平均对象，末次策略仍可能循环，采样CFR另需无偏性、方差与集中工具，不能沿用完整树确定性分解代替有限样本分析。
 
 ### 7.6 本章小结
 
-主要内容：综合信息、收益、均衡与学习动态，区分给定策略的偏离条件、实际更新轨迹和累计表现。
+主要内容：把合法信息、固定策略收益、偏离条件、指定更新轨迹和累计保证放回同一多方任务，按各自对象和成立条件收束全章。
 
 论证与表述逻辑：
 
-1. 多方选择使行动的后果取决于联合策略。信息集先限制每人能够实施的完整计划，到达概率再把这些计划变成各方整局价值。
-2. 固定其他策略后可求最佳响应，相互响应形成Nash条件。有限混合均衡的存在由Sperner、Brouwer、闭图近似选择和Kakutani的证明链保证，不意味着唯一、容易计算或能够被任意学习过程找到。
-3. 合作价值回答另一类问题。Shapley值在联盟价值已定义后按加入顺序平均边际贡献，并由四项公理唯一刻画；它既不保证成员不退出，也不把预测归因变成因果贡献。
+1. 信息集决定可实施计划，完全回忆既支持混合与行为策略的实现等价，也为局部遗憾分解和合法平均提供唯一本人前缀。
+2. 有限混合Nash由不动点证明链保证存在，零和原对偶给出共同博弈值，CE与CCE则按偏离信息区分，均不自动提供任意更新的收敛性。
+3. 双加热器的响应收缩与局内状态稳定属于不同递推，匹配硬币的循环、连续轨道和ESS入侵检验也各有规则与比较条件。
+4. 投影更新与CFR控制累计遗憾，一般和对应经验联合分布的偏离误差，两人零和对应合法平均策略的联合可利用度，末项与采样保证另需分析。
+5. Shapley值分配所定义的贡献，核心排除联盟阻挡，Pareto排除共同改善，Nash乘积在紧凸域、共同严格增益和分歧点下作协商选择，这些性质不能仅凭名称互推。
