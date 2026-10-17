@@ -12,7 +12,8 @@
 - `03-foundations/`：基础、理论与可信性三部分资源。
 - `04-classic-models/` 与 `05-neural-network-models/`：不设部分，按制作方式归档。
 - `06-probabilistic-graphical-models/`：表示、推断、学习与典型模型四部分。
-- `07-reinforcement-learning/` 与 `08-knowledge-learning/`：对应正文分部的 TikZ 图源及记录。
+- `07-reinforcement-learning/`：保留115张重绘图资源，其中113张接入当前正文，按部分保存原生TikZ、Matplotlib数值图与无字生成背景及真实字体排字；当前接入见卷内 `redraw-manifest.json`，复现入口见卷内 `README.md`。
+- `08-knowledge-learning/`：对应正文分部的TikZ图源及记录。
 - `10-image-and-multimodal-processing/`：图像、视频和多模态三部分的31份历史 TikZ 图源，分别位于对应部分的 `tikz/`；迁移保留原图的科学内容与绘制方式，样式仍沿用历史内联接口。
 - `11-recommendation-search-advertising/`：理解、决策、搜索和广告十章使用的 TikZ 图源，按三个正文部分归档。
 - 卷九和卷十二尚无独立图像；新增时按实际章节建立目录。
