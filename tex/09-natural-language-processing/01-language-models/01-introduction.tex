@@ -122,7 +122,8 @@ must submit their registration information before 18:00 on April 16.
 一个子词片段或标点。语言学意义上的“词”与模型词元因此不是同一概念。字节对编码
 （byte pair encoding, BPE）、WordPiece和Unigram语言模型分别按合并、词表构造或概率
 分割目标处理字符串，不保证上述三组结果相同。这些切分是教学构造，不冒充真实分词器的
-输出。词元进入嵌入矩阵的接口见第~\ref{sec:transformer-input}节；本章不展开训练词表的算法。
+输出。词元编码与输入表示将在第~\ref{chap:nlp-large-language-models}章结合预训练样本展开；
+本章先确定任务使用的单位与位置。
 字符组成句子，句子构成文档；对话还按说话者和发送时刻分成轮次。
 句子、文档和轮次的边界决定哪些片段被一起输入，却不一定就是模型的特殊词元。
 
@@ -179,8 +180,8 @@ must submit their registration information before 18:00 on April 16.
 
 上下文范围必须在数据构造和部署时保持一致。训练样本若附带完整文档，部署时却只输入
 一个被截断的句子，模型面对的是更少的信息。反过来，测试时若额外指定本应自行检索的
-答案文档，或提供未来消息及人工测试答案，又会高估实际信息条件下的能力。下一章将具体讨论词法、
-句法、语义、篇章与语用分析；本章只建立它们共同使用的单位、位置和上下文概念。
+答案文档，或提供未来消息及人工测试答案，又会高估实际信息条件下的能力。后续文本分析章将具体讨论词法、句法、语义、篇章与语用分析；
+本章先建立它们共同使用的单位、位置和上下文概念。
 
 \subsection{任务输出与正确答案}
 \label{sec:nlp-outputs-and-correctness}
@@ -327,9 +328,7 @@ $(x,y)$，其中$x$是通知或咨询，$y$是类别；序列标注样本为每�
 指令示例则提供“输入该怎样解释、输出该遵循什么格式”的实例；它可能作为微调样本，
 也可能只放在当前提示中，不能把二者都称为发生了参数学习。自监督目标可从原文遮蔽
 “海棠楼201”再要求恢复，提供词元预测目标，却不直接给出“举办地点”的业务字段。
-这些信息来源的比较见第~\ref{chap:machine-learning-paradigms}章，
-尤其第~\ref{sec:self-supervised-learning}、\ref{sec:weakly-supervised-learning}
-和~\ref{sec:transfer-learning}节。
+这些信息来源的共同机制可参考\BookChapterRef{chap:machine-learning-paradigms}{范式简介}。
 
 例如人工人员按统一规范标出$[39,45)$，能同时提供边界和类型；
 地点词典命中“海棠楼”只提供$[39,42)$，未覆盖房间号。若外部表记录活动在海棠楼201，
@@ -403,14 +402,16 @@ $(x,y)$，其中$x$是通知或咨询，$y$是类别；序列标注样本为每�
 再输出“日历已更新，版本2”。若用户说“只查一下，别改”，授权标记应为假，
 流程停在回答阶段。通知抽取正确与日历确实改期是两项不同的验收结果。
 
-这也解释了本部分的章节安排：下一章交付单位、结构和意义分析；信息抽取章交付可追溯
-事实；分类、匹配与组织章处理单篇、文本对和集合；生成与转换章交付新文本；
-问答与对话章增加证据和交流历史；求解与执行章增加程序、动作及完成证据；
-语音章再增加声音和时间条件。这是按交付对象分工，不是要求所有应用都逐章运行。
+这些输出对象决定后续应用章的分工：文本分析交付单位、结构和意义，信息抽取交付可追溯
+事实，分类与匹配处理文本属性及关系，生成与转换交付新文本，问答与对话增加证据和交流
+历史，求解与执行增加程序、动作及完成证据，语音处理再加入声音与时间条件。
+在进入这些任务以前，本部分先建立共同模型：从统计建模进入大模型预训练，再研究
+示范微调、偏好对齐与固定参数下的推断。推理能力涉及多个学习阶段，因此单独综合讨论，
+评测章则统一建立各阶段比较的证据条件。模型形成与任务交付是两条相互联系的线索。
 
 自然语言还可以连接可执行对象与声音。语义解析把问题转换为数据库查询或其他形式表达；
 程序生成和语言智能体把要求变成代码或环境动作；语音识别、合成和口语对话在文字之外
-增加声学输入输出与实时性条件。本部分讨论这些任务中由语言决定的接口和评价。页面版面、
+增加声学输入输出与实时性条件。本卷讨论这些任务中由语言决定的接口和评价。页面版面、
 图像、视频及其与文字的联合证据属于后续图像处理部分。
 
 \subsection{已有模型怎样形成任务输出}
@@ -426,7 +427,7 @@ $(x,y)$，其中$x$是通知或咨询，$y$是类别；序列标注样本为每�
     \toprule
     实现接口 & 得分或预测对象 & 输出恢复 & 仍需检查的约束 \\
     \midrule
-    TF--IDF加朴素贝叶斯或线性分类器
+    词项统计加朴素贝叶斯或线性分类器
       & 文档与每个候选类别
       & 选择最大得分类别，或按验证集阈值输出多标签
       & 特征词表、未知词、类别代价与概率校准 \\
@@ -448,20 +449,20 @@ $(x,y)$，其中$x$是通知或咨询，$y$是类别；序列标注样本为每�
       & 来源时点、权限、参数模式与环境回执 \\
     \bottomrule
   \end{tabularx}
-  \caption{常见模型接口怎样形成语言任务输出。表中只比较输入到输出的任务接口；模型训练、
-  概率推断与优化细节见前卷对应章节。}
+  \caption{常见模型接口怎样形成语言任务输出。概率建模、预训练、微调及模型推断由本部分
+  后续章节展开，具体任务的监督和验收由应用章节说明。}
   \label{tab:nlp-model-output-interfaces}
 \end{table*}
 
-以“是否含报名规定”为二分类任务，TF--IDF把词语频率及其跨文档稀有程度变成特征。
-朴素贝叶斯用类别先验和词项似然形成类别得分，线性分类器用
+以“是否含报名规定”为二分类任务，可以先统计文档中的词项。多项式朴素贝叶斯根据
+各类别语料的词项计数估计词项似然，并与类别先验组合成类别得分；线性分类器则可以
+使用计数或TF--IDF特征。TF--IDF把词语频率及其跨文档稀有程度变成权重，再用
 $s_k=\bm{w}_k^\top\bm{x}+b_k$为类别$k$评分，$\bm{x}$为文档特征。
 例如两类得分为$(1.8,-0.2)$时取前一类“含报名规定”，却不能由此断定所有人都必须报名。
 词表和逆文档频率只在训练语料上拟合，分类阈值在验证集上选定。
 这里的关键输出是类别，不是TF--IDF向量。
-分类模型与评价见第~\ref{chap:classification}章。若改用BERT一类编码器，可取整段表示接
-分类头，也可为每个起止位置对计算实体跨度得分；Transformer的信息流和预训练接口见第
-\ref{chap:transformer}章。
+分类模型与评价见\BookChapterRef{chap:classification}{分类}。若改用BERT一类编码器，可取整段表示接
+分类头，也可为每个起止位置对计算实体跨度得分；Transformer的信息流和预训练接口见\BookChapterRef{chap:transformer}{Transformer}。
 
 跨度头若对规范化词元“海棠楼”“201”分别给出最高的起、止分数，输出的是连续词元区间；
 需要经过表~\ref{tab:nlp-units-offsets}的映射才能恢复原文字符跨度。
@@ -469,9 +470,7 @@ $s_k=\bm{w}_k^\top\bm{x}+b_k$为类别$k$评分，$\bm{x}$为文档特征。
 
 序列标注要求相邻位置的答案共同合法。例如BIO标签中的\code{I-LOC}不应无条件出现在
 地点片段开头。HMM或线性链CRF为局部标签及其转移评分，再由Viterbi算法恢复整体最优
-序列；逐位置分别取最大分数可能拼出不合法或整体得分更低的路径。HMM推断见第
-\ref{sec:pgm-dynamic-discrete}节，CRF定义与解码见第
-\ref{sec:pgm-energy-models-crf-definition}节。
+序列；逐位置分别取最大分数可能拼出不合法或整体得分更低的路径。HMM推断见\BookChapterRef{chap:pgm-dynamic}{动态有向模型}，CRF定义与解码见\BookChapterRef{chap:pgm-energy-models}{静态无向模型}。
 
 例如“海／棠”两个位置的局部最高标签为\code{I-LOC, I-LOC}，逐点取最大值会以
 \code{I-LOC}开头。带起始约束的Viterbi应在所有合法序列中比较发射分和转移分，
@@ -499,6 +498,61 @@ $s_k=\bm{w}_k^\top\bm{x}+b_k$为类别$k$评分，$\bm{x}$为文档特征。
 使用返回片段形成答案；工具接口则把语言输出解析为函数名与参数，在权限检查后交给环境。
 检索到一篇相关通知不等于回答已经受到支持，生成一个外观合法的调用也不等于操作成功。
 来源、参数和回执分别提供不同阶段的证据。
+
+这些接口为什么需要不同的学习方法，可以从“新通知怎样借用过去的经验”来理解。
+词项模型共享同一词在不同文档中的统计证据，适合先检验局部词语能否支持类别判断；
+结构模型进一步让多个位置的答案相互约束，解决逐位置判断无法保证整体合法的问题。
+上下文编码让同一词随语境改变表示，条件生成则将固定类别或固定跨度扩展为可变长序列。
+外部检索增加当前可读取的材料，工具执行增加可以观察的环境结果。后两项改变可用信息
+和交付对象，需要与模型参数如何学习分别说明。
+
+学习目标对应模型要估计的对象。分类器用已标注类别约束类别分数；结构标注器用完整参考
+路径约束局部得分及转移；生成器用参考序列约束各位置的条件概率。检索器的训练样本需要
+指出哪些材料与当前问题有关，不能直接把阅读器的答案标签当作完整检索监督。
+规则和工具接口也可能没有待估参数：词典由资料整理而来，模式约束由输出规范规定，
+执行结果由环境返回。此时要说明的是规则或数据的来源与有效范围。
+表~\ref{tab:nlp-learning-use-interfaces}把学习信息与运行信息放在一起，以便观察
+相同的“输入文字、返回文字”接口背后有哪些不同过程。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}p{30mm}XXX@{}}
+    \toprule
+    方法接口 & 从经验中确定什么 & 学习依据 & 新输入下的使用过程 \\
+    \midrule
+    词项分类
+      & 类别先验、词项概率或特征权重
+      & 文档与类别；计数估计、条件似然或间隔目标
+      & 固定词表后提取特征，计算类别分数并应用选择规则 \\
+    结构化标注
+      & 局部标签分数及结构间的关联
+      & 参考标签路径、树或图；相应结构目标
+      & 为候选结构评分，在指定合法空间内恢复整体结果 \\
+    上下文编码与任务头
+      & 共享表示及任务特有的预测参数
+      & 预训练信号与类别、跨度或关系监督
+      & 根据当前语境编码，预测任务对象并恢复原文位置 \\
+    条件生成
+      & 给定条件和前缀后的输出分布
+      & 参考序列、示范或反馈；计分位置随目标而定
+      & 逐步产生候选，解析结果并核对任务要求 \\
+    检索与执行的组合
+      & 可学习的匹配或决策参数；另有索引和接口规则
+      & 有关资料、参考动作或执行反馈；规则部分未必学习
+      & 取得材料或环境观察，再形成回答或下一动作 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{模型学习与实际使用的分工。每行表示一类接口，可以组合使用；训练依据不等于
+  运行时可访问的信息，模型目标也不等于最终应用的完整验收条件。}
+  \label{tab:nlp-learning-use-interfaces}
+\end{table*}
+
+实际应用中的选择还取决于要维护什么。固定类别的批量筛选可以比较词项分类和上下文
+分类，按同一标签规范报告错误与成本；需要恢复角色或事件绑定时，要另外比较完整结构。
+摘要与翻译还需检查生成内容对来源意义的保持，资料问答需要核对检索与答案支持，
+办理任务则需要确认环境中发生的变化。这里的用途说明指出应比较哪些方法；
+各任务章将给出模型的具体结构、训练过程和有来源的实验结果。只有任务、材料和预算
+能够对齐时，某项实证改进才可用于支持相应的应用选择。
 
 \subsection{评价依据与应用比较}
 \label{sec:nlp-evaluation-and-comparison}
@@ -636,7 +690,7 @@ Smatch比较抽象意义表示（AMR）图中的三元组对应，BLEU、ROUGE�
 相似的答案。使用模型评审时，应交换候选顺序、固定评价量表，并以可独立核查的事实或人工
 抽样校验其判断；还应固定评审模型、版本、提示和可见资料。MT-Bench与Chatbot Arena
 的评价分析讨论了位置、冗长及自我偏好，不能把偏好胜出解释为事实正确
-（\citeyear{nlp-intro-zheng2023judge}；完整来源见本章文献说明）。
+\scite{nlp-intro-zheng2023judge}
 
 固定测试集的平均分也可能掩盖系统性错误。CheckList把语言能力拆成最小功能测试、不变性
 测试和方向性期望，用否定、实体替换、数量或语序变化检查模型是否依赖表面捷径
@@ -683,7 +737,7 @@ XTREME（\citeyear{hu2020xtreme}）把分类、结构标注和检索等任务放
 本节采用文献地图所选版本的年份：已列出会议或期刊版本的工作按正式发表年，
 只引用预印本的工作明确标记为预印本。例如果干模型早已公开，Whisper仍按ICML 2023年
 论文定位，Tacotron 2按ICASSP 2018年论文定位；它们分别在2022年、2017年已有预印本。
-这不表示任务或思想始于该年。完整出处见本章末的文献说明。
+这不表示任务或思想始于该年。
 
 \begin{figure*}[htbp]
   \centering
@@ -842,84 +896,6 @@ $\tau$-Voice（\citeyear{nlp-intro-ray2026}，预印本）再把全双工交流�
 更新状态并停止已经不合适的回复。转写错误率、译文质量、声音自然度、响应延迟和任务成功
 因此必须分别评价。2026年材料在这里只提供近期问题入口，不用预印本的自述推出普遍保证。
 
-\section*{文献说明}
-\label{sec:nlp-intro-literature-notes}
-
-以下按本章论述顺序列出评价与历史来源。它们支持相邻段落中的任务设定和接口对照，
-不用于宣称领域已被穷尽，亦不为教学构造的通知、分数与轨迹背书。
-已正式发表的引用保留所选出版信息，其余明确记为预印本。
-
-\begin{fullwidth}
-\noindent\term{共同评价}\par
-\fullcite{kiela2021dynabench}\par
-\fullcite{nlp-intro-zheng2023judge}\par
-\fullcite{nlp-intro-liang2023helm}\par
-\fullcite{hu2020xtreme}\par
-\fullcite{bandarkar2024belebele}\par
-\fullcite{singh2025globalmmlu}\par
-
-\noindent\term{结构、判定与事实记录}\par
-\fullcite{manning2008ir}\par
-\fullcite{pgm-energy-models-sutton2012}\par
-\fullcite{pgm-static-directed-hofmann1999}\par
-\fullcite{blei2003}\par
-\fullcite{nlp-intro-bianchi2021}\par
-\fullcite{lee2017coreference}\par
-\fullcite{nlp-intro-kitaev2018}\par
-\fullcite{nlp-intro-he2018}\par
-\fullcite{nivre2020universal}\par
-\fullcite{nlp-intro-cer2017}\par
-\fullcite{nlp-intro-williams2018}\par
-\fullcite{nlp-intro-zhang2019paws}\par
-\fullcite{nlp-intro-nie2020}\par
-\fullcite{nlp-intro-xu2020clue}\par
-\fullcite{yao2019docred}\par
-\fullcite{nlp-intro-wang2020maven}\par
-\fullcite{nlp-intro-li2021wikievents}\par
-\fullcite{nlp-intro-wang2022mavenere}\par
-\fullcite{nlp-intro-gong2025}\par
-\fullcite{nlp-intro-ding2021}\par
-
-\noindent\term{文本转换与语言覆盖}\par
-\fullcite{nlp-intro-koehn2003}\par
-\fullcite{nlp-intro-napoles2017}\par
-\fullcite{nlp-intro-gardent2017}\par
-\fullcite{nlp-intro-narayan2018}\par
-\fullcite{nlp-intro-alvamanchego2020}\par
-\fullcite{nlp-intro-see2017}\par
-\fullcite{nlp-intro-ma2019stacl}\par
-\fullcite{nlp-intro-freitag2021}\par
-\fullcite{nlp-intro-nllb2022}\par
-\fullcite{nlp-intro-kocmi2024}\par
-\fullcite{nlp-intro-zhao2026discox}\par
-
-\noindent\term{证据使用与多轮交流}\par
-\fullcite{rajpurkar2018squad2}\par
-\fullcite{yang2018hotpotqa}\par
-\fullcite{nlp-intro-thorne2018}\par
-\fullcite{lewis2020rag}\par
-\fullcite{budzianowski2018multiwoz}\par
-\fullcite{nlp-intro-zhang2018persona}\par
-\fullcite{nlp-intro-dinan2019}\par
-\fullcite{rastogi2020sgd}\par
-\fullcite{nlp-intro-barres2025}\par
-\fullcite{nlp-intro-shi2026}\par
-
-\noindent\term{可检验产物与实时语音}\par
-\fullcite{nlp-intro-cobbe2021}\par
-\fullcite{nlp-intro-chen2021}\par
-\fullcite{nlp-intro-yao2023tot}\par
-\fullcite{yao2023react}\par
-\fullcite{nlp-intro-zhou2024webarena}\par
-\fullcite{nlp-intro-jimenez2024}\par
-\fullcite{nlp-intro-shen2018}\par
-\fullcite{nlp-intro-wang2021covost}\par
-\fullcite{radford2023whisper}\par
-\fullcite{nlp-intro-seamless2023}\par
-\fullcite{defossez2024moshi}\par
-\fullcite{nlp-intro-ray2026}\par
-\end{fullwidth}
-
 \section{本章小结}
 \label{sec:nlp-introduction-summary}
 
@@ -933,6 +909,14 @@ $\tau$-Voice（\citeyear{nlp-intro-ray2026}，预印本）再把全双工交流�
 行为反例和分条件报告，说明证据究竟覆盖了什么。
 
 研究历史显示，许多持续存在的任务不断增加新的输入范围、输出结构与评价条件，而不是被
-某一种模型依次取代。后续章节将沿文本分析、信息抽取、分类与组织、生成与转换、问答与
-对话、求解与执行以及语音任务展开。每一章都从任务对象出发，再讨论实现与评价，使“模型
-能生成什么”与“应用需要证明什么”保持区分。
+某一种模型依次取代。后续先解释语言模型怎样形成：基础建模确定概率对象与共享，预训练学习广泛语料，
+有监督微调学习示范响应，偏好对齐引入判断标准，推断将固定参数变成候选结果。
+推理能力专题连接这些阶段，评测章说明每一步改变可由什么证据支持。随后再进入
+文本分析、信息抽取、分类与组织、生成与转换、问答与对话、求解与执行以及语音任务，
+把共同机制落实为各类具体交付与核验条件。
+
+\paragraph{延展阅读}
+若要沿任务、模型和评价三条线继续展开，可分别阅读Manning等人的信息检索教材、
+Sutton与McCallum的条件随机场教程，以及HELM的综合评测框架。阅读时应同时记录
+各资料规定的输入、输出、可见信息和判定证据，避免把某种模型接口或单项分数扩大为
+整个自然语言处理任务的定义\scite{manning2008ir,pgm-energy-models-sutton2012,nlp-intro-liang2023helm}
