@@ -65,8 +65,9 @@ def classic():
  f,a=fig(112,77);axes(a,(-2.2,3.8),(-1.8,2.7),'$\\beta_1$','$\\beta_2$',[-2,-1,0,1,2,3],[-1,0,1,2]);a.set_aspect('equal')
  for rad in [.6,1.2,1.8]:a.plot(rad*np.cos(t),rad*np.sin(t),c=RED,ls='--',lw=.7)
  for rad in [.55,1.05,1.55]:a.plot(2+rad*np.cos(t),1+.55*rad*np.sin(t),c=BLUE,lw=.8)
- a.scatter([2],[1],facecolors='white',edgecolors=BLUE,s=26);a.text(2.04,1.04,'MLE');a.scatter([1.256],[.848],c=YELLOW,edgecolors=INK,s=24);a.text(.92,.63,'MAP');a.scatter([0],[0],c=RED,s=20);a.text(-.06,-.1,'先验中心',ha='right',va='top');a.annotate('',(1.38,.87),(1.9,.98),arrowprops={'arrowstyle':'->','color':INK})
- save(f,'regression-mle-map-geometry','01-classic-models',{'theta_radians':t,'MLE':[2,1],'MAP_display_rounded':[1.256,.848]},{'likelihood_mean':[2,1],'likelihood_scales':[1,.55],'prior_scale':1.3,'MAP_exact':[2/(1+1/1.3**2),1/(1+.55**2/1.3**2)]})
+ map_point=np.array([2/(1+1/1.3**2),1/(1+.55**2/1.3**2)])
+ a.scatter([2],[1],facecolors='white',edgecolors=BLUE,s=26);a.text(2.04,1.04,'MLE');a.scatter([map_point[0]],[map_point[1]],c=YELLOW,edgecolors=INK,s=24);a.text(.92,.63,'MAP');a.scatter([0],[0],c=RED,s=20);a.text(-.06,-.1,'先验中心',ha='right',va='top');a.annotate('',(1.38,.87),(1.9,.98),arrowprops={'arrowstyle':'->','color':INK})
+ save(f,'regression-mle-map-geometry','01-classic-models',{'theta_radians':t,'MLE':[2,1],'MAP_marker_exact':map_point,'MAP_display_rounded':np.round(map_point,3)},{'likelihood_mean':[2,1],'likelihood_scales':[1,.55],'prior_scale':1.3,'MAP_exact':[2/(1+1/1.3**2),1/(1+.55**2/1.3**2)]})
 
 def extra_classic():
  f,a=fig(112,83);k=np.arange(1,8);b=np.array([4.5,3.5,2.5,1.7,1,.6,.4]);v=np.array([.3,.5,.8,1.2,1.9,2.8,4]);noise=np.full(7,.8)
