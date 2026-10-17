@@ -1,6 +1,6 @@
-# 卷10《应用：图像和多模态处理》：第3部分“多模态处理”正文大纲
+# 卷10《应用：图像和多模态处理》：第4部分“多模态处理”正文大纲
 
-正文入口：[part.tex](../../tex/10-image-and-multimodal-processing/03-multimodal-processing/part.tex)，接入第8章“多模态理解”和第9章“多模态生成”。共用模型已在第一部分第2章“视觉与多模态模型”中展开，本部分在其接口上组织证据与媒体成果。
+正文入口：[part.tex](../../tex/10-image-and-multimodal-processing/04-multimodal-processing/part.tex)，接入第8章“多模态理解”和第9章“多模态生成”。共用模型已在第一部分第2章“视觉与多模态模型”中展开，本部分在其接口上组织证据与媒体成果。
 
 各章末保留独立“本章小结”，研究展望联系证据、控制和预算中尚未满足的条件展开。部分入口的不编号阅读指引不计章数。文献的首稿、会议及修订版本分别记录，近期案例的能力与比较结论限定于实际来源的输入、输出和评价条件。
 
@@ -10,7 +10,7 @@
 
 ## 第8章 多模态理解
 
-正文：[章节源文件](../../tex/10-image-and-multimodal-processing/03-multimodal-processing/02-multimodal-understanding.tex)。
+正文：[章节源文件](../../tex/10-image-and-multimodal-processing/04-multimodal-processing/01-multimodal-understanding.tex)。
 
 本章回答：怎样结合文字、图像、视频、声音及页面结构找到证据、解释内容并回答问题？利用前置第2章的模型接口，主体按请求需返回的结果展开：匹配、定位、结构化信息、描述和答案。问题还可能要求重新观察细节、组合分散事件或操作空间中间状态，因此在基本结果接口之后，集中建立证据获取、解答及联合核验的路径。方法按所服务的任务环节组织，不重复共用模型原理；多图、多页、音画与连续对话作为信息条件进入各任务。
 
@@ -290,7 +290,7 @@
 
 ## 第9章 多模态生成
 
-正文：[章节源文件](../../tex/10-image-and-multimodal-processing/03-multimodal-processing/03-multimodal-generation.tex)。
+正文：[章节源文件](../../tex/10-image-and-multimodal-processing/04-multimodal-processing/02-multimodal-generation.tex)。
 
 本章回答：怎样根据文字、参考图像、视频、声音或空间条件制作媒体，并协调不同输出？主体按交付成果展开：视频、与视觉对应的声音、协同音视频、空间内容及视觉条件响应。这些成果可以组成制作流程，不作为互斥的模型类别。
 
