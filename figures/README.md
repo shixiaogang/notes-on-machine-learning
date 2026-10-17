@@ -13,7 +13,8 @@
 - `04-classic-models/` 与 `05-neural-network-models/`：不设部分，按制作方式归档。
 - `06-probabilistic-graphical-models/`：表示、推断、学习与典型模型四部分。
 - `07-reinforcement-learning/` 与 `08-knowledge-learning/`：对应正文分部的 TikZ 图源及记录。
-- 卷九至十二尚无独立图像；新增时按实际章节建立目录。
+- `10-image-and-multimodal-processing/`：图像、视频和多模态三部分的31份历史 TikZ 图源，分别位于对应部分的 `tikz/`；迁移保留原图的科学内容与绘制方式，样式仍沿用历史内联接口。
+- 卷九、卷十一和卷十二尚无独立图像；新增时按实际章节建立目录。
 - `00-shared/mathematical-generators/` 与 `00-shared/model-generators/`：跨卷共用生成器与图组记录。
 
 ## 使用与追溯
