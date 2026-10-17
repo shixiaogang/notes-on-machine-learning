@@ -7,6 +7,8 @@
 ## 现有资源
 
 - `01-mathematical-preliminaries-upper/` 与 `02-mathematical-preliminaries-lower/`：数学两卷图源，各三部分。
+  卷二于2026-10-17新增20幅解析教学图，覆盖八章的概率、因果、状态演化、控制、价值与策略比较及学习分析；各部分的`matplotlib/`子目录保存独立源码、解析参数、矢量成图与预览，使用位置登记在共用图像接入清单中。
+  同日第二轮另按具体概念障碍增补15幅图，集中解释条件平均、统计推断、跳跃对齐、隐藏位置、机制复合与动态可行性等问题，不设各章数量配额；图源分别归入所属部分的`tikz/`和`matplotlib/`，保留原有推导及既有图像。
 - `03-foundations/`：基础、理论与可信性三部分资源。
 - `04-classic-models/` 与 `05-neural-network-models/`：不设部分，按制作方式归档。
 - `06-probabilistic-graphical-models/`：表示、推断、学习与典型模型四部分。
