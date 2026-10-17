@@ -1,0 +1,195 @@
+\section{模型结构与前向计算}
+\label{sec:nlp-llm-computation}
+
+给定词元序列以后，模型需要在每个位置计算可用于预测的上下文表示。我们以仅由解码器层组成的因果Transformer为基线：预测某个后续词元时，当前位置只读取已经提供的前缀；训练时也遵守同样的可见范围。网络的共同结构是反复交替进行上下文聚合与逐位置变换，再把最终表示映射为概率。下列结构变体分别改变这个计算中的某个部件，不能因为都用于长序列就视为同一种方法。
+
+\subsection{输入嵌入与位置表示}
+\label{sec:nlp-llm-embedding}
+
+离散编号只表示词元身份，编号大小本身没有语义距离。设词表大小为$V=|\mathcal V|$，模型宽度为$d$，可学习嵌入表为$\bm{E}\in\mathbb R^{V\times d}$。对位置$t$的词元$x_t$，取出对应行并写成列向量$\bm e_t=\bm E_{x_t,:}^{\top}\in\mathbb R^d$。相同词元在不同位置读取同一行参数，因此一处样本对该行的更新能够影响其他样本中的同一词元。它提供的是共享起点，后续上下文计算才使同一词元在不同句子中得到不同表示。
+
+嵌入向量本身没有标明词元的相对位置。把“周四改到周五”与“周五改到周四”视为无序集合，会丢失安排变化的方向。一个做法是在输入加入位置向量；另一个做法是保留位置索引，在计算位置间的相关性时使用它。本章主要采用后一条路线中的旋转位置编码，因此初始表示可取$\bm h_t^{(0)}=\bm e_t$，位置信息在查询与键形成以后进入计算。二者不是同一运算，不能把所有位置方案都写成在嵌入上相加。
+
+词元接口也可以与主要计算单位分开。字节潜在Transformer（Byte Latent Transformer, BLT）从字节输入出发，由局部网络编码和恢复字节，主要网络则处理根据预测不确定性划分的动态片段。可预测部分可以形成较长片段，不确定部分采用较短片段，改变的是昂贵计算分配到哪些位置\scite{nlp-llm-blt2024}。它不是在固定子词词表上换一张嵌入表；片段编码、主要网络和字节输出共同构成完整概率模型。比较此类结构时，需要同时给出原始字节数、片段数和计算预算。
+
+\subsection{上下文聚合与键值状态组织}
+\label{sec:nlp-llm-attention}
+
+输入表示需要读到与当前预测有关的历史。以一层中的一个注意力头为例，暂省略层号。将位置表示$\bm h_t\in\mathbb R^d$分别映射成查询、键和值：$\bm q_t=\bm W_Q\bm h_t$、$\bm k_t=\bm W_K\bm h_t$、$\bm v_t=\bm W_V\bm h_t$。查询表达当前位置需要寻找什么，键用于衡量历史位置与这个需要是否匹配，值承载被汇总的信息。设查询与键维度为$d_h$，值维度为$d_v$，相应地$\bm W_Q,\bm W_K\in\mathbb R^{d_h\times d}$、$\bm W_V\in\mathbb R^{d_v\times d}$。则\term{因果注意力}（causal attention）的聚合为
+\begin{equation}
+ a_{tj}=\frac{\exp(\bm q_t^{\top}\bm k_j/\sqrt{d_h})}
+ {\sum_{i=1}^{t}\exp(\bm q_t^{\top}\bm k_i/\sqrt{d_h})},
+ \qquad
+ \bm o_t=\sum_{j=1}^{t}a_{tj}\bm v_j.
+ \label{eq:nlp-llm-causal-attention}
+\end{equation}
+权重只在$j\leq t$上归一化，保证$\bm o_t$不使用未来词元。缩放因子控制点积随维度变化的尺度，但不能单独保证注意力分布合适；投影参数还需要通过学习确定。
+
+为了在匹配中使用相对距离，\term{旋转位置编码}（rotary position embedding, RoPE）对查询与键施加由位置决定的旋转。先考虑二维情形，取旋转角频率$\omega$，令
+\begin{equation}
+ \bm R_t=\begin{pmatrix}
+ \cos(t\omega)&-\sin(t\omega)\\
+ \sin(t\omega)&\cos(t\omega)
+ \end{pmatrix},\qquad
+ (\bm R_t\bm q_t)^{\top}(\bm R_j\bm k_j)
+ =\bm q_t^{\top}\bm R_{j-t}\bm k_j.
+ \label{eq:nlp-llm-rope}
+\end{equation}
+最后一步来自旋转矩阵的复合关系$\bm R_t^{\top}\bm R_j=\bm R_{j-t}$。高维实现将多个不同频率的二维旋转组成分块矩阵。匹配分数因此能够依赖相对位移$j-t$，同时仍受内容向量影响。RoPE改变的是查询与键，不要求给值向量或输入嵌入施加同样旋转；相对位置进入公式也不保证模型能直接处理任意未训练长度\scite{su2021roformer}。
+
+\term{多头注意力}（multi-head attention, MHA）使用$H$组投影，各自计算式\eqref{eq:nlp-llm-causal-attention}，再拼接各头输出并投影回$d$维。不同头可以学习不同的内容匹配方式，但不能预先断言某个头必然负责语法、另一个头必然负责事实。聚合后还可以加入依赖当前表示的门控，例如$\tilde{\bm o}_t=\sigma(\bm W_g\bm h_t)\odot\bm o_t$，其中$\sigma$是逐坐标的sigmoid函数，$\odot$表示逐坐标乘法。Gated Attention研究了这类聚合输出门控：它改变信息经过聚合后怎样传出，通常没有因此减少需要读取的历史位置\scite{qiu2025gated}。
+
+当模型逐步产生新词元时，旧位置的键和值可以保存，供新查询读取。若每头键和值均为$d_h$维，每层每个历史词元在MHA下需要保存$2Hd_h$个数。\term{多查询注意力}（multi-query attention, MQA）让所有查询头共享一组键和值，变为$2d_h$个数；\term{分组查询注意力}（grouped-query attention, GQA）将查询头分成$G$组，每组共享键值，变为$2Gd_h$个数。这种共享减少状态量，也约束了不同查询头可以使用的键值表示；改变既有模型的共享方式通常需要相应训练或适应\scite{shazeer2019mqa,ainslie2023gqa}。
+
+多头潜在注意力（multi-head latent attention, MLA）采用另一种约束：把键和值共同生成自一个较低维的潜在向量。省略位置部分时，其内容分支可以写为
+\begin{equation}
+ \bm c_j=\bm W_D\bm h_j,\qquad
+ \bm k_j^{C}=\bm W_{UK}\bm c_j,\qquad
+ \bm v_j^{C}=\bm W_{UV}\bm c_j,
+ \label{eq:nlp-llm-mla}
+\end{equation}
+其中$\bm c_j\in\mathbb R^{d_c}$，$d_c$小于展开后的多头维度。这里仍按单个内容头书写：$\bm W_D\in\mathbb R^{d_c\times d}$，$\bm W_{UK}\in\mathbb R^{d_h\times d_c}$与$\bm W_{UV}\in\mathbb R^{d_v\times d_c}$是该头对应的行块；各头共享同一$\bm c_j$，使用各自的上投影行块。对内容打分有$\bm q_t^{\top}\bm W_{UK}\bm c_j=(\bm W_{UK}^{\top}\bm q_t)^{\top}\bm c_j$，因此可以先变换当前查询，再在低维状态上完成匹配，不必为每个历史位置保存展开后的各头键。值聚合也可以利用线性性：
+\begin{equation}
+ \sum_{j=1}^{t}a_{tj}\bm W_{UV}\bm c_j
+ =\bm W_{UV}\sum_{j=1}^{t}a_{tj}\bm c_j.
+ \label{eq:nlp-llm-mla-value}
+\end{equation}
+这说明可以先在潜在向量上加权，再执行该头的值上投影，历史缓存同样不必保存逐头展开值。
+
+位置旋转一般不能任意穿过投影矩阵。DeepSeek-V2因此把承载RoPE的位置查询与共享位置键从内容分支分开，分别拼接后计算打分；历史位置需要保存内容潜在向量和解耦的位置键，而不只是$\bm c_j$\scite{nlp-llm-deepseekv2-2024}。例如，在一个仅用于说明状态量的配置中，若$H=32$、$d_h=128$、$G=8$、$d_c=512$、位置键维度为64，则MHA、GQA与MLA分别保存8192、2048与576个数。这个比较只计算一层、一个历史词元的状态元素，不能据此直接推出整体运行时间的相同比例变化。
+
+上述方案都允许查询读取全部历史位置，只改变匹配与状态的参数化。Transformer的通用结构可参考\BookChapterRef{chap:transformer}{卷五的Transformer章}；本节保留当前语言建模所需的计算，并把减少读取位置和汇入有限状态两种改变放到后面分别讨论。
+
+\subsection{历史信息的选择性读取}
+\label{sec:nlp-llm-sparse-reading}
+
+若上下文长度为$T$，全注意力要为每个位置与其前缀计算匹配，匹配数量随$T^2$增长。键值压缩减少了每个历史位置的状态，却没有直接减少这些位置对。\term{稀疏注意力}（sparse attention）改为规定每个查询读取的历史子集或历史摘要，因而同时改变计算量与可用信息。最简单的滑动窗口只读取最近$w$个位置，匹配数量约为$Tw$；但若改期信息在窗口之外，模型就可能无法直接取到它。
+
+压缩摘要与内容选择回应两种不同需要。把若干连续位置压成一个表示，可以用较少单元覆盖较远的历史，但具体细节可能在压缩时丢失。根据当前查询选择少量原始块，则保留被选块中的细节，但需要额外规则判断哪些块重要。二者不能都被描述成“只保留重要词元”：前者构造新表示，后者选择原位置。
+
+原生稀疏注意力（Native Sparse Attention, NSA）把压缩、选择和局部窗口作为三条分别计算注意力的分支。设分支$b\in\{c,s,w\}$在当前位置得到输出$\bm o_t^{b}$，再用当前表示产生的门值$g_t^{b}\in[0,1]$融合：
+\begin{equation}
+ \bm o_t=g_t^{c}\bm o_t^{c}
+             +g_t^{s}\bm o_t^{s}
+             +g_t^{w}\bm o_t^{w}.
+ \label{eq:nlp-llm-nsa}
+\end{equation}
+压缩分支提供粗粒度的全局信息和选块依据，选择分支读取得分较高块中的原始细节，局部分支负责邻近依赖。各分支分别归一化，不是把三类键值简单拼接后共用一次softmax；原文还为分支提供独立键值以减轻职责干扰\scite{nlp-llm-nsa2025}。
+
+例如，一段很长的活动记录中，当前问题询问最终地点，选择分支有机会保留含地点更改的旧块，局部分支则读取最近的问句。选块若遗漏了关键旧块，局部计算再准确也无法恢复那条证据。块的离散选择还意味着，能够在预训练中学习整个方案，不等于每个选块决策都是普通的连续可微映射。讨论收益时应分别检查读取数量、选择开销与信息遗漏，而不能把理论稀疏性直接等同于特定设备上的加速。
+
+\subsection{历史信息的递归汇聚}
+\label{sec:nlp-llm-recurrent-state}
+
+稀疏注意力仍保留可供选择的历史位置。另一种做法是不逐项保留全部历史，而是在读入每个词元时更新有限大小的状态。设$\bm s_t$是读到位置$t$后的状态，简化的\term{状态空间模型}（state space model, SSM）可写为
+\begin{equation}
+ \bm s_t=\bm A_t\bm s_{t-1}+\bm B_t\bm h_t,
+ \qquad
+ \bm o_t=\bm C_t\bm s_t.
+ \label{eq:nlp-llm-state-space}
+\end{equation}
+$\bm A_t$控制旧信息怎样保留，$\bm B_t$控制当前表示怎样写入，$\bm C_t$控制读出。若状态为$m$维、输入为$d$维、输出为$d_o$维，则三者形状依次为$m\times m$、$m\times d$与$d_o\times m$。固定维度状态的大小不随已读长度增长；代价是许多历史细节需要共用同一状态，模型不能像全注意力那样直接访问每个旧位置。
+
+Mamba让离散化步长及部分写入、读出参数依赖当前输入，使模型能够依据内容控制保留与遗忘。式\eqref{eq:nlp-llm-state-space}只概括状态更新关系，实际结构还包含受约束的状态矩阵、局部卷积与门控等部件。Mamba-2从结构化状态空间对偶性（structured state space duality, SSD）解释某些状态模型与结构化线性注意力的联系\scite{gu2023mamba,dao2024mamba2}。这个联系有指定的矩阵结构条件，不意味着所有状态空间模型等价于任意softmax注意力。
+
+对需要按键修改记忆的情形，只进行加法累积还可能让旧值与新值互相干扰。令$\bm S_t\in\mathbb R^{d_v\times d_k}$表示键到值的关联状态，$\bm k_t\in\mathbb R^{d_k}$、$\bm v_t\in\mathbb R^{d_v}$是当前键值。先遗忘得到$\bar{\bm S}_t=\alpha_t\bm S_{t-1}$，再按当前键上的预测残差更新：
+\begin{equation}
+ \bm S_t=\bar{\bm S}_t+
+ \beta_t(\bm v_t-\bar{\bm S}_t\bm k_t)\bm k_t^{\top},
+ \qquad \bm o_t=\bm S_t\bm q_t.
+ \label{eq:nlp-llm-gated-delta}
+\end{equation}
+其中$\alpha_t\in(0,1)$控制遗忘，$\beta_t\in(0,1)$控制修正强度，$\bm q_t$为读出查询。括号中的残差说明当前状态对这个键还欠缺多少值信息；更新只沿$\bm k_t$的方向修正。该式为便于理解采用标量遗忘门，实际变体可以使用更细的门控。
+
+Gated DeltaNet将遗忘控制与这种增量修正规则结合；Kimi Linear进一步使用细粒度门控的状态更新，并与MLA层混合\scite{nlp-llm-gateddelta2024,nlp-llm-kimilinear2025}。混合结构能够让某些层汇聚历史、另一些层访问保留的位置，但其状态与缓存不能再统一称为固定大小。有限状态的优势和精确回读的需要之间存在取舍：若任务要求从很长前缀中精确复制任意旧字符串，状态容量与写入干扰就是必须检查的条件。
+
+\subsection{逐位置变换与专家调用}
+\label{sec:nlp-llm-experts}
+
+上下文聚合回答当前位置从其他位置取得哪些信息；取得这些信息后，还需要对其进行非线性变换。\term{逐位置前馈网络}（position-wise feed-forward network, FFN）对每个位置使用相同参数，但在一次调用中不再让位置彼此交互。以门控变换为例，令输入为$\bm u_t\in\mathbb R^d$，可写为
+\begin{equation}
+ f(\bm u_t)=\bm W_2\bigl[
+ \operatorname{SiLU}(\bm W_1\bm u_t)
+ \odot(\bm W_3\bm u_t)\bigr],
+ \label{eq:nlp-llm-ffn}
+\end{equation}
+其中$\bm W_1,\bm W_3\in\mathbb R^{m\times d}$，$\bm W_2\in\mathbb R^{d\times m}$，$\operatorname{SiLU}(z)=z\sigma(z)$。一条投影分支调节另一条分支的输出，最后回到$d$维。这是SwiGLU型变换；具体网络也可以使用其他激活与偏置约定\scite{shazeer2020glu}。
+
+稠密前馈每次都调用整套参数。若希望提供更多可选择的变换，又不在每个词元上计算所有变换，可以准备$E$个专家$f_1,\ldots,f_E$，再由路由器根据$\bm u_t$选择少量专家。\term{混合专家}（mixture of experts, MoE）在这里表示按输入有条件地组合若干参数子网络，例如
+\begin{equation}
+ f_{\mathrm{MoE}}(\bm u_t)=
+ \sum_{e\in\mathcal T_t}r_{t,e} f_e(\bm u_t),
+ \label{eq:nlp-llm-moe}
+\end{equation}
+$\mathcal T_t$是路由得分最高的$k$个专家，$r_{t,e}$是它们的组合权重。总参数包含全部专家，某个词元的激活参数只包含实际调用的专家及共享部件。它们回答不同的资源问题，不应把总参数与稠密模型的每词元计算量直接比较\scite{shazeer2017}。
+
+DeepSeekMoE将专家划分得更细，使固定激活量下有更多组合，并保留总会调用的共享专家来承接各输入共同需要的变换。共享专家之外，路由专家仍由输入选择\scite{nlp-llm-deepseekmoe2024}。这种设计提供分工机会，但“专家”只是网络部件的名称，不保证每个专家对应一个可解释领域。若多数词元集中到少量专家，其余参数就难以得到充分更新，因此需要检查路由比例及其随训练的变化。
+
+负载控制可以通过辅助损失或路由调整实现，不过过强地追求均匀调用也可能妨碍有用分工。DeepSeek-V3报告了在主路由目标外调节专家选择偏置的负载控制方案\scite{deepseek2024v3}。这里关注它怎样改变专家的调用机会，而不展开训练设备之间的分配。专家计算仍需读入上下文表示并完成非线性映射，下一小节的条件记忆则改变参数信息的取用方式。
+
+\subsection{条件参数记忆的接入}
+\label{sec:nlp-llm-conditional-memory}
+
+像常见短语、固定搭配和局部词形这样的模式会反复出现。若每次都只靠多层变换重新构造这些局部关系，可以考虑另设一条路径：用已经读到的词元片段索引可学习参数，再根据当前上下文决定取出的内容是否适用。这里的记忆是模型参数的一部分，与使用时检索外部文档不同，也不等于直接保存训练原文。
+
+Engram采用多个词元后缀片段及多个哈希头查表。若$g_{t,n}$为截至$t$的$n$元片段，$\varphi_{n,k}$为第$k$个哈希函数，$\bm E_{n,k}$为对应可学习表，则一次读取为
+\begin{equation}
+ \bm e_{t,n,k}=\bm E_{n,k}[\varphi_{n,k}(g_{t,n})],
+ \qquad
+ \bm e_t=\operatorname{concat}_{n,k}(\bm e_{t,n,k}).
+ \label{eq:nlp-llm-engram}
+\end{equation}
+确定性索引让相同规范化片段取到相同的表项，多组哈希减少所有读取都发生相同碰撞的机会。表项仍通过学习更新，哈希映射并没有赋予它们真实事实的保证\scite{nlp-llm-engram2026}。
+
+取出的片段向量不依赖更远上下文，可能受到多义性和哈希碰撞影响。Engram因此将它投影为键和值，用已聚合上下文的隐藏表示产生门控，再通过短的因果卷积细化，最后残差接入主网络。门控回答“这个局部记忆在当前句子里应当贡献多少”，而查表回答“取哪一组参数”；两者职责不能合并成一次相似度检索。
+
+与式\eqref{eq:nlp-llm-moe}相比，专家方案选择要运行的子网络，条件查表选择要读入的参数向量。两者可以共存，也都有容量、调用量与学习充分性之间的限制。Engram属于近期结构探索，其具体参数分配和任务收益需要在对应设置下检验。建立这种区分后，我们再考虑上述分支怎样在多层网络中传递。
+
+\subsection{层间连接与多层组合}
+\label{sec:nlp-llm-layer-composition}
+
+单层聚合与变换只能完成一次信息处理。叠加层后，较高层可以使用已经融合上下文的表示，但也需要避免每层都完全改写输入。常用的前置归一化残差块把更新写成“旧表示加新分支”：
+\begin{align}
+ \bm u_t^{(\ell)}&=\bm h_t^{(\ell)}+
+  \operatorname{Attn}_t\bigl(\operatorname{Norm}(\bm H^{(\ell)})\bigr),
+ \label{eq:nlp-llm-layer-attention}\\
+ \bm h_t^{(\ell+1)}&=\bm u_t^{(\ell)}+
+  f\bigl(\operatorname{Norm}(\bm u_t^{(\ell)})\bigr).
+ \label{eq:nlp-llm-layer-ffn}
+\end{align}
+$\bm H^{(\ell)}$表示这一层全部可见位置的表示，$\operatorname{Attn}_t$返回位置$t$的聚合输出，$f$可取稠密前馈或专家组合。归一化控制进入分支的数值尺度，残差路径使原表示不必完全经过该分支才能传下去；分支仍可改变表示，不能把残差理解为每层实际都接近恒等变换。
+
+若采用均方根归一化，对$\bm h\in\mathbb R^d$的一种写法为$\operatorname{Norm}(\bm h)=\bm g\odot\bm h/\sqrt{d^{-1}\sum_i h_i^2+\varepsilon}$，其中$\bm g$是可学习尺度，$\varepsilon>0$用于避免分母为零。它不减去均值，与标准层归一化不同。若一条残差更新为$\bm h'=\bm h+F(\bm h)$，其局部导数为$\bm I+\partial F/\partial\bm h$，这说明梯度存在不经过$F$的直接路径；多层导数仍相乘，因而不能据此宣布梯度永远不会放大或衰减。
+
+Hyper-Connections将单条残差流扩展为多条流，并学习流之间与计算分支之间的混合。为理解这种变化，设$\bm X^{(\ell)}\in\mathbb R^{r\times d}$保存$r$条流，可用示意式
+\begin{equation}
+ \bm X^{(\ell+1)}=
+ \bm M_\ell\bm X^{(\ell)}+
+ \bm b_\ell F(\bm a_\ell^{\top}\bm X^{(\ell)})
+ \label{eq:nlp-llm-hyperconnection}
+\end{equation}
+表示其职责：$\bm a_\ell,\bm b_\ell\in\mathbb R^r$，$\bm M_\ell\in\mathbb R^{r\times r}$。$\bm a_\ell$将多流读入分支，$\bm b_\ell$把分支输出写回多流，$\bm M_\ell$控制旁路混合。实际方案还规定这些系数怎样依赖输入。多流增加组合自由度，也使反复混合的传播尺度成为需要检查的问题\scite{nlp-llm-hyperconnections2024}。
+
+流形约束超连接（manifold-constrained hyper-connections, mHC）进一步约束残差混合矩阵，使理想的$\bm M_\ell$为双随机矩阵，即元素非负、每行和每列均为1。每条输出流因此是输入流的凸组合，多个这样的矩阵相乘也保持双随机性。这一性质限制的是残差混合本身，完整网络还有分支计算和其他映射。原文通过有限步Sinkhorn行列归一化近似实现约束；实际有限迭代的矩阵不必精确满足两个和为1的条件，不能把理想性质无条件搬到数值实现上\scite{nlp-llm-mhc2025}。
+
+\subsection{词元概率与序列概率}
+\label{sec:nlp-llm-probabilities}
+
+经过$L$层计算后，位置$t$得到表示$\bm h_t^{(L)}$。要预测下一个词元，需要给词表中每个候选分配归一化概率。令最终归一化表示为$\bm z_t$，输出矩阵为$\bm U\in\mathbb R^{V\times d}$，偏置为$\bm b\in\mathbb R^V$，则
+\begin{equation}
+ p_\theta(x_{t+1}=v\mid x_{1:t})=
+ \frac{\exp((\bm U\bm z_t+\bm b)_v)}
+ {\sum_{u\in\mathcal V}\exp((\bm U\bm z_t+\bm b)_u)}.
+ \label{eq:nlp-llm-softmax}
+\end{equation}
+参数$\theta$包含嵌入、各层变换与输出映射。某些模型让输出矩阵与输入嵌入共享参数，也有模型省去输出偏置；这些选择不改变这里从有限得分到词表分布的归一化关系。
+
+概率链式法则将条件概率连成序列概率。加入开始标记后，可写为
+\begin{equation}
+ p_\theta(x_{1:T})=\prod_{t=1}^{T}
+ p_\theta(x_t\mid x_{<t}).
+ \label{eq:nlp-llm-sequence-probability}
+\end{equation}
+这里$x_{<t}$包括用于起始的约定条件。若要比较完整可变长度文本，应把结束标记也作为被预测事件，否则这个乘积只描述指定长度前缀的概率。softmax使每个局部词元分布归一化；模型是否几乎必然在有限步结束，还需要另外检查生成规则与终止性质。
+
+在通知例子中，$p_\theta(\text{“周五”}\mid\text{“读书会改到”})$只比较这个位置的候选；整句概率还包含后续“下午”“两点”等事件的条件概率。单步最可能的词元未必构成整段最可能的序列，这一差别将在\ref{chap:nlp-model-inference}章用于解释解码。当前我们已经建立可求导的概率计算，但尚未规定每个样本中哪些输出必须正确，下一节才构造学习目标。
