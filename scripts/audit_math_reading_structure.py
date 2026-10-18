@@ -91,13 +91,31 @@ def assignments(root: Path) -> list[dict]:
             "chapter": int(number),
             "title": title.strip(), "path": path.strip() if path.strip().startswith("tex/") else str(VOLUME / path.strip()),
         })
-    if len(rows) != 17:
-        raise ValueError(f"Expected 17 assignments, found {len(rows)}")
-    if [row["chapter"] for row in rows] != list(range(1, 18)):
-        raise ValueError("Chapter assignments must use current numbers 1 through 17 in order")
-    if len({row["path"] for row in rows}) != 17:
+    # Historical audit identities stay stable when a current chapter splits.
+    # In particular, ID 17 remains the source governed by the retirement file.
+    count = 18 if modern else 17
+    if modern and len(modern) != len(rows):
+        raise ValueError("Chapter assignments must not mix current and legacy formats")
+    if len(rows) != count:
+        raise ValueError(f"Expected {count} assignments, found {len(rows)}")
+    identities = [row["chapter"] for row in rows]
+    if (sorted(identities) if modern else identities) != list(range(1, count + 1)):
+        raise ValueError(f"Chapter assignments must use current numbers 1 through {count} exactly once")
+    if len({row["path"] for row in rows}) != count:
         raise ValueError("Chapter assignments must have unique source paths")
+    if modern:
+        for volume, expected_count in ((1, 10), (2, 8)):
+            local_numbers = [row["local_chapter"] for row in rows if row["volume"] == volume]
+            if local_numbers != list(range(1, expected_count + 1)):
+                raise ValueError(f"Volume {volume} assignments must list local chapters 1 through {expected_count} in reading order")
     return rows
+
+
+def current_outline_chapter(row: dict) -> int:
+    """Map stable audit identities to the current concatenated outline."""
+    if "local_chapter" not in row:
+        return row["chapter"]
+    return row["local_chapter"] + (10 if row["volume"] == 2 else 0)
 
 
 def outline_headings(text: str) -> dict[int, list[dict]]:
@@ -106,7 +124,7 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
     current = None
     for line_no, line in enumerate(text.splitlines(), 1):
         if line.startswith("## 卷二"):
-            offset = 9
+            offset = 10
         chapter = re.match(r"## 第(\d+)章 (.+)$", line)
         if chapter:
             current = int(chapter[1]) + offset
@@ -473,7 +491,7 @@ def main() -> int:
     rows = assignments(root)
     selected = [row for row in rows if not args.chapter or row["chapter"] in args.chapter]
     reports = [
-        audit_chapter(root, row, expected[row["chapter"]]) for row in selected
+        audit_chapter(root, row, expected[current_outline_chapter(row)]) for row in selected
     ]
     part_guides = audit_part_guides(root)
     # Read immutable Git objects so a clean build directory cannot silently

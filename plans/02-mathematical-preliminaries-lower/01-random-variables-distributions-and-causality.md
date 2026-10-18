@@ -2,7 +2,7 @@
 
 正文入口：[tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/part.tex](../../tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/part.tex)。章号按本卷连续编号，以下标题和顺序对应当前入口实际接入的正文。
 
-先建立随机对象及其生成与推断，再比较和优化概率分布，最后讨论改变生成机制后的因果响应及识别条件。
+先建立随机对象及其生成与推断，再比较和优化概率分布，最后讨论改变生成机制后的因果响应及识别条件。随机变量的可测性与期望所需的测度、积分工具回用卷一《可测函数》；连续处理的局部响应回用《连续函数》的微分与线性近似。
 
 ## 第1章 随机变量
 
