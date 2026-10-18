@@ -26,6 +26,14 @@ CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 ABBREVIATION_RE = re.compile(
     r"^(?:\$[^$\n]+\$[- ]*)?[A-Z][A-Z0-9]*(?:[-/][A-Z0-9]+)*$"
 )
+# Capitalization only provides the default classification. These names follow
+# the spelling used by their original publications.
+VERIFIED_ABBREVIATIONS = frozenset(
+    {"HyDE", "BERT-LeaQuR", "NeuQS", "ConvDR", "IRCoT"}
+)
+VERIFIED_PROPER_NAMES = frozenset(
+    {"BM25", "BGE-M3", "DUET", "BRIGHT", "BEIR"}
+)
 RESERVED_INDEX_CHARACTERS = set('@!|"')
 
 
@@ -710,6 +718,10 @@ def _contains_reserved_character(value: str) -> bool:
 
 
 def _is_abbreviation(value: str) -> bool:
+    if value in VERIFIED_PROPER_NAMES:
+        return False
+    if value in VERIFIED_ABBREVIATIONS:
+        return True
     return bool(ABBREVIATION_RE.fullmatch(value))
 
 
@@ -1061,7 +1073,8 @@ def _normalize_idx_tex(value: str) -> str:
         r"\\widehat \1",
         value,
     )
-    return re.sub(r"(\$[^$\n]*?)\s+\$", r"\1$", value)
+    value = re.sub(r"(\$[^$\n]*?)\s+\$", r"\1$", value)
+    return _canonicalize_tex(value)
 
 
 def audit_index_artifacts(

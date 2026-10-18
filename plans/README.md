@@ -2,7 +2,7 @@
 
 本目录按 `tex/volumes.json` 的十二卷登记组织。每个设有部分的卷按部分保存一份大纲；卷四与卷五不设部分，各保存一份卷级大纲。卷目录名称与 `tex/` 对应目录一致。
 
-大纲以 `volume.tex → part.tex → 章节及章内输入` 的实际接入顺序为准：章号在卷内连续，保留正文层级，每节及下级小节均说明主要内容、论证依据和表述逻辑。正文与旧规划不一致时采用正文；未接入的拟设章节不作为现有内容。当前共96章，卷九、卷十一和卷十二仅有部分入口，尚无章节正文。
+大纲以 `volume.tex → part.tex → 章节及章内输入` 的实际接入顺序为准：章号在卷内连续，保留正文层级，每节及下级小节均说明主要内容、论证依据和表述逻辑。正文与旧规划不一致时采用正文；未接入的拟设章节不作为现有内容。当前共121章；卷九接入15章，卷十接入9章，卷十一接入10章，卷十二仅有部分入口，尚无章节正文。
 
 | 卷 | 卷名 | 正文章数 | 部分与大纲 |
 | --- | --- | --- | --- |
@@ -14,9 +14,9 @@
 | 6 | 模型：概率图模型 | 15 | [表示](06-probabilistic-graphical-models/01-representation.md)；[推断](06-probabilistic-graphical-models/02-inference.md)；[学习](06-probabilistic-graphical-models/03-learning.md)；[模型](06-probabilistic-graphical-models/04-models.md) |
 | 7 | 学习范式：强化学习 | 8 | [基本问题与求解](07-reinforcement-learning/01-problems-and-solving.md)；[信息与奖励受限的学习](07-reinforcement-learning/02-information-and-reward.md)；[任务扩展与可信决策](07-reinforcement-learning/03-task-expansion-and-trustworthiness.md) |
 | 8 | 学习范式：知识的获取、演进与迁移 | 14 | [知识的获取](08-knowledge-learning/01-knowledge-acquisition.md)；[知识的演进](08-knowledge-learning/02-knowledge-evolution.md)；[知识的迁移](08-knowledge-learning/03-knowledge-transfer.md) |
-| 9 | 应用：自然语言处理 | 0（仅部分入口） | [文本分析与信息组织](09-natural-language-processing/01-text-analysis-and-organization.md)；[文本生成与交互](09-natural-language-processing/02-text-generation-and-interaction.md)；[语音处理](09-natural-language-processing/03-speech-processing.md) |
+| 9 | 应用：自然语言处理 | 15 | [语言模型](09-natural-language-processing/01-language-models.md)；[文本分析与信息组织](09-natural-language-processing/02-text-analysis-and-organization.md)；[文本生成与交互](09-natural-language-processing/03-text-generation-and-interaction.md)；[语音处理](09-natural-language-processing/04-speech-processing.md) |
 | 10 | 应用：图像和多模态处理 | 15 | [图像和多模态基础（6章）](10-image-and-multimodal-processing/01-image-and-multimodal-foundations.md)；[图像和多模态模型（2章）](10-image-and-multimodal-processing/02-image-and-multimodal-models.md)；[图像处理（3章）](10-image-and-multimodal-processing/03-image-processing.md)；[视频处理（2章）](10-image-and-multimodal-processing/04-video-processing.md)；[多模态处理（2章）](10-image-and-multimodal-processing/05-multimodal-processing.md) |
-| 11 | 应用：推荐、搜索与广告 | 0（仅部分入口） | [理解、选择与展示](11-recommendation-search-advertising/01-understanding-selection-and-display.md)；[决策与评价](11-recommendation-search-advertising/02-decision-and-evaluation.md)；[搜索与广告](11-recommendation-search-advertising/03-search-and-advertising.md) |
+| 11 | 应用：推荐、搜索与广告 | 10 | [理解、选择与展示](11-recommendation-search-advertising/01-understanding-selection-and-display.md)；[决策与评价](11-recommendation-search-advertising/02-decision-and-evaluation.md)；[搜索与广告](11-recommendation-search-advertising/03-search-and-advertising.md) |
 | 12 | 系统 | 0（仅部分入口） | [机器学习系统](12-systems/01-machine-learning-systems.md) |
 
 卷十共15章、5部分。图像和多模态基础部分接入概述、图像的形成与表示、图像的变换与滤波、图像的特征与分割、视频的表示与运动、多模态数据的对齐与融合六章；图像和多模态模型部分接入图像与视频模型、多模态模型两章；图像处理部分接入图像识别与检索、图像复原增强压缩及图像生成编辑三章；视频处理接入视频感知跟踪检索及视频复原增强压缩两章；多模态处理接入多模态理解及多模态生成两章。各部分的不编号阅读指引不计入章数。
