@@ -13,3 +13,8 @@
 复现时先运行图11.3、11.6所在目录的`render-panel.py`，再运行本目录的`render-architecture.py`；不带参数导出全部68幅，亦可给出一个或多个图键。工具在当前worktree的`build/volume-three-tikz-redraw/`串行编译，输出各图旁的PDF、SVG、PNG及物理尺寸记录，并检查缺字和导出期间的源文件变化。
 
 `compare-architecture.py`读取重绘前的资源快照（缺省时从基线提交恢复），输出逐图对照PDF；两列采用同一实际引用宽度，重绘侧保留矢量内容。加`--checkpoint aaab22a2`可生成“原图—首轮—保真修订”三列对照，`--keys`可限制图键。每图的局部样本来源、自审和复读记录与图源同目录；书页验收记录放在`reviews/academic-drawing/2026-10-18-volume-three-tikz/`，不以编译通过替代视觉检查。
+
+
+用户后续指出连线端口与局部样式仍有漏项。本轮从`689bef96`继续修订，逐幅检查实际输入/输出、汇流与反馈，而非仅对齐旧图。普通网络维持原接口；`\VLayerNetTall`在保留每层节点数和圆形节点的同时增大纵向间距，适用于原图中需要较高比例的网络。局部修订与实际书页记录见`reviews/academic-drawing/2026-10-18-volume-three-tikz/connection-followup-summary.json`。
+
+对照工具默认在页首及每个版本栏头标出醒目的图号。示例：`compare-architecture.py --checkpoint 689bef96 --checkpoint-label 上次修订`，以原图、上次修订与本次版本并排比较；可继续用`--keys`限定图组。
