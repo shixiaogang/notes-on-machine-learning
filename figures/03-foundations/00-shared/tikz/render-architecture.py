@@ -5,14 +5,29 @@ complete manifest. Requires XeLaTeX, xdvipdfmx and PyMuPDF. Matplotlib mixed
 panels are recreated by the two adjacent render-panel.py scripts first.
 """
 from pathlib import Path
-import json,sys,hashlib,subprocess
+import json,sys,hashlib,subprocess,re
 import pymupdf as fitz
 r=next(p for p in Path(__file__).resolve().parents if (p/'build.sh').exists()); out=r/'build/volume-three-tikz-redraw';out.mkdir(parents=True,exist_ok=True)
 manifest=json.loads((Path(__file__).parent/'architecture-manifest.json').read_text())
 keys=set(sys.argv[1:]);rows=[x for x in manifest['records'] if not keys or x['key'] in keys]
 if keys-{x['key'] for x in rows}:raise ValueError('Unknown figure key')
 sources=[Path(x['source']) for x in rows]
-inputs=[r/s for s in sources]+list((Path(__file__).parent/'icons').glob('*.pdf'))+[Path(__file__).parent/'architecture-style.tex']
+input_set=set(r/s for s in sources)|set((Path(__file__).parent/'icons').glob('*.pdf'))|{Path(__file__).parent/'architecture-style.tex',Path(__file__)}
+def collect_tex(path):
+ text=path.read_text()
+ for name in re.findall(r'\\input\{([^{}\n]+)\}',text):
+  dep=r/(name if Path(name).suffix else name+'.tex')
+  if dep.is_file() and dep not in input_set:
+   input_set.add(dep);collect_tex(dep)
+ for directory in re.findall(r'(figures/[^{}\n]*?/assets/)',text):
+  input_set.update(p for p in (r/directory).glob('*') if p.is_file())
+for source in sources:
+ collect_tex(r/source)
+ dependency_list=r/source.parent/'dependencies.json'
+ if dependency_list.is_file():
+  input_set.add(dependency_list)
+  input_set.update(r/p for p in json.loads(dependency_list.read_text()).get('inputs',[]) if (r/p).is_file())
+inputs=sorted(input_set)
 before={str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 pre=(r/'figures/00-shared/academic-drawing/preamble.tex').read_text()
 pre=pre.replace(r'\input{figures/00-shared/academic-drawing/font-exceptions.tex}',r'''\setmathfont{STIXTwoMath-Regular.otf}[Path=fonts/,range={cal,scr,frak,"2216,"22EE,"22A4,"2713}]
