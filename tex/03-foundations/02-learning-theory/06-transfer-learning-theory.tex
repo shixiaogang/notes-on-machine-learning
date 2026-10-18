@@ -1,121 +1,138 @@
-\chapter{迁移学习的可学习性}
+\chapter{迁移学习和持续学习的可学习性}
 \label{chap:transfer-learning-theory}
 
-先看一个贯穿全章的具体情境。我们用过去几个月的邮件训练了一个垃圾邮件分类器，在那几个月留出的邮件上，它的错误率已经足够低。按照前几章的理论，模型选择完成后，应使用与选择过程独立、从评价分布独立同分布抽取的留出邮件估计期望风险，并用相应置信界说明有限样本误差。未来邮件若仍来自同一评价分布，这份独立估计才支持对未来错误率的判断；只说同分布而不核对独立性并不足够。可是把它换到新月份后，两件事情可能同时改变：长邮件或带附件邮件变多了；更麻烦的是，同样一封长邮件，在新月份里是诈骗邮件的比例也可能与过去不同。前一种变化使各种输入出现的频率改变，后一种变化使“看到什么样的邮件后应当如何判断”的规律改变。无论哪种变化，新邮件都不再满足“与训练同分布”这一前提，前面的同分布保证便不能直接照用。
+一个邮件分类器可以在过去月份的样本上达到很低的错误率，但这份结果还不能回答三个后续问题。新月份的邮件分布改变后，它能否继续识别诈骗邮件？邮件来源不变而误判代价改变后，已有模型能否支持新的决策？如果邮件不断到来、旧数据逐渐无法重访，模型能否一边适应新邮件，一边保持对历史邮件的识别能力？三个问题都要求把有限经验得到的结果用于总体，但可用信息和评价目标各不相同。
 
-迁移学习要回答的正是：在分布发生改变时，旧数据还有没有用、能用到什么程度、需要补什么新信息。为了把话说清楚，我们把提供数据的旧分布称为\emph{源域}，把真正关心的新分布称为\emph{目标域}。这一章的分析分成两步，缺一不可。第一步是\emph{信息层面}的判断：仅凭源域的带标签样本和允许看到的目标域信息，可见信息是否足以支持目标任务所需的预测决策。识别完整标签核与找到近似最优分类器并非同一要求：不同标签核仍可能共享最优决策。只有当相容机制对决策提出冲突要求、并造成不能消除的正超额风险时，再多同源样本也不能解决这一信息障碍；我们会用一个只有两个假设的极小反例说明，目标域里出现了源域从未见过的输入时，问题可能根本无法确定。第二步才是\emph{统计层面}的估计：在跨域关系已经确定、问题可识别的前提下，需要多少样本才能把所需的量估计准确；这一步正是VC维、范数、参数分布和算法稳定性等前几章工具发挥作用的地方，但它们只能控制抽样误差，无法补回第一步缺失的目标标签关系。
+前几章已经建立总体风险、超额风险和PAC可学习性的分析方法。本章沿用这些对象，分别考察分布变化下的迁移、任务变化下的迁移，以及固定任务下的持续学习。我们先判断可见信息是否足以支持所需预测，再构造能够估计目标风险的学习过程，最后检查样本量、优化误差和记忆限制。反例用于说明哪些信息缺口不能靠增加同类样本弥补；正面结论则明确算法在什么范围内能够学会。
 
-根据训练和选模型时能看到多少目标域信息，这一章讨论两类设定，它们也是最容易被混淆的概念。如果允许使用目标域\emph{不带标签}的输入（只知道新月份邮件长什么样，不知道哪些是垃圾邮件），称为领域自适应；如果连这样的目标域输入都不能用于训练和选模型，模型在见到任何目标数据之前就要固定下来，称为领域泛化。第~\ref{sec:transfer-learning-setting}节先精确定义这两类设定及其评价目标，并用不可识别反例建立信息门槛。第~\ref{sec:domain-adaptation}节研究领域自适应：先找到连接两域风险的量，再加入复杂度或稳定性控制。第~\ref{sec:domain-generalization}节研究领域泛化，分别沿“所有允许目标域共享同一标签规律”和“训练与未来环境都从同一个环境总体中随机抽取”两条思路建立保证。需要强调的是，领域泛化中“要求对每个允许目标域分别成立”和“只要求在未来环境上的平均成立”是两种不同的承诺，所需的样本量也不同，我们会在定义和结论中始终保留这一区别。
+以下有限样本结论中，样本数与有限候选数均为正整数，失败概率$\delta\in(0,1)$，优化误差非负；需要条件分布时，假定相应条件概率核存在。
 
-\section{迁移学习的学习问题}
+\section{迁移学习和持续学习的设定与挑战}
 \label{sec:transfer-learning-setting}
 
-\subsection{数据与评价目标}
+在此前常用的设定中，我们先固定任务、损失和假设空间，再从同一未知分布独立抽取训练样本，并评价算法在这个分布上的总体风险。经验风险与总体风险由同一个分布联系起来，有限样本分析控制二者的偏差。本章改变其中的分布、任务或数据访问方式；这些改变决定了原有证明中哪一步还可沿用，哪一步需要新的条件。
+
+\Needspace{7\baselineskip}
+\subsection{迁移学习的设定}
+\label{sec:transfer-settings-overview}
+
+\subsubsection{任务不变时的分布变化}
+
+邮件分类的输出仍是“正常”或“诈骗”，两类错误的计分方式也保持不变，但邮件长度、类别比例或给定特征后的诈骗概率可能变化。把输入与标签记为$(x,y)$，源域和目标域分别由联合分布$\mathcal P_S,\mathcal P_T$描述。任务固定意味着我们在两个分布上使用同一种损失；它不要求两个分布拥有相同的最优分类器。
+
+算法能看到哪些目标信息，需要单独约定。\term{领域自适应}（domain adaptation）允许目标域数据参与学习；无监督领域自适应只提供目标输入，不提供目标标签。\term{领域泛化}（domain generalization）则在训练和模型选择时都不使用目标数据，要求训练所得模型直接用于允许的新环境。部署时读取一个待预测输入，与用一批目标数据更新模型，是不同的信息访问方式。
+
+\subsubsection{数据分布不变时的任务变化}
+
+同一批邮件也可以服务不同的决策要求。例如，原先把漏判诈骗与误拦正常邮件计为相同代价，后来要求尽量减少误拦；数据的特征、标签及其联合分布没有变化，最优决策却可能改变。我们用固定分布$\mathcal P$和两个损失$\ell_S,\ell_T$表达这一情形。任务变化改变的是评价同一预测的方式，迁移需要判断旧任务留下的信息能否支持新目标。
+
+可复用的知识可能是一个分类器，也可能是预测概率、特征表示或统计摘要。它们保留的信息不同，不能只因都称为“已有模型”就赋予相同的理论保证。如果任务改变了预测标签，例如从识别诈骗转为识别邮件主题，应先固定底层邮件来源，再分别说明标签如何产生；此时新的特征--标签联合分布并没有自动保持不变。本章先在固定观测分布、改变损失的设定中给出可核查的结论。
+
+\Needspace{7\baselineskip}
+\subsection{持续学习的设定}
+\label{sec:continual-settings-overview}
+
+\subsubsection{持续到达的数据与分布变化}
+
+现在让邮件按月份到达，模型每接收一批数据便更新，并继续承担分类任务。本章主要固定输入输出的含义和损失，允许第$t$个阶段的分布$\mathcal P_t$随时间改变；分布始终相同也是其中一种情形。阶段可以是明确的数据批次，理论分析中的阶段划分不意味着现实系统总能准确检测到变化边界。
+
+每次更新都可能包含一次从历史分布到当前分布的迁移。但持续学习还要评价更新后的模型在历史分布上是否仍能完成任务。因而，连续适应当前数据只是过程的一部分，整个序列上的评价要求也必须进入学习问题。
+
+\subsubsection{历史数据访问与知识保留}
+
+如果全部历史邮件都能反复读取，我们可以在每次更新时重新汇集数据。持续学习中的资源限制使这种做法未必可用：旧数据离开后，算法只能利用保留下来的状态。这个状态可以包含模型参数、少量样本和统计摘要，其容量与更新方式都应列为条件。
+
+“没有保存旧样本”并不意味着没有保存历史信息。例如，对每个有限候选模型累计过去的损失，就能保留某些学习目标所需的统计量。反过来，若允许用无限精度实数存放全部过去，也不能把这种形式上的固定维状态解释为有限记忆。后面的存储分析会明确计数精度或可用比特数。
+
+\subsubsection{当前适应与历史表现保持}
+
+更新后的模型既要在当前月份的总体上表现良好，也可能需要处理再次出现的历史邮件类型。我们把吸收新数据、改善当前预测的要求称为可塑性，把保持仍有用的历史能力的要求称为稳定性。这里的稳定性评价能力随更新如何变化，与替换训练样本所定义的算法稳定性具有不同含义。
+
+历史表现还可以有不同的评价口径。历史分布上的平均错误率允许少数月份表现较差；要求每个历史分布的错误率都小则更强。如果相同输入在不同月份必须得到相反标签，而预测时又不提供月份信息，同一个分类器可能无法同时达到各月份自己的最优风险。因此，保持要求必须连同允许的分布序列和比较基准一起规定。
+
+\Needspace{7\baselineskip}
+\subsection{与一般可学习性问题的区别和挑战}
+\label{sec:transfer-continual-challenges}
+
+\subsubsection{训练样本与评价总体之间的联系}
+
+源域训练误差首先估计源域风险。即使这个估计完全准确，我们仍需说明它为什么能限制目标域风险。源域是否覆盖目标输入、标签规律之间存在什么联系、目标标签是否可用，都会影响这一转换。缺少必要联系时，可见数据可能完全相同而正确的目标决策不同，困难便发生在抽样误差之前。
+
+跨分布结论也需要说明针对哪个总体作出承诺。对每个预先允许的目标域分别保证，与对随机抽取的新环境平均保证，约束的是不同对象。前者不能仅由后者推出；增加某个已有环境内的样本，也不能普遍替代增加独立环境的数量。
+
+\subsubsection{已有知识对新学习目标的适用性}
+
+任务改变以后，源任务上的最优结果可能没有保留目标任务所需的全部信息。例如，一个只输出类别的模型没有直接报告类别概率，而新的误判代价可能要求按概率重新选择阈值。因此，源任务完成得好与目标任务能够从旧知识中学会，是两个需要分别证明的判断。
+
+如果原始数据仍完整可用，而且新损失能由这些数据计算，按新目标重新学习就是一个基准。迁移的额外价值应体现为目标任务需要更少的新样本或计算。这样的收益依赖任务联系；只证明目标任务可学习，还不能证明旧知识带来了收益。
+
+\subsubsection{有限历史信息下的稳定性与可塑性}
+
+持续学习把风险控制扩展到多个更新阶段。当前训练样本可以帮助估计当前风险，却不能直接检验已经不可访问的所有历史分布。算法必须通过保留信息、共享预测规律或其他明确条件，把历史保证传递到下一阶段。
+
+单次更新有保证，也不意味着整个过程自动具有相同保证。更新次数增加可能累积风险增量和失败概率，历史平均风险还可能掩盖个别环境的遗忘。我们需要同时说明样本量、记忆容量、序列长度与评价精度的关系。表达能力限定可以达到的风险，优化误差说明算法离经验目标还有多远，泛化分析则把经验结果连接到所评价的总体。
+
+\section{分布变化下的迁移可学习性}
+\label{sec:domain-adaptation}
+
+先回到任务固定、月份改变的邮件分类问题。要从旧邮件学习新月份的分类器，我们需要依次确定三件事：算法能使用什么信息，源标签如何与目标标签联系，以及有限样本是否足以估计这种联系所定义的风险。本节以无监督领域自适应为主要设定，并在目标数据完全不可用时讨论领域泛化。
+
+\Needspace{7\baselineskip}
+\subsection{学习问题}
 \label{sec:adaptation-generalization-settings}
 
-沿用第~\ref{sec:transfer-learning}节的说法，迁移学习用已有领域或任务中的信息帮助一个新问题。为了能用概率语言精确讨论，我们先约定“域”到底指什么。一封邮件可以写成一对$(x,y)$：$x$记录邮件的特征（长度、用词、发件人等），$y$是它的标签（是否为垃圾邮件）。把$(x,y)$看成一个随机变量，它服从$X\times Y$上的某个联合分布；这个联合分布完整描述了“会看到什么样的邮件”以及“每种邮件对应什么标签”。\emph{域}（domain）就是这样一个联合分布，连同它所代表的收集环境。这一章固定输入空间$X$和标签空间$Y$，只允许联合分布本身改变；输入空间或标签空间本身改变的跨任务情形不属于后面的形式结论。提供历史数据的旧分布是源域$\mathcal P_S$，真正要预测的新分布是目标域$\mathcal P_T$。
-
-有了两个分布，还需要在同一把尺子下比较模型在两域的表现。固定一个假设空间$\mathcal H$和取值于$[0,1]$的预测损失$\ell(\widehat y,y)$，记$\ell_h(x,y)=\ell(h(x),y)$，对$z=(x,y)\in Z=X\times Y$也记$\ell(h,z)=\ell(h(x),y)$。同一个假设$h$在两域上的风险分别为
-\begin{equation}
- R_S(h)=\mathbb E_{\mathcal P_S}\ell_h(x,y),\qquad
- R_T(h)=\mathbb E_{\mathcal P_T}\ell_h(x,y).
- \label{eq:transfer-population-risks}
-\end{equation}
-下标$S,T$表示在哪个分布下求期望；字母上方加帽号$\widehat R$才表示在有限样本上算出的经验量，二者不要混淆。域$D$在输入上的边缘分布记为$\mathcal P_D^X$。全章默认损失、上确界和抽样过程都满足所需的可测性条件。
-
-部署后真正决定好坏的是目标风险$R_T(h)$。但目标域可能本身就含噪声——例如两封特征完全相同的邮件，有时是垃圾邮件有时不是，任何函数都无法同时分对。因此合理的目标不是把$R_T$压到零，而是尽量接近“在我们允许的模型范围内本来能做到的最好水平”。记
-\[
- R_{T,\mathcal H}^{\star}=\inf_{h\in\mathcal H}R_T(h),
-\]
-并称差$R_T(h)-R_{T,\mathcal H}^{\star}$为\term{目标域超额期望风险}（target-domain excess risk）：它衡量所选模型比同一假设空间中最适合目标域的模型还差多少。这个最优值可以非零，学习只要求逼近它，不承诺消除输入信息本身不足造成的错误。
-
-接下来要固定的关键问题是：训练和选模型时，究竟允许看到目标域的什么信息。对可见信息的约定不同，问题的难度和结论形式都不同，下面两种设定必须分开。
-
-\term{领域自适应}（domain adaptation）允许目标域样本参与学习，但本章重点讨论\emph{无监督}领域自适应：能看到带标签的源域样本$S_S$和\emph{不带标签}的目标域输入$U_T$，两批样本相互独立，
-\[
- S_S\sim\mathcal P_S^{n_S},\qquad
- U_T\sim(\mathcal P_T^X)^{n_T}.
-\]
-也就是说，$U_T$里只有新月份邮件的$x$，没有它们的$y$。这正对应许多真实场景：新数据源源不断地到来、可以观察其内容，但人工标注很贵或来不及。要注意两点：其一，$U_T$既然参与了训练，就不能再当作独立的最终测试集重复使用；其二，无标签输入只能告诉我们目标域里哪类$x$常见，无法直接透露目标域的标签规律。如果目标标签也大量可得，那就退化成了同域PAC问题；迁移分析关心的，正是源域信息能否减少对这些目标标签的需求。
-
-\term{领域泛化}（domain generalization）则更严格：训练和模型选择阶段连目标域的无标签输入都不能用，只能用若干个训练环境中的带标签样本，训练结束后得到一个固定模型直接部署。需要澄清的是，部署时模型当然仍要读取每一个待预测的目标输入$x$；这里禁止的是用一批目标数据去更新参数、调整归一化统计量或重新选模型。若部署时允许用当前目标批次做这些更新，就属于第~\ref{sec:transfer-learning}节的测试时适应：输出不再是固定函数，而是依赖于适应过程，相应的时序、批次依赖和比较基准都要重新定义，不能直接套用本章的固定输出定理。既然训练时见不到目标域，就还必须事先说清楚哪些新环境属于“允许范围”，这一点会通过下面的分布族来规定。
-
-在相同损失下，按可见信息和评价中的随机对象，可以把问题进一步分成三种。
-
-\textbf{领域自适应。}固定一对源—目标分布，算法由$S_S,U_T$选出一个供该目标域使用的假设，评价$R_T$并与$R_{T,\mathcal H}^{\star}$比较；概率来自两批样本和算法自身的随机性。
-
-\term{逐目标域领域泛化}（target-wise domain generalization）固定一组训练域，要求同一个训练好的输出对允许范围内的\emph{每一个}目标域都分别成立。输出不能针对某个目标域重新选择；风险和基准仍是$R_T,R_{T,\mathcal H}^{\star}$。概率只平均训练样本和算法随机性，目标域由概率符号外面的全称量词逐个固定——这意味着不能靠“在多数目标域上表现好”来蒙混过关。
-
-\term{环境平均领域泛化}（environment-average domain generalization）换了一个视角：假设环境本身来自某个总体$\mathcal Q$，先从$\mathcal Q$中随机抽出$K$个训练环境，再在每个环境内采样。这时评价的是输出在“随机新环境”上的平均风险
-\[
- R_{\mathcal Q}(h)=\mathbb E_{\mathcal P\sim\mathcal Q}R_{\mathcal P}(h),
-\]
-并与$\inf_{h\in\mathcal H}R_{\mathcal Q}(h)$比较。概率同时包含环境的抽取、环境内观测和算法随机性。打个比方，逐目标域保证像是要求一位老师教出的学生在\emph{每一所}指定学校都能跟上；环境平均保证只要求他教出的学生在\emph{随机抽取的学校}平均意义上能跟上，允许个别学校特别难。三种问题使用同样的损失和输出范围，改变的是可见信息、被平均的分布对象和比较基准，后面会看到它们对应不同的样本量条件。
-
-\subsection{分布偏移与可识别性}
+\subsubsection{固定任务与变化的联合分布}
 \label{sec:distribution-shift}
 
-要判断旧数据在新分布下还能不能用，先要弄清一个联合分布$\mathcal P(x,y)$由哪些部分组成。按概率论中最常用的两种分解，它既可以写成“先抽输入、再按输入决定标签”
+固定可测输入空间$X$、标签空间$Y$和取值于$[0,1]$的损失$\ell$。联合分布既可分解为输入分布与条件标签分布，也可分解为类别比例与类内输入分布：
 \[
- \mathcal P(x,y)=\mathcal P^X(x)\,\mathcal P(y\mid x),
+ \mathcal P(x,y)=\mathcal P^X(x)\mathcal P(y\mid x)
+               =\mathcal P^Y(y)\mathcal P(x\mid y).
 \]
-也可以反过来写成“先抽类别、再在该类别下抽输入”
-\[
- \mathcal P(x,y)=\mathcal P^Y(y)\,\mathcal P(x\mid y).
-\]
-这四个因子——输入分布$\mathcal P^X$、条件标签分布$\mathcal P(y\mid x)$、类别比例$\mathcal P^Y$、类内输入分布$\mathcal P(x\mid y)$——正好刻画了“看到什么输入”和“输入与标签如何关联”两件事。源域到目标域的偏移，无外乎是其中某些因子保持、另一些改变。下面三种经典设定就是按“保留哪个因子”来命名的；理解了这张分解表，后面的所有条件都只是在回答“被保留的因子是否真的能从源数据中读到”。
+这里的乘积表示相应边缘分布与条件概率核的组合；离散情形可直接按概率相乘。比较这些组成部分，可以说明迁移保留了什么关系，而不仅是说“数据变了”。
 
-需要先记住一个要点：即使两域共享同一个条件标签分布$\mathcal P(y\mid x)$，这个共享关系在源域\emph{从未出现过的输入}上也是无法核实的——源数据里根本没有那些$x$。因此协变量偏移这一“关系不变”的假设，还必须和后面的覆盖条件配合，才能真正把源标签信息用到目标域。
+协变量偏移（covariate shift）保留$\mathcal P(y\mid x)$，允许$\mathcal P^X$变化；相同邮件特征对应的标签概率不变，但不同特征出现的比例改变。标签偏移（label shift）保留$\mathcal P(x\mid y)$，允许类别比例变化；它通常也会改变由输入反推标签的概率。\term{概念偏移}（concept shift）直接描述$\mathcal P(y\mid x)$变化。这些条件可以交叉，不能理解为互斥分类；图~\ref{fig:learning-distribution-shift}展示了被改变的分布成分。
 
-\begin{definition}[协变量偏移]
-\label{def:covariate-shift}
-若存在一个条件标签分布$\mathsf K(\mathrm dy\mid x)$，使得
-\[
- \mathcal P_D(\mathrm dx,\mathrm dy)
- =\mathcal P_D^X(\mathrm dx)\mathsf K(\mathrm dy\mid x),
- \qquad D\in\{S,T\},
-\]
-则称两域满足协变量偏移设定。该设定允许$\mathcal P_S^X$与$\mathcal P_T^X$不同。
-\end{definition}
-
-协变量偏移（covariate shift）让输入频率改变、条件标签分布保持。例如新月份长邮件更多，但长、短邮件内部的诈骗比例各自不变。分类器若更容易错判长邮件，比例增加仍可提高目标风险。因此保留标签规律没有要求两域风险相等。
-
-\begin{definition}[标签偏移]
-\label{def:label-shift}
-若存在条件输入分布$\mathsf K(\mathrm dx\mid y)$，使得
-\[
- \mathcal P_D(\mathrm dx,\mathrm dy)
- =\mathcal P_D^Y(\mathrm dy)\mathsf K(\mathrm dx\mid y),
- \qquad D\in\{S,T\},
-\]
-则称两域满足标签偏移设定。该设定允许$\mathcal P_S^Y$与$\mathcal P_T^Y$不同。
-\end{definition}
-
-标签偏移（label shift）保留类别内部输入分布，改变类别比例。例如诈骗邮件更常见，但诈骗与正常邮件各自的特征分布不变。按输入反推类别时还要计类别比例，所以给定输入的标签概率通常也会改变；这与协变量偏移保留的条件不同。
-
-\term{概念偏移}（concept shift），亦称条件偏移，直接描述给定输入的标签分布改变。源域长邮件诈骗比例0.1、目标为0.4，即使长邮件频率不变，源标签也不能直接代表目标。本章在共同覆盖输入上比较这类变化；源域完全未覆盖的目标输入另有信息缺口。
-
-这三种设定只是对“哪个因子保持不变”的命名，并不是彼此互斥的三种类别，同一个偏移可能同时符合两种描述。例如标签偏移保留类内分布$\mathcal P(x\mid y)$，但当类别比例改变时，按贝叶斯公式反推的$\mathcal P(y\mid x)$通常也会改变，所以从“给定输入看标签”的角度，它又表现出概念偏移所说的变化。图~\ref{fig:learning-distribution-shift}标出了各自行变化的组成部分。还要特别强调：\emph{命了名不等于就能学}。协变量偏移没有保证源域覆盖了目标域的输入；标签偏移也没有保证新的类别比例能仅凭无标签输入被唯一算出来。这两点正是后面要补的条件。
 \begin{figure*}[htbp]
   \centering
   \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/matplotlib/learning-theory-distribution-shift/figure.pdf}
   \caption{分布偏移改变联合分布的不同组成部分。实线表示源域，虚线表示目标域；密度、类别比例和条件概率均为规范化的教学构造，不表示实测频率。协变量偏移允许输入分布改变，标签偏移允许类别比例改变，概念偏移则改变给定输入后的标签分布，图中$\eta(x)=\mathbb P(y=1\mid x)$。这些设定还需与覆盖条件或其他可识别条件结合，才能支持迁移保证。}
  \label{fig:learning-distribution-shift}
 \end{figure*}
-
-这里要区分两个容易混为一谈的条件：源域和目标域的输入密度\emph{是否不同}，与源域是否\emph{覆盖}了目标域会出现的输入区域。密度不同是常态，本身并不可怕；真正致命的是目标域会出现的某些输入在源域里概率为零。直观地说，如果某类新邮件在历史上从未出现过，那么无论收集多少历史邮件，我们都不会知道这类邮件的标签该是什么。用概率论的语言，这叫目标输入分布对源输入分布不满足绝对连续性（后面会正式用到）。图~\ref{fig:learning-support-coverage}在同一尺度下比较了三种情形：目标输入区域完全落在源区域内时，那里原则上能取到源观测；目标区域一旦伸出源区域之外，深色部分没有任何源概率，再多源数据也补不上它的标签。即使完全覆盖，若目标常见的输入在源域里极其稀少，加权时还要给这些少数样本乘上很大的权重，估计方差随之增大——这就是后面密度比上界$\kappa$要刻画的代价。
-
-\begin{figure*}[!htb]
-  \centering
-  \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/matplotlib/learning-theory-support-coverage/figure.pdf}
-  \caption{同尺度的三种支持覆盖。源密度均为$[1,4]$上的$1/3$，目标密度均为长度2区间上的$1/2$；(a)、(b)、(c)的目标支持依次为$[1.5,3.5]$、$[3,5]$、$[3.9,5.9]$。深色区域没有源密度，其目标概率$u_T=\mathbb P_T\{p_S(X)=0\}$依次为0、0.5、0.95。实线、虚线与底色共同区分源域、目标域；只有(a)满足覆盖条件$p_T(x)>0\Rightarrow p_S(x)>0$。密度为规范化教学构造，不是实验分布。}
- \label{fig:learning-support-coverage}
-\end{figure*}
 \FloatBarrier
 
-覆盖只解决“目标输入在源域见没见过”，但即使两域输入分布\emph{完全相同}，也可能仍然学不成：我们无从知道目标域沿用的标签规律是不是和源域一样。图~\ref{fig:learning-alignment-counterexample}构造了这样一个极端而清楚的情形：两域都以相同概率产生输入0和1，源域标签满足$y=x$；但目标域的标签可能仍为$y=x$，也可能完全相反为$y=1-x$。算法只能看到带标签的源样本和无标签的目标输入，而后两者在两种世界里看起来一模一样，因此它无法判断自己处在哪一种世界。仅把两域的输入或表示“对齐”，并不能确定目标标签。
+\subsubsection{源域数据、目标域信息与评价目标}
+\label{sec:transfer-pac-setting}
 
-这种困难与“样本不够多”有本质区别：增加样本只能让我们对\emph{可见数据}的分布估计得更准，而在这个例子里，两种世界给出的可见数据分布本来就完全相同，再多样本也看不出区别。要让一个目标量能够被学习，它必须先被可见信息\emph{唯一确定}：所有与可见数据相容的可能机制，都必须对这个目标量给出相同答案，这一要求称为\term{可识别性}（identifiability，可参考\BookChapterRef{chap:random-variables}{卷2《数学准备：概率、因果与决策》第1章“随机变量”}）。这里必须先指定目标量是标签核、最优决策还是风险数值。若只要求近似最优分类，两个不同标签核仍可能有同一最优分类器；例如单点输入的正类概率分别为0.7或0.8时，预测1在两种机制下都最优。要证明预测学习不可能，还须构造可见规律相同、却要求冲突决策的机制，并证明任意决策在至少一个机制下有固定的正超额风险。下面的两假设例子正具备这一冲突。下面用一个只有两个假设的极小空间，把“可识别性”这个信息门槛与“模型容量太大”这种统计门槛明确分开。
+为了区分“在哪个总体上表现好”，对同一假设$h\in\mathcal H$定义
+\begin{equation}
+ R_D(h)=\mathbb E_{(x,y)\sim\mathcal P_D}\ell(h(x),y),
+ \qquad D\in\{S,T\}.
+ \label{eq:transfer-population-risks}
+\end{equation}
+目标域可能有标签噪声，假设空间也可能存在表达限制。因此，我们用$R_{T,\mathcal H}^{\star}=\inf_{h\in\mathcal H}R_T(h)$作为比较基准，称$R_T(h)-R_{T,\mathcal H}^{\star}$为\term{目标域超额期望风险}（target-domain excess risk）。它衡量所选假设与同一候选空间中目标表现最优者的差距。
+
+无监督领域自适应接收相互独立的带标签源样本$S_S\sim\mathcal P_S^{n_S}$与无标签目标样本$U_T\sim(\mathcal P_T^X)^{n_T}$。能否学习取决于允许的分布对集合$\mathfrak P_{\mathrm{DA}}$；覆盖关系、共享标签规律、已知辅助信息都属于这个设定。以下概率包含抽样与算法内部随机性，并假定涉及的损失、上确界和输出满足可测性要求。
+
+\begin{definition}[领域自适应的PAC可学习性]
+\label{def:adaptation-pac-learnability}
+固定$\mathcal H,\ell,\mathfrak P_{\mathrm{DA}}$。若存在输出属于$\mathcal H$的算法$A$和有限门槛$m_S,m_T$，使对任意$\varepsilon,\delta\in(0,1)$、任意$(\mathcal P_S,\mathcal P_T)\in\mathfrak P_{\mathrm{DA}}$，以及$n_S\geq m_S(\varepsilon,\delta)$、$n_T\geq m_T(\varepsilon,\delta)$，都有
+\[
+ \mathbb P\{R_T(A(S_S,U_T))-R_{T,\mathcal H}^{\star}\leq\varepsilon\}
+ \geq1-\delta,
+\]
+则称该设定PAC可学习。门槛可以依赖假设空间和分布族的统一参数，但不能依赖未知的具体分布对。
+\end{definition}
+
+这个要求约束总体风险，并不是说源域上观察到的任意规律都会在目标域成立。若需要已知密度比等辅助输入，必须把它写进算法的信息条件。定义先要求有限样本下存在成功算法；高效计算还需要另外控制求解代价。
+
+\Needspace{7\baselineskip}
+\subsection{可学习的条件}
+\label{sec:adaptation-risk}
+
+\subsubsection{目标预测规律的可识别性}
+
+设两个月份都以相同概率产生输入0和1，源标签为$y=x$，目标标签却可能是$y=x$或$y=1-x$。源标签样本与无标签目标输入在两种情形中的分布完全一样，正确决策却相反。图~\ref{fig:learning-alignment-counterexample}把同一预测与两种隐藏标签并排比较，说明输入分布对齐仍不足以确定目标预测。
 
 \begin{figure*}[!htb]
   \centering
@@ -125,6 +142,58 @@
 \end{figure*}
 \FloatBarrier
 
+一个目标量是否由可观察数据的分布唯一确定，是\term{可识别性}（identifiability）问题。预测学习还需核对识别的对象：不同的条件标签概率可能拥有相同的最优决策，例如正类概率为0.7或0.8时都应预测1。用这一思路证明不可学习，需要可见规律相同而近似最优决策不能兼容的反例，不能只指出标签概率不同（可参考\BookChapterRef{chap:random-variables}{卷2“随机变量”章}）。
+
+\subsubsection{分布覆盖与跨域风险的联系}
+
+源域从未出现的目标输入，需要额外的标签联系才能预测。若目标输入分布对源输入分布绝对连续，即$\mathcal P_T^X\ll\mathcal P_S^X$，源域零概率集合在目标域也为零概率。图~\ref{fig:learning-support-coverage}显示覆盖与密度相同是两种要求：源、目标密度可以不同，但缺少覆盖的区域无法仅靠更多源观测补出标签。
+
+\begin{figure*}[!htb]
+  \centering
+  \includegraphics[width=164.600mm]{figures/03-foundations/02-learning-theory/matplotlib/learning-theory-support-coverage/figure.pdf}
+  \caption{同尺度的三种支持覆盖。源密度均为$[1,4]$上的$1/3$，目标密度均为长度2区间上的$1/2$；(a)、(b)、(c)的目标支持依次为$[1.5,3.5]$、$[3,5]$、$[3.9,5.9]$。深色区域没有源密度，其目标概率$u_T=\mathbb P_T\{p_S(X)=0\}$依次为0、0.5、0.95。实线、虚线与底色共同区分源域、目标域；只有(a)满足覆盖条件$p_T(x)>0\Rightarrow p_S(x)>0$。密度为规范化教学构造，不是实验分布。}
+ \label{fig:learning-support-coverage}
+\end{figure*}
+\FloatBarrier
+
+另一种连接两域风险的办法，是比较分类器之间的预测分歧。分歧只涉及输入，因此可以在无标签目标样本上观察。对二分类零一损失，令
+\begin{equation}
+ d_{\mathcal H\triangle\mathcal H}
+ =2\sup_{h,g\in\mathcal H}
+ \left|\mathbb P_S^X(h\neq g)-\mathbb P_T^X(h\neq g)\right|,
+ \label{eq:h-delta-h-divergence}
+\end{equation}
+其中$h\neq g$表示二者在同一输入上给出不同类别。上确界覆盖算法可能选出的全部假设对，系数2采用假设分歧散度的惯用归一化。还需定义$\lambda=\inf_{g\in\mathcal H}(R_S(g)+R_T(g))$，衡量同一个候选在两域上能达到多小的风险之和。
+
+\begin{theorem}[领域自适应的目标域期望风险界]
+\label{thm:domain-adaptation-bound}
+对非空可测二分类假设空间$\mathcal H$和源、目标联合分布，采用零一损失及上述分歧散度与$\lambda$，则每个$h\in\mathcal H$都满足
+\begin{equation}
+ R_T(h)\leq R_S(h)+\tfrac12d_{\mathcal H\triangle\mathcal H}+\lambda.
+ \label{eq:domain-adaptation-risk-bound}
+\end{equation}
+\end{theorem}
+\begin{proof}
+固定任意$g\in\mathcal H$。若$h$在目标域出错，则$g$出错或二者预测不同，故
+$R_T(h)\leq R_T(g)+\mathbb P_T^X(h\neq g)$。散度定义把后一项限制为
+$\mathbb P_S^X(h\neq g)+d_{\mathcal H\triangle\mathcal H}/2$。
+在源域，预测不同意味着至少一者出错，因此
+$\mathbb P_S^X(h\neq g)\leq R_S(h)+R_S(g)$。合并并对$g$取下确界即可。
+\end{proof}
+
+该界分别保留源风险、输入差异和标签相关量\scite{bendavid2010adaptation}。其中$\lambda$包含目标标签，不能从无标签输入直接估计；它也可能因两域共有噪声而为正，不能据此断言目标超额风险不可学习。图~\ref{fig:learning-domain-classifier}用域分类错误解释输入散度：域先验相等、判别类对取补封闭时，其最小错误$e^*$与相应散度满足$d=2(1-2e^*)$。能分清输入来源，只说明输入差异，不决定目标任务的全部风险。
+
+\begin{figure*}[!htb]
+  \centering
+  \includegraphics[width=113.404mm]{figures/03-foundations/02-learning-theory/tikz/learning-theory-domain-classifier/figure.pdf}
+  \caption{域分类器的错误只对应输入散度项。源输入均匀分布于$[0,1]^2$，目标输入均匀分布于$[\delta,1+\delta]\times[0,1]$，其中$0\leq\delta\leq1$；圆点、方块的位置为教学构造，错误率由区域概率计算。$\mathcal H$含双向阈值与常值假设，域分类器类取$\mathcal G=\mathcal H\triangle\mathcal H$。其中$g=h_0\mathbin\oplus h_\delta$在左侧浅色带预测源域，$h_a(x)=\mathbb I\{x_1\geq a\}$；两域均等先验时，最小域错误为$(1-\delta)/2$，$d_{\mathcal G}=2\delta$。任务风险界还包含源风险及$\lambda=\inf_{h\in\mathcal H}(R_S(h)+R_T(h))$，不能只由域错误决定。}
+ \label{fig:learning-domain-classifier}
+\end{figure*}
+\FloatBarrier
+
+\subsubsection{缺少跨域联系时的不可学习性}
+
+现在把信息缺口写成一个有限样本也无法消除的结论。下面只有两个候选分类器，每种可能的目标机制都能被其中一个正确表示；失败来自可见信息无法在二者之间作出选择。
 
 \begin{theorem}[缺少覆盖时的不可学习性]
 \label{thm:transfer-nonidentifiability}
@@ -157,161 +226,20 @@ $U_T\sim(\mathcal P_T^X)^{n_T}$相互独立。
 $h_1$在两域均无错误，故失败并非假设空间缺少合适的假设。
 \end{proof}
 
-这个反例的关键在于，失败与模型复杂度完全无关：假设空间只有$h_0,h_1$两个假设，VC维仅为1，按理说同分布下一个样本就足够；但输入$b$的标签在源域从不出现，无论$n_S,n_T$多大都补不上这条信息。而且两个设定中都\emph{存在}一个能在两域同时做到零风险的假设，所以问题也不是假设空间里缺少好模型。缺的只是一条信息桥梁：源输入对$b$的覆盖（或者一条显式连接两域标签规律的条件）。这说明在迁移问题中，只限制参数数目或参数范数远远不够，必须同时检查跨域联系是否成立、目标信息是否可见\scite{bendavid2010impossibility}。
+无论样本量多大，输入$b$的标签都没有进入观测。这里甚至存在同时在源域和目标域零风险的候选，所以“存在一个好模型”也不能代替识别该模型的依据。不可学习结论依赖这一允许分布族；提供目标标签或增加有效的跨域联系会改变问题\scite{bendavid2010impossibility}。
 
-\subsection{迁移学习的PAC要求}
-\label{sec:transfer-pac-setting}
+\Needspace{7\baselineskip}
+\subsection{有限样本保证}
 
-反例告诉我们，“任意分布改变都能迁移”是不可能的；要得到正面结论，必须事先划定一个\emph{允许分布对的集合}$\mathfrak P_{\mathrm{DA}}$，明确承诺源域和目标域之间满足哪些关系。共享的条件标签核、源域对目标域的覆盖程度、密度比是否有界、算法是否已知某些辅助量，都属于这个集合的规定。这些条件不是可有可无的技术细节：改变其中任何一条，哪怕假设空间$\mathcal H$完全相同，问题都可能从可学习变成不可学习。下面把前面三种问题分别写成PAC定义，读者重点关注每个定义里的概率对谁取、基准风险是什么。
+\subsubsection{重加权学习的目标域风险保证}
+\label{sec:adaptation-coverage}
 
-\begin{definition}[相对于分布族的领域自适应PAC可学习性]
-\label{def:adaptation-pac-learnability}
-固定$\mathcal H$、损失函数$\ell$及允许的分布对集合$\mathfrak P_{\mathrm{DA}}$。若存在取值于$\mathcal H$的学习算法$A$与有限的样本量函数$m_S,m_T$，使得对任意$\varepsilon,\delta\in(0,1)$、任意$(\mathcal P_S,\mathcal P_T)\in\mathfrak P_{\mathrm{DA}}$，以及$n_S\geq m_S(\varepsilon,\delta)$、$n_T\geq m_T(\varepsilon,\delta)$，都有
-\[
- \mathbb P_{S_S,U_T,A}\!\left(
- R_T(A(S_S,U_T))-R_{T,\mathcal H}^{\star}\leq\varepsilon
- \right)\geq1-\delta,
-\]
-则称$\mathcal H$在该设定下是领域自适应PAC可学习的。样本量函数可以依赖$\mathcal H$及$\mathfrak P_{\mathrm{DA}}$的统一参数，但不能依赖其中未知的具体分布对。
-\end{definition}
-
-这个定义与前几章的不可知PAC定义读起来很像，区别只在于两点：抽样多了一批无标签目标样本$U_T$，评价风险换成了目标风险$R_T$，并且整个保证要对允许集合$\mathfrak P_{\mathrm{DA}}$中的\emph{任意}一对分布统一成立。定义仍然只要求输出属于$\mathcal H$、逼近可能非零的最优风险，因此是不可知式的。若算法还需要密度比之类的辅助量，必须把这些量明确列为算法已知的输入，不能默认它“恰好知道”。此外，样本量函数只能依赖假设空间和分布族的统一参数（如密度比上界$\kappa$），不能偷偷依赖具体是哪一对分布。最后要提醒：这里只回答“是否存在一个样本量有限的算法”这一统计问题，这个算法能否被高效计算出来是另一个独立的计算复杂度问题。
-
-\begin{definition}[逐目标域领域泛化PAC可学习性]
-\label{def:targetwise-domain-generalization-pac}
-设$\mathfrak P_{\mathrm{DG}}$是允许训练域组$\mathcal D=(\mathcal P_1,\ldots,\mathcal P_K)$的集合，并为每个$\mathcal D$指定允许目标域集合$\mathcal T(\mathcal D)$。记训练域均匀混合为$\overline{\mathcal P}_{\mathcal D}=K^{-1}\sum_{e=1}^K\mathcal P_e$。若存在取值于$\mathcal H$的算法$A$和有限样本量函数$m$，使对任意$\varepsilon,\delta\in(0,1)$、任意$\mathcal D\in\mathfrak P_{\mathrm{DG}}$、任意固定的$\mathcal P_T\in\mathcal T(\mathcal D)$及任意$n\geq m(\varepsilon,\delta)$，都有
-\[
- \mathbb P_{S\sim\overline{\mathcal P}_{\mathcal D}^{\,n},A}\!\left(
- R_T(A(S))-R_{T,\mathcal H}^{\star}\leq\varepsilon
- \right)\geq1-\delta,
-\]
-则称$\mathcal H$在该设定下是\term{逐目标域领域泛化}（target-wise domain generalization）PAC可学习的。算法在训练和模型选择时不接收目标域样本；目标域由概率之外的全称量词固定。
-\end{definition}
-
-理解这个定义的关键是全称量词的位置：目标域$\mathcal P_T$写在概率符号\emph{外面}，表示先固定任意一个允许目标域，再只对训练样本和算法掷硬币取概率。因此同一套算法和同一个样本量门槛，必须对每一个允许目标域都管用；不过不同目标域上“哪些具体样本导致成功”可以是不同的事件，不要求用同一个样本实现同时成功。后面9.3节会给出一种更强的结论：存在\emph{同一个}高概率样本事件，在该事件上输出对全部允许目标域同时成立。那种“同时保证”显然蕴含这里的逐域保证，但要求更高。
-
-\begin{definition}[环境平均领域泛化PAC可学习性]
-\label{def:environment-average-domain-generalization-pac}
-设$\mathfrak M$是允许的环境分布族，其中每个$\mathcal Q\in\mathfrak M$都定义在$Z$上的概率分布所组成的空间上。训练时先独立抽取$\mathcal P_1,\ldots,\mathcal P_K\sim\mathcal Q$，再从每个环境抽取环境训练样本块$D_e\sim\mathcal P_e^n$，算法只接收$\mathcal S=(D_1,\ldots,D_K)$。定义
-\[
- R_{\mathcal Q}(h)=\mathbb E_{\mathcal P\sim\mathcal Q}R_{\mathcal P}(h).
-\]
-若存在取值于$\mathcal H$的算法$A$以及有限的环境数门槛$k_0$和总观测数门槛$m_0$，使对任意$\varepsilon,\delta\in(0,1)$、任意$\mathcal Q\in\mathfrak M$，只要$K\geq k_0(\varepsilon,\delta)$且$Kn\geq m_0(\varepsilon,\delta)$，就有
-\[
- \mathbb P_{\mathcal P_1,\ldots,\mathcal P_K,D_1,\ldots,D_K,A}\!\left(
- R_{\mathcal Q}(A(\mathcal S))-\inf_{h\in\mathcal H}R_{\mathcal Q}(h)
- \leq\varepsilon
- \right)\geq1-\delta,
-\]
-则称$\mathcal H$在该设定下是\term{环境平均领域泛化}（environment-average domain generalization）PAC可学习的。
-\end{definition}
-
-注意这里的概率对象比逐目标域定义多了一层：不仅环境内的观测是随机的，连训练环境本身也是从$\mathcal Q$中随机抽出的；而“未来环境”并不逐个出现，它们的好坏已经通过外层期望$R_{\mathcal Q}$被平均掉了。比较基准也要看清：$\inf_{h\in\mathcal H}R_{\mathcal Q}(h)$是先固定\emph{同一个}假设、让它在环境总体上平均风险最低，而不是允许每个环境各自挑选最适合自己的假设再把风险平均——后者强得多，也不符合“训练出一个固定模型部署到各处”的设定。定义还要求超额风险能随\emph{两层}样本量（环境数$K$和总观测数$Kn$）任意减小；9.3节会看到，为什么这两层门槛缺一不可。
-
-三个定义形式相近，读者可以用三个问题快速区分：训练时能不能看到目标输入？概率对哪些随机量取？比较的基准是某一个目标域的最优风险，还是环境平均意义下的最优风险？三者有一个共同点：保证总是相对于一个事先固定的分布族而言，离开这个族便不成立。还要区分两种强度的结论：如果一条风险界右边残留一个与样本量无关的正常数（比如无法估计的共同错误项），它仍然有价值——能告诉我们目标风险受哪些因素影响——但它不满足PAC“任意精度”的要求，因为样本再多也压不掉那个常数。后面各节会严格按自适应、逐目标、环境平均这三种评价对象分别给出结论，互不混用。
-
-\section{领域自适应的可学习性}
-\label{sec:domain-adaptation}
-
-自适应中的无标签目标样本只显示输入分布。因此我们先要把源标签风险与目标风险连接，再控制有限抽样和算法选择。分歧、标签核和覆盖提供前一步，函数空间复杂度或输出稳定性提供后一步。只有两步成立，VC维、Rademacher、稳定性或PAC--Bayes才支持目标保证。
-
-\subsection{跨域风险的连接与可识别条件}
-\label{sec:adaptation-risk}
-
-在无监督领域自适应里，目标标签看不到，但有一件事是\emph{不需要标签就能观察}的：两个分类器对同一封邮件给出的预测是否一致。设$h,g$是两个二分类器，只比较它们的预测$h(x),g(x)$而不涉及$y$，那么“分歧概率”$\mathbb P(h(x)\neq g(x))$在源域和目标域都可以只用输入算出来。例如$h,g$在源域10\%的邮件上意见不同，在目标域40\%的邮件上意见不同，这个0.3的差距告诉我们两域的输入分布确实变了。更重要的是，这个量将成为连接两域风险的桥梁：如果两域连“分类器之间在哪里分歧”都差不多，再加上源域风险很小，就有望推出目标域风险也小。但要注意，光知道源分歧只有0.1，并不能单独限制目标分歧，所以桥的两端都必须保留。
-
-为什么不能固定一对$h,g$来算分歧？因为学习算法会根据样本选出不同的最终假设，我们需要的界必须对\emph{任何可能被选中}的假设都成立，因此要对$\mathcal H$中所有假设对取两域分歧概率之差的最大值。由此得到$\mathcal H\triangle\mathcal H$散度（$\mathcal H\triangle\mathcal H$-divergence，亦称假设分歧散度），它度量两域输入分布在“假设空间能分辨的方向”上相差多远。记号中的$\triangle$来自集合的对称差：把分类器看成它预测为1的输入集合，那么$h,g$预测不一致的区域恰好是这两个集合的对称差$h\triangle g$，所以“在$\mathcal H\triangle\mathcal H$上取散度”就是在所有这种分歧集合上取散度。式前的系数2是该概念的惯用归一化（与后面域分类器错误率的换算相配合），上确界则保证它覆盖所有可能的假设选择。
-
-\begin{definition}[假设分歧散度]
-\label{def:h-delta-h-divergence}
-对非空二分类假设空间$\mathcal H\subseteq\{0,1\}^{X}$，定义
+若两个域共享条件标签核$\mathsf K(\mathrm dy\mid x)$，并且源输入覆盖目标输入，就可以调整源样本的贡献来计算目标风险。令密度比$w=\mathrm d\mathcal P_T^X/\mathrm d\mathcal P_S^X$，其含义是把源输入概率转换为目标输入概率所需的权重。结合共享标签核，得到
 \begin{equation}
- \begin{aligned}
- d_{\mathcal H\triangle\mathcal H}(\mathcal P_S^X,\mathcal P_T^X)
- =2\sup_{h,g\in\mathcal H}
- \big|&\mathbb P_{x\sim\mathcal P_S^X}(h(x)\neq g(x))\\
-       &-\mathbb P_{x\sim\mathcal P_T^X}(h(x)\neq g(x))\big|.
- \end{aligned}
- \label{eq:h-delta-h-divergence}
-\end{equation}
-\end{definition}
-
-这个抽象的散度还可以用一个非常直观的方式理解：给每条输入\emph{人为贴上它来自哪个域}的标签（源或目标），然后训练一个“域分类器”去判断一条输入来自源域还是目标域。如果两域输入分布完全相同，任何分类器都只能瞎猜，最低错误率为1/2；如果存在一个分类器能很准地区分来源，说明两域在它看得到的方向上差别很大。设分类器类为$\mathcal G$，定义$d_{\mathcal G}=2\sup_{g\in\mathcal G}|\mathbb P_S(g=1)-\mathbb P_T(g=1)|$；当两域先验概率相等且$\mathcal G$对取补封闭时，它与最低域分类错误$\varepsilon_{\mathrm{dom}}^*$之间满足$d_{\mathcal G}=2(1-2\varepsilon_{\mathrm{dom}}^*)$：域错误越低，候选类越能找到两域概率不同的区域，散度就越大。这是总体层面的可分性，不包含有限样本估计和能否算出来的保证。取$\mathcal G=\mathcal H$得到较粗的$\mathcal H$散度，取$\mathcal G=\mathcal H\triangle\mathcal H$才正好对应式~\eqref{eq:h-delta-h-divergence}；图~\ref{fig:learning-domain-classifier}会同时展示这一区别，并提醒任务风险还不止散度一项。
-
-仅有“两域输入像不像”还不够：即使输入散度为0，下面的绝对风险上界仍须检查同一假设在两域的风险之和，才能说明两域风险能否同时很小。若两域机制在同一正概率区域要求相反的确定标签，源域上的正确预测就会与目标域要求冲突；但共同风险较大还可能有别的原因，不能预先把它都解释为这种冲突。因此还要度量“共同预测能力”：$\lambda=\inf_{g\in\mathcal H}(R_S(g)+R_T(g))$，即在假设空间里找同一个假设，使它在两域的风险之和最小。$\lambda$小，说明确实存在一个假设能在两域同时表现好；$\lambda$大只说明同一假设在两域的绝对风险之和无法很小，原因可能是标签机制冲突，也可能是两域共有的标签噪声或假设空间限制。例如源域与目标域相同、输入恒定而正类概率为0.7时，常值分类器中最优者风险为0.3，$\lambda=0.6$，但它相对类内最优的超额风险仍为零。因此不能把共同错误大直接等同于跨域决策冲突。要特别注意$\lambda$由两域的\emph{真实分布和标签}决定，与训练时使用的正则化系数毫无关系（只是希腊字母恰好相近）。它含目标标签，因此无法仅凭无标签目标输入估计——这一点后面会反复成为关键限制。Ben-David等人正是把这个与标签有关的量、源风险和输入分歧三者联系起来，得到下面的风险界\scite{bendavid2010adaptation}。
-
-\begin{theorem}[领域自适应的目标域期望风险界]
-\label{thm:domain-adaptation-bound}
-设$(X,\mathcal X)$为可测输入空间，$Y=\{0,1\}$，
-$\mathcal P_S,\mathcal P_T$为$X\times Y$上的概率分布，其输入边缘分布分别为
-$\mathcal P_S^X,\mathcal P_T^X$。令$\mathcal H$为由可测函数
-$h:X\to Y$组成的非空二分类假设空间，并定义
-\[
- R_D(h)=\mathbb P_{(x,y)\sim\mathcal P_D}\{h(x)\neq y\},
- \qquad D\in\{S,T\},
-\]
-\[
-\begin{aligned}
- d_{\mathcal H\triangle\mathcal H}(\mathcal P_S^X,\mathcal P_T^X)
- =2\sup_{h,g\in\mathcal H}\bigl|
- &\mathbb P_{x\sim\mathcal P_S^X}\{h(x)\neq g(x)\}\\
- &-\mathbb P_{x\sim\mathcal P_T^X}\{h(x)\neq g(x)\}\bigr|,
-\end{aligned}
-\]
-以及
-\[
- \lambda=\inf_{g\in\mathcal H}\bigl(R_S(g)+R_T(g)\bigr).
-\]
-则对任意$h\in\mathcal H$，
-\begin{equation}
- R_T(h)\leq R_S(h)
- +\tfrac12d_{\mathcal H\triangle\mathcal H}(\mathcal P_S^X,\mathcal P_T^X)
- +\lambda.
- \label{eq:domain-adaptation-risk-bound}
-\end{equation}
-\end{theorem}
-\begin{proof}
-取任意用于比较的假设$g\in\mathcal H$。当$h$在目标域预测错误时，要么$g$也预测错误，要么$h$与$g$的预测不同。因此
-\[
- R_T(h)\leq R_T(g)+\mathbb P_T(h(x)\neq g(x)).
-\]
-分歧散度控制同一分歧事件在两域的概率差，从而
-\[
- \mathbb P_T(h\neq g)
- \leq\mathbb P_S(h\neq g)+\tfrac12d_{\mathcal H\triangle\mathcal H}.
-\]
-在源域中，两个二分类假设预测不同意味着至少一个预测错误，故
-$\mathbb P_S(h\neq g)\leq R_S(h)+R_S(g)$。合并三步，再对$g$取下确界，得到结论。
-\end{proof}
-
-\begin{figure*}[!htb]
-  \centering
-  \includegraphics[width=113.404mm]{figures/03-foundations/02-learning-theory/tikz/learning-theory-domain-classifier/figure.pdf}
-  \caption{域分类器的错误只对应输入散度项。源输入均匀分布于$[0,1]^2$，目标输入均匀分布于$[\delta,1+\delta]\times[0,1]$，其中$0\leq\delta\leq1$；圆点、方块的位置为教学构造，错误率由区域概率计算。$\mathcal H$含双向阈值与常值假设，域分类器类取$\mathcal G=\mathcal H\triangle\mathcal H$。其中$g=h_0\mathbin\oplus h_\delta$在左侧浅色带预测源域，$h_a(x)=\mathbb I\{x_1\geq a\}$；两域均等先验时，最小域错误为$(1-\delta)/2$，$d_{\mathcal G}=2\delta$。任务风险界还包含源风险及$\lambda=\inf_{h\in\mathcal H}(R_S(h)+R_T(h))$，不能只由域错误决定。}
- \label{fig:learning-domain-classifier}
-\end{figure*}
-
-这就暴露出分歧界的一个根本限制：共同错误$\lambda$里含有目标标签，而无监督自适应恰恰看不到目标标签，所以$\lambda$无法从数据中直接估计；它把这条绝对风险上界中仍需控制的标签相关量单列出来。若希望由该界推出任意小的绝对风险，还需使不随样本量消失的项足够小；本章的不可知PAC要求的是目标超额风险任意小，不能仅凭绝对风险上界留有正项就判定不可能。下面选择一条更直接控制超额风险的充分路径，用额外的跨域关系把目标风险改写为源域量；这不是所有可学习迁移问题都必须采用的唯一条件。下面采用三个相互配合的条件：两域共享同一个条件标签分布、源域输入覆盖目标域输入、密度比有统一上界。它们合起来能把目标风险改写成源域上的一个加权期望，而加权期望是可以用源样本估计的。
-
-要把目标期望改写成能用源样本计算的形式，需要一件概率论工具：重要性加权（测度变换）。先看为什么需要它。直接用源样本做平均，相当于按源输入分布$\mathcal P_S^X$求期望；而我们想要的是按目标输入分布$\mathcal P_T^X$求期望。如果目标分布里每一类输入所占的比例与源域不同，就应当让源样本中“在目标域更常见”的那些邮件在平均时占更大比重。
-
-这一比重就是密度比。若目标分布不会在源域概率为零的地方赋予正概率（即目标输入分布对源输入分布\emph{绝对连续}，记作$\mathcal P_T^X\ll\mathcal P_S^X$，这正是前面“覆盖”条件的概率写法），则存在非负函数
-\[
- w(x)=\frac{\mathrm d\mathcal P_T^X}{\mathrm d\mathcal P_S^X}(x),
-\]
-它对每个可测集合$B$满足$\mathcal P_T^X(B)=\int_B w(x)\,\mathrm d\mathcal P_S^X(x)$。直观上，$w(x)$回答“同一个输入$x$在目标域比在源域重要多少倍”：$w(x)>1$表示它在目标域更常见，应加权；$w(x)<1$则相反。仅有密度比存在还不够，估计时还要控制它的大小——若个别$w(x)$极大，平均几乎由极少数样本决定，方差会爆炸。因此再假设几乎处处$w(x)\leq\kappa$，于是
-\[
- \mathcal P_T^X(B)\leq\kappa\mathcal P_S^X(B).
-\]
-这个不等式有两层含义：其一，$w(x)<\infty$意味着源域概率为零的区域目标域也没有概率，即排除了源完全遗漏的区域；其二，统一上界$\kappa$限制了源域“低估”目标重要区域的最严重程度。$\kappa$可以直接读出迁移的代价：若某类邮件在目标域占一半、在源域只占百分之一，那么在这类输入上必有$\kappa\geq50$，后面会看到所需样本量大致按$\kappa^2$增长——目标域越依赖源域里罕见的输入，需要的源样本就越多。
-
-共享标签核使输入重加权同时重加权标签损失，因此目标评价可写为
-\begin{equation}
- R_T(h)=\mathbb E_{(x,y)\sim\mathcal P_S}
-                 [w(x)\ell(h(x),y)].
+ R_T(h)=\mathbb E_{(x,y)\sim\mathcal P_S}[w(x)\ell(h(x),y)].
  \label{eq:covariate-risk-identity}
 \end{equation}
-图~\ref{fig:learning-importance-weighting}显示目标相对常见的输入获得更大源样本权重。标签仍由源域提供，其适用性靠共享条件机制，而非输入密度接近。
+权重只改变输入的抽样比例，源标签能够用于目标评价仍依赖共享条件核。图~\ref{fig:learning-importance-weighting}展示目标更常见的输入如何获得更大的源样本权重。
 
 \begin{figure}[htbp]
   \centering
@@ -323,541 +251,100 @@ $\mathbb P_S(h\neq g)\leq R_S(h)+R_S(g)$。合并三步，再对$g$取下确界�
  目标输入必须受到源输入覆盖；要使用风险恒等式，还需保持相同的条件标签分布。}
  \label{fig:learning-importance-weighting}
 \end{figure}
+\FloatBarrier
 
-这个恒等式是整条重加权路线的核心，值得看清两个因子各自的作用：密度比$w(x)$只负责把“按源域抽输入”纠正成“按目标域抽输入”，它不含标签；而损失$\ell(h(x),y)$中的标签$y$仍来自源样本，之所以这些源标签在目标域仍然正确，完全依赖两域共享条件标签核$\mathsf K(\mathrm dy\mid x)$这一假设。这条恒等式依赖两个条件：缺少覆盖，目标输入分布未必能由源分布上的有限密度比表示；条件标签核改变时，只重加权输入一般不能把源联合分布变为目标联合分布。这不表示每条源标签在目标域都错误，而是缺少保证条件分布匹配的依据。还需强调，源标签和目标输入这两部分观测各自都不能单独识别出目标标签核，迁移始终依赖这条外部给定的连接条件（可参考\BookChapterRef{chap:mathematics-and-future-research}{卷2《数学准备：概率、因果与决策》第8章“数学基础与后续研究”}）。下面先假设$w$已知，给出一个干净的可学习结论，再讨论$w$也要从数据估计时会多出什么要求。
-
-\subsection{基于假设空间的有限样本保证}
-\label{sec:adaptation-classwide-bounds}
-
-现在固定前面的两类连接：分歧风险界保留共同错误项，加权恒等式依赖共享核和覆盖。接下来从整个函数空间控制经验偏差。VC维适合二分类与分歧函数，加权实值损失则可用Rademacher复杂度和范数。
-
-\paragraph{分歧距离与VC维}
-
-定理~\ref{thm:domain-adaptation-bound}给出的是总体（期望）风险之间的关系，其中$R_S$和分歧概率都是真实期望，实践中只能用有限样本估计。这里要估计的量有两类：用带标签源样本估计源风险$R_S(h)$，用两域的\emph{输入}估计分歧概率（分歧不含标签，所以目标侧只需$U_T$）。又因为最终假设是根据数据选出来的，只对单个假设估计准确还不够，必须让上述估计对空间里\emph{全部}假设和\emph{全部}假设对同时成立，这正是一致收敛要处理的情形。
-
-将源经验风险记为$\widehat R_{S_S}(h)$，用样本频率替换式~\eqref{eq:h-delta-h-divergence}中的概率得到$\widehat d$。分歧函数组成
-\[
- \mathcal D_{\mathcal H}
- =\{x\mapsto\mathbb I\{h(x)\neq g(x)\}:h,g\in\mathcal H\}.
-\]
-这将假设对比较变成二值函数估计。分别用$c_{\mathcal H}(n,\delta)$和$c_{\mathcal D}(n,\delta)$控制分类与分歧的统一偏差，即可得到下述结论。“统一”表示概率至少$1-\delta$的事件中，空间内全部函数同时满足。
-
-\begin{theorem}[有限样本的领域自适应期望风险界]
-\label{thm:adaptation-finite-sample}
-设$(X,\mathcal X)$为可测输入空间，$Y=\{0,1\}$，
-$\mathcal P_S,\mathcal P_T$为$X\times Y$上的概率分布，输入边缘分别为
-$\mathcal P_S^X,\mathcal P_T^X$。令$\mathcal H$为非空可测二分类假设空间，并定义
-\[
- R_D(h)=\mathbb P_{(x,y)\sim\mathcal P_D}\{h(x)\neq y\},
- \quad
- \lambda=\inf_{g\in\mathcal H}\bigl(R_S(g)+R_T(g)\bigr),
-\]
-\[
- \mathcal D_{\mathcal H}
- =\{x\mapsto\mathbb I\{h(x)\neq g(x)\}:h,g\in\mathcal H\}.
-\]
-令$n_S,n_T\geq1$，
-$S_S=((x_i^S,y_i^S))_{i=1}^{n_S}\sim\mathcal P_S^{n_S}$与
-$U_T=(x_i^T)_{i=1}^{n_T}\sim(\mathcal P_T^X)^{n_T}$相互独立，并定义
-\[
- \widehat R_{S_S}(h)=\frac1{n_S}\sum_{i=1}^{n_S}
- \mathbb I\{h(x_i^S)\neq y_i^S\},
-\]
-\[
- \widehat d
- =2\sup_{h,g\in\mathcal H}\left|
- \frac1{n_S}\sum_{i=1}^{n_S}\mathbb I\{h(x_i^S)\neq g(x_i^S)\}
- -\frac1{n_T}\sum_{i=1}^{n_T}\mathbb I\{h(x_i^T)\neq g(x_i^T)\}
- \right|.
-\]
-设$c_{\mathcal H}$与$c_{\mathcal D}$满足：对任意$\eta\in(0,1)$，
-\[
- \mathbb P\left\{\sup_{h\in\mathcal H}
- |R_S(h)-\widehat R_{S_S}(h)|
- \leq c_{\mathcal H}(n_S,\eta)\right\}\geq1-\eta,
-\]
-且对$D\in\{S,T\}$、$m\geq1$及
-$V_D=(v_1,\ldots,v_m)\sim(\mathcal P_D^X)^m$，
-\[
- \mathbb P\left\{\sup_{q\in\mathcal D_{\mathcal H}}
- \left|\mathbb E_{x\sim\mathcal P_D^X}q(x)
- -\frac1m\sum_{i=1}^m q(v_i)\right|
- \leq c_{\mathcal D}(m,\eta)\right\}\geq1-\eta.
-\]
-假设这些上确界均为可测随机变量。则对任意$\delta\in(0,1)$，以概率至少
-$1-\delta$，对全部$h\in\mathcal H$同时成立
-\begin{equation}
- \begin{aligned}
- R_T(h)\leq{}&\widehat R_{S_S}(h)+\tfrac12\widehat d+\lambda\\
- &+c_{\mathcal H}(n_S,\delta/3)
-  +c_{\mathcal D}(n_S,\delta/3)
-  +c_{\mathcal D}(n_T,\delta/3).
- \end{aligned}
- \label{eq:adaptation-vc-risk}
-\end{equation}
-\end{theorem}
-\begin{proof}
-分别对源域分类损失、源域分歧函数和目标域分歧函数应用一致收敛保证。三项保证中至少一项失败的概率不超过$\delta/3+\delta/3+\delta/3=\delta$，这里不要求三项事件独立。在三项均成立时，对每对$h,g$，两域真实分歧概率之差与经验分歧频率之差的偏差不超过两个$c_{\mathcal D}$之和。取上确界后，有
-\[
- \tfrac12d_{\mathcal H\triangle\mathcal H}
- \leq\tfrac12\widehat d
- +c_{\mathcal D}(n_S,\delta/3)+c_{\mathcal D}(n_T,\delta/3).
-\]
-再用$R_S(h)\leq\widehat R_{S_S}(h)+c_{\mathcal H}(n_S,\delta/3)$代入总体期望风险界即可。
-\end{proof}
-
-有限VC维控制了三项抽样误差。若$\operatorname{VC}(\mathcal H)=d<\infty$，分类模式受生长函数限制，分歧由两个假设组成，$m$点上的模式至多$\Pi_{\mathcal H}(m)^2$。据式~\eqref{eq:vc-uniform-bound}，$1\leq d\leq n$时两类$c$皆可取
-\[
- O\!\left(\sqrt{\frac{d\log(2en/d)+\log(1/\delta)}{n}}\right).
-\]
-将每项控制到$\varepsilon$的充分样本量为$O((d\log(1/\varepsilon)+\log(1/\delta))/\varepsilon^2)$。无标签目标域训练样本在此估计散度，不能估计$\lambda$。
-
-参数数量可间接经VC维进入抽样代价。$d_{\mathrm{in}}$维仿射分类的VC维是$d_{\mathrm{in}}+1$；满足第~\ref{chap:deep-learning-theory}章条件的ReLU网络可用$d=O(p_{\mathrm{net}}L_{\mathrm{net}}\log p_{\mathrm{net}})$上界代入。减少参数有助于减小这一估计项，却不会自动减少共同错误$\lambda$。有限样本项全部消失后，跨域差异仍在，所以式~\eqref{eq:adaptation-vc-risk}仍是条件风险界，尚非整个分布族的PAC刻画。
-
-\paragraph{覆盖条件下的加权经验风险}
-\label{sec:adaptation-coverage}
-
-式~\eqref{eq:covariate-risk-identity}的加权恒等式提供另一条路径：已知且统一有界的密度比，让我们从源数据同时估计所有有限候选的目标风险，再用经验最小化控制目标超额风险。
+为了控制有限样本的波动，还需限制权重大小。设$0\leq w\leq\kappa$，$w$已知，$\mathcal H$包含$N$个可测候选。对$n$个独立源样本计算
+$\widehat R_w(h)=n^{-1}\sum_{i=1}^n w(x_i)\ell(h(x_i),y_i)$，并选取其近似最小者。下面允许非零优化误差，明确把统计保证与求解要求接在一起。
 
 \begin{theorem}[已知密度比下的迁移样本量界]
 \label{thm:covariate-finite-pac}
-设$(X,\mathcal X)$与$(Y,\mathcal Y)$为可测空间，
-$\mathcal P_S,\mathcal P_T$为$X\times Y$上的概率分布。假设存在共同的条件标签核
-$\mathsf K(\mathrm dy\mid x)$，使
-$\mathcal P_D(\mathrm dx,\mathrm dy)
-=\mathcal P_D^X(\mathrm dx)\mathsf K(\mathrm dy\mid x)$
-对$D\in\{S,T\}$成立；并且
-$\mathcal P_T^X\ll\mathcal P_S^X$，已知密度比
-$w=\mathrm d\mathcal P_T^X/\mathrm d\mathcal P_S^X$满足
-$0\leq w(x)\leq\kappa$几乎处处成立。
-令$\mathcal H$为含$1\leq N<\infty$个可测映射$h:X\to Y$的空间，
-$\ell:Y\times Y\to[0,1]$为可测损失。对
-$S=((x_1,y_1),\ldots,(x_n,y_n))\sim\mathcal P_S^n$，定义
-\[
- R_T(h)=\mathbb E_{(x,y)\sim\mathcal P_T}\ell(h(x),y),\qquad
- R_{T,\mathcal H}^{\star}=\inf_{h\in\mathcal H}R_T(h).
-\]
-给定$n\geq1$个独立源域样本，令
-\[
- \hat R_w(h)=\frac1n\sum_{i=1}^n
-          w(x_i)\ell(h(x_i),y_i),\qquad
- \widehat h\in\argmin_{h\in\mathcal H}\hat R_w(h).
-\]
-对任意$\delta,\varepsilon\in(0,1)$，以概率至少$1-\delta$，
+在上述共享标签核、覆盖、已知有界密度比及有限假设空间条件下，若算法输出满足
+$\widehat R_w(\widehat h)\leq\min_{h\in\mathcal H}\widehat R_w(h)+\rho$，其中$\rho\geq0$，则以概率至少$1-\delta$，
 \begin{equation}
  R_T(\widehat h)-R_{T,\mathcal H}^{\star}
- \leq\kappa\sqrt{\frac{2\log(2N/\delta)}{n}}.
+ \leq\kappa\sqrt{\frac{2\log(2N/\delta)}{n}}+\rho.
  \label{eq:covariate-finite-excess}
 \end{equation}
-特别地，若$n\geq2\kappa^2\log(2N/\delta)/\varepsilon^2$，则目标域超额期望风险以概率至少$1-\delta$不超过$\varepsilon$。
 \end{theorem}
 \begin{proof}
-对每个固定假设，$w(x_i)\ell(h(x_i),y_i)$取值在$[0,\kappa]$，其期望由式~\eqref{eq:covariate-risk-identity}给出。Hoeffding不等式与有限假设空间的概率求和保证，以概率至少$1-\delta$，全部假设同时满足
+每个加权损失在$[0,\kappa]$中。Hoeffding不等式及对$N$个候选的概率求和给出同一个事件，在该事件上
 \[
- |R_T(h)-\hat R_w(h)|\leq
- a_n,\qquad a_n=\kappa\sqrt{\frac{\log(2N/\delta)}{2n}}.
+ \sup_{h\in\mathcal H}|\widehat R_w(h)-R_T(h)|
+ \leq a_n=\kappa\sqrt{\frac{\log(2N/\delta)}{2n}}.
 \]
-取目标域期望风险最小的$h^\star\in\mathcal H$，由经验最优性有
+取目标风险最小者$h^\star$，依次用两次偏差界与一次近似经验最优性，得到
 \[
- R_T(\widehat h)
- \leq\hat R_w(\widehat h)+a_n
- \leq\hat R_w(h^\star)+a_n
- \leq R_T(h^\star)+2a_n.
+ R_T(\widehat h)\leq\widehat R_w(\widehat h)+a_n
+ \leq\widehat R_w(h^\star)+\rho+a_n
+ \leq R_T(h^\star)+\rho+2a_n.
 \]
-代入$a_n$得到结论。
 \end{proof}
 
-把定理的条件和结论合起来读：只要两域共享标签核、源域覆盖目标域、密度比已知且统一被$\kappa$控制，那么一个有限假设空间就能达到任意给定的目标超额风险精度——因为目标风险被改写成了一个可以用源数据一致估计的加权平均，这与前几章普通的有限假设空间PAC学习在机制上完全对应。定理中的经验风险最小化只用于证明“存在这样一个算法”，$\kappa^2$的样本量是充分条件而非最优下界。这个结论与分歧界形成对照：那里残留着无法估计的$\lambda$，这里通过更强的共享核假设把残余项彻底消掉了。
+当各候选的损失可计算且候选间的比较可实现时，精确枚举可令$\rho=0$，此时$n\geq2\kappa^2\log(2N/\delta)/\varepsilon^2$足以保证超额风险不超过$\varepsilon$。这是相对于统一权重上界的充分样本量，不是最优下界。若枚举候选过于昂贵，还要另行分析具体优化算法；有限样本可学习与计算高效不能互相替代。
 
-比值未知时，还要证明可从两域输入估计它，这不能由有限VC维代替。例如用独立辅助数据构造$0\leq\widehat w\leq\kappa$，条件于辅助样本记
+\subsubsection{源样本与目标样本的数量要求}
+
+已知$w$的结论没有使用无标签目标样本，因为分布差异已经由辅助输入提供。当$w$未知时，目标样本的作用是帮助估计它。设从独立辅助数据得到$0\leq\widehat w\leq\kappa$，并以概率至少$1-\delta_w$满足
 \[
- b_w=\mathbb E_{x\sim\mathcal P_S^X}|\widehat w(x)-w(x)|.
+ \mathbb E_{x\sim\mathcal P_S^X}|\widehat w(x)-w(x)|\leq b_w.
 \]
-损失有界使每个$h$都满足$|\mathbb E_{(x,y)\sim\mathcal P_S}[\widehat w(x)\ell(h(x),y)]-R_T(h)|\leq b_w$。若辅助数据以概率至少$1-\delta_w$保证$b_w\leq\varepsilon_w$，再对独立源标签样本使用上述证明，目标超额风险增加$2\varepsilon_w$。条件抽样失败概率为$\delta_\ell$时，总失败至多$\delta_w+\delta_\ell$。只有比值误差在允许族上一致趋零，才保留PAC保证。
+由于损失不超过1，把$w$换成$\widehat w$对每个候选的总体加权风险至多造成$b_w$误差。条件于辅助数据，对新的独立源标签样本使用上一证明，目标超额风险至多增加$2b_w$，总失败概率至多为$\delta_w+\delta_\ell$，其中$\delta_\ell$是损失估计的失败概率。
 
-共享标签核也不能只作为近似口号。若条件标签改变，记
-\[
- b_{\mathrm{cond}}=\mathbb E_{x\sim\mathcal P_T^X}
- \operatorname{TV}\bigl(\mathcal P_S(\cdot\mid x),
-                        \mathcal P_T(\cdot\mid x)\bigr),
-\]
-总变差表示两分布对同一事件赋概率的最大差。$[0,1]$损失使式~\eqref{eq:covariate-risk-identity}两端误差至多$b_{\mathrm{cond}}$，超额风险界便增加$2b_{\mathrm{cond}}$。若此残余保持为正，仅靠当前上界就不能证明任意小的超额风险保证；要断言所有算法都无法达到，还须另给不可学习性下界。
+因此，源样本量控制加权损失的估计，目标样本量通过密度比估计影响$b_w$。沿这条路径推出PAC可学习，需要在允许的分布族上使两类误差都能一致减小；仅有有限假设空间，并不保证任意密度比都能可靠估计。若共享标签核仅近似成立，目标输入平均下的条件标签总变差为$b_{\mathrm{cond}}$，同样会给超额风险上界增加$2b_{\mathrm{cond}}$。固定残余项使当前上界不足以证明任意精度，但不等同于不可学习性下界。
 
-标签偏移走的是另一条重加权路线，而且先要回答一个可识别性问题：仅凭无标签目标输入，能不能把新的类别比例算出来？设想只有两个类别、且它们的类内输入分布完全相同，那么无论类别比例怎么变，混合出来的输入分布都一模一样，比例自然无法确定。所以必须要求不同类别的输入分布“足够不同”，使混合比例可以被反解。设$Y=\{1,\ldots,C\}$，源域每个类别都有正概率，各类共享同一类条件分布$\mathsf K_y=\mathcal P_S^X(\cdot\mid y)$，目标域类别比例为$q_y=\mathcal P_T^Y(\{y\})$。对输入分布用全概率公式，有
-\[
- \mathcal P_T^X=\sum_{y=1}^{C}q_y\mathsf K_y,\qquad
- q_y\geq0,\qquad \sum_{y=1}^{C}q_y=1.
-\]
-第一个等式是一个\emph{混合模型}：目标输入分布被表示成$C$个类条件分布按比例$q_y$的凸组合。要用无标签目标输入反解$q_y$，需要两层条件。首先，目标输入分布必须真的落在这些类条件分布张成的凸包内（标签偏移本身保证了这一点）；其次，这个凸组合的系数必须\emph{唯一}，否则同一输入分布会对应多组比例。唯一性也称点识别（point identification）。若希望单纯形内\emph{所有}可能目标比例都能被唯一识别，可以要求$\mathsf K_1,\ldots,\mathsf K_C$线性无关：若$\sum_{y=1}^C a_y\mathsf K_y=0$只有全零解$a_1=\cdots=a_C=0$，两组不同比例就不可能产生同一混合分布。反过来，若存在非零系数关系，因每个$\mathsf K_y$总质量为1，可得系数和为0；从任一内点比例沿这组系数作足够小的正负扰动，就得到两组相同混合分布，故全单纯形上的单射性失败。但某个边界比例仍可能唯一，例如$\mathsf K_1=\delta_0$、$\mathsf K_2=\delta_1$、$\mathsf K_3=(\delta_0+\delta_1)/2$虽然相关，目标$\delta_0$仍只对应比例$(1,0,0)$。所以全局唯一性与给定目标点的识别必须分开。
+标签偏移也需要先建立可估计的联系。若源域各类别均有正概率、类内分布$\mathsf K_y$保持不变，目标输入分布满足$\mathcal P_T^X=\sum_y q_y\mathsf K_y$，其中$q_y$为目标类别比例。只有这组混合比例可以识别并稳定估计，按类别比例重加权才有依据。类内分布相同的两个类别无法仅凭目标输入区分比例；对于有限类别，类内分布线性无关可保证全体比例的唯一性。有限样本下还需控制可辨程度：当两组类别比例的绝对差之和超过给定阈值时，对应输入分布之间的总变差不能任意接近零，否则抽样波动会掩盖需要识别的比例差异。
 
-唯一性还须配合有限样本条件数。选有界统计向量$\bm\psi:X\to\mathbb R^m$、$\|\bm\psi(x)\|_2\leq B_\psi$，矩阵$\bm M\in\mathbb R^{m\times C}$第$y$列为$\mathbb E_{x\sim\mathsf K_y}\bm\psi(x)$。记$\bm q=(q_1,\ldots,q_C)^\top$，则目标统计满足$\mathbb E_{x\sim\mathcal P_T^X}\bm\psi(x)=\bm M\bm q$。若$\bm M$满列秩、允许族上$\sigma_{\min}(\bm M)\geq c>0$，且源类别概率对$y=1,\ldots,C$统一满足$\mathcal P_S^Y(\{y\})\geq\pi_{\min}>0$，统计估计误差才可统一转为比例误差。$c$或$\pi_{\min}$趋零会任意放大误差。因此各偏移类型需要自己的识别与稳定估计条件，不能共用参数数目判据。
-
-\paragraph{参数范数与加权Rademacher复杂度}
-\label{sec:transfer-norm-complexity}
-
-前面的有限假设和VC维界按“候选函数有多少种”来收费，对高维线性模型往往给出很大的样本量。第~\ref{chap:deep-learning-theory}章已经说明，可以改用另一种更细的收费方式：不数函数个数，而限制预测函数的“幅度”，用Rademacher复杂度衡量这个受限空间与随机噪声相关的能力。例如线性分数$f_{\bm\theta}(\bm x)=\langle\bm\theta,\bm x\rangle$，只要参数范数$\|\bm\theta\|$和输入范数$\|\bm x\|$有界，它与随机标签的相关性就有一个与维度无关的上界。迁移中沿用这一工具时，只多了一个问题：密度比$w(x)$会给每个样本再乘一个至多$\kappa$的权重，因此要额外算清这次重加权把样本复杂度放大多少倍——直觉上答案就是$\kappa$（界里）或$\kappa^2$（样本量里）。
-
-具体考虑线性预测$f_{\bm\theta}(\bm x)=\langle\bm\theta,\bm x\rangle$，并施加两类有界条件：参数被限制在半径为$B$的球内$\|\bm\theta\|_2\leq B$，输入被限制在半径为$r$的球内$\|\bm x\|_2\leq r$。损失取值于$[0,1]$，并假设它关于预测分数是$L_{\ell}$-Lipschitz的，即分数改变$a$，损失至多改变$L_{\ell}|a|$。这个条件把分类中常用的间隔损失也包含进来（间隔越宽，$L_{\ell}$越小）。这三个量各自有直观作用：$B$限制模型可调的幅度，$r$限制单个输入的尺度，$L_{\ell}$把分数变化翻译成损失变化；密度比$\kappa$则决定源样本对目标评价的代表性。它们会一起决定复杂度项的大小。
-
-\begin{theorem}[范数受限线性预测的迁移保证]
-\label{thm:transfer-linear-norm}
-设$n,p\geq1$，$X\subseteq\mathbb R^p$取Borel $\sigma$代数，
-$(Y,\mathcal Y)$为可测标签空间，$\mathcal P_S,\mathcal P_T$为
-$X\times Y$上的概率分布。假设两域共享条件标签核
-$\mathsf K(\mathrm dy\mid\bm x)$，即
-$\mathcal P_D(\mathrm d\bm x,\mathrm dy)
-=\mathcal P_D^X(\mathrm d\bm x)\mathsf K(\mathrm dy\mid\bm x)$
-对$D\in\{S,T\}$成立，且
-$\mathcal P_T^X\ll\mathcal P_S^X$的已知密度比
-$w=\mathrm d\mathcal P_T^X/\mathrm d\mathcal P_S^X$满足
-$0\leq w(\bm x)\leq\kappa$几乎处处成立。
-对$\|\bm\theta\|_2\leq B$，令
-$f_{\bm\theta}(\bm x)=\langle\bm\theta,\bm x\rangle$。
-假设$\|\bm x\|_2\leq r$在$\mathcal P_S^X$下几乎处处成立，损失
-$\ell:\mathbb R\times Y\to[0,1]$可测，且关于第一个变量为
-$L_{\ell}$-Lipschitz。定义
-\[
- R_T(f_{\bm\theta})=\mathbb E_{(\bm x,y)\sim\mathcal P_T}
- \ell(f_{\bm\theta}(\bm x),y).
-\]
-对$S=((\bm x_1,y_1),\ldots,(\bm x_n,y_n))\sim\mathcal P_S^n$，令
-\[
- \hat R_w(\bm\theta)=\frac1n\sum_{i=1}^n
- w(\bm x_i)\ell(f_{\bm\theta}(\bm x_i),y_i),\qquad
- \widehat{\bm\theta}\in\argmin_{\|\bm\theta\|_2\leq B}\hat R_w(\bm\theta).
-\]
-固定$B,r,L_{\ell},\kappa>0$。对任意$\delta,\varepsilon\in(0,1)$，
-以概率至少$1-\delta$，
-\begin{equation}
- \begin{aligned}
- R_T(f_{\widehat{\bm\theta}})
- -\inf_{\|\bm\theta\|_2\leq B}R_T(f_{\bm\theta})
- \leq\frac{4\kappa L_{\ell}Br}{\sqrt n}
-       +6\kappa\sqrt{\frac{\log(4/\delta)}{2n}}.
- \end{aligned}
- \label{eq:transfer-norm-excess}
-\end{equation}
-因此，存在普适常数$C$，当
-$n\geq C\kappa^2((L_{\ell}Br)^2+\log(4/\delta))/\varepsilon^2$
-时，目标域超额期望风险以概率至少$1-\delta$不超过$\varepsilon$。
-\end{theorem}
-\begin{proof}
-记$\mathcal F_w$为加权损失函数空间。固定源域样本后，令$w_i=w(x_i)$，$\sigma_i$为相互独立的随机正负号。由Lipschitz收缩性质与欧氏范数的对偶关系，
-\begin{align*}
- \widehat{\mathfrak R}_S(\mathcal F_w)
- &\leq\frac{L_{\ell}B}{n}\mathbb E_{\bm\sigma}
-       \left\|\sum_{i=1}^n\sigma_iw_i\bm x_i\right\|_2\\
- &\leq\frac{L_{\ell}B}{n}\sqrt{\sum_{i=1}^n w_i^2\|\bm x_i\|_2^2}
- \leq\frac{\kappa L_{\ell}Br}{\sqrt n}.
-\end{align*}
-第二步使用Cauchy--Schwarz不等式；展开范数平方后，不同随机正负号的交叉项期望为零。收缩时可先减去每个样本上的$w_i\ell(0,y_i)$，这些与参数无关的项不改变Rademacher复杂度。
-
-对加权损失$f\in\mathcal F_w$及其补函数$\kappa-f$，分别应用基于经验Rademacher复杂度的期望风险界。
-两者都取值于$[0,\kappa]$；各分配$\delta/2$的失败概率，便能同时控制期望风险高于和低于经验风险的偏差，得到
-\[
- \sup_{\|\bm\theta\|_2\leq B}
- |R_T(f_{\bm\theta})-\hat R_w(\bm\theta)|
- \leq\frac{2\kappa L_{\ell}Br}{\sqrt n}
-       +3\kappa\sqrt{\frac{\log(4/\delta)}{2n}}.
-\]
-经验最小化的目标域超额期望风险不超过这个统一偏差的两倍，证明完成。
-\end{proof}
-
-此处使用$B,r,L_{\ell}$而未显含参数维度$p$，但只有它们不随$p$增长时才消除直接维度依赖。例如固定每坐标尺度会使$r$随$\sqrt p$增长，仍增加样本量。$\kappa$增大同样增加源样本需求，反映目标重要区域在源中稀少的代价。
-
-零一损失不连续，不能直接满足该Lipschitz条件。分类可用第~\ref{chap:deep-learning-theory}章的间隔损失，取$L_{\ell}=1/\gamma$，以目标间隔损失上界控制分类风险；得到的保证保留间隔要求，并非全部零一分类器的不可知PAC刻画。深网络也可先以各层谱范数估计损失复杂度，再通过相同跨域关系转换。一般损失与分布差异的分析见Mansour等\scite{mansour2009adaptation}。
-
-\subsection{基于输出的有限样本保证}
+\subsubsection{复杂度与算法稳定性带来的保证}
 \label{sec:transfer-stability}
-\label{sec:adaptation-output-bounds}
 
-到目前为止，9.2.2节的VC维和Rademacher界都走“统一偏差”路线：同时控制假设空间里\emph{所有}候选，因此无论算法最后选中哪个都安全。这条路线稳妥，却可能因为要照顾一些根本不会被选中的复杂候选而过于保守。本节换两个更贴近“算法实际做了什么”的视角。其一是算法稳定性：不问候选空间多大，只问换掉一个训练样本后，算法的输出预测会改变多少；变化越小，训练集上的表现就越能代表新数据上的表现。其二是PAC--Bayes：当训练或预测本身带随机性时，直接评价“参数上的一个分布”，衡量所选分布偏离一个事先固定的先验有多远。需要再次强调，这两条路径和统一偏差一样，都\emph{只负责}有限样本控制；把加权经验风险接到目标风险的跨域关系（共享标签核、覆盖）以及算法是否真的把经验目标优化好，仍然是不可省略的前提。
-
-\paragraph{算法稳定性与可学习性}
-
-先看清稳定性路线为什么需要两个量，而不是一个。一方面，限制参数范数只是缩小了候选范围，并没有保证“换掉一条训练数据后输出几乎不变”——这要靠稳定性参数$\beta_n$来刻画。另一方面，输出稳定也不代表它预测得准：一个算法可以非常稳定地始终输出同一个错误假设。因此还需要第二个量，衡量算法在训练集上是否真的把加权经验风险优化到了接近最小，即经验优化误差$\rho_n$。泛化好（稳定）和拟合好（优化误差小）必须同时成立，下面的定理正是把目标超额风险拆成这两项。
-
-在已知密度比的协变量偏移下，可以直接将第~\ref{chap:convex-learning-and-stability}章的稳定性用于加权损失。若替换源样本后，任意观测上的损失对算法内部随机性取期望后的改变至多$\beta_n$，乘上$w(x)\leq\kappa$后，加权稳定性至多$\kappa\beta_n$。这里平均的是算法随机性，样本和测试观测仍由全称量词控制。
-
-\begin{theorem}[稳定性条件下的迁移可学习性]
-\label{thm:transfer-stability-learning}
-设$(X,\mathcal X)$与$(Y,\mathcal Y)$为可测空间，
-$\mathcal P_S,\mathcal P_T$为$X\times Y$上的概率分布。假设两域共享条件标签核
-$\mathsf K(\mathrm dy\mid x)$，即
-$\mathcal P_D(\mathrm dx,\mathrm dy)
-=\mathcal P_D^X(\mathrm dx)\mathsf K(\mathrm dy\mid x)$
-对$D\in\{S,T\}$成立，且
-$\mathcal P_T^X\ll\mathcal P_S^X$的已知密度比
-$w=\mathrm d\mathcal P_T^X/\mathrm d\mathcal P_S^X$满足
-$0\leq w(x)\leq\kappa$几乎处处成立。
-令$\mathcal H$为由可测映射$h:X\to Y$组成的假设空间，
-$\ell:Y\times Y\to[0,1]$为可测损失，并定义
+有限候选方便展示证明的机制，实际模型可能有无限多个参数取值。此时需要控制加权损失函数族的一致估计误差。例如，独立源样本上的经验Rademacher复杂度为
 \[
- R_T(h)=\mathbb E_{(x,y)\sim\mathcal P_T}\ell(h(x),y),\qquad
- R_{T,\mathcal H}^{\star}=\inf_{h\in\mathcal H}R_T(h).
+ \widehat{\mathfrak R}_S(w\ell_{\mathcal H})
+ =\mathbb E_{\bm\sigma}\sup_{h\in\mathcal H}
+ \frac1n\sum_{i=1}^n\sigma_i w(x_i)\ell(h(x_i),y_i),
 \]
-令$S=(z_1,\ldots,z_n)\sim\mathcal P_S^n$，其中$z_i=(x_i,y_i)$，并定义
+其中$\sigma_i$独立等概率取$\pm1$。这个量检验候选加权损失对随机符号的拟合能力；它必须作用于实际重加权后的函数族。沿用前文的对称化与有界差分分析，以概率至少$1-\delta$，
 \[
- \hat R_w(h)=\frac1n\sum_{i=1}^n w(x_i)\ell(h(x_i),y_i).
+ \sup_h|R_T(h)-\widehat R_w(h)|
+ \leq2\widehat{\mathfrak R}_S(w\ell_{\mathcal H})
+      +3\kappa\sqrt{\frac{\log(4/\delta)}{2n}}.
 \]
-可能随机化的算法$A$输出$\mathcal H$中的假设。假设对任意相邻源域样本
-$S,S'$和任意$z=(x,y)\in X\times Y$都有
-\[
- \left|\mathbb E_A\ell(A(S)(x),y)
- -\mathbb E_A\ell(A(S')(x),y)\right|\leq\beta_n,
-\]
-其中$\mathbb E_A$只对算法内部随机性取期望，并且
-\[
- \mathbb E\!\left[\hat R_w(A(S))-
-                  \inf_{h\in\mathcal H}\hat R_w(h)\right]
- \leq\rho_n.
-\]
-其中$n\geq1$且$\kappa,\beta_n,\rho_n\geq0$。则
+这里对正、负两个偏差事件合并，假定相应上确界可测。近似ERM的超额风险仍由右侧的两倍加优化误差控制，跨域条件则仍由式~\eqref{eq:covariate-risk-identity}提供。
+
+另一条路径直接控制算法对样本替换的敏感度。设替换一个源样本后，算法输出在任意观测上的期望未加权损失变化至多为$\beta_n$，且其期望加权经验优化误差至多为$\rho_n$。乘上固定权重后，损失敏感度至多为$\kappa\beta_n$。由于目标风险等于加权源风险，前文的算法稳定性分析给出
 \begin{equation}
- \mathbb E[R_T(A(S))-R_{T,\mathcal H}^{\star}]
+ \mathbb E\big[R_T(A(S))-R_{T,\mathcal H}^{\star}\big]
  \leq\kappa\beta_n+\rho_n.
  \label{eq:transfer-stability-excess}
 \end{equation}
-若$\kappa\beta_n+\rho_n$在允许的分布族上一致趋于零，则该设定PAC可学习。
-具体地，对任意$\varepsilon,\delta\in(0,1)$，使
-$\kappa\beta_n+\rho_n\leq\varepsilon\delta$，便足以保证目标域超额期望风险
-以概率至少$1-\delta$不超过$\varepsilon$。
-\end{theorem}
-\begin{proof}
-加权损失的均匀稳定性与式~\eqref{eq:covariate-risk-identity}给出
-\[
- \mathbb E[R_T(A(S))-\hat R_w(A(S))]\leq\kappa\beta_n.
-\]
-对任意固定$h\in\mathcal H$，又有
-\[
- \mathbb E\inf_{g\in\mathcal H}\hat R_w(g)
- \leq\mathbb E\hat R_w(h)=R_T(h).
-\]
-将目标域超额期望风险分解为期望风险与经验风险之差、经验优化误差以及最优经验风险与最优目标域期望风险之差，合并上述不等式并对$h$取下确界，得到期望结论。由于$A(S)\in\mathcal H$，目标域超额期望风险非负，对它使用Markov不等式即可得到所述概率保证。
-\end{proof}
+其依据是把超额风险分成期望泛化差与经验优化差，再用
+$\mathbb E\inf_h\widehat R_w(h)\leq\inf_hR_T(h)$处理比较基准。若右侧在允许族上一致趋零，非负超额风险的Markov不等式便把期望界转为PAC保证。
 
-右侧$\kappa\beta_n$估计目标风险与加权经验评价的平均差，$\rho_n$估计加权经验优化误差。若$\beta_n\leq c/n$、$\rho_n\leq a/n$，取$n\geq(\kappa c+a)/(\varepsilon\delta)$便达到充分要求。这条Markov推导没有优化置信度依赖，但明确说明了两项怎样共同支持迁移。
+复杂度与算法稳定性提供不同的有限样本控制方式，但都没有创造跨域标签联系。采用PAC--Bayes分析随机预测器时也一样：源样本选择参数分布的代价可以被控制，目标标签机制仍需单独建立依据。因而，这些工具应接在可识别条件之后使用，不能把一个随样本量减小的估计项当作完整的迁移结论。
 
-若损失对参数为$G$-Lipschitz，相邻源样本输出的期望距离至多$s_n$，便有$\beta_n\leq Gs_n$，式~\eqref{eq:transfer-stability-excess}变为$\kappa Gs_n+\rho_n$。使用正则化或SGD参数界时，要确认算法优化的是当前加权目标，并检查相应光滑、凸等条件。共享标签和覆盖仍是转换到目标风险的前提，参数不变也无法补出隐藏目标标签。
-
-\paragraph{参数分布与PAC--Bayes}
-\label{sec:transfer-pac-bayes}
-
-有些算法本身就带随机性，或者我们故意不输出单个最优参数，而是保留一个参数分布、预测时随机抽一组参数（这种做法在集成和带不确定性的预测中很常见）。第~\ref{chap:deep-learning-theory}章的PAC--Bayes界适合评价这种“随机预测器”：它把源域总体风险与经验风险之差，控制成“训练后所选分布$Q$偏离事先固定先验$P_0$的程度（KL散度）”加一个随样本量衰减的项。搬到迁移场景后，这个PAC--Bayes项仍然只管\emph{源域内部}的抽样误差；要跨到目标域，还得像分歧界那样补上两域之间的预测分歧和共同错误。下面先定义随机预测器在一个域上的风险，以及它的“分歧”和“共同错误”。
-
-先固定评价对象。设训练后得到假设空间上的一个分布$Q$（称为后验，但不要求用贝叶斯公式算出）。采用Gibbs预测：给定新输入，不做平均，而是\emph{现场随机抽一个}假设$h\sim Q$，用它给出预测。于是一个自然的风险是对抽取的假设取平均：
-\[
- r_D(Q)=\mathbb E_{h\sim Q}R_D(h),
-\]
-即随机抽到的假设在域$D$上的平均错误率。为了把这个风险与“不含标签即可算的量”联系起来，再独立抽两个假设$h,g\sim Q$，分别定义它们的预测分歧（只需输入）和共同错误（需要标签）：
-\begin{align*}
- d_D(Q)&=\mathbb E_{h,g\sim Q}\mathbb P_{x\sim\mathcal P_D^X}(h(x)\neq g(x)),\\
- e_D(Q)&=\mathbb E_{h,g\sim Q}\mathbb P_{(x,y)\sim\mathcal P_D}
-                       (h(x)\neq y,\ g(x)\neq y).
-\end{align*}
-这里的$d_D(Q)$只比较两个随机假设的预测，因此只用无标签输入就能估计；$e_D(Q)$要求两个假设\emph{同时}分错，必须用到标签。证明会给出一个把三者联系起来的恒等式$r_D(Q)=\tfrac12 d_D(Q)+e_D(Q)$，它是PAC--Bayes跨域界的关键：凭这个恒等式，目标风险中需要标签的部分才能被拆成“可由无标签目标输入估计的分歧”加上“两域共同错误之差”。可见即使用参数分布的语言，可见信息的边界依然存在。
-
-\begin{theorem}[参数分布的跨域期望风险界]
-\label{thm:transfer-pac-bayes}
-设$(X,\mathcal X)$为可测输入空间，$Y=\{0,1\}$，
-$\mathcal P_S,\mathcal P_T$为$X\times Y$上的概率分布，
-$\mathcal H$为由可测二分类假设组成并带有相应$\sigma$代数的空间。
-对$D\in\{S,T\}$，定义零一风险
-\[
- R_D(h)=\mathbb P_{(x,y)\sim\mathcal P_D}\{h(x)\neq y\}.
-\]
-对$\mathcal H$上的概率分布$Q$，独立抽取$h,g\sim Q$，并定义
-\[
- \begin{aligned}
- r_D(Q)&=\mathbb E_{h\sim Q}R_D(h),\\
- d_D(Q)&=\mathbb E_{h,g\sim Q}
- \mathbb P_{x\sim\mathcal P_D^X}\{h(x)\neq g(x)\},\\
- e_D(Q)&=\mathbb E_{h,g\sim Q}
- \mathbb P_{(x,y)\sim\mathcal P_D}
- \{h(x)\neq y,\ g(x)\neq y\}.
- \end{aligned}
-\]
-设$n\geq1$，
-$S_S=((x_1,y_1),\ldots,(x_n,y_n))\sim\mathcal P_S^n$，并令
-\[
- \widehat r_{S_S}(Q)=\mathbb E_{h\sim Q}
- \left[\frac1n\sum_{i=1}^n\mathbb I\{h(x_i)\neq y_i\}\right].
-\]
-设$P_0$为$\mathcal H$上的先验分布，且与$S_S$独立。对任意
-$\delta\in(0,1)$，以概率至少$1-\delta$，
-对所有$Q\ll P_0$同时有
-\begin{equation}
- \begin{aligned}
- r_T(Q)\leq{}&\widehat r_{S_S}(Q)
- +\sqrt{\frac{D_{\mathrm{KL}}(Q\|P_0)+\log((n+1)/\delta)}{2n}}\\
- &+\tfrac12|d_T(Q)-d_S(Q)|+|e_T(Q)-e_S(Q)|,
- \end{aligned}
- \label{eq:transfer-pac-bayes}
-\end{equation}
-\end{theorem}
-\begin{proof}
-固定$(x,y)$，令$p=\mathbb P_{h\sim Q}(h(x)\neq y)$。两个独立抽取的二分类假设分歧的概率为$2p(1-p)$，同时错误的概率为$p^2$。等式
-$p=\tfrac12\cdot2p(1-p)+p^2$在域$D$上取期望后给出
-\[
- r_D(Q)=\tfrac12d_D(Q)+e_D(Q).
-\]
-分别代入$D=T,S$并相减，可得
-\[
- r_T(Q)\leq r_S(Q)+\tfrac12|d_T(Q)-d_S(Q)|+|e_T(Q)-e_S(Q)|.
-\]
-对$r_S(Q)$应用定理~\ref{thm:pac-bayes-bound}的PAC--Bayes上界，得到结论。
-\end{proof}
-
-分解采用Germain等的分析\scite{germain2015adaptation}。平方根项来自源抽样，其余两项比较同一后验在两域的分歧和共同错误。增加源样本直接降低前项，但若目标共同错误差无结构控制，无标签目标数据仍不能使全部代价任意小。
-
-相同协方差的高斯先验与后验给出参数位移的具体入口。先固定可测参数化$\bm\theta\mapsto h_{\bm\theta}$，令参数空间上的先验和后验分别为$P_\Theta,Q_\Theta$，它们经这一映射诱导出定理中的假设分布$P_0,Q$。取$\mathbb R^p$上的协方差$\sigma^2\bm I_p$、$\sigma>0$，均值$\bm\mu_0,\bm\mu$，则
-\[
- D_{\mathrm{KL}}(Q_\Theta\|P_\Theta)=\frac{\|\bm\mu-\bm\mu_0\|_2^2}{2\sigma^2}.
-\]
-数据处理不等式给出$D_{\mathrm{KL}}(Q\|P_0)\leq D_{\mathrm{KL}}(Q_\Theta\|P_\Theta)$，所以参数空间的高斯KL可以作为前一风险界中诱导假设分布KL的上界；非单射参数化时二者不必相等。缩小位移会降低这个参数上界，增大$\sigma$也降低此式，却改变随机预测并可能增加经验风险。若源经验风险与跨域残余已足够小，且有样本无关的统一上界$D_{\mathrm{KL}}(Q_\Theta\|P_\Theta)\leq B_{\mathrm{KL}}$，$n\geq[B_{\mathrm{KL}}+\log((n+1)/\delta)]/(2\varepsilon^2)$足以将复杂度项降到$\varepsilon$。这是充分条件，不是算法样本下界；数据选择的$Q_\Theta$可得到事后证书，预定门槛则还需KL统一控制。
-
-预训练模型也可构造先验，但须独立于本次计算经验风险的源样本；否则需采用允许数据依赖先验的相应理论。
-
-还要注意这个定理评价的是Gibbs预测（每次现抽一个假设），它不自动等于“用后验平均参数构成的单个神经网络”的风险；对非线性模型二者可能不同，需要额外的聚合步骤才能互相转换。最后把本节两条算法路线与前面的统一偏差放在一起比较：统一偏差控制\emph{候选空间}的估计误差，稳定性控制\emph{相邻样本}下的输出变化，PAC--Bayes控制\emph{所选分布相对先验}的代价。它们从不同角度提供有限样本保证，但在迁移问题中都必须先有跨域标签联系——没有任何一种复杂度工具能替代缺失的目标标签。
-
-\subsection{理论比较与适用边界}
-\label{sec:adaptation-comparison}
-
-这一节给出的几条定理，公式里都带着一个随样本量衰减的“复杂度项”，形式看起来相近，但它们成立所依赖的跨域关系并不相同，不能因为结论长得像就认为假设可以互换。分歧界（9.2.1节）把目标风险拆成源风险、两域输入散度和共同错误$\lambda$三项，其中$\lambda$无法用无标签目标数据估计；重要性重加权（9.2.2节）要求共享标签核、覆盖和有界且已知（或可一致估计）的密度比，才能把目标风险完全写成源域加权期望；PAC--Bayes分解（9.2.3节）则比较同一后验在两域的Gibbs分歧与共同错误。它们是在\emph{不同的信息假设}下回答同一个问题，复杂度项相近并不使这些假设等价。
-
-在跨域关系固定之后，各条路线处理有限样本的工具也各管一段，彼此不能替代：VC维、Rademacher复杂度和范数界控制\emph{候选空间}上的统一估计误差；稳定性控制\emph{具体算法}对换样本的响应；PAC--Bayes控制\emph{所选分布相对先验}的选择代价。这三句话之间没有蕴含关系：候选空间简单不保证算法稳定（仍可能对单个样本剧烈反应），算法稳定也不保证它在训练集上选到了好假设，而Gibbs随机预测器的风险一般不等于用平均参数构成的单个模型的风险。阅读每条结论时，都应同时记住它评价的输出是什么、与什么比较、需要哪些条件。
-
-最后还要区分上界没有趋零与真实风险不能改善。当复杂度、稳定性或PAC--Bayes控制量满足相应样本量条件时，抽样项才会趋零；跨域残余则未必消失。密度比估计有固定偏差、条件核存在差异，或界中保留共同错误之差，都可能使现有上界留下正项，但这不证明真实超额风险具有正下界。共同错误$\lambda$还是绝对风险量，可能来自两域共有的噪声，不能直接拿它判断相对类内最优的不可知PAC是否成立。因此应先明确所控的是绝对风险还是$R_T(A)-\inf_{h\in\mathcal H}R_T(h)$，再核对允许分布族、可见目标信息、残余项及有限样本条件。若上界不足，只能说这条分析尚未给出任意精度保证；不可学习性还需要不可区分性或其他下界论证。
-
-\section{领域泛化的可学习性}
+\subsubsection{目标数据不可用时的领域泛化保证}
 \label{sec:domain-generalization}
 
-领域泛化比领域自适应更苛刻：训练和选模型时连无标签的目标输入都看不到，模型在见到任何目标数据之前就要固定。在这种信息量下，若允许新环境任意变化，定理~\ref{thm:transfer-nonidentifiability}的反例依然成立——只要目标域出现训练域从未覆盖的输入或采用相反的标签规律，就没有任何算法能保证成功。因此正面结论只能来自对“训练环境与未来环境如何关联”的限制，而这种限制可以按两种不同的承诺方式给出，正好对应9.1节的两个泛化定义。
+如果训练时没有目标输入，也没有其他目标信息，就不能仅凭源数据估计任意未知目标的密度比。正面结论需要限制允许的新环境。这里比较两种不同的承诺：\term{逐目标域领域泛化}（target-wise domain generalization）要求同一学习程序对每个允许目标域分别给出保证；\term{环境平均领域泛化}（environment-average domain generalization）把训练环境与新环境看成同一环境总体的随机抽样，评价新环境上的平均风险。后者允许某些环境风险较高。
 
-第一条路径对应逐目标域泛化：我们承诺存在一条所有环境共享的标签规律（给定特征后标签的条件分布不变），并且训练环境的输入合起来能够覆盖每一个允许目标域的输入；在这两个条件下，同一个模型要对\emph{每一个}目标域都成立。第二条路径对应环境平均泛化：不要求所有环境共享同一条确定的标签规律，而是把环境本身看成从某个总体中随机抽取的，训练环境和未来环境“同出一源”，只承诺模型在\emph{随机抽取的未来环境}上的平均风险。两条路径改变的是概率外面的评价对象（逐个固定的域 vs. 被平均的随机域），所需样本量也不同，下面分别建立。
-
-\subsection{逐目标域保证}
-\label{sec:dg-shared-mechanism}
-
-单个训练域未必能覆盖目标域会出现的全部输入，但\emph{多个}训练域合起来可能做到。例如不同月份各有自己常见的邮件类型，把它们汇总后，目标月份的邮件类型大多能在某个历史月份中找到。把$K$个训练域的分布等权混合，记
+先看逐目标域的一个充分条件。对二分类，假定训练与允许的目标域共享条件正类概率$\eta(x)$，且$h^\star(x)=\mathbb I\{\eta(x)\geq1/2\}$属于有限空间$\mathcal H$。令训练混合分布为$\overline{\mathcal P}$，对每个目标都满足$\mathcal P_T^X\leq\kappa\overline{\mathcal P}^X$，即每个可测集合$B$都有$\mathcal P_T^X(B)\leq\kappa\overline{\mathcal P}^X(B)$。零一风险相对于$h^\star$的差可以写为
 \[
- \overline{\mathcal P}=\frac1K\sum_{e=1}^K\mathcal P_e.
-\]
-“先等概率选一个域、再从该域抽一个观测”得到的是来自$\overline{\mathcal P}$的一条记录。若每条记录都独立重做这两步，所得训练序列才是该混合分布的独立同分布样本，下面的定理采用这一抽样方式。每域固定取相同数量再汇总虽有相同的总体平均，却有不同联合抽样律，须另作分层分析。覆盖的要求相应变成：对任意输入集合，它在目标域的概率不超过在混合分布中的概率的$\kappa$倍。这样，目标域重要的输入在训练数据合集中就必须有足够占比。仅有覆盖还不够，下面还要规定标签规律本身是共享的。
-
-光有输入覆盖只解决了“见没见过”，还要解决“见到之后按什么规律分类”。对二分类，假设\emph{所有}训练域和\emph{所有}允许目标域共享同一个条件正类概率
-\[
- \eta(x)=\mathbb P(y=1\mid x),
-\]
-即给定同一封邮件$x$，它在任何域中是垃圾邮件的概率都相同。依据这个共同的$\eta(x)$，统一选定平局时预测1的贝叶斯分类器$h^\star(x)=\mathbb I\{\eta(x)\geq1/2\}$，并假设它属于我们的假设空间$h^\star\in\mathcal H$。在$\eta(x)=1/2$的位置，两种预测的条件风险相同；零概率集上的差别也不改变风险，因此这里不宣称最优分类器唯一。这是一个很强的假设，要看清它强在哪里：它要求的是未来标签规律\emph{本身}不变，而不只是“在现有几个训练域上恰好训出了同一个分类器”。后者可能只是几个有限域上的偶然一致，换到新域就失效；前者才足以把训练结论推广到未见过的目标域。
-
-为什么这个共享假设能把不同域连起来？关键在于：相对同一个贝叶斯最优分类器$h^\star$，任意分类器$h$在每个域上的\emph{超额}风险可以写成一个\emph{与域无关}的非负函数的期望。具体地，在$h$与$h^\star$预测相同的输入处，$h$不产生额外错误；两者预测不同时，预测0的条件错误率是$\eta(x)$，预测1的条件错误率是$1-\eta(x)$，两者之差的绝对值为$|2\eta(x)-1|$。它等于$\eta(x)$到$1/2$距离的两倍；标签概率离$1/2$越远，选错贝叶斯动作的额外代价越大，而平局处这个代价为零。因此对每一个共享$\eta$的域$D$都有
-\begin{equation}
  R_D(h)-R_D(h^\star)
- =\mathbb E_{x\sim\mathcal P_D^X}
+ =\mathbb E_{\mathcal P_D^X}
    [|2\eta(x)-1|\mathbb I\{h(x)\neq h^\star(x)\}].
- \label{eq:shared-bayes-excess}
-\end{equation}
-积分函数在两域相同且非负，覆盖就能把源混合上的超额风险转为目标超额风险。非负性正是这一步放缩成立的依据。
-
-\begin{theorem}[共享标签机制下的领域泛化]
-\label{thm:dg-shared-pac}
-设$(X,\mathcal X)$为可测输入空间，$Y=\{0,1\}$。
-给定$K\geq1$个训练域分布$\mathcal P_1,\ldots,\mathcal P_K$及非空的允许目标域集合
-$\mathcal T$，它们均为$X\times Y$上的概率分布。令
-$\overline{\mathcal P}=K^{-1}\sum_{e=1}^K\mathcal P_e$。
-假设存在同一个可测函数$\eta:X\to[0,1]$，使每个训练域及每个
-$\mathcal P_T\in\mathcal T$的条件标签分布都满足
-$\mathbb P(y=1\mid x)=\eta(x)$；令
-$h^\star(x)=\mathbb I\{\eta(x)\geq1/2\}$。
-设$\mathcal H$为含$N<\infty$个可测二分类假设的空间，且
-$h^\star\in\mathcal H$。对任意域$D$定义零一风险
-$R_D(h)=\mathbb P_{(x,y)\sim\mathcal P_D}\{h(x)\neq y\}$，并令
-$R_{T,\mathcal H}^{\star}=\inf_{h\in\mathcal H}R_T(h)$。
-若对每个$\mathcal P_T\in\mathcal T$与每个可测输入集合$B$都有
-\[
- \mathcal P_T^X(B)\leq\kappa\overline{\mathcal P}^{X}(B),
 \]
-其中$\kappa>0$，则从$\overline{\mathcal P}$独立抽取
-$S=(z_1,\ldots,z_m)\sim\overline{\mathcal P}^{\,m}$，并令
+被积函数非负且与域无关，覆盖条件因而给出
+$R_T(h)-R_T(h^\star)\leq\kappa[R_{\overline{\mathcal P}}(h)-R_{\overline{\mathcal P}}(h^\star)]$。
+若从训练混合独立抽取$n$个样本并做ERM，则以概率至少$1-\delta$，对全部允许目标同时有
 \[
- \widehat h\in\argmin_{h\in\mathcal H}
- \frac1m\sum_{i=1}^m\mathbb I\{h(x_i)\neq y_i\}.
-\]
-对任意$m\geq1$和$\delta,\varepsilon\in(0,1)$，以概率至少$1-\delta$，
-对全部$\mathcal P_T\in\mathcal T$同时有
-\begin{equation}
  R_T(\widehat h)-R_{T,\mathcal H}^{\star}
- \leq\kappa\sqrt{\frac{2\log(2N/\delta)}{m}}.
- \label{eq:dg-shared-pac}
-\end{equation}
-故$m\geq2\kappa^2\log(2N/\delta)/\varepsilon^2$是保证目标域超额期望风险不超过$\varepsilon$的充分样本量条件。
-
-若进一步有$\eta(x)\in\{0,1\}$在$\overline{\mathcal P}^X$下几乎处处成立，
-则任意与样本一致的假设都满足可实现PAC保证，只需
-\[
- m\geq\frac{\kappa}{\varepsilon}
-       \bigl(\log N+\log(1/\delta)\bigr).
+ \leq\kappa\sqrt{\frac{2\log(2|\mathcal H|/\delta)}{n}}.
 \]
-\end{theorem}
-\begin{proof}
-由式~\eqref{eq:shared-bayes-excess}与覆盖条件，对任意$h\in\mathcal H$，
-\[
- R_T(h)-R_T(h^\star)
- \leq\kappa\bigl(R_{\overline{\mathcal P}}(h)
-                  -R_{\overline{\mathcal P}}(h^\star)\bigr).
-\]
-$h^\star$在混合分布及各目标域中都是$\mathcal H$内最优假设。有限假设空间的不可知PAC样本量界给出
-\[
- R_{\overline{\mathcal P}}(\widehat h)
- -R_{\overline{\mathcal P}}(h^\star)
- \leq\sqrt{\frac{2\log(2N/\delta)}{m}}.
-\]
-控制混合分布超额期望风险的同一个事件适用于全部目标域，因此得到同时保证。
+这里的同一成功事件覆盖全部目标，比逐个固定目标后要求高概率成立更强。结论依赖共同最优决策和覆盖，不能从训练域上的经验不变性直接推出。按每个训练域固定样本数的分层抽样，也需要相应的加权偏差分析，不能直接当作混合分布的独立同分布抽样。
 
-在可实现情形，$R_D(h^\star)=0$。若某个假设在某个允许目标域上的期望风险大于$\varepsilon$，则它在混合分布上的期望风险必大于$\varepsilon/\kappa$。这样的固定假设与$m$个样本一致的概率至多为$\exp(-m\varepsilon/\kappa)$。对至多$N$个假设的失败概率求和，再令结果不超过$\delta$，得到第二个样本量条件。
-\end{proof}
-
-这个定理比第~\ref{sec:transfer-learning-setting}节的逐目标域PAC定义\emph{更强}：证明中控制混合分布超额风险的是同一个高概率样本事件，而该事件一旦成立，就通过覆盖不等式\emph{同时}对所有允许目标域给出保证，不需要为每个目标域分别成立。它也清楚地展示了领域泛化的可行方式：算法只学一个共享分类器，既不需要目标样本，也不需要知道目标密度比；目标域与训练域的全部差异都被一个$\kappa$概括，$\kappa$越大，训练混合分布中目标关心的输入越稀少，同样的源错误被放大得越厉害。使用定理时要注意抽样方式：证明要求样本是“每次独立选域再抽观测”得到的混合独立样本；若在每个域固定抽取相同数量（分层抽样），样本之间的权重结构不同，不能直接套用，需要另行论证。
-
-无限空间可用复杂度替代有限计数。若混合分布上的统一偏差至多$c_{\mathcal H}(m,\delta)$，相同证明得到目标超额风险至多$2\kappa c_{\mathcal H}(m,\delta)$。有限VC维给出充分路径，范数与合适损失的Rademacher界也可控制源估计。一般损失的跨域转换还需证明式~\eqref{eq:shared-bayes-excess}类似的非负条件超额关系。
-
-实际模型通常先学一个表示$\Phi$（把原始特征压缩成一组表示），再接一个简单的预测头$g$。共享标签核的假设可以放到表示层：若对所有允许域$D$都有$\mathbb P_D(y\mid\Phi(x))=\eta_\Phi(\Phi(x))$，即标签规律在表示空间中与域无关，并且目标域的表示分布受训练域表示分布覆盖，就可以在表示空间中对$h=g\circ\Phi$套用上面的定理。这里有两个容易忽视的陷阱。第一，原始输入层共享标签核，并不意味着随便一个多对一表示$\Phi$仍能保持它：压缩可能把原本标签概率不同的输入映到同一个表示点，从而人为制造出概念偏移；表示也可能直接丢掉对分类有用的信息。第二，若$\Phi$本身也是从有限训练域学出来的，就必须额外论证它确实学到了不变关系，并控制“表示+预测头”组合空间的复杂度，不能只计算预测头的复杂度。要特别注意，“同一个预测头在\emph{有限几个}训练域上都最优”并不等于它在未来域也最优；寻找在所有环境下共同最优的预测关系，正是不变风险最小化（invariant risk minimization, IRM）的出发点\scite{arjovsky2019irm}。
-
-IRM类方法还隐含一个数据要求：训练环境必须\emph{变化得足够充分}，才能把真正的因果/不变特征与仅在训练环境中碰巧稳定的特征区分开。举例来说，如果“某类用词”和“垃圾邮件标签”在所有训练月份都恰好一起出现，算法无法判断究竟是用词决定标签、还是另一个未观察因素同时决定二者；换一个二者不再同时出现的目标月份，依赖用词的模型就会失效。这正是IRM风险分析给出的边界之一\scite{rosenfeld2021irmrisk}。所以，IRM的理想约束是同一表示下的同一个预测头在各训练环境中都达到各自的最小风险，并不要求风险数值相等；不同环境的噪声水平可以使这些最小值不同。可计算的正则惩罚通常只是这个理想约束的替代形式，仍须核对条件，不能代替对未来分布的假设：允许环境的范围、表示能否被识别、组合假设空间的复杂度仍需逐一明确。
-
-\paragraph{表示充分性与近似误差}
-
-换表示还会引入一个与有限样本无关、却同样无法回避的误差来源：表示可能从根本上丢失了预测标签所需的信息。固定一个已经学好的表示$\Phi$，令所有可表达的预测构成$\mathcal H_\Phi=\{g\circ\Phi:g\in\mathcal G\}$（即只能先做$\Phi$再用预测头$g$）。把目标风险相对\emph{不受表示限制}的贝叶斯风险作差，可以拆成两项：
-\begin{equation}
- \begin{aligned}
- R_T(\widehat h)-R_T^{\mathrm{Bayes}}
- ={}&\left[R_T(\widehat h)-\inf_{h\in\mathcal H_\Phi}R_T(h)\right]\\
- &+\left[\inf_{h\in\mathcal H_\Phi}R_T(h)-R_T^{\mathrm{Bayes}}\right].
- \end{aligned}
- \label{eq:transfer-representation-bias}
-\end{equation}
-第一项是在组合空间$\mathcal H_\Phi$内的超额风险，有限样本估计、优化不充分或算法选择都可能使它为正，不能只归因于样本少。第二项是该组合空间相对目标贝叶斯风险的近似差，同时受表示$\Phi$和允许预测头类$\mathcal G$的限制。它是两个风险下确界之差：即使贝叶斯最优函数不在$\mathcal H_\Phi$内，仍可能有一列函数的风险无限接近贝叶斯风险；只有证明这两个下确界之间有严格的正间隙，才能断言该差不能靠增加样本和充分优化消除。例如，表示若合并了具有正概率、标签确定且不同的输入，预测头在同一表示点只能作同一决定，便可能产生这种近似差，大小仍须结合相应概率质量计算。
-
-表示$\Phi$与预测头$g$若一起由训练样本选出，复杂度要按它们组成的整体空间计算，不能只统计固定表示后的预测头。因此逐目标域保证还须同时核对共享机制、覆盖、整体有限样本复杂度，以及相对所选比较基准的近似差。
-
-\subsection{环境平均保证}
-\label{sec:dg-random-environments}
-
-逐目标域路径要求所有目标共享一条确定的标签规律，这个条件在很多应用中太强：不同用户、不同医院、不同地区的数据生成机制可能确实各有差异，找不出一个处处成立的规律。环境平均路径主动放弃“对每个环境都成立”，换成一个更现实的承诺：把每个环境看成从某个环境总体$\mathcal Q$中随机抽取的样本，训练环境与未来环境\emph{来自同一个总体}，我们只要求模型在“按$\mathcal Q$随机抽来的新环境”上的\emph{平均}风险低。按定义~\ref{def:environment-average-domain-generalization-pac}，这允许模型在个别特别难的环境上表现差，只要这些环境在总体中占比不大。一个典型例子是把每个用户看作一个环境：从同一用户总体中独立抽出一批训练用户和一批新用户，保证的是对未来\emph{随机用户}的平均效果，而不是对每一个指定用户都有效。
-
-这个设定下的抽样分成清晰的两层，后面会看到两层样本量各管一件事、不能互相替代。环境总体为$\mathcal Q$：抽取一次环境，得到该环境上的一个联合分布$\mathcal P$；先独立抽取$K$个环境分布$\mathcal P_1,\ldots,\mathcal P_K$，再在每个环境内独立抽取$n$个观测$z_{e,i}=(x_{e,i},y_{e,i})$。给定环境后，环境内观测相互独立，但不同环境的观测一般不同分布。对一个固定模型$h$，真实的总体平均风险和用两层数据算出的经验风险分别为
-\begin{equation}
- R_{\mathcal Q}(h)=\mathbb E_{\mathcal P\sim\mathcal Q}R_{\mathcal P}(h),
- \qquad
- \widehat R_{\mathcal S}(h)=\frac1{Kn}\sum_{e=1}^{K}\sum_{i=1}^{n}\ell(h,z_{e,i}).
- \label{eq:environment-average-risk}
-\end{equation}
-读这两个式子时注意平均的次序：$R_{\mathcal Q}(h)$先在每个环境内对观测求期望得到$R_{\mathcal P}(h)$，再对环境总体$\mathcal Q$求外层期望；经验风险$\widehat R_{\mathcal S}(h)$则用总共$Kn$个观测的简单平均来估计这个两层期望。两层抽样天然提供两种不同的信息，增大环境内样本数$n$和增大环境数$K$改善的是不同的东西，下面的定理会把这两项误差分别量化。
-
-具体来说，增大每个环境内的样本数$n$，只能把\emph{已经见过的这$K$个环境}上的风险估计得更准，却不能告诉我们没见过的环境长什么样；增大环境数$K$，才提供了关于环境总体$\mathcal Q$本身的独立信息。因此，即使固定$K$、让$n$趋于无穷，我们对“未来环境平均风险”的不确定仍然存在——样本再多，也只是反复观察同样有限的几个环境。这解释了为什么环境平均的样本量条件必须同时对$K$和$Kn$提出要求。
-
-图~\ref{fig:learning-environment-sampling}在相同总观测下比较增点与增行。原域内采样只增加行内点，另抽环境增加独立行。$R_{\mathcal Q}$还平均环境总体，因而二者不能互相替代。
+环境平均保证采用另一种抽样单位。设先从环境总体$\mathcal Q$独立抽取$K$个分布$\mathcal P_1,\ldots,\mathcal P_K$，再从每个分布独立抽取$n$个观测，不同块条件独立。模型在这些环境的经验平均上学习，评价
+$R_{\mathcal Q}(h)=\mathbb E_{\mathcal P\sim\mathcal Q}R_{\mathcal P}(h)$。
+图~\ref{fig:learning-environment-sampling}区分环境数与域内样本数，它们对应两层随机性。
 
 \begin{figure*}[!htb]
   \centering
@@ -869,170 +356,327 @@ IRM类方法还隐含一个数据要求：训练环境必须\emph{变化得足�
  中、右都有18个观测，只有右侧增加了独立环境数量。图中数量为教学构造，不对应实测数据。}
  \label{fig:learning-environment-sampling}
 \end{figure*}
+\FloatBarrier
 
-\begin{theorem}[随机环境中的一致收敛与可学习性]
-\label{thm:dg-two-level-sample}
-设$(Z,\mathcal Z)$为可测观测空间，$\mathcal Q$为定义在$Z$上概率分布所组成空间上的
-环境分布。令$\mathcal H$为含$1\leq N<\infty$个假设的空间，
-$\ell:\mathcal H\times Z\to[0,1]$可测。
-先独立抽取$\mathcal P_1,\ldots,\mathcal P_K\sim\mathcal Q$；给定这些环境后，
-对每个$e$独立抽取
-$D_e=(z_{e,1},\ldots,z_{e,n})\sim\mathcal P_e^n$，且不同环境的环境训练样本块条件独立。
-记$\mathcal S=(D_1,\ldots,D_K)$，其中$K,n\geq1$，并定义
+记第$e$个环境的第$j$个观测为$z_{e,j}$，经验风险为
 \[
- R_{\mathcal P}(h)=\mathbb E_{z\sim\mathcal P}\ell(h,z),\qquad
- R_{\mathcal Q}(h)=\mathbb E_{\mathcal P\sim\mathcal Q}R_{\mathcal P}(h),
+ \widehat R(h)=\frac1{Kn}\sum_{e=1}^K\sum_{j=1}^n\ell(h,z_{e,j}).
 \]
-\[
- \widehat R_{\mathcal S}(h)=\frac1{Kn}
- \sum_{e=1}^K\sum_{i=1}^n\ell(h,z_{e,i}).
-\]
-对任意$\delta,\varepsilon\in(0,1)$，以概率至少$1-\delta$，
-对所有$h\in\mathcal H$同时有
+对包含$N$个候选、损失在$[0,1]$中的空间，把总体风险与经验风险之差拆成“环境抽样误差”和“给定环境后的观测误差”。分别使用Hoeffding不等式并对候选求和，以概率至少$1-\delta$得到
 \begin{equation}
- |R_{\mathcal Q}(h)-\widehat R_{\mathcal S}(h)|
+ \sup_h|R_{\mathcal Q}(h)-\widehat R(h)|
  \leq\sqrt{\frac{\log(4N/\delta)}{2K}}
-      +\sqrt{\frac{\log(4N/\delta)}{2Kn}}.
+     +\sqrt{\frac{\log(4N/\delta)}{2Kn}}.
  \label{eq:dg-two-level-uniform}
 \end{equation}
-令$\widehat h\in\argmin_{h\in\mathcal H}\widehat R_{\mathcal S}(h)$，
-则其环境平均超额期望风险
-$R_{\mathcal Q}(\widehat h)-\inf_{h\in\mathcal H}R_{\mathcal Q}(h)$
-不超过所列右侧的两倍。特别地，若
+第一项使用$K$个独立的环境风险，第二项在给定环境后使用$Kn$个独立但未必同分布的损失。ERM的环境平均超额风险不超过右侧的两倍，比较基准是$\inf_hR_{\mathcal Q}(h)$，始终只选同一个假设。增大域内$n$不能消除这个界中的有限环境代价；该结论也不能转换为对任意指定目标域的保证。
+
+\Needspace{10\baselineskip}
+\section{任务变化下的迁移可学习性}
+\label{sec:task-transfer-learnability}
+
+现在保持邮件的生成分布不变，只改变错误的计分方式。若仍能访问全部带标签邮件，我们可以直接按新损失重新训练。迁移问题更具体地问：只保留旧任务学到的知识，并提供有限的新任务反馈时，能否达到目标风险要求？要回答这一点，必须同时描述保留信息与目标学习过程。
+
+\Needspace{7\baselineskip}
+\subsection{学习问题}
+
+\subsubsection{固定数据分布与变化的学习目标}
+
+令一条完整观测为$z\in Z$，分布固定为$\mathcal P$，两个任务在共同候选空间$\mathcal H$上分别使用有界损失$\ell_S(h,z),\ell_T(h,z)\in[0,1]$。这里把损失写成假设与观测的函数，以容纳同一记录上的不同评价。相应风险为
 \[
- K\geq\frac{8\log(4N/\delta)}{\varepsilon^2},
- \qquad
- Kn\geq\frac{8\log(4N/\delta)}{\varepsilon^2},
+ R_S(h)=\mathbb E_{\mathcal P}\ell_S(h,z),\qquad
+ R_T(h)=\mathbb E_{\mathcal P}\ell_T(h,z).
 \]
-则
+本节下标$S,T$区分任务，分布始终是同一个$\mathcal P$；上一节中这两个下标区分域。改变损失可以改变最优决策，即使数据分布没有改变。
+
+如果两个任务的输出形式不同，可以把$h$理解为包含所需输出的共同决策对象，再分别由损失读取相应部分。这个形式安排只提供统一记号，不会自动使两个任务相关。下面的推导直接采用同一输入、同一标签而错误代价不同的例子，避免把输出扩展本身当作迁移依据。
+
+\subsubsection{可复用知识与目标任务的反馈}
+
+源样本$S_S\sim\mathcal P^{n_S}$经过学习后产生知识$K=A_S(S_S)$，例如一个固定表示$\phi_K$。目标阶段只接收$K$和新的反馈样本$S_T$，由算法$A_T$输出$h$。样本中是否包含计算$\ell_T$所需的标签，属于反馈条件；只有输入时不能默认目标经验风险已经可算。
+
+为使来源知识与新任务的估计误差能够分开，下面先令$S_T\sim\mathcal P^{n_T}$与$S_S$独立。条件于$K$以后，目标候选空间成为固定集合。若用同一批目标数据反复选择源模型、修改表示并估计最终风险，独立性就不再成立，需把这些选择纳入共同复杂度或使用新的验证数据。
+
+\subsubsection{重新学习与知识迁移的比较基准}
+
+设从原始输入重新学习时允许使用$\mathcal H$，复用$K$以后只使用非空候选子集$\mathcal H_K\subseteq\mathcal H$。例如，固定表示后只学习预测头，便限制了能够实现的输入到输出映射。用同一个总体、损失和大空间基准$R_{T,\mathcal H}^{\star}$比较，才能判断限制候选所节省的样本是否抵偿了表示损失。
+
+如果只与$\inf_{h\in\mathcal H_K}R_T(h)$比较，一个始终输出错误常值的单元素空间也可能具有零超额风险。因此，迁移结论须同时报告受限空间的学习误差与相对于原空间的近似差。若来源阶段也消耗了大量样本，这些成本应与目标阶段的新增需求分别说明。
+
+\Needspace{7\baselineskip}
+\subsection{可学习的条件}
+
+\subsubsection{源任务最优解的信息局限}
+
+考虑只有一个输入、标签$y\in\{0,1\}$的教学例子。两种可能的固定数据分布分别满足$\mathbb P(y=1)=0.6$或$0.9$。源任务使用零一损失，两种情形的唯一最优分类器都输出1。因此，若来源知识只保存这个最优类别决策，目标阶段收到的信息完全相同。
+
+现在把标签0预测为1的代价设为0.8，把标签1预测为0的代价设为0.2，正确预测代价为0。设正类概率为$p$，预测1与预测0的目标风险分别是$0.8(1-p)$和$0.2p$，故最优阈值为$p=0.8$。在$p=0.6$时应预测0，选错的超额风险为0.2；在$p=0.9$时应预测1，选错的超额风险为0.1。
+
+仅接收源最优类别、没有新标签的目标算法无法区分这两种情形。若它以概率$q$输出1，则在第一种情形以概率$q$产生大于0.05的超额风险，在第二种情形以概率$1-q$失败，至少一个失败概率不小于$1/2$。每一种情形内部的数据分布都没有随任务改变；缺失的是源决策没有保留的概率信息。增加目标标签或保留概率估计会改变这一信息条件。
+
+\subsubsection{共享表示对目标任务的充分性}
+
+对固定表示$\phi_K$，目标阶段可用$g\circ\phi_K$预测，其中$g$属于允许的预测头集合。若表示把两个原始输入映射到同一点，任何预测头都必须对它们作出相同决策。在只含这两个输入的例子中，若它们都以正概率出现，且各自的目标最优决策唯一而不同、原始候选能够同时实现这两个决策，那么合并它们就会产生目标近似误差。源任务不需要区分它们，也不能消除这个目标任务的损失。
+
+为了量化这一影响，定义
+\begin{equation}
+ a_T(K)=\inf_{h\in\mathcal H_K}R_T(h)
+        -\inf_{h\in\mathcal H}R_T(h)\geq0.
+ \label{eq:task-transfer-bias}
+\end{equation}
+$a_T(K)=0$表示受限空间能够任意逼近大空间的目标最优风险，不要求最小值一定取到。表示对目标预测足够使用，还取决于预测头是否能够表达所需决策。源任务风险小并不能单独限制$a_T(K)$；要给出端到端保证，需由任务联系或源学习分析进一步控制这个量。
+
+\subsubsection{源任务风险与目标任务风险的联系}
+
+记源任务的类内最优风险为$R_{S,\mathcal H}^{\star}=\inf_{h\in\mathcal H}R_S(h)$。一种直接的充分条件，是存在已知的候选转换$T:\mathcal H\to\mathcal H$和统一常数$c\geq0,b\geq0$，使允许的分布与任务对都满足
+\begin{equation}
+ R_T(T(h))-R_{T,\mathcal H}^{\star}
+ \leq c\bigl(R_S(h)-R_{S,\mathcal H}^{\star}\bigr)+b.
+ \label{eq:task-risk-transfer}
+\end{equation}
+它说明源任务的近似最优解经转换后，离目标最优还有多远。若源算法以高概率保证超额风险至多$\varepsilon_S$，则转换所得目标超额风险至多$c\varepsilon_S+b$。只有$b$可消除或被进一步学习控制时，这条路线才能支持任意精度的目标PAC要求。
+
+这个条件需要证明，不能由“两个任务相关”替代。例如若$\ell_T(h,z)=c\ell_S(h,z)+d(z)$，其中$c>0$且$d$与$h$无关、相应风险有限，则取$T$为恒等映射即可得到$b=0$，因为与决策无关的期望项在超额风险中抵消。前面的代价变化反例则表明，一般的损失改变未必具有这种性质。
+
+如果源任务保留的是概率信息，而不是一个最优类别，改变错误代价仍可能得到保证。为说明这一点，回到二分类，但在这个例子中让源任务用平方损失学习条件正类概率$\eta(x)=\mathbb P(y=1\mid x)$，输出$f(x)\in[0,1]$。这里比较的是全部可测预测器中的Bayes最优风险，而不是前面固定$\mathcal H$中的最优风险。对平方损失按输入取条件期望，交叉项因$\mathbb E[y-\eta(x)\mid x]=0$而消失，得到
 \[
- \mathbb P\left\{
- R_{\mathcal Q}(\widehat h)-\inf_{h\in\mathcal H}R_{\mathcal Q}(h)
- \leq\varepsilon\right\}\geq1-\delta.
+ R_S(f)-R_S(\eta)=\mathbb E[(f(x)-\eta(x))^2].
 \]
-\end{theorem}
-\begin{proof}
-在真实环境平均期望风险和经验风险之间插入已见环境的期望风险平均值：
+因此，源超额风险控制了保留概率的均方误差。
+
+设目标任务把标签0预测为1的代价设为$c_0\in(0,1]$，把标签1预测为0的代价设为$c_1\in(0,1]$，正确预测不受罚。给定$x$，两个决策的条件风险分别为$c_0(1-\eta(x))$和$c_1\eta(x)$，故目标阈值为$\tau=c_0/(c_0+c_1)$。用源概率构造$d_f(x)=\mathbb I\{f(x)\geq\tau\}$，对应Bayes决策为$d_\eta$。只有二者决策不同才产生超额风险；这时$\tau$位于$f(x)$与$\eta(x)$之间，故$|\eta(x)-\tau|\leq|f(x)-\eta(x)|$。于是
 \begin{align*}
- |R_{\mathcal Q}(h)-\widehat R_{\mathcal S}(h)|
- \leq{}&\left|R_{\mathcal Q}(h)-\frac1K\sum_{e=1}^K R_{\mathcal P_e}(h)\right|\\
- &+\left|\frac1K\sum_{e=1}^K R_{\mathcal P_e}(h)-\widehat R_{\mathcal S}(h)\right|.
+ R_T(d_f)-R_T(d_\eta)
+ &= (c_0+c_1)\mathbb E\bigl[|\eta(x)-\tau|
+       \mathbb I\{d_f(x)\neq d_\eta(x)\}\bigr] \\
+ &\leq(c_0+c_1)\mathbb E|f(x)-\eta(x)| \\
+ &\leq(c_0+c_1)\sqrt{R_S(f)-R_S(\eta)}.
 \end{align*}
-第一项包含$K$个独立环境，每个$R_{\mathcal P_e}(h)$都在$[0,1]$中。对固定$h$应用Hoeffding不等式，再对$N$个假设求和，以失败概率$\delta/2$得到第一项的统一上界。
+最后一步使用Cauchy--Schwarz不等式。若源概率学习具有相对于$\eta$的高概率保证，这个界便将它转为新代价下的保证，无需再估计目标标签分布。与仅保存类别的反例相比，新增依据是概率估计保留了移动阈值需要的信息；若源候选不能逼近$\eta$，相应近似差仍须计入。
 
-第二项在给定全部$\mathcal P_e$后，是$Kn$个独立、有界但未必同分布的观测相对于各自期望的平均偏差。Hoeffding不等式仍然适用，再对$N$个假设求和，以条件失败概率$\delta/2$得到第二项上界。该保证对每组环境都成立，因此无条件失败概率也不超过$\delta/2$。合并两个事件得到一致收敛结论，ERM的超额期望风险再由两次偏差控制得到。
-\end{proof}
 
-充分门槛可以写为
-\[
- K\geq\frac{8\log(4N/\delta)}{\varepsilon^2},\qquad
- Kn\geq\frac{8\log(4N/\delta)}{\varepsilon^2}.
-\]
-这两个门槛很好地印证了前面的直观分析。由于$n\geq1$时$Kn\geq K$，第一个条件（环境数足够多）会自动蕴含第二个，所以在这种最坏情形、不附加任何域间结构的分析下，所需样本量实际上由\emph{环境数量}$K$主导：域内数据$n$主要用于把每个已见环境的风险估计准确，但无论在已见环境内采多少点，都不能代替对更多\emph{独立}环境的观察。这并不是说域内数据没用——在进一步假设环境间共享结构（如共享表示）时，域内样本能发挥更大作用，相应的界也会改善；这里给出的是不利用这类额外结构时的一般结论。
+\Needspace{7\baselineskip}
+\subsection{有限样本保证}
 
-无限空间要分别控制两层函数：环境层为$\mathcal P\mapsto R_{\mathcal P}(h)$，域内为$z\mapsto\ell(h,z)$。参数、范数或Rademacher量须用于实际约束的层。学习共享表示与任务头时，还要分开表示复杂度、头复杂度和任务数；多任务表示理论由此得到样本量关系\scite{maurer2016representation}。
+\subsubsection{源知识估计误差与目标任务学习误差}
 
-使用这条定理时要始终记得它承诺的范围：它比较的是\emph{同一个}假设在环境总体上的平均风险，因此允许模型在某些环境下风险较高，只要这些环境在$\mathcal Q$下概率不大；它也不与“每个环境各自挑选最优假设再平均”的基准比较，那个基准强得多，且对应一个会随环境更换模型的系统。另外，如果允许算法在部署时用目标环境的数据进行适应，输出就不再是一个与目标无关的固定假设，评价对象和比较基准都要重新定义，不能继续套用本定理。
+有目标标签时，我们可以在$\mathcal H_K$中重新选择决策。目标超额风险自然分成两部分：在这个空间内没有学到最优的误差，以及空间本身相对于$\mathcal H$的近似差$a_T(K)$。如果来源阶段以概率至少$1-\delta_S$保证$a_T(K)\leq b_S$，目标阶段再给出条件失败概率$\delta_T$的学习保证，两类失败合计至多$\delta_S+\delta_T$。
 
-\paragraph{基于环境稳定性的算法保证}
-\label{sec:dg-environment-stability}
+这里的$b_S$必须来自明确的源学习结果与任务联系，不能把源经验误差直接改名为$b_S$。下一结论先条件于实际得到的$K$，说明目标阶段可以做到什么；它将来源知识的好坏保留为显式项。
 
-与领域自适应中类似，一致收敛界同时控制所有候选假设，可能偏保守；也可以把第~\ref{chap:convex-learning-and-stability}章的稳定性思想搬到环境层，直接分析实际使用的算法。做法是把“替换一个训练样本”升级为“替换\emph{一整个环境的数据块}”：如果换掉其中一个训练环境的全部数据后，算法在任意测试点上的损失几乎不变，就说明输出没有过度依赖某一个环境，从而更可能在新环境上保持稳定。这条路线控制的是具体算法对环境变化的敏感度，不再同时约束整个候选空间。
+\subsubsection{固定表示下的目标任务样本复杂度}
 
-为什么能把“一个环境”类比成普通稳定性定理里的“一个样本”？记第$e$个环境的数据块为$D_e=(z_{e,1},\ldots,z_{e,n})$，整个训练集为$\mathcal S=(D_1,\ldots,D_K)$。不固定环境时，同一块内的观测彼此相关（它们共享同一个环境分布），不能当成独立样本；但\emph{不同块}因为环境是独立抽取的，彼此独立同分布。对一个数据块定义平均损失$L(h,D)=n^{-1}\sum_{i=1}^n\ell(h,z_i)$，它对环境取期望恰好就是$R_{\mathcal Q}(h)$。于是在“环境”这一层，每个数据块$D_e$正好扮演了普通稳定性定理中单个观测$z_i$的角色，样本量对应环境数$K$。
+为看清样本量的作用，设每个可能的$K$都确定一个有限非空空间$\mathcal H_K$，且$|\mathcal H_K|\leq N_0$。这些候选可以是固定表示配合一组允许的预测头。目标算法计算每个候选的新损失平均值，再选择近似最小者。
 
-\begin{definition}[环境均匀稳定性]
-\label{def:environment-stability}
-设$A$接收$K$个环境训练样本块。若对任意仅在一个环境训练样本块上不同的$\mathcal S,\mathcal S'$，以及任意测试观测$z$，均有
-\[
- \left|\mathbb E_A\ell(A(\mathcal S),z)
-       -\mathbb E_A\ell(A(\mathcal S'),z)\right|\leq\gamma_K,
-\]
-则称$A$具有参数为$\gamma_K$的环境均匀稳定性。这里$\mathbb E_A$只对算法$A$的内部随机性取期望，$\mathcal S,\mathcal S'$与$z$均固定。
-\end{definition}
-
-\begin{theorem}[环境稳定性与平均可学习性]
-\label{thm:dg-environment-stability}
-设$(Z,\mathcal Z)$为可测观测空间，$\mathfrak M$为环境分布族；每个
-$\mathcal Q\in\mathfrak M$都定义在$Z$上的概率分布所组成的空间上。
-固定$\mathcal Q\in\mathfrak M$，先独立抽取
-$\mathcal P_1,\ldots,\mathcal P_K\sim\mathcal Q$；给定这些环境后，对每个$e$
-独立抽取$D_e=(z_{e,1},\ldots,z_{e,n})\sim\mathcal P_e^n$，并令
-$\mathcal S=(D_1,\ldots,D_K)$，其中$K,n\geq1$。
-允许假设空间$\mathcal H$无限，设
-$\ell:\mathcal H\times Z\to[0,1]$可测，并定义
-\[
- R_{\mathcal P}(h)=\mathbb E_{z\sim\mathcal P}\ell(h,z),\qquad
- R_{\mathcal Q}(h)=\mathbb E_{\mathcal P\sim\mathcal Q}R_{\mathcal P}(h),
-\]
-\[
- \widehat R_{\mathcal S}(h)=\frac1{Kn}
- \sum_{e=1}^K\sum_{i=1}^n\ell(h,z_{e,i}).
-\]
-可能随机化的算法$A$输出$\mathcal H$中的假设。假设对任意仅有一个环境训练样本块不同的
-$\mathcal S,\mathcal S'$和任意$z\in Z$，
-\[
- \left|\mathbb E_A\ell(A(\mathcal S),z)
- -\mathbb E_A\ell(A(\mathcal S'),z)\right|\leq\gamma_K,
-\]
-其中$\mathbb E_A$只对算法内部随机性取期望，且
-\[
- \mathbb E\!\left[\widehat R_{\mathcal S}(A(\mathcal S))-
-                  \inf_{h\in\mathcal H}\widehat R_{\mathcal S}(h)\right]\leq\rho_{K,n},
-\]
-其中$\gamma_K,\rho_{K,n}\geq0$，所有显示的随机变量均可测。则
-\[
- \mathbb E\!\left[R_{\mathcal Q}(A(\mathcal S))-
-                  \inf_{h\in\mathcal H}R_{\mathcal Q}(h)\right]
- \leq\gamma_K+\rho_{K,n}.
-\]
-若对任意$\varepsilon,\delta\in(0,1)$都存在门槛$k_0,m_0$，使所有允许的
-$\mathcal Q$及所有满足$K\geq k_0$、$Kn\geq m_0$的抽样方案都有
-$\gamma_K+\rho_{K,n}\leq\varepsilon\delta$，则
-\[
- \mathbb P\left\{
- R_{\mathcal Q}(A(\mathcal S))
- -\inf_{h\in\mathcal H}R_{\mathcal Q}(h)
- \leq\varepsilon\right\}\geq1-\delta.
-\]
-这是一条同时对$K$与$Kn$量化的条件；只沿某条令$K,n\to\infty$的增长路径收敛并不足够。
+\begin{theorem}[复用知识后的目标风险保证]
+\label{thm:task-transfer-finite}
+设$K$与目标样本$S_T\sim\mathcal P^n$独立，$\mathcal H_K\subseteq\mathcal H$满足上述大小限制，目标损失可测且属于$[0,1]$。若输出$\widehat h\in\mathcal H_K$的目标经验风险至多比类内最小值高$\rho$，则以概率至少$1-\delta$，
+\begin{equation}
+ R_T(\widehat h)-R_{T,\mathcal H}^{\star}
+ \leq a_T(K)+\sqrt{\frac{2\log(2N_0/\delta)}{n}}+\rho.
+ \label{eq:task-transfer-finite}
+\end{equation}
 \end{theorem}
 \begin{proof}
-环境均匀稳定性也控制块损失$L$的变化，因为对块内每个观测的损失变化取平均仍不超过$\gamma_K$。不同环境训练样本块独立同分布，故均匀稳定性定理给出
+条件于$K$，候选空间固定，目标样本仍独立同分布。对候选损失使用Hoeffding不等式并求和，得到统一偏差上界
 \[
- \mathbb E[R_{\mathcal Q}(A(\mathcal S))-\widehat R_{\mathcal S}(A(\mathcal S))]\leq\gamma_K.
+ \sqrt{\frac{\log(2N_0/\delta)}{2n}}.
 \]
-对任意固定$h$，$\mathbb E\widehat R_{\mathcal S}(h)=R_{\mathcal Q}(h)$，从而
-$\mathbb E\inf_h\widehat R_{\mathcal S}(h)\leq\inf_hR_{\mathcal Q}(h)$。
-加入经验优化误差即得期望结论，再对非负的超额期望风险应用Markov不等式。
+近似ERM使用两次偏差与一次优化误差，因而在类内达到根号项加$\rho$的超额风险。再加入式~\eqref{eq:task-transfer-bias}即得结论。该条件概率保证对每个$K$成立，对$K$平均后仍成立。
 \end{proof}
 
-环境稳定性与普通的单样本稳定性之间可以换算，但换算结果再次说明环境数才是关键。替换一个环境块相当于替换其中$n$个观测，把单观测稳定性的变化量逐项累加，可得块稳定性参数$\gamma_K\leq n\beta_{Kn}$。举例来说，若单观测均匀稳定性是$\beta_{Kn}=O(1/(Kn))$（这是许多正则化方法的典型量级），代入只得到$\gamma_K=O(1/K)$：增大域内样本$n$在乘积$Kn$中带来的改善被前面的因子$n$抵消，最终收敛速度只由环境数$K$决定，与“域内加数据不能消除环境不足”的结论一致。如果能更精细地直接分析“整块替换后参数的期望移动距离”$s_{K,n}$，则对$G$-Lipschitz损失有$\gamma_K\leq Gs_{K,n}$，在能利用环境间共享结构时可以得到更紧的结果。
+若$a_T(K)=0$且$\rho=0$，则$n\geq2\log(2N_0/\delta)/\varepsilon^2$足够。这给出一种统计可行的目标学习规则；要成为可执行程序，还需候选损失可计算且比较可实现。若预测头空间无限，可以用目标损失族的Rademacher复杂度等量替换有限候选的对数项；固定表示只限制候选结构，并不自动保证复杂度小或优化容易。
 
-\subsection{两类保证的比较与适用边界}
-\label{sec:dg-guarantee-comparison}
+\subsubsection{迁移降低样本需求的条件}
 
-最后把领域泛化的两条路线并排比较，避免在应用中把一种保证误当成另一种。\emph{逐目标域保证}先固定某一个目标域，要求同一个训练输出接近该域自身的最优基准；它靠“所有域共享标签核”加“训练混合覆盖目标输入”来保证源风险可以转移到目标，并能加强为在同一个样本事件上对全部目标域同时成立。\emph{环境平均保证}则把目标域看成$\mathcal Q$中随机抽取的环境，评价的是同一个假设在环境总体上的平均风险，允许个别环境很差。正因为二者的概率对象不同，平均保证\emph{不能}自动改成逐域保证：“平均风险低”与“每个域风险都低”是两个强度不同的命题。
+假设直接学习的有限空间大小为$N$，复用后为$N_0<N$，二者的损失和评价总体一致。上述充分界把目标抽样代价中的$\log N$换成$\log N_0$；这个改善需要$a_T(K)$与优化误差不抵消所节省的估计误差。因此，更小的受限空间只是减少目标样本需求的一条条件性途径，不是任意压缩都有效的结论，也不能由两个上界直接推出最优样本复杂度的严格排序。
 
-两条路径的样本条件也不一样。逐域路线要求训练混合分布覆盖目标域可能出现的输入，并要求共享的标签机制在目标域仍然成立，样本量主要由覆盖常数$\kappa$和模型复杂度决定；平均路线则要求足够多的\emph{独立}环境$K$，域内样本数$n$只负责估准已见环境。正如前文反复看到的，增大$n$不能替代增大$K$。此外，9.2节的普通样本替换稳定性与这里的环境块替换稳定性控制的是两种不同尺度的扰动（换一个观测 vs. 换一整个环境），二者不能只因为名字都叫“稳定性”就互相套用。
+多任务表示理论进一步研究哪些来源任务足以确定对目标有用的表示。代表性结果把共享表示、任务专属预测头及来源任务的多样性分别纳入分析，在相应任务联系下得到目标样本需求的改善\scite{tripuraneni2020diversity}。这类研究需要明确任务族；把任意新损失都纳入目标集合，会使表示充分性要求明显增强。
 
-把这一章的结论压缩成一句话：复杂度工具（VC维、Rademacher、范数）和算法工具（稳定性、PAC--Bayes）都只负责有限样本这一步，它们本身都\emph{不能}建立源域与目标域之间的联系。逐目标域结论还需要共享机制、覆盖和信息充分的表示；环境平均结论还需要训练环境与未来环境来自同一个环境总体。阅读或应用任何一条泛化保证时，都应同时核对比较基准、跨域条件和有限样本控制三者，缺一不可。
+\subsubsection{任务联系不足时的迁移边界}
 
-\Needspace{8\baselineskip}
+若$a_T(K)>0$固定不变，再多目标样本也只能让算法接近受限空间的最好结果。允许重新学习表示会扩大候选空间，可能降低近似差，同时增加估计和计算代价。若完全没有目标反馈，又不存在式~\eqref{eq:task-risk-transfer}这样的联系，源任务成功本身不能排除前面的不可识别反例。
+
+负迁移应在相同目标样本、评价分布和可比训练预算下，与直接学习基准比较；它表示复用旧知识使目标风险变大。理论分析需要确定增加的是近似误差、估计误差还是优化误差。一个宽松的风险上界变大，并不足以证明实际发生了负迁移。
+
+\section{持续学习的可学习性}
+\label{sec:continual-learnability}
+
+继续按月份接收邮件，并要求模型能处理已经出现过的邮件类型。当前数据可以让模型更适合本月，却可能使过去的决策失效。本节先明确历史评价，再给出保留损失统计量的有限候选算法，说明不重访原始数据时仍可能学习；同时用记忆下界说明，历史信息也不能任意丢弃。
+
+\Needspace{7\baselineskip}
+\subsection{学习问题}
+
+\subsubsection{固定任务与持续到达的数据}
+
+固定可测空间$Z=X\times Y$、假设空间$\mathcal H$和损失$\ell\in[0,1]$。第$t$阶段接收$S_t=(z_{t,1},\ldots,z_{t,n_t})$，其中$z_{t,i}$来自$\mathcal P_t$。下面的有限样本结论先固定分布序列，并假定各阶段内独立同分布、不同阶段样本相互独立。序列可以变化，但不依赖已经抽取的训练样本；由历史自适应选择分布的过程需要另外的条件概率分析。
+
+为描述旧数据离开后算法还能使用什么，令$M^{(t)}$表示第$t$阶段结束时的全部保留状态，并写成
+\[
+ M^{(t)}=U_t(M^{(t-1)},S_t),\qquad
+ h^{(t)}=V_t(M^{(t)}).
+\]
+$U_t$为更新规则，$V_t$为预测规则，带括号的上标表示阶段。本节评价每次更新完成后，模型在各分布中新观测上的期望损失，不评价反馈到达前的在线预测损失。状态包括模型参数和所有历史摘要；除这个状态之外，算法不能再读取已经离开的样本。
+
+\subsubsection{分布变化与历史数据的不可重访}
+
+若只在当前$S_t$上最小化损失，算法估计的是$\mathcal P_t$下的风险。要维持历史表现，需要让状态保留与历史评价相关的信息。保存若干旧样本是一种方式，保存可直接更新的损失统计量是另一种方式；它们支持的候选空间与计算要求并不相同。
+
+没有重访原始数据，不排除保留足以计算既定经验目标的统计量；有限维状态也不必然意味着有限比特。因此，以下正面构造明确保存哪些计数，反例则把包括最终模型在内的全部历史状态限制为$B$比特。这样可以比较信息的需求，而不会把未计入的参数存储当作免费记忆。
+
+\subsubsection{当前风险、历史风险与遗忘}
+
+对每个历史阶段$i$，定义$R_i(h)=\mathbb E_{\mathcal P_i}\ell(h,z)$和$R_i^\star=\inf_{h\in\mathcal H}R_i(h)$。为了让每个已经出现的阶段在评价中占同样权重，取
+\begin{equation}
+ \overline R_t(h)=\frac1t\sum_{i=1}^tR_i(h).
+ \label{eq:continual-average-risk}
+\end{equation}
+它比较同一个模型在历史分布上的平均表现；若实际使用频率不同，应在观察样本之前规定相应权重。平均评价的类内基准是$\inf_h\overline R_t(h)$，不能把它换成允许每个阶段各选模型的$t^{-1}\sum_iR_i^\star$。
+
+对已经学过的阶段$i$，$R_i(h^{(t)})-R_i(h^{(i)})$度量之后更新造成的风险变化，正值表示遗忘。但遗忘小也可能只是一直表现很差，所以还需看$R_i(h^{(t)})-R_i^\star$。如果要求所有历史分布都接近各自最优，就应控制$\max_{i\leq t}[R_i(h^{(t)})-R_i^\star]$。最大值在此用于防止少数历史环境被平均掩盖。
+
+对给定允许序列族和记忆预算，平均风险的有限阶段PAC要求可表述为：对任意$\varepsilon,\delta\in(0,1)$和预定阶段数$T$，存在统一的有限样本门槛与遵守预算的同一算法，对允许族内的每个分布序列，都以概率至少$1-\delta$保证全部$t\leq T$的平均超额风险不超过$\varepsilon$。逐历史分布要求则把这个风险量换成最大逐域超额风险。有限$T$下可学习并不自动意味着同一固定预算能够支持无限阶段。
+
+\Needspace{7\baselineskip}
+\subsection{可学习的条件}
+
+\subsubsection{不同历史分布上的预测兼容性}
+
+如果两个历史环境都只产生同一个输入，一个总标为0，另一个总标为1，那么任何固定二分类器至少在一个环境上风险为1。两个环境分别都可零风险学习，但不提供环境身份的同一个分类器无法同时实现这一目标。即使全部数据都保留，这个表达限制也不会消失。
+
+为了把这种限制与抽样误差分开，定义共同候选能达到的最小最大超额风险
+\begin{equation}
+ \Delta_t=\inf_{h\in\mathcal H}\max_{i\leq t}[R_i(h)-R_i^\star].
+ \label{eq:continual-compatibility}
+\end{equation}
+内部最大值反映需要保持的每个历史分布，外部下确界在允许的共同模型中选择最好者。有限空间中$\Delta_t=0$意味着存在同时最优的候选；$\Delta_t>0$时，任意共同模型的最大逐域超额风险都至少为$\Delta_t$。平均风险相对于共同模型最优者的学习要求，仍可能成立。
+
+\subsubsection{保持历史表现所需的信息}
+
+固定$N$个候选，如果学习目标只是所有观测的平均损失，就可以在数据离开前为每个候选累加损失。原始邮件随后丢弃，累计值仍能用于选择经验最优者。这说明能否保持历史表现，取决于状态是否保留当前学习目标所需的信息，而不只取决于是否保存原始样本。
+
+这个构造依赖候选在观测到来前已经固定。若以后增加了一个新模型，它在旧样本上的损失通常无法由原有候选的累计值恢复。对不断改变表示的神经网络，也不能直接把有限候选计数法理解为一个固定大小的通用摘要。
+
+\subsubsection{稳定性与可塑性的共同要求}
+
+如果状态只允许输出初始模型，历史能力可以保持不变，但新分布上的超额风险可能始终很大。如果状态只保留最新批次的最优模型，又可能丢失旧环境的决策。有效的学习过程需要在既定评价目标下同时约束这两方面，而不是分别把“参数不变”或“当前误差下降”当作成功。
+
+理论上，这些约束体现为候选是否兼容、历史目标能否估计以及更新是否足够接近经验最优。记忆下界描述信息必须保留多少，优化分析描述保留这些信息以后算法能否利用它们。二者都需要与总体风险保证结合。
+
+\subsubsection{信息丢失与有限记忆下的不可能性}
+
+下面用固定分类任务说明存储要求。令$X=\{1,\ldots,T\}$，每个输入$i$有一个固定但未知的标签$b_i\in\{0,1\}$。第$i$阶段的分布集中在$(i,b_i)$，学习器完整看到该标签，之后旧观测不可重访。所有二分类函数都允许，因而存在一个共同的零风险模型；困难只在保留任意标签串所需的信息。
+
+\begin{theorem}[逐历史分布保持的信息下界]
+\label{thm:continual-memory-example}
+在上述设定中，取正整数$T$及$\delta\in(0,1)$，假定最终预测函数只能由至多$B$比特的保留状态和与数据独立的随机性产生，全部历史相关存储均计入状态。若要求对每个标签串，以概率至少$1-\delta$输出一个在所有$T$个历史分布上风险均小于1的确定性二分类函数，则
+\[
+ B\geq T+\log_2(1-\delta).
+\]
+概率针对学习与模型选择的随机性，输出后对每个输入使用所选函数。
+\end{theorem}
+\begin{proof}
+每个历史分布集中于一个点，风险小于1意味着该点预测正确。因此成功等价于恢复完整标签串。先固定所有独立随机数；至多$2^B$种状态只能解码为至多$2^B$种函数，故在$2^T$个等概率标签串中，成功比例不超过$2^{B-T}$。再对随机数平均，上界不变。若对每个标签串的成功概率都至少为$1-\delta$，平均成功概率也至少为该值，所以$1-\delta\leq2^{B-T}$。
+\end{proof}
+
+这个教学反例中，每阶段标签已经完全揭示，增加该阶段重复样本不能减少记忆需求。它说明任意扩大的独立历史信息与固定比特预算不能同时满足任意序列上的逐域保持。它不排除具有共享结构、较弱平均目标或可重访条件的正面结果；一般PAC持续学习中的存储与访问次数关系还可参考相应复杂度研究\scite{chen2022memory}。
+
+\Needspace{7\baselineskip}
+\subsection{有限样本保证}
+
+\subsubsection{历史分布上的平均风险保证}
+
+先考虑有限非空空间$\mathcal H$，大小为$N$，并在每个阶段接收$n$个独立样本。候选事先固定，算法为每个$h$维护累计损失
+\[
+ C_t(h)=C_{t-1}(h)+\sum_{j=1}^n\ell(h,z_{t,j}),\qquad C_0(h)=0.
+\]
+在第$t$阶段结束时，选择累计损失最小的候选，即最小化$\widehat R_t(h)=C_t(h)/(tn)$。因为各阶段样本数相同，这个经验量估计式~\eqref{eq:continual-average-risk}规定的等权历史风险。
+
+\begin{theorem}[累计损失学习的历史平均保证]
+\label{thm:continual-average-finite}
+在固定分布序列、阶段内及阶段间独立抽样、有界损失和有限候选的上述条件下，预先给定$T\geq1$。若每阶段输出的经验风险至多比最小值高$\rho_t$，则以概率至少$1-\delta$，所有$t\leq T$同时满足
+\begin{equation}
+ \overline R_t(h^{(t)})-\min_{h\in\mathcal H}\overline R_t(h)
+ \leq\sqrt{\frac{2\log(2NT/\delta)}{tn}}+\rho_t.
+ \label{eq:continual-average-bound}
+\end{equation}
+\end{theorem}
+\begin{proof}
+对固定$t,h$，$tn$个损失相互独立、属于$[0,1]$，虽然不一定同分布，其平均期望仍为$\overline R_t(h)$。Hoeffding不等式给出
+\[
+ \mathbb P\{|\widehat R_t(h)-\overline R_t(h)|>a\}
+ \leq2\exp(-2tn a^2).
+\]
+对$N$个候选和$T$个阶段求和，以总失败概率$\delta$控制每阶段偏差
+$a_t=\sqrt{\log(2NT/\delta)/(2tn)}$。各阶段经验最优性再给出$2a_t+\rho_t$的超额风险界。
+\end{proof}
+
+若精确最小化，令$n\geq2\log(2NT/\delta)/\varepsilon^2$便保证全部$t\leq T$达到精度$\varepsilon$，这是包含最早阶段要求的充分条件。当候选和损失可计算且候选间的比较可实现时，算法每条观测评估$N$个候选并更新计数，展示了不保留原始样本的一条可行路径；当$N$巨大时，计算代价仍可能难以接受。
+
+对零一损失，每个计数属于$\{0,\ldots,Tn\}$，除固定候选描述外，保存累计值需要至多$N\lceil\log_2(Tn+1)\rceil$比特。一般实值损失需另外规定量化精度；若每次量化绝对误差至多为$q$，平均损失误差也至多为$q$，上述超额风险界再增加$2q$。因此不能把$N$个实数计数直接说成与精度无关的有限比特保证。
+
+\subsubsection{各历史分布上的同时风险保证}
+
+平均风险小并不保证每个历史分布的风险都小。例如，等权的$T$个环境中，一个环境风险为1、其余为0，平均风险只有$1/T$。若每个环境都必须保持，就需要保存能够分别估计其风险的信息。对有限候选，可以保留每个阶段、每个候选的经验风险$\widehat R_i(h)$。
+
+为了比较各环境相对于自身最好候选的差距，定义
+\[
+ \widehat E_t(h)=\max_{i\leq t}
+ \left[\widehat R_i(h)-\min_{g\in\mathcal H}\widehat R_i(g)\right].
+\]
+算法选择使$\widehat E_t$近似最小的候选。减去各自经验最优值，是为了避免把不同环境固有的噪声差异直接解释为遗忘；最大值则落实每个历史环境都要保持的要求。
+
+\begin{theorem}[有限候选的逐历史分布保证]
+\label{thm:continual-uniform-finite}
+沿用上一结论的抽样、损失和有限候选条件。令
+$a=\sqrt{\log(2NT/\delta)/(2n)}$。若每阶段输出满足
+$\widehat E_t(h^{(t)})\leq\min_h\widehat E_t(h)+\rho_t$，则以概率至少$1-\delta$，所有$t\leq T$同时满足
+\begin{equation}
+ \max_{i\leq t}[R_i(h^{(t)})-R_i^\star]
+ \leq\Delta_t+4a+\rho_t.
+ \label{eq:continual-uniform-bound}
+\end{equation}
+\end{theorem}
+\begin{proof}
+对全部阶段与候选求和，Hoeffding不等式保证同一事件上
+$|\widehat R_i(h)-R_i(h)|\leq a$。于是经验最优值与总体最优值的差也至多为$a$，每个候选的经验超额风险与真实超额风险之差至多为$2a$。取最大值保持这一误差界；再比较经验近似最小者与真实最小者，两次使用$2a$并加入$\rho_t$，即得结论。该事件已覆盖所有$i\leq T$，故结论同时覆盖每个前缀$t$。
+\end{proof}
+
+若所有历史分布存在共同最优候选，则$\Delta_t=0$。精确求解时，$n\geq8\log(2NT/\delta)/\varepsilon^2$足以给出每阶段、每历史分布的精度$\varepsilon$。若$\Delta_t>0$，结论只保证接近共同模型能达到的最好折中，不能称为相对于每个独立最优基准的任意精度PAC学习。
+
+\subsubsection{样本数量、记忆容量与序列长度}
+
+两条正面结果保存的信息不同。累计损失足以选择历史平均风险小的候选，计数数量为$N$；分别保持历史环境需要上述构造保存$Nt$个阶段计数。后者是一种充分实现方式，不是所有算法都必须使用的存储下界。共同结构或更合适的摘要可能减少存储，但需要另外证明摘要仍支持所要求的风险控制。
+
+两条界的样本依赖也不同。平均评价利用$tn$个观测，而逐域估计中每个环境仍只有$n$个样本；不断增加新环境的数据，并不自动提高早期环境风险的估计精度。有限阶段上的$\log T$来自同时控制失败事件。若要求无限阶段同时成立，可以为第$t$阶段分配可求和的失败预算，如$6\delta/(\pi^2t^2)$；但这样只处理概率累计，并不消除不断增长的存储或兼容性要求。
+
+这些结果允许不同阶段分布不同，但依赖固定序列与独立抽样。存在时间相关、模型反馈影响数据分布或任务边界未知时，需要先重建抽样模型，再判断哪些集中不等式与统计摘要仍然适用。阶段数本身不能概括这些依赖。
+
+\subsubsection{多次更新中的误差累积与控制}
+
+如果具体算法没有重新求解历史经验目标，而只对上一步模型做局部更新，就需要控制每次更新给旧分布带来的风险增量。假设第$j$次更新在所有$i<j$上都满足
+$R_i(h^{(j)})-R_i(h^{(j-1)})\leq\gamma_j$，则对任意$i<t$，逐项相加得到
+\[
+ R_i(h^{(t)})-R_i(h^{(i)})\leq\sum_{j=i+1}^t\gamma_j.
+\]
+即使每一步的增量都很小，不可求和的增量仍可能累积。若各步保证带有失败概率，也需要对对应事件作联合控制。
+
+风险增量条件必须有历史信息或结构假设支持，不能仅由当前训练误差下降推出。有限候选下，若保存的历史样本对所有候选同时给出误差$a_i$的风险估计，那么两次模型在该环境上的真实风险差，至多比经验风险差大$2a_i$。统一控制候选使样本可以用于数据依赖的模型比较；只有对一个预先固定模型成立的估计，不能直接用于反复选出的新模型。
+
+累计损失与逐域经验超额风险构造直接控制每个阶段的总体目标，不需要把每次遗忘上界累加。对参数化模型，任务顺序、更新方向与参数约束如何改变遗忘及泛化，则需结合具体模型分析。线性模型下已有研究分别刻画这些因素，不能把其条件下的结论直接推广为任意神经网络的保证\scite{lin2023forgetting}。
+
 \section{本章小结}
 \label{sec:transfer-learning-summary}
 
-分布改变后，首要问题是源观测能否确定目标预测。小至两个假设的空间，也可能因缺标签关系或覆盖而不可识别。复杂度和稳定性帮助控制抽样学习，跨域假设则决定源信息是否可以用于目标。
+同样是把已有经验用于后续预测，三种设定的信息要求不同。分布变化时，需要连接源观测与目标标签规律；目标任务变化时，需要确认旧知识保留了新损失所需的信息；持续学习时，还要保证历史信息在更新过程中没有丢失到无法支持评价的程度。只有明确这些联系，有限样本工具才能把经验结果变成总体保证。
 
-无标签目标样本提供输入分布，分歧与共同错误连接两域风险，共享标签核和覆盖则允许风险重加权。固定相应跨域联系后，可用VC维、范数复杂度、稳定性或PAC--Bayes计算有限样本代价；重加权路线还须有已知或能在允许族上一致估计的密度比。未控制的正跨域残余会阻止仅从当前上界推出任意精度结论，但不是不可学习性下界；还须分清绝对风险与目标域类内超额风险。
+分布迁移中的重加权说明，跨域条件可以把目标风险写成可估计的源期望；任务迁移中的受限空间分析则把表示近似差与目标学习误差分开。两者都要求控制优化误差，且当前上界中的固定残余不能通过单纯增加样本消除；这并不自动构成不可学习的下界。存在一个正确候选也不够：相同可见信息若要求冲突决策，学习仍会失败。
 
-没有目标训练样本时，定义~\ref{def:targetwise-domain-generalization-pac}逐一评价允许目标，可由共享机制与覆盖支持；定义~\ref{def:environment-average-domain-generalization-pac}从共同环境总体抽样，评价新环境平均。不同概率对象要求不同样本量，域内$n$不能普遍代替环境$K$，稳定性也仍需经验优化。
-
-本部分的PAC结论绑定观测、损失、比较空间和允许分布族：存在算法，使每个$\varepsilon,\delta$对应统一有限门槛，在每个允许分布上以至少$1-\delta$概率达到相应风险范围。这没有判断损失是否覆盖实际使用后果、基准是否可接受，也没有自动覆盖族外数据、系统组合和新的部署条件。第~\ref{sec:learning-theory-research-content}节列出的预训练、持续偏移和有限目标监督问题，都须先固定可见信息、分布变化与比较对象，再作复杂度分析。
+持续学习的正面构造说明，原始数据不可重访并不必然阻止学习，适合评价目标的统计量有时已经足够。但历史平均保证、逐历史分布保证和遗忘控制具有不同的比较基准与资源要求。共同模型的兼容性限定可以达到的风险，有限状态限定能够保留的信息，样本与计算资源决定这些目标能否实现；逐阶段的成功还需明确扩展到多长的序列。
 
 \paragraph{扩展阅读}
-Ben-David等的自适应界与不可能性结果分别说明可用条件和缺失信息。对照共同错误、散度与反例，可以检验为何抽样项下降还不等于迁移可学习\scite{bendavid2010adaptation,bendavid2010impossibility}。
+Ben-David等人的领域自适应分析把源风险、输入分歧与共同错误联系起来；其不可学习性研究适合与本章反例对照，检查哪些可观察相似性仍不足以支持目标保证\scite{bendavid2010adaptation,bendavid2010impossibility}。
 
-Germain等的PAC--Bayes分解适合进一步比较源抽样、预测分歧和共同错误。可逐项判断无标签目标样本能估计哪些量，哪些量必须依赖标签结构\scite{germain2015adaptation}。
+Tripuraneni、Jordan与Jin研究来源任务的多样性如何支持共享表示及新任务的样本效率。Maurer、Pontil与Romera-Paredes则从多任务表示学习分析共享结构的收益。阅读时应分别核对任务抽样、表示假设和新任务反馈，不能把这些结果理解为对任意任务变化的统一承诺\scite{tripuraneni2020diversity,maurer2016representation}。
 
-Maurer、Pontil与Romera-Paredes分析了多任务表示中的环境数量、域内样本与表示复杂度。阅读时保留任务抽样和共享表示条件，尤其区分环境平均结论与任意未来域保证\scite{maurer2016representation}。
+Chen、Papadimitriou与Peng从PAC框架研究持续学习的记忆需求及多次访问任务带来的改变，可用于比较一次读取、重访与状态容量的关系。Lin等人在线性模型下分析遗忘与泛化，适合进一步理解任务联系、参数规模和顺序为何需要同时进入理论条件\scite{chen2022memory,lin2023forgetting}。
