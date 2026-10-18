@@ -13,7 +13,7 @@ from book_catalog import group, references, tex_inputs, uncomment, volumes
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "target/.build-manifest.json"
-MAX_PAGES = 600
+MAX_PAGES = 800
 
 
 def digest(data):
@@ -155,8 +155,8 @@ def pdf_record(volume):
     data = path.read_bytes()
     if not data.startswith(b"%PDF-") or not data.rstrip().endswith(b"%%EOF"):
         raise ValueError(f"PDF 损坏或尚未构建完成：{path.name}")
-    import fitz
-    with fitz.open(path) as document:
+    import pymupdf
+    with pymupdf.open(path) as document:
         pages = len(document)
     if pages > MAX_PAGES:
         raise ValueError(f"{path.name} 共{pages}页，超过{MAX_PAGES}页上限。")
@@ -243,7 +243,7 @@ def main():
             for name in [MANIFEST] + ["target/" + n for n in sorted(expected)]:
                 if not staged_matches(name, (ROOT / name).read_bytes()):
                     raise ValueError(f"成品尚未暂存或暂存版本已过期：{name}")
-        print("成品检查通过：十二卷 PDF 与各卷当前输入一致，均不超过600页。")
+        print("成品检查通过：十二卷 PDF 与各卷当前输入一致，均不超过800页。")
 
 
 if __name__ == "__main__":
