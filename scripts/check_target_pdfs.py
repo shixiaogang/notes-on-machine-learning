@@ -155,8 +155,8 @@ def pdf_record(volume):
     data = path.read_bytes()
     if not data.startswith(b"%PDF-") or not data.rstrip().endswith(b"%%EOF"):
         raise ValueError(f"PDF 损坏或尚未构建完成：{path.name}")
-    import fitz
-    with fitz.open(path) as document:
+    import pymupdf
+    with pymupdf.open(path) as document:
         pages = len(document)
     if pages > MAX_PAGES:
         raise ValueError(f"{path.name} 共{pages}页，超过{MAX_PAGES}页上限。")
