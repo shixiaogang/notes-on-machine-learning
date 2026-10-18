@@ -1,0 +1,230 @@
+\section{结构预测的共同范式}
+\label{sec:nlp-analysis-paradigms}
+
+本章的任务看起来各不相同：分词输出词界，句法分析输出树，语义解析输出逻辑式或SQL，共指输出提及的分组。它们却可以写成同一个问题。给定输入$x$，记它所有合法输出组成的集合为$\mathcal{Y}(x)$，模型学习一个得分函数$s_{\bm\theta}(x,y)$，预测时求
+\begin{equation}
+  \hat y=\argmax_{y\in\mathcal{Y}(x)}s_{\bm\theta}(x,y).
+  \label{eq:nlp-analysis-structured-argmax}
+\end{equation}
+这类输出是带内部约束的组合对象、而不是单个类别的问题，称为\term{结构化预测}（structured prediction）。式~\eqref{eq:nlp-analysis-structured-argmax}立即带来三项困难。其一，$\mathcal{Y}(x)$的规模随输入长度指数增长，不能逐个打分；其二，合法性约束（BIO标签不能以I开头、依存树单根无环、SQL必须可解析）必须由某个机制保证，不能指望模型自动学会；其三，训练只看到参考结构$y^\star$，学习目标怎样与$\argmax$推断配合，决定了训练与预测是否一致。
+
+不同方法对这三项困难给出了不同回答。把结构拆成逐位置标签的是\term{序列标注}（sequence labeling），对候选区间评分的是跨度范式，把构造过程写成一串动作的是转移系统，把得分分解到弧或区间上再做精确动态规划的是图方法，把结构写成词元序列再受约束地生成的是生成范式。图~\ref{fig:nlp-analysis-paradigms}用同一个短句对照这五种输出表示。本节依次写出每种范式的输出表示、得分分解、推断算法、训练目标和复杂度，第\ref{sec:nlp-analysis-paradigm-comparison}小节用一张表收拢。此后各节只写任务特有的部分，范式的通用机制回指本节；第\ref{chap:nlp-information-extraction}章与第\ref{chap:nlp-classification-matching-organization}章也按这套归类组织。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/02-text-analysis-and-organization/tikz/analysis-ch9a-paradigms}
+  \caption{同一输入“小王／阅读／通知”在五种范式下的输出表示。从上到下：序列标注为每个字符给一个BMES标签；跨度范式给出带类别的区间（NP、VP、S），区间可以嵌套；转移系统展示一个中间状态（栈、缓冲区、已建的弧）及下一动作；图方法在“根＋词”的有向图上选出一棵依存树，虚线为未入选的候选弧；约束生成把成分树线性化为括号序列，图中为生成到一半时的前缀及下一词元的允许集合。右侧注出各范式的推断方式。树与弧均为教学设定。}
+  \label{fig:nlp-analysis-paradigms}
+\end{figure*}
+
+\subsection{输出结构与分解方式}
+\label{sec:nlp-analysis-paradigm-structures}
+
+先看两个最小的歧义。“研究生命”可以切成“研究／生命”，也可以切成“研究生／命”；第二个字“究”是否是词尾，取决于第三个字“生”归到哪个词。“新学生代表”可以是“[新学生]代表”，也可以是“新[学生代表]”；“学生”先和谁组合，同时决定了“新”修饰谁。两例中各位置的决定互相牵连：若为每个位置独立选择最高分的标签或父节点，拼起来的结果可能根本不是一个合法切分或一棵树。因此分析输出是一个整体，评分与推断都要在整体层面进行。
+
+为在各范式间沿用同一组记号，设输入已经过编码器（第\ref{sec:nlp-llm-computation}节的Transformer层或第\ref{sec:nlp-classical-bert}小节的BERT类编码器），得到逐位置表示$\bm H\in\mathbb R^{n\times d}$，第$i$行$\bm h_i$是第$i$个单位的上下文向量；$n$是分析单位数，$d$是隐藏维度。若编码器在子词上运行而分析单位是字或词，需先按第\ref{sec:nlp-analysis-paradigm-tagging}小节的对齐规则取出相应位置。结构$y$被看成若干\term{部件}（part）的集合，整体得分是部件得分之和：
+\begin{equation}
+  s_{\bm\theta}(x,y)=\sum_{p\in y}\phi_{\bm\theta}(p;\bm H).
+  \label{eq:nlp-analysis-part-score}
+\end{equation}
+部件随范式而变：序列标注中是“位置$i$取标签$a$”和“相邻标签$(a,b)$”；跨度范式中是“区间$[i,j]$取类别$c$”；转移系统中是“在状态$c_t$执行动作$a_t$”；图方法中是“词$h$支配词$m$的弧”或“区间$[i,j]$构成一个成分”；生成范式中是“第$t$个输出词元”。部件越局部，$\argmax$越容易用动态规划精确求解，能表达的约束和交互也越少，这是贯穿全节的权衡。
+
+训练目标分三类，区别在于把参考结构$y^\star$与哪些竞争者比较：
+\begin{equation}
+  \begin{aligned}
+    \mathcal L_{\mathrm{local}}&=-\sum_{k}\log p_{\bm\theta}\bigl(d_k^\star\mid x,\text{第}k\text{个决策的上下文}\bigr),\\
+    \mathcal L_{\mathrm{global}}&=-s_{\bm\theta}(x,y^\star)+\log\sum_{y\in\mathcal Y(x)}\exp s_{\bm\theta}(x,y),\\
+    \mathcal L_{\mathrm{margin}}&=\max_{y\in\mathcal Y(x)}\bigl[s_{\bm\theta}(x,y)+\Delta(y,y^\star)\bigr]-s_{\bm\theta}(x,y^\star).
+  \end{aligned}
+  \label{eq:nlp-analysis-structured-objectives}
+\end{equation}
+局部目标$\mathcal L_{\mathrm{local}}$把结构拆成一串决策$d_k$（逐位置标签、逐步动作、逐词元），每个决策单独做softmax交叉熵。它训练快，不需要对整个$\mathcal Y(x)$求和，但每个决策只与同一步的候选竞争，训练时看到的上下文又是参考结构的一部分，与推断时的整体$\argmax$并不一致。全局目标$\mathcal L_{\mathrm{global}}$是条件对数似然，第二项是对数\term{配分函数}（partition function），它让参考结构与全部合法结构竞争；对参数求导得到“参考结构的部件特征减去模型分布下的期望部件特征”，与第\ref{sec:nlp-classical-crf}小节式~\eqref{eq:nlp-classical-crf-gradient}的形式相同，代价是要能算出部件的边缘概率。\term{结构化间隔损失}（structured margin loss）$\mathcal L_{\mathrm{margin}}$只要求参考结构比每个错误结构高出与错误程度$\Delta$相称的间隔，例如$\Delta$取错误标签数或错误跨度数\scite{nlp-analysis-taskar2004,nlp-analysis-tsochantaridis2005}。计算它需要在得分上加入$\Delta$后再做一次$\argmax$，称为\term{代价增强解码}（cost-augmented decoding）；当$\Delta$能分解到部件上时，这只是在每个部件分数上加一个常数，原来的解码算法不变。取$\Delta\equiv0$并用次梯度逐样本更新，就退化为\term{结构化感知机}（structured perceptron）\scite{collins2002}。
+
+用一个只有三个合法结构的教学例子比较后两种目标。设参考结构$y^\star$得分为2，错误结构$y_1$得分为2.5、与参考差一个部件（$\Delta=1$），$y_2$得分为0、差两个部件（$\Delta=2$）。全局目标为$-2+\log(e^{2}+e^{2.5}+e^{0})\approx1.02$，模型分布约为$p(y^\star)=0.36$、$p(y_1)=0.59$、$p(y_2)=0.05$；梯度按这些概率把三个结构的部件都推一推，$y_1$被压低得最多，$y_2$几乎不动。间隔目标为$\max\{2+0,\ 2.5+1,\ 0+2\}-2=1.5$，代价增强解码选出$y_1$，梯度只在$y^\star$与$y_1$不同的部件上起作用，$y_2$已经满足间隔而不受影响。结构化感知机看的是$\max\{2,2.5,0\}-2=0.5$，同样只纠正$y_1$，但不要求超出间隔。三者的差别在于参考结构要与谁竞争、赢多少才算够。
+
+这三类目标对推断算法提出的要求不同，也正好对应动态规划的不同用法。同一张图表（格点、区间表）上把“取最大”换成“对数求和”，Viterbi变成前向算法，CKY变成inside算法；用代数语言说，两者是同一递推在不同\term{半环}（semiring）上的实例。因此凡是能精确求$\argmax$的分解，通常也能精确求配分函数，三类目标都可用；转移系统和自回归生成没有这样的图表，只能用局部目标或在束内近似全局目标。
+
+\subsection{基于序列标注的预测}
+\label{sec:nlp-analysis-paradigm-tagging}
+
+当输出是一组互不重叠的区间时，可以把它编码为逐位置标签。分词用BMES：B为词首，M为词中，E为词尾，S为单字词；实体与组块用\term{BIO标注}（BIO tagging）：B-$X$开始一个类型为$X$的区间，I-$X$延续同类区间，O表示不在任何区间内；BIOES再用E-$X$标出区间末位、S-$X$标出单位置区间。编码是可逆的：给定合法标签序列，从左到右扫描即可恢复区间集合。可逆性只对合法序列成立，例如O之后紧跟I-PER时，就无法确定这个区间从哪里开始。
+
+序列标注模型由三层组成。编码器输出经线性层得到\term{发射分数}（emission score）$\bm E=\bm H\bm W+\bm 1\bm b^\top\in\mathbb R^{n\times L}$，$L$为标签数，$\bm E_{i,a}$是位置$i$取标签$a$的分数；线性链CRF另有可学习的转移矩阵$\bm T\in\mathbb R^{L\times L}$和起止向量$\bm\pi,\bm\rho\in\mathbb R^{L}$；第三层是固定的\term{合法转移掩码}（legal transition mask）$\bm M\in\{0,-\infty\}^{L\times L}$及起止掩码$\bm m^{\mathrm{start}},\bm m^{\mathrm{end}}\in\{0,-\infty\}^{L}$，规范允许的转移取0，禁止的转移取$-\infty$。整句得分、训练目标和解码写成
+\begin{equation}
+  \begin{aligned}
+    s(x,y)&=\bigl(\bm\pi+\bm m^{\mathrm{start}}\bigr)_{y_1}
+      +\sum_{i=1}^{n}\bm E_{i,y_i}\\
+      &\quad+\sum_{i=2}^{n}\bigl(\bm T+\bm M\bigr)_{y_{i-1},y_i}
+      +\bigl(\bm\rho+\bm m^{\mathrm{end}}\bigr)_{y_n},\\
+    \mathcal L_{\mathrm{CRF}}&=\log\sum_{y\in\{1,\ldots,L\}^n}\exp s(x,y)-s(x,y^\star),\\
+    \hat y&=\argmax_{y\in\{1,\ldots,L\}^n}s(x,y).
+  \end{aligned}
+  \label{eq:nlp-analysis-legal-mask}
+\end{equation}
+求和与$\argmax$名义上遍历全部$L^n$条序列，但任何含非法转移的序列得分为$-\infty$，在配分函数中贡献$\exp(-\infty)=0$，也不可能成为$\argmax$；于是两者实际上都只在合法集合$\mathcal Y(x)$上进行，与式~\eqref{eq:nlp-analysis-structured-objectives}的$\mathcal L_{\mathrm{global}}$一致。线性链CRF的定义、前向—后向算法、梯度及其计算步骤见第\ref{sec:nlp-classical-crf}小节与算法~\ref{alg:nlp-classical-crf-gradient}，这里只需注意两点：掩码项是常数，对它的梯度为零；被屏蔽的转移在前向递推中自然消失，不需要改写算法。
+
+掩码由标签规范直接构造。BIO规范下，对每个类型$X$，若$b=\mathrm{I}\text{-}X$而前驱$a\notin\{\mathrm B\text{-}X,\mathrm I\text{-}X\}$，则$\bm M_{a,b}=-\infty$，并令$\bm m^{\mathrm{start}}_{\mathrm I\text{-}X}=-\infty$；BIO没有句末限制。BIOES规范更严：B-$X$与I-$X$之后只能接I-$X$或E-$X$，E-$X$、S-$X$、O之后不能接I-$X$或E-$X$，句末只允许E-$X$、S-$X$、O。BMES是无类型的BIOES，其掩码表见第\ref{sec:nlp-analysis-bmes-crf}小节。掩码为什么必须同时用于训练和解码？若只在解码时屏蔽，训练的配分函数就包含了大量非法序列，模型要花参数把它们压低，而学到的转移分数只会是很大的有限负数，不会是$-\infty$；训练目标与解码时的输出空间也就不再相同。两处使用同一个掩码，训练、解码和标签到区间的恢复程序就共享同一个结构定义。
+
+预训练编码器常把一个词切成多个子词，标签却定义在词或字上。常用的\term{首子词对齐}（first-subword alignment）只取每个词第一个子词的表示作为该词的$\bm h_i$，其余子词不产生标签、不计损失（第\ref{sec:nlp-classical-bert-heads}小节）。接CRF时，应先按首子词位置把$\bm E$收集成长度为词数的矩阵，再在其上做转移；若把非首子词也留在链上，相邻词之间就隔着若干无标签位置，转移矩阵描述的不再是相邻词的标签关系。解码得到词级标签后，按词到原文字符的偏移恢复字符跨度。
+
+与逐位置softmax相比，带掩码的CRF多出两样东西：标签之间的依赖，以及合法性保证。逐位置softmax的代价是$O(nL)$，可以完全并行，但独立地取最大可能得到O后接I-$X$这样的序列，只能靠事后规则修补（例如把孤立的I改成B），而修补规则本身就是一种未经训练的决策。CRF的训练与解码代价为$O(nL^2)$，在神经编码器的代价面前通常可以忽略。序列标注的根本局限在于输出表示：一层标签只能表示互不重叠的平面区间，嵌套实体（“北京大学”是组织，其中“北京”是地点）需要多层标注，多个谓词的语义角色需要为每个谓词重复编码一次。把逐位置标签换成逐区间标签的半马尔可夫CRF可以直接给整段打分\scite{pgm-energy-models-sarawagi2004}，这已经接近下一小节的跨度范式。
+
+\subsection{基于跨度的预测}
+\label{sec:nlp-analysis-paradigm-span}
+
+当输出由可以嵌套的区间组成时，与其把区间编码进逐位置标签，不如直接枚举候选区间并逐个评分。设候选集合为
+\[
+  \mathcal S=\{(i,j):1\leq i\leq j\leq n,\ j-i+1\leq W\},
+\]
+$W$为最大宽度，$|\mathcal S|=O(nW)$；不限宽度时为$n(n+1)/2$。每个候选需要一个固定维度的\term{跨度表示}（span representation）。Lee等在共指消解中提出的写法把三类信息拼接在一起\scite{lee2017coreference}：
+\begin{equation}
+  \begin{aligned}
+    \alpha_t&=\bm w_\alpha^\top\operatorname{FFNN}_\alpha(\bm h_t),\qquad
+    a_{i,j,t}=\frac{\exp\alpha_t}{\sum_{k=i}^{j}\exp\alpha_k},\qquad
+    \hat{\bm h}_{i,j}=\sum_{t=i}^{j}a_{i,j,t}\,\bm h_t,\\
+    \bm g_{i,j}&=\bigl[\bm h_i;\ \bm h_j;\ \hat{\bm h}_{i,j};\ \bm\phi(j-i)\bigr]\in\mathbb R^{3d+d_w}.
+  \end{aligned}
+  \label{eq:nlp-analysis-span-representation}
+\end{equation}
+两个端点向量$\bm h_i,\bm h_j$记录边界处的上下文，决定“从哪里开始、到哪里结束”；$\hat{\bm h}_{i,j}$是区间内部按注意力加权的汇聚，$\alpha_t$对所有跨度共享，可学成“这个位置像不像中心词”的分数，再在每个区间内部归一化；$\bm\phi(j-i)\in\mathbb R^{d_w}$是\term{宽度嵌入}（width embedding），把区间长度（通常分桶）映射成可学习向量，让模型知道人名多为两三字、长跨度较少是实体等先验。若编码器为双向循环网络，也可以用端点差分代替拼接，第\ref{sec:nlp-analysis-neural-cky}小节的神经成分解析就采用这种变体。
+
+类别得分由前馈网络给出：$s(i,j,c)=\bm w_c^\top\operatorname{FFNN}(\bm g_{i,j})$，$c$取遍任务类别和一个表示“不是任何结构单元”的NONE类。训练目标是对每个候选做$C+1$类交叉熵，$C$为任务类别数，参考区间取其类别，其余候选取NONE。NONE类远多于正类，常见的处理是对NONE候选降采样或降低权重。另一种常用变体把起点和终点分别投影后用双仿射打分，$s(i,j,c)=\bm r_i^{\mathrm s\top}\bm U_c\bm r_j^{\mathrm e}+\bm w_c^\top[\bm r_i^{\mathrm s};\bm r_j^{\mathrm e}]+b_c$，一次矩阵运算就得到形状为$n\times n\times C$的分数张量\scite{nlp-analysis-yu2020biaffine}；它省去了内部汇聚，适合候选很多、跨度较短的场合。
+
+候选规模是跨度范式的主要代价。式~\eqref{eq:nlp-analysis-span-representation}中每个跨度的注意力汇聚需$O(Wd)$，全部候选共$O(nW^2d)$；若后续还要给跨度对评分（共指中“提及$i$的先行项是否为$j$”），候选对数是$O(|\mathcal S|^2)$，不可直接承受。剪枝分两步：先用最大宽度$W$截断，再用一元分数$s_{\mathrm m}(i,j)=\bm w_{\mathrm m}^\top\operatorname{FFNN}_{\mathrm m}(\bm g_{i,j})$排序，只保留前$\lambda n$个跨度进入配对，配对数降为$O(\lambda^2n^2)$。剪枝分数与最终目标联合训练，其梯度只来自保留下来的跨度，被剪掉的正确跨度没有机会被纠正，因此$\lambda$要在召回与代价之间权衡。
+
+跨度分类给出的是每个候选的独立判断，跨度之间的冲突还需要一步解码。若任务要求互不重叠（平面实体），按得分降序贪心选择不冲突的跨度最简单，但不保证总分最大；精确解是\term{加权区间调度}（weighted interval scheduling）：令$F(j)$为前$j$个位置上不重叠跨度的最大总分，
+\[
+  F(0)=0,\qquad F(j)=\max\Bigl\{F(j-1),\ \max_{i:\,(i,j)\in\mathcal S}\bigl[F(i-1)+\tilde s(i,j)\bigr]\Bigr\},
+\]
+其中$\tilde s(i,j)=\max_{c\neq\mathrm{NONE}}s(i,j,c)-s(i,j,\mathrm{NONE})$是选入该跨度相对不选的得分增量，只有正增量的跨度值得选入，递推代价为$O(nW)$。举一个教学数值：设$n=4$，候选$[1,3]$、$[1,2]$、$[3,4]$的增量分别为5、3、3.5，其余为负。贪心先选$[1,3]$，另两个都与它重叠，总分为5；区间调度比较$F(4)=\max\{F(3),F(2)+3.5\}$，其中$F(2)=3$、$F(3)=5$，得到$6.5$，选$[1,2]$与$[3,4]$。若任务允许嵌套但不允许部分交叉（成分树、层次实体），则要用第\ref{sec:nlp-analysis-paradigm-graph}小节的CKY在跨度分之上求最优树；若嵌套和交叉都允许（共指中的提及），则不需要冲突解码。
+
+与序列标注相比，跨度范式用$O(nW)$个候选换来了嵌套表示能力，并能把整段作为一个对象建模（宽度、内部汇聚），这正是共指、成分解析和嵌套实体需要的。它的代价是候选规模与类别不平衡，以及平面任务中额外的冲突解码。
+
+\subsection{基于转移系统的预测}
+\label{sec:nlp-analysis-paradigm-transition}
+
+前两种范式都在固定的候选集合上打分。另一种思路是模仿人逐词读句、边读边搭结构的过程：把结构的构建写成一台状态机，每一步选一个动作。形式上，一个\term{转移系统}（transition system）由四部分组成\scite{nlp-analysis-nivre2008}：状态集合$\mathcal C$，每个状态$c$通常由栈$\sigma$、缓冲区$\beta$和已建部分$A$组成；动作集合$\mathcal A$，每个动作$a$有一个前提（在哪些状态下可执行）和一个效果（把$c$变成$a(c)$）；初始函数$c_{\mathrm s}(x)$，通常是空栈、整句在缓冲区、$A=\varnothing$；终止状态集合$\mathcal C_{\mathrm t}$，从中可以读出完整结构。以arc-standard依存系统为例，SHIFT把缓冲区首词压栈，LEFT-ARC在栈顶两词间加一条由栈顶指向次顶的弧并弹出次顶，RIGHT-ARC加一条反方向的弧并弹出栈顶。“小王／阅读／通知”经SHIFT、SHIFT、LEFT-ARC、SHIFT、RIGHT-ARC，得到“阅读”支配“小王”和“通知”两条弧，再连到根即完成；完整的动作—前提—效果表与轨迹见第\ref{sec:nlp-analysis-arc-transition}小节。
+
+模型在每个状态上给合法动作打分。状态特征$\bm f(c)$由栈顶与缓冲区若干位置的编码器表示及已建部分的信息拼成，动作分布只在合法动作集合$\mathcal A(c)$上归一化：
+\[
+  p_{\bm\theta}(a\mid c)=\frac{\exp\bigl(\bm w_a^\top\bm f(c)\bigr)}{\sum_{a'\in\mathcal A(c)}\exp\bigl(\bm w_{a'}^\top\bm f(c)\bigr)},\qquad a\in\mathcal A(c),
+\]
+不满足前提的动作直接屏蔽，与序列标注中的合法掩码作用相同。训练需要把参考结构$y^\star$变成动作监督。\term{静态oracle}（static oracle）是一个确定性规则，它从初始状态出发，每一步按固定优先级选出一个能导向$y^\star$的动作，得到参考动作序列$a_1^\star,\ldots,a_m^\star$及沿途状态$c_1^\star=c_{\mathrm s}(x)$、$c_{t+1}^\star=a_t^\star(c_t^\star)$。训练目标是这些动作的局部交叉熵：
+\begin{equation}
+  \mathcal L_{\mathrm{static}}(\bm\theta)=-\sum_{t=1}^{m}\log p_{\bm\theta}\bigl(a_t^\star\mid c_t^\star\bigr).
+  \label{eq:nlp-analysis-transition-loss}
+\end{equation}
+它是式~\eqref{eq:nlp-analysis-structured-objectives}中$\mathcal L_{\mathrm{local}}$在转移系统上的具体形式。推断时从$c_{\mathrm s}(x)$出发，每步执行概率最高的合法动作直到终止；arc-standard对$n$个词恰好执行$2n$个动作，所以推断时间与句长成线性。同一结构常有多条动作序列都能得到它，这称为\term{伪歧义}（spurious ambiguity）；静态oracle只挑其中一条，其余同样正确的动作在训练中被当作错误。
+
+式~\eqref{eq:nlp-analysis-transition-loss}的状态$c_t^\star$全部来自参考历史，模型从未见过自己犯错之后的状态。推断时一旦某一步选错，后续状态就偏离训练分布，模型在陌生状态上更容易继续出错，错误逐步累积，这就是\term{暴露偏差}（exposure bias）。\term{动态oracle}（dynamic oracle）针对这个问题\scite{nlp-analysis-goldberg2012}：对任意状态$c$，不论它是否在参考轨迹上，都给出最优动作集合
+\[
+  \mathcal O(c;y^\star)=\Bigl\{a\in\mathcal A(c):\ \min_{y\in\mathcal Y(a(c))}\operatorname{loss}(y,y^\star)=\min_{y\in\mathcal Y(c)}\operatorname{loss}(y,y^\star)\Bigr\},
+\]
+其中$\mathcal Y(c)$是从$c$出发仍可到达的结构集合，$\operatorname{loss}$为错误弧数等结构损失。也就是说，最优动作不会让最好可达结果变差。对arc-eager这类“弧可分解”的系统，动作的代价等于它使之不可达的参考弧数，可以在常数或线性时间内算出。训练时让模型按自己的预测走（可设一个探索概率，并在若干轮之后才开始探索），在每个访问到的状态上提高最优动作集合的总概率：
+\begin{equation}
+  \mathcal L_{\mathrm{dynamic}}(\bm\theta)=-\sum_{t}\log\sum_{a\in\mathcal O(c_t;y^\star)}p_{\bm\theta}(a\mid c_t),\qquad c_{t+1}=\hat a_t(c_t).
+  \label{eq:nlp-analysis-dynamic-oracle-loss}
+\end{equation}
+算法~\ref{alg:nlp-analysis-dynamic-oracle}列出这一过程。对集合求和同时处理了伪歧义：多个同样好的动作都不受惩罚。从模仿学习的角度看，这与DAgger的思想一致，都是在学习者自己产生的状态分布上向专家查询正确动作\scite{ross2011}；序列生成中的计划采样（scheduled sampling）也按同一思路逐步用模型预测替换参考前缀\scite{nlp-analysis-bengio2015scheduled}。
+
+\Needspace{14\baselineskip}
+\begin{algorithm}[基于动态oracle的转移系统训练]
+  \label{alg:nlp-analysis-dynamic-oracle}
+  \begin{algorithmic}[1]
+    \Require 训练集$\{(x,y^\star)\}$，转移系统，可计算$\mathcal O(c;y^\star)$的动态oracle，探索概率$q$，开始探索的轮次$k$
+    \Ensure 参数$\bm\theta$
+    \For{轮次$e=1,2,\ldots$}
+      \For{每个样本$(x,y^\star)$}
+        \State $c\gets c_{\mathrm s}(x)$；$\mathcal L\gets0$
+        \While{$c\notin\mathcal C_{\mathrm t}$}
+          \State $\mathcal O\gets\mathcal O(c;y^\star)$ \Comment{当前状态下不增加损失的动作}
+          \State $\mathcal L\gets\mathcal L-\log\sum_{a\in\mathcal O}p_{\bm\theta}(a\mid c)$
+          \State $\hat a\gets\argmax_{a\in\mathcal A(c)}p_{\bm\theta}(a\mid c)$
+          \If{$e>k$ 且以概率$q$探索}
+            \State $c\gets\hat a(c)$ \Comment{按模型预测走，可能离开参考轨迹}
+          \Else
+            \State $c\gets\bigl(\argmax_{a\in\mathcal O}p_{\bm\theta}(a\mid c)\bigr)(c)$
+          \EndIf
+        \EndWhile
+        \State 用$\nabla_{\bm\theta}\mathcal L$更新$\bm\theta$
+      \EndFor
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+贪心推断的另一个弱点是早期决策无法撤销。束搜索（第\ref{sec:nlp-generation-beam}小节）在每步保留$b$个得分最高的部分动作序列，可以推迟决定。但若模型逐步局部归一化，束搜索仍受第\ref{sec:nlp-classical-memm}小节所说的标注偏置影响：每个状态出发的概率之和恒为1，后面的证据无法降低一条早期路径的总分。Andor等因此对整条动作序列做全局归一化，$p(a_{1:m}\mid x)\propto\exp\sum_t s(c_t,a_t)$，配分函数在束内的候选上近似，并在参考序列掉出束时立即停止该样本、按当时的束更新参数\scite{nlp-analysis-andor2016}；这种\term{早期更新}（early update）最早用于感知机训练的增量解析\scite{nlp-analysis-collins2004}。
+
+转移系统的优点是推断线性、可以自由使用已建结构作为特征（例如已经找到的依存子节点），并能处理难以写成固定图表的结构，如AMR图和篇章树。代价是没有全局最优保证，结果依赖动作顺序，且每个新结构类型都要单独设计动作集合并证明其完备性（任何合法结构都可达）与可靠性（只产生合法结构）。
+
+\subsection{基于图与区间动态规划的预测}
+\label{sec:nlp-analysis-paradigm-graph}
+
+若结构得分可以分解到弧或区间上，就能在规定的结构空间内精确求最优。依存树的\term{弧分解}（arc-factored）模型令$s(x,y)=\sum_{(h\to m)\in y}s(h,m)$，$s(h,m)$为词$h$支配词$m$的分数，位置0为人工根；成分树的跨度分解模型令$s(x,y)=\sum_{(i,j,\ell)\in y}s(i,j,\ell)$。这两种分解对应三种经典算法，它们都按“子结构的最优值只依赖子结构的边界”这一性质组织递推。
+
+CKY在区间上递推二叉树。当分数来自跨度而非文法规则时，记$\bar s(i,j)=\max_\ell s(i,j,\ell)$，
+\begin{equation}
+  \pi(i,i)=\bar s(i,i),\qquad
+  \pi(i,j)=\bar s(i,j)+\max_{i\leq k<j}\bigl[\pi(i,k)+\pi(k+1,j)\bigr],
+  \label{eq:nlp-analysis-span-cky}
+\end{equation}
+$\pi(1,n)$是最优树的总分，记录每个区间取得最大的$k$和$\ell$即可回溯。共有$O(n^2)$个区间，每个区间枚举$O(n)$个分裂点，总代价$O(n^3+n^2L)$。若改用PCFG的规则概率评分，状态再带上非终结符，代价为$O(n^3|G|)$，其inside形式和期望计数见第\ref{sec:nlp-classical-cky}小节与第\ref{sec:nlp-classical-inside-outside}小节。
+
+Eisner算法在投射依存树上做同样的事\scite{nlp-analysis-eisner1996}。直接把“以$h$为中心词的区间”作为状态需要同时记住区间两端和中心词，代价为$O(n^5)$；Eisner的做法是让中心词总在区间的一端，并区分“完整”与“不完整”区间。$C^{\to}[i,j]$表示$i$支配$(i,j]$内全部词、且$j$一侧已不再接收子节点的最优子树，$I^{\to}[i,j]$表示刚刚加入弧$i\to j$、$j$的内侧子节点已经收齐的区间，$C^{\leftarrow}$与$I^{\leftarrow}$为方向相反的对应项。初值$C^{\to}[i,i]=C^{\leftarrow}[i,i]=0$，递推为
+\begin{equation}
+  \begin{aligned}
+    I^{\to}[i,j]&=\max_{i\leq k<j}\bigl(C^{\to}[i,k]+C^{\leftarrow}[k+1,j]\bigr)+s(i,j),\\
+    I^{\leftarrow}[i,j]&=\max_{i\leq k<j}\bigl(C^{\to}[i,k]+C^{\leftarrow}[k+1,j]\bigr)+s(j,i),\\
+    C^{\to}[i,j]&=\max_{i<k\leq j}\bigl(I^{\to}[i,k]+C^{\to}[k,j]\bigr),\\
+    C^{\leftarrow}[i,j]&=\max_{i\leq k<j}\bigl(C^{\leftarrow}[i,k]+I^{\leftarrow}[k,j]\bigr).
+  \end{aligned}
+  \label{eq:nlp-analysis-eisner}
+\end{equation}
+每个状态只有两个端点加一个方向，共$O(n^2)$个，每个枚举$O(n)$个分裂点，总代价$O(n^3)$。投射性来自递推本身：两个子区间只在端点相接，交叉弧无法拼出来。人工根只连一个真实词的单根约束、数值算例与回溯见第\ref{sec:nlp-analysis-eisner}小节。
+
+允许交叉弧时，依存树就是有向图上以根为起点的最大生成树（最大树形图）。Chu–Liu/Edmonds算法先为每个非根词选分数最高的入边\scite{nlp-analysis-chu1965,nlp-analysis-edmonds1967}；若这些边不成环，它们就是答案；若成环，把环$C$收缩为一个节点，进入环中节点$v$的边$u\to v$改记分数$s(u,v)-s(\pi(v),v)$，$\pi(v)$为$v$在环内的入边起点，离开环的边取环内各节点出边的最大分数，在收缩图上递归求解，再展开环、去掉被替换的那条环内边。朴素实现为$O(n^3)$，Tarjan的实现在稠密图上为$O(n^2)$\scite{nlp-analysis-tarjan1977}。McDonald等把它用于依存分析，在一阶分解下，非投射解码因此反而比投射的Eisner算法便宜\scite{v9a-mcdonald2005}。算法框、单根约束与算例见第\ref{sec:nlp-analysis-mst}小节。
+
+三种算法都依赖一阶可加分解。若要让分数依赖兄弟弧、祖父弧等高阶部件，状态就要多记信息：投射情形下加入相邻兄弟弧仍可保持$O(n^3)$，非投射情形的二阶精确解码却已是NP难问题，需要近似\scite{nlp-analysis-mcdonald2006}；再加入祖父弧，投射解码升到$O(n^4)$\scite{nlp-analysis-koo2010}。训练上，三类目标都可用：CKY与Eisner把$\max$换成对数求和即得inside算法，可计算全局似然和边缘概率；非投射树的配分函数可由矩阵树定理用一个行列式求出\scite{nlp-analysis-koo2007}；结构化间隔损失只需代价增强解码。神经图解析器常采用更简单的局部目标：每个词在所有候选中心词上做一次softmax，按交叉熵训练，测试时再用Eisner或Chu–Liu/Edmonds恢复合法树\scite{nlp-analysis-dozat2017}。这时训练不考虑树约束，由解码修正少量成环或多根的情况；第\ref{sec:nlp-analysis-biaffine}小节的双仿射解析器即采用这种组合。
+
+图方法与转移系统针对同一类结构，取舍正好相反：图方法在分解范围内给出精确最优，但部件只能是局部的，代价至少为$O(n^2)$；转移系统线性时间、特征可以读取已建的任意部分，但没有全局保证。
+
+\subsection{基于约束生成的预测}
+\label{sec:nlp-analysis-paradigm-generation}
+
+前四种范式都要为每类结构设计专门的标签、候选或动作。生成范式改为把结构写成一个词元序列，用统一的自回归模型生成它。这需要一个\term{线性化}（linearization）映射$\operatorname{lin}:\mathcal Y(x)\to\mathcal V^*$，它必须可逆：给定合法序列，解析程序$\operatorname{lin}^{-1}$能唯一恢复结构。成分树可以写成括号序列“(S (NP 小王) (VP 阅读 (NP 通知)))”，语义图可以写成带变量和重入标记的括号式，实体与关系可以写成“[小王｜人名]”这类结构化抽取语言，查询直接写成SQL。模型按
+\[
+  p_{\bm\theta}(z\mid x)=\prod_{t=1}^{m}p_{\bm\theta}(z_t\mid z_{<t},x),\qquad z=\operatorname{lin}(y)
+\]
+给序列$z$打分，用教师强制的逐词元交叉熵训练（第\ref{sec:nlp-sft-masked-loss}小节），即在参考前缀$z^\star_{<t}$上预测$z^\star_t$；这是$\mathcal L_{\mathrm{local}}$的又一种形式，因而也有与转移系统相同的暴露偏差。可以把转移系统看成线性化的一种特殊情形：动作序列就是一种线性化，只是动作的合法性由状态机直接给出。
+
+生成的输出必须能落回原文与结构定义，这要靠两类机制。第一类是复制：结构中的词语、实体名大多来自输入，与其从整个词表中生成，不如让解码器直接指向输入位置。复制分布与词表分布的混合形式在第\ref{sec:nlp-analysis-seq2seq-lemma}小节式~\eqref{eq:nlp-analysis-copy}首次写出；更彻底的做法是让目标序列只含位置指针和类型标记，解析时由指针直接恢复字符偏移。第二类是约束解码：在每一步只允许能延续成合法输出的词元，约束后的分布与掩码计算见第\ref{sec:nlp-inference-fsm}小节与第\ref{sec:nlp-inference-grammar}小节，前者用有限状态机处理正则格式，后者用下推自动机处理括号嵌套。在结构分析中，掩码有三个来源：线性化文法本身（括号配对、每个开括号后必须是类别符号）；输入（复制的片段必须是原文子串，可用原文的前缀树检查）；外部模式（SQL中的列名必须属于给定数据库，实体名必须在知识库名称表中）。以图~\ref{fig:nlp-analysis-paradigms}最后一行为例，前缀已生成“(S (NP 小王) (VP 阅读 (NP 通知”，此时原文已读完，括号文法只允许生成闭括号；若不施加约束，模型可能在这里再生成一个原文中不存在的词。
+
+线性化还引入了前四种范式没有的偏差。集合型结构（一句中的多个实体、一个事件的多个论元）本无顺序，线性化必须规定一个顺序，参考序列的顺序就成了额外的监督，模型生成了正确集合的另一种排列也会被交叉熵惩罚；常见做法是固定一种规范顺序（如按原文位置）并在评价时按集合比较。自回归解码也没有全局最优保证，束搜索只是近似；输出还须经$\operatorname{lin}^{-1}$解析并与原文对齐核验，解析失败、指向不存在的位置或复制了不在原文中的片段，都应计为错误，而不是被静默修补。
+
+生成范式的优势在于接口统一：同一个预训练编码器—解码器或大语言模型可以覆盖树、图、逻辑式和抽取记录，新增结构类型只需新增线性化与文法，并能直接利用预训练中学到的生成能力；大语言模型的提示式分析也属于这一范式，只是不更新参数。代价是解码串行、长结构的序列较长，以及上面所说的顺序偏差和核验负担。
+
+\subsection{范式的比较与选择}
+\label{sec:nlp-analysis-paradigm-comparison}
+
+表~\ref{tab:nlp-analysis-paradigms}把五种范式放在同一组维度上。读表时可以沿两条线比较：从上到下，输出表示越来越灵活，从平面区间到任意可线性化的结构；推断的精确性却没有单调关系，序列标注和图方法在各自的分解内精确，跨度范式的冲突解码视任务而定，转移系统和生成只有近似保证。表中最后一列列出本章及后两章的主要任务所采用的范式；同一任务出现在多行，说明范式是建模选择，而非由任务唯一决定。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{13mm}>{\raggedright\arraybackslash}p{26mm}>{\raggedright\arraybackslash}p{22mm}>{\raggedright\arraybackslash}p{24mm}>{\raggedright\arraybackslash}p{18mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    范式 & 输出表示与得分分解 & 推断 & 训练目标 & 复杂度 & 典型任务\\
+    \midrule
+    序列标注 & 逐位置标签；发射分＋相邻转移分 & 带合法掩码的Viterbi & 逐位置交叉熵，或CRF条件似然 & $O(nL^2)$ & 本章：分词、词性与组块、语义角色BIO、话语行为；第\ref{chap:nlp-information-extraction}章：BIO实体、触发词、统一标注的关系抽取；第\ref{chap:nlp-classification-matching-organization}章：标注式关键短语抽取\\
+    跨度 & 候选区间及类别；跨度分（可加跨度对分） & 枚举与剪枝；不重叠选择、CKY或直接阈值 & 含NONE类的跨度交叉熵 & 候选$O(nW)$；配对$O(\lambda^2n^2)$ & 本章：神经成分解析、跨度语义角色、跨度共指；第\ref{chap:nlp-information-extraction}章：嵌套实体、实体对关系分类；第\ref{chap:nlp-classification-matching-organization}章：跨度配对的方面情感三元组\\
+    转移系统 & 动作序列；状态上的动作分 & 贪心或束搜索 & oracle动作交叉熵；动态oracle；束内全局归一化 & $O(n)$个动作 & 本章：移进–归约成分解析、arc-standard与arc-eager、转移式AMR、RST篇章解析\\
+    图与区间动态规划 & 弧或区间集合；一阶可加分解 & CKY、Eisner、Chu–Liu/Edmonds & 全局似然、结构化间隔，或逐词选中心词 & $O(n^3)$；CLE可达$O(n^2)$ & 本章：CKY成分解析、投射与非投射依存、双仿射、增强依存与语义图；第\ref{chap:nlp-information-extraction}章：超图与词对网格实体、词元对关系标记；第\ref{chap:nlp-classification-matching-organization}章：网格标注的方面情感三元组\\
+    约束生成 & 线性化词元序列；逐词元条件概率 & 束搜索加文法、前缀树或模式掩码 & 教师强制交叉熵 & $m$步串行解码，掩码代价另计 & 本章：序列化解析、AMR生成、逻辑式与SQL、话语改写；第\ref{chap:nlp-information-extraction}章：指针式与结构化生成抽取、生成式实体链接、复制式三元组；第\ref{chap:nlp-classification-matching-organization}章：指针生成的方面情感三元组、关键短语生成\\
+    \bottomrule
+  \end{tabularx}
+  \caption{结构预测的五种范式。$n$为分析单位数，$L$为标签数，$W$为最大跨度宽度，$\lambda$为剪枝比例，$m$为输出序列长度；复杂度只计结构层，编码器代价另计。第\ref{chap:nlp-classification-matching-organization}章的文本分类与匹配输出单个类别或分数，相当于$\mathcal Y(x)$为有限标签集的退化情形，不需要结构解码；该章的方面情感三元组与关键短语抽取仍是结构输出，列在相应行中。}
+  \label{tab:nlp-analysis-paradigms}
+\end{table*}
+
+选择范式时，可以依次检查四个问题。第一，结构是否允许嵌套或交叉：只有平面区间时序列标注最经济；有嵌套而无交叉时用跨度加CKY或分层解码；有交叉弧或多入边时用图方法或生成。第二，是否需要精确推断与可校准的概率：需要边缘概率（例如把分析结果传给下游做不确定性处理）时，优先选能算配分函数的标注或图方法。第三，监督是结构本身还是只有最终答案：只有执行结果或答案时（语义解析中的答案监督），结构是隐变量，生成范式配合采样或边缘似然更容易训练。第四，长度与时延：长文档上$O(n^3)$的图方法和逐词元生成都可能过慢，转移系统或带剪枝的跨度模型更合适。
+
+同一任务通常有多种实现。依存分析有转移、图和生成三种做法；实体识别有序列标注、跨度、超图、词对网格和生成五种做法。后文在各小节开头注明所采用的范式；比较不同范式时，应固定编码器、训练数据与评价口径，只改变输出表示与解码，否则观察到的差异无法归因于范式本身。
