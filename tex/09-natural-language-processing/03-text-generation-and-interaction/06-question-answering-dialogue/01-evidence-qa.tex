@@ -1,0 +1,543 @@
+\section{证据问答}
+\label{sec:nlp-dialogue-evidence}
+
+证据问答的输入不只有问题$q$，还包括允许访问的资料、资料版本、查询时点和计算预算；输出可以是原文跨度、生成的回答、表格单元格或计算值，也可以是“给定材料不足以回答”。这里的“不足”是对可用证据的判断，不是断言世界上没有答案。本节固定一份教学资料：片段A写改期后的时间与地点，片段B写校内、校外的参加条件，片段C是无关的教室借用说明；必要时另行声明教学表格。
+
+这一任务的挑战可以列为五项。其一，资料规模大而答案只在少数片段中，找到证据本身就是问题。其二，答案的形式不一：可能是原文跨度、需要综合多个片段的生成文本、表格单元格，或要经过计算的数值。其三，一部分问题需要多跳组合，第二步要查什么取决于第一步查到了什么。其四，证据不足时系统应当弃答，而不是给出一个类型相似的短语。其五，回答应能追溯到来源，读者可以逐句核对。
+
+方法谱系大致沿这五项挑战推进：给定段落的抽取式阅读只解决定位与弃答（第\ref{sec:nlp-dialogue-text-qa}小节）；开放域检索问答在阅读前加入检索，并让检索器与阅读器联合训练（第\ref{sec:nlp-dialogue-open-domain}小节）；检索增强生成把检索结果作为生成条件，再逐环节改进（第\ref{sec:nlp-dialogue-rag-family}小节）；证据为数据库或表格时转为执行查询或选格聚合（第\ref{sec:nlp-dialogue-structured-qa}小节），文本与表格混合时再加入数值程序（第\ref{sec:nlp-dialogue-hybrid-qa}小节）。评价时，检索遗漏、阅读错误、组合错误与引用错误分别统计：只召回B而缺活动时间是覆盖失败，把报名截止当成活动时间是组合错误，答案正确却引用了C是引用错误。表\ref{tab:nlp-dialogue-evidence-methods}汇总各方法解决的问题与新代价。
+
+\subsection{抽取式阅读理解}
+\label{sec:nlp-dialogue-text-qa}
+
+\term{抽取式阅读理解}（extractive reading comprehension）给定问题$q=(q_1,\ldots,q_J)$和一段材料$c=(c_1,\ldots,c_T)$，要求输出材料中的一个连续跨度$(s,e)$，$1\leq s\leq e\leq T$；材料不含答案时输出空答案。SQuAD把这一设定做成大规模数据集，答案由标注者在维基百科段落中圈出\scite{nlp-qa-rajpurkar2016squad}；SQuAD 2.0又加入了看似可答、实则材料中没有答案的问题，要求模型学会弃答\scite{rajpurkar2018squad2}
+
+用完整通知构造三类问题。“读书会何时举行”可以定位到跨度“4月18日（周五）14:00”；“谁可直接参加”定位到“校内师生”，它是类别而不是出席名单；“主讲人是谁”在材料中没有答案，正确输出是弃答。这三个问题依次检验定位、答案类型与证据边界。下面两个模型都只回答“答案已在这段材料中时怎样定位”；在全文资料中能否找到这段材料，留给第\ref{sec:nlp-dialogue-open-domain}小节。
+
+\subsubsection{BiDAF问文交互阅读}
+\label{sec:nlp-dialogue-bidaf}
+
+定位跨度时，材料中每个词是否属于答案取决于问题问的是什么。早期的注意力阅读模型通常把问题或材料先汇总成一个固定向量，再用它去匹配另一方，问题中的不同词对材料不同位置的作用被过早平均掉了。\term{双向注意力流}（bidirectional attention flow, BiDAF）的思想是：不做早期汇总，在每个材料位置都计算一份与问题相关的表示，并让这些逐位置的表示连同原有的上下文表示一起“流”入后续层\scite{nlp-dialogue-seo2017}。模型分为六层，结构见图\ref{fig:nlp-dialogue-bidaf}。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/03-text-generation-and-interaction/tikz/dialogue-ch13a-bidaf.tex}
+  \caption{BiDAF的六层结构。左列处理长度为$T$的材料，右列处理长度为$J$的问题，两列在注意力流层由同一个相似矩阵连接；交互后的表示$\bm G$既送入建模层，也经虚线直接送入输出层。起点与终点分别由两组表示打分，终点一侧多经过一层双向LSTM。张量形状按原文约定写为“特征维度$\times$序列长度”。}
+  \label{fig:nlp-dialogue-bidaf}
+\end{figure}
+
+前三层分别编码两段文本。字符嵌入层把每个词的字符序列送入一维卷积并在宽度方向做最大池化，得到对未登录词也有效的字符级向量；词嵌入层取固定的预训练词向量。两者拼接后经两层Highway网络\cite{srivastava2015highway}，得到材料表示$\bm X\in\mathbb R^{d\times T}$和问题表示$\bm Q\in\mathbb R^{d\times J}$。上下文嵌入层用一个双向LSTM分别编码两者，拼接两个方向的输出，得到$\bm H\in\mathbb R^{2d\times T}$与$\bm U\in\mathbb R^{2d\times J}$；记它们的第$t$列与第$j$列为$\bm h_t$与$\bm u_j$。双向LSTM的结构与训练可参考\BookChapterRef{chap:recurrent-networks}{卷五的循环神经网络章}，这里只用到它的输出：每个位置的向量同时概括了左右两侧的上下文。原文取$d=100$，字符卷积用100个宽度为5的滤波器。
+
+第四层是注意力流层。两个方向的注意力共用一个相似矩阵$\bm S\in\mathbb R^{T\times J}$，它的元素衡量材料第$t$个词与问题第$j$个词的匹配程度：
+\begin{equation}
+  S_{t,j}=\bm w_{\mathrm S}^{\top}
+  [\bm h_t;\bm u_j;\bm h_t\odot\bm u_j],
+  \qquad \bm w_{\mathrm S}\in\mathbb R^{6d}.
+  \label{eq:nlp-dialogue-bidaf}
+\end{equation}
+其中$\odot$表示逐元素乘积，$[\cdot;\cdot]$表示拼接。三段拼接分别让打分看到材料词本身、问题词本身和两者逐维的乘积；只用内积$\bm h_t^{\top}\bm u_j$相当于把$\bm w_{\mathrm S}$固定为只作用于乘积项的全1向量，学习的$\bm w_{\mathrm S}$更灵活。
+
+由$\bm S$可以从两个方向读出注意力。材料到问题（context-to-query, C2Q）的注意力回答“对材料第$t$个词而言，问题中哪些词最相关”：对第$t$行做softmax得到$\bm a_t=\operatorname{softmax}(\bm S_{t,:})\in\mathbb R^{J}$，再加权问题向量得$\tilde{\bm u}_t=\sum_j a_{t,j}\bm u_j$，各列组成$\widetilde{\bm U}\in\mathbb R^{2d\times T}$。问题到材料（query-to-context, Q2C）的注意力回答“材料中哪些词与问题的某个词最接近”：先对每行取最大值，再在材料位置间做softmax，$\bm b=\operatorname{softmax}(\max_{j}S_{t,j})_{t=1}^{T}\in\mathbb R^{T}$，得材料摘要$\tilde{\bm h}=\sum_t b_t\bm h_t$，复制$T$次成为$\widetilde{\bm H}\in\mathbb R^{2d\times T}$。两方向的结果与原表示逐位置拼接：
+\begin{equation}
+  \bm G_{:,t}=[\bm h_t;\tilde{\bm u}_t;\bm h_t\odot\tilde{\bm u}_t;\bm h_t\odot\tilde{\bm h}_t]\in\mathbb R^{8d}.
+  \label{eq:nlp-dialogue-bidaf-g}
+\end{equation}
+这里每个材料位置都得到自己的问题相关表示，注意力权重在不同时刻之间互不依赖，原文称之为无记忆注意力；$\bm h_t$本身也保留在$\bm G$中，交互层不会抹去材料的原始上下文。
+
+用一个两行两列的教学子矩阵$\bm S=\left[\begin{smallmatrix}2&0\\0&1\end{smallmatrix}\right]$看两个方向的计算。逐行softmax得到C2Q权重$(0.881,0.119)$和$(0.269,0.731)$：第一个材料词主要读取第一个问题词，第二个材料词主要读取第二个问题词。行最大值为$(2,1)$，softmax后得Q2C权重$(0.731,0.269)$，材料摘要偏向第一个词。这些权重决定送往后续层的表示，本身并不是答案概率。
+
+第五层是建模层，用两层双向LSTM读取$\bm G$，得$\bm M\in\mathbb R^{2d\times T}$。它与上下文层的区别在于输入：上下文层只看材料自身，建模层看到的是已经带着问题信息的表示，因而能建模“在这个问题下，材料各词之间的关系”。第六层是输出层，起点与终点分布分别为
+\begin{equation}
+  \bm p^{(1)}=\operatorname{softmax}\bigl(\bm w_1^{\top}[\bm G;\bm M]\bigr),\qquad
+  \bm p^{(2)}=\operatorname{softmax}\bigl(\bm w_2^{\top}[\bm G;\bm M_2]\bigr),
+  \label{eq:nlp-dialogue-bidaf-output}
+\end{equation}
+其中$\bm w_1,\bm w_2\in\mathbb R^{10d}$，$\bm M_2\in\mathbb R^{2d\times T}$是把$\bm M$再送入一层双向LSTM的输出，softmax在$T$个材料位置上进行。终点一侧多一层循环编码，使终点预测能够参考起点附近已形成的表示。训练最小化真实起点与终点的负对数概率之和在样本上的平均；推断时在$s\leq e$的约束下选使$p^{(1)}_s p^{(2)}_e$最大的$(s,e)$。固定$e$时只需知道$\max_{s\leq e}p^{(1)}_s$，从左到右扫描一遍维护这个前缀最大值，就能在$O(T)$时间内找到最优跨度。
+
+BiDAF确立了“逐位置交互、交互表示再建模、起止两头输出”的阅读器框架，后续许多阅读器在此基础上修改注意力形式或叠加自注意力。它的局限也来自这套手工设计：交互只在一层中发生；所有参数在问答数据上从头训练，词向量之外没有预训练知识；LSTM沿序列串行计算；输出层只能给出单个跨度，原始设置也不包含弃答。
+
+\subsubsection{BERT跨度阅读与弃答}
+\label{sec:nlp-dialogue-bert-span}
+
+BiDAF的交互层是为阅读任务专门设计的。若把问题与材料拼成一个序列交给预训练的双向编码器，每一层自注意力都允许材料位置读取问题位置、问题位置读取材料位置，C2Q与Q2C两类交互就成为自注意力的一部分，而且在每一层反复发生。BERT正是这样做的：输入写成\code{[CLS] 问题 [SEP] 材料 [SEP]}，问题和材料分别用两种段嵌入区分，编码器之上只保留起点向量与终点向量组成的跨度头，起止分布与训练目标见第\ref{sec:nlp-classical-bert-heads}小节的式\eqref{eq:nlp-classical-span-head}\scite{devlin2019}。预训练取代了手工交互层，模型结构反而更简单；在SQuAD 1.1开发集上，单模型F1由BiDAF的约77提高到BERT-large的约91。
+
+阅读任务在通用跨度头之外还需要处理三件事。第一是长材料。编码器有最大长度，材料超长时按固定步长切成重叠窗口，每个窗口都与问题拼接；BERT公开实现的SQuAD脚本取最大长度384、步长128。训练时，答案不在当前窗口内的样本把起止都标到\code{[CLS]}。每个窗口还要保存子词到原文字符的偏移，以便把预测的子词区间还原为原文字符串，而不是把子词拼接起来当作答案。
+
+第二是合法跨度与弃答。记起点向量与终点向量为$\bm w_{\mathrm s},\bm w_{\mathrm e}$，位置表示为$\bm h_i$。合法跨度要求$i\leq j$、长度不超过$\ell_{\max}$且两端都在材料段内，最佳跨度分数和空答案分数分别为
+\begin{equation}
+  s_{\mathrm{span}}=\max_{\substack{i\leq j\leq i+\ell_{\max}-1\\ i,j\in\text{材料}}}
+  \bigl(\bm w_{\mathrm s}^{\top}\bm h_i+\bm w_{\mathrm e}^{\top}\bm h_j\bigr),
+  \qquad
+  s_{\mathrm{null}}=\bm w_{\mathrm s}^{\top}\bm h_{\mathrm C}+\bm w_{\mathrm e}^{\top}\bm h_{\mathrm C},
+  \label{eq:nlp-dialogue-span}
+\end{equation}
+其中$\bm h_{\mathrm C}$是\code{[CLS]}位置的表示。当$s_{\mathrm{span}}-s_{\mathrm{null}}>\tau$时返回跨度，否则弃答；阈值$\tau$在开发集上按F1选定。分数差是未归一化的对数尺度，同一个$\tau$在不同窗口间可比，这一点比比较各窗口内单独归一化的概率更可靠。
+
+用压缩后的材料词元“读书会／改至／4月18日／14:00／地点／海棠楼201／校内师生／可直接参加”演算，以下概率均为教学假设。对时间问题，位置3、4的起点概率为$0.60,0.10$，终点概率为$0.15,0.70$。跨度$(3,4)$的乘积为$0.42$，两个单词元候选分别为$0.60\times0.15=0.09$和$0.10\times0.70=0.07$。设空答案的乘积为$0.02$，同一归一化下分数差为$\log(0.42/0.02)=3.045$，在教学阈值$\tau=1$时返回“4月18日14:00”。对“主讲人是谁”，若最佳跨度的乘积为$0.03$、空答案为$0.30$，分数差为$-2.303$，模型弃答。
+
+第三是跨窗口汇总。每个窗口给出自己的最佳非空候选和空答案分数；汇总时取所有窗口中最大的$s_{\mathrm{span}}-s_{\mathrm{null}}$，再与$\tau$比较。若答案分散在两个窗口，例如“校内学生和教师”需要两个不相邻的短语，单跨度头无法恢复，需要多跨度标注或改为生成。与BiDAF相比，BERT阅读器的优势来自预训练与深层交互，代价是长度上限带来的分窗、每个窗口一次完整的编码计算，以及对输出类型的同样限制：它仍只能抽取，不能综合。
+
+\subsection{开放域检索问答}
+\label{sec:nlp-dialogue-open-domain}
+
+\term{开放域问答}（open-domain question answering）不给定段落，系统要先从大规模文集中找出可能含答案的片段，再阅读。DrQA确立了这条\term{检索器}（retriever）加\term{阅读器}（reader）的流水线：检索器用词袋统计从维基百科中取回少量文章，阅读器在其中抽取答案\scite{nlp-qa-chen2017drqa}。Natural Questions用真实搜索查询配合维基百科页面标注长短答案，成为这一设定的常用数据\scite{nlp-qa-kwiatkowski2019nq}。流水线把问题分成两半：检索器决定答案是否有机会被读到，阅读器决定读到之后能否定位。
+
+这一设定新增两个困难。第一，词汇检索依赖词项重合，“校外怎么参加”与“须提交报名信息”几乎没有共同词，答案片段可能根本进不了候选；第\ref{sec:nlp-dialogue-dpr}小节用稠密检索处理它。第二，检索器与阅读器分开训练时，检索器并不知道阅读器实际需要什么；第\ref{sec:nlp-dialogue-joint-retriever}小节把检索当作潜变量、用答案似然训练检索器。
+
+\subsubsection{DPR检索与阅读}
+\label{sec:nlp-dialogue-dpr}
+
+先看词汇检索在教学资料上的表现。BM25的打分公式与参数含义见第\ref{sec:nlp-classification-bm25}小节。表\ref{tab:nlp-dialogue-retrieval}直接规定一个教学索引的统计：查询只保留“读书会、报名”，$k_1=1.2$，$b=0.75$，$n=3$个片段，平均长度$40/3$。两个词的逆文档频率为$\log1.6=0.470$和$\log(8/3)=0.981$，例如B的分数为$0.470\times2.2/2.65+0.981\times4.4/3.65=1.573$。取前两项得到B、A；只取第一项会缺活动时间。问题若写成“校外怎么参加”，“报名”一词不出现，B的分数也随之消失。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{lrrrr}
+    \toprule
+    片段 & 长度 & “读书会”词频 & “报名”词频 & BM25分数\\
+    \midrule
+    A：时间地点 & 10 & 1 & 0 & 0.524\\
+    B：参加条件 & 20 & 1 & 2 & 1.573\\
+    C：借用说明 & 10 & 0 & 0 & 0\\
+    \bottomrule
+  \end{tabular}
+  \caption{固定教学索引上的词汇召回。长度为教学分词统计；片段A、B互补，排序靠前与证据覆盖完整不是同一个条件。}
+  \label{tab:nlp-dialogue-retrieval}
+\end{table}
+
+DPR用两个BERT编码器分别把问题和片段映射为向量$\bm q=E_q(q)$、$\bm z=E_z(z)\in\mathbb R^{d}$，以内积$s(q,z)=\bm q^{\top}\bm z$打分；训练目标是第\ref{sec:nlp-classification-dpr}小节的对比损失，即式\eqref{eq:nlp-matching-infonce}取内积打分、以批内其他问题的正片段和BM25难负例为负例\scite{nlp-karpukhin2020dpr}。难负例挖掘与蒸馏也在那里讨论，这里只看DPR在问答流水线中的位置。
+
+离线阶段，文集按固定长度切成片段并逐一编码。DPR把英文维基百科切成每段100词的片段，共约2100万个，向量存入近似最大内积索引；倒排索引与近似近邻检索的工程实现可参考\BookChapterRef{chap:rs-search}{卷十一的搜索相关性章}。切分时每个片段保留标题和对象编号，否则“18:00前”离开了“校外来宾”和“ML-0418”就失去了所指。在线阶段只编码问题，取内积最高的前$k$个片段。教学向量取$\bm q=(1,1)$，$\bm z_A=(2,0)$，$\bm z_B=(0,3)$，$\bm z_C=(-1,0)$，内积为$2,3,-1$，前两项为B、A。这组二维向量只用来核对计算，不代表真实训练所得的表示。
+
+阅读器面对的是$k$个片段，而不是一个。DPR的阅读器对每个片段$z_i$单独编码\code{[CLS] 问题 [SEP] 片段}，得表示$\bm P_i\in\mathbb R^{L\times h}$，并同时做两件事：在片段内给跨度打分，在片段间做选择。三个分布为
+\begin{equation}
+\begin{aligned}
+  P_{\mathrm{start},i}(s)&=\operatorname{softmax}(\bm P_i\bm w_{\mathrm{start}})_s,\qquad
+  P_{\mathrm{end},i}(t)=\operatorname{softmax}(\bm P_i\bm w_{\mathrm{end}})_t,\\
+  P_{\mathrm{sel}}(i)&=\operatorname{softmax}(\widehat{\bm P}^{\top}\bm w_{\mathrm{sel}})_i,
+\end{aligned}
+  \label{eq:nlp-dialogue-dpr-reader}
+\end{equation}
+其中矩阵$\widehat{\bm P}\in\mathbb R^{h\times k}$的第$i$列是片段$z_i$的\code{[CLS]}表示，$\bm w_{\mathrm{start}},\bm w_{\mathrm{end}},\bm w_{\mathrm{sel}}\in\mathbb R^{h}$是可学习向量。片段选择分布在$k$个片段之间归一化，它的作用相当于一个交叉编码的重排器：问题与片段在编码时充分交互，比双编码器的内积更精细，但只能在少量候选上计算。训练时，从检索结果前100项中取一个含答案的正片段和若干负片段，最大化正片段中全部答案出现位置的边缘对数似然，并加上正片段被选中的对数似然；推断时先选$P_{\mathrm{sel}}$最高的片段，再在其中取$P_{\mathrm{start}}\times P_{\mathrm{end}}$最大的跨度。
+
+在教学资料上，问“校外来宾报名何时截止”，阅读器应选B并返回“4月16日18:00前”；若同时问活动时间与报名截止，单个片段只能回答一半，两个子答案要分别提问或由外部模板拼合。一次输出综合多个片段，要等到第\ref{sec:nlp-dialogue-rag-family}小节的生成式方法。
+
+第\ref{sec:nlp-classification-dpr}小节讨论过的假负例，在问答中还有一种特有形式：需要两项事实的问题，A和B都是有效证据，不能因为某轮训练把B选作正例就把A当作负例；反过来，“含答案字符串即正例”的弱监督也会把同名但无关的片段当作正例。另一个代价来自索引：片段向量出自某个版本的片段编码器，编码器一旦更新就必须重新编码全文，否则新的问题向量与旧的片段向量不在同一空间。下一小节的联合训练正要面对这一代价。
+
+\subsubsection{检索器与阅读器的联合训练}
+\label{sec:nlp-dialogue-joint-retriever}
+
+DPR的检索器只从“哪个片段含答案”学习，而逐题标注这一点本身就昂贵。一个片段即使含答案字符串，也可能上下文不足、阅读器读不出来；另一个片段即使不含原词，也可能恰好提供了推出答案所需的事实。联合训练的思路是：不给检索器逐片段的标签，而把检索到哪个片段当作潜变量，以最终答案的似然为目标，让答案的好坏反过来决定检索器应该提高谁、压低谁。
+
+REALM把这一思路用于预训练\scite{nlp-qa-guu2020realm}。输入$x$是一段被遮住部分词元的文本，目标$y$是被遮住的内容，片段$z$取自文集$\mathcal Z$。模型分两步：检索器给出$p(z\mid x)$，读取器在$x$与$z$的拼接上预测$p(y\mid z,x)$；答案似然对片段求和，
+\begin{equation}
+\begin{aligned}
+  p(y\mid x)&=\sum_{z\in\mathcal Z}p(y\mid z,x)\,p(z\mid x),\\
+  p(z\mid x)&=\frac{\exp f(x,z)}{\sum_{z'}\exp f(x,z')},\qquad
+  f(x,z)=\bm e_{\mathrm{in}}(x)^{\top}\bm e_{\mathrm{doc}}(z).
+\end{aligned}
+  \label{eq:nlp-dialogue-realm}
+\end{equation}
+其中$\bm e_{\mathrm{in}}$与$\bm e_{\mathrm{doc}}$是两个BERT编码器的\code{[CLS]}表示经线性投影所得的向量。对全文求和不可行，REALM用最大内积搜索取出前$k$个片段近似求和。
+
+为什么这样训练能教会检索器？对检索器参数求$\log p(y\mid x)$的梯度。由$\nabla\log p(z\mid x)=\nabla f(x,z)-\sum_{z'}p(z'\mid x)\nabla f(x,z')$，代入后整理得
+\begin{equation}
+  \nabla\log p(y\mid x)=\sum_{z}r(z)\,\nabla f(x,z),\qquad
+  r(z)=\Bigl[\frac{p(y\mid z,x)}{p(y\mid x)}-1\Bigr]p(z\mid x).
+  \label{eq:nlp-dialogue-realm-grad}
+\end{equation}
+推导的关键一步是：$\sum_z p(y\mid z,x)p(z\mid x)\nabla\log p(z\mid x)/p(y\mid x)$中，$p(y\mid z,x)p(z\mid x)/p(y\mid x)$正是后验$p(z\mid x,y)$，梯度因此等于$\sum_z[p(z\mid x,y)-p(z\mid x)]\nabla f(x,z)$。$r(z)>0$当且仅当$p(y\mid z,x)>p(y\mid x)$：一个片段让答案的概率高于按检索分布随机取片段时的平均水平，它的分数就被提高，否则被压低。教学例子中，设A、B的检索概率都是0.5，读取器以A为条件时答案概率0.8、以B为条件时0.2，则$p(y\mid x)=0.5$，$r(A)=(0.8/0.5-1)\times0.5=0.3$，$r(B)=-0.3$。检索器没有见过任何片段标签，却得到了“提高A、压低B”的信号。
+
+这个信号也带来索引问题。$\bm e_{\mathrm{doc}}$每更新一次，索引中的向量就过时了。REALM的做法是异步刷新：训练任务持续更新参数，另一个索引任务每隔一段时间取参数快照，重新编码全部片段并重建索引，完成后交回训练任务，在其原文的预训练设置中约每500步刷新一次。两次刷新之间索引略有滞后，但它只用于选出前$k$个候选，候选的$p(z\mid x)$及其梯度仍用当前参数重新计算。预训练还用到两个设计：\term{显著跨度遮蔽}（salient span masking）优先遮住命名实体和日期这类需要世界知识才能补全的跨度；候选中加入一个空片段，供不需要检索的样本使用。微调到开放域问答时，REALM只建一次索引，固定片段编码器，只更新问题编码器和阅读器。
+
+Atlas把联合训练用于少样本学习\scite{nlp-qa-izacard2023atlas}。检索器是Contriever式双编码器，阅读器是T5上的解码器融合模型（见第\ref{sec:nlp-dialogue-fid}小节）。它不对片段求和，而是用阅读器提供一个目标分布，让检索器分布向它靠拢。检索器在前$K$个片段上的分布为$p_{\mathrm{retr}}(z_k\mid q)\propto\exp(s(z_k,q)/\theta)$，$\theta$为温度。\term{困惑度蒸馏}（perplexity distillation）以“只给这个片段时阅读器生成答案$a$的概率”作为目标：
+\begin{equation}
+  p_k=\frac{\exp\log p_{\mathrm{LM}}(a\mid z_k,q)}{\sum_{i=1}^{K}\exp\log p_{\mathrm{LM}}(a\mid z_i,q)},\qquad
+  L_{\mathrm{PDist}}=\mathrm{KL}\bigl(p\,\Vert\,p_{\mathrm{retr}}\bigr),
+  \label{eq:nlp-dialogue-pdist}
+\end{equation}
+目标分布不回传梯度，这一损失只更新检索器。\term{注意力蒸馏}（attention distillation）把阅读器对各片段的交叉注意力汇总成片段分数作为目标，源自Izacard与Grave的阅读器到检索器蒸馏\cite{nlp-qa-izacard2021distilling}；Atlas另外比较了EMDR\textsuperscript{2}式边缘化目标和留一困惑度目标，最终采用较稳定且计算较省的困惑度蒸馏。
+
+Atlas还量化了刷新索引的代价。设文集有$N$个片段，检索器与阅读器参数量为$P_{\mathrm{retr}}$与$P_{\mathrm{lm}}$，每步批量为$B$、每题读$K$个片段，前向加反向与激活重算约为一次前向的4倍，则每$R$步全量重建索引的相对开销约为$N P_{\mathrm{retr}}/(4BKP_{\mathrm{lm}}R)$。按其设置，3700万片段、批量64、每题20个片段、每1000步刷新一次，开销约为30\%。两种替代做法以精度换计算：每步多取$L$个候选并用最新检索器重新编码排序；或者只微调问题编码器、固定片段编码器，索引从此不必更新。在大多数少样本设置中，后一种做法对效果影响不大。Atlas在只用64条训练样本时，在Natural Questions上的精确匹配率超过42\%。
+
+联合训练省去了片段标注，并让检索器的目标与阅读器一致；代价是训练需要重复检索、读取器要对每个候选单独计算以提供信号，以及索引刷新与陈旧性的工程负担。阅读器本身的偏差也会经由梯度或蒸馏目标传给检索器。
+
+\subsection{检索增强生成}
+\label{sec:nlp-dialogue-rag-family}
+
+抽取式阅读器只能返回原文跨度，无法写出“活动于4月18日14:00举行，校外来宾须在4月16日18:00前报名”这样综合两个片段的回答。\term{检索增强生成}（retrieval-augmented generation, RAG）把检索结果作为生成器的条件，答案不再受跨度限制。第\ref{sec:nlp-dialogue-rag}与第\ref{sec:nlp-dialogue-fid}小节的RAG与FiD回答“多个片段怎样接入生成器”，二者的结构差别见图\ref{fig:nlp-dialogue-rag-fid}。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/03-text-generation-and-interaction/tikz/dialogue-ch13a-rag-fid.tex}
+  \caption{RAG与FiD接入多个检索片段的位置。左：RAG让生成器在每个片段条件下各算一次概率，再以检索概率为权重求和，求和可以在整句层面或每个词元层面进行。右：FiD把问题与每个片段分别编码，拼接全部编码结果，由一个解码器在每步对所有片段做交叉注意力；它不对片段做概率加权。$k$为片段数，$\ell$为每个问题—片段输入的长度。}
+  \label{fig:nlp-dialogue-rag-fid}
+\end{figure*}
+
+接入方式确定后，问题转移到流水线的其他环节，图\ref{fig:nlp-dialogue-rag-pipeline}标出了各改进方法作用的位置。问题的表述与答案文档的表述不一致，检索就会遗漏，查询改写与假设文档检索在检索之前修改查询（第\ref{sec:nlp-dialogue-query-rewrite}小节）；双编码器的初检排序不够精细，交叉编码器在少量候选上重排（第\ref{sec:nlp-dialogue-rerank}小节）；多跳问题一次检索不够，迭代检索让推理与检索交替（第\ref{sec:nlp-dialogue-iterative}小节）；并非每个问题、每句话都需要检索，Self-RAG让模型自己决定何时检索并评判结果（第\ref{sec:nlp-dialogue-self-rag}小节）；回答无法追溯，带引用的生成让每个陈述附上来源并可自动核验（第\ref{sec:nlp-dialogue-citation}小节）。最后讨论另一条路线：把全部资料直接放进长上下文，能否取代检索（第\ref{sec:nlp-dialogue-long-context}小节）。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/03-text-generation-and-interaction/tikz/dialogue-ch13a-rag-pipeline.tex}
+  \caption{检索增强生成的流水线及各改进方法作用的环节。实线是一次检索增强生成的数据流：构造查询、初检取前$K$项、重排保留前$k$项、生成、逐陈述核验引用。两条虚线是由生成过程触发的再检索：Self-RAG在每个片段前以反思标记决定是否检索，IRCoT把刚生成的推理句作为下一次检索的查询。下方注明各环节对应的方法。}
+  \label{fig:nlp-dialogue-rag-pipeline}
+\end{figure*}
+
+\subsubsection{RAG检索条件生成}
+\label{sec:nlp-dialogue-rag}
+
+RAG的原模型把文档看作潜变量：不预先指定唯一正确的文档，而把各文档条件下的答案概率按检索概率加权求和\scite{lewis2020rag}。检索器是DPR，$p_\eta(z\mid x)\propto\exp(\bm d(z)^{\top}\bm q(x))$；生成器是BART-large，输入为问题与片段的直接拼接。设检索到的前$k$个片段为$Z_k$，$\pi_z=p_\eta(z\mid x)$在候选内归一化，生成器给出$p_\theta(y_i\mid x,z,y_{<i})$。求和可以放在两个层面：
+\begin{equation}
+\begin{aligned}
+ p_{\mathrm{seq}}(y\mid x)
+ &=\sum_{z\in Z_k}\pi_z
+      \prod_{i=1}^{m}p_\theta(y_i\mid x,z,y_{<i}),\\
+ p_{\mathrm{tok}}(y\mid x)
+ &=\prod_{i=1}^{m}
+      \sum_{z\in Z_k}\pi_z\, p_\theta(y_i\mid x,z,y_{<i}).
+\end{aligned}
+\label{eq:nlp-dialogue-rag}
+\end{equation}
+RAG-Sequence在一次完整答案中使用同一片段，再对片段求和；RAG-Token在每个位置都对片段求和，允许不同位置依赖不同片段。后者并不在每个词元处重新检索，候选集合与检索概率仍只由输入问题决定。
+
+表\ref{tab:nlp-dialogue-rag}给出完整的教学计算。为了突出求和与求积的位置，只比较两个双词元候选，省略两者相同的结束符概率；表中数值是给定各自前缀时的条件概率，不是文献实验。取$\pi_A=0.6$，$\pi_B=0.4$，候选甲为“周五／14:00”，候选乙为“周四／14:00”。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{llrr}
+    \toprule
+    候选 & 条件片段 & 第1词元概率 & 第2词元概率\\
+    \midrule
+    甲 & A & 0.8 & 0.2\\
+    甲 & B & 0.2 & 0.9\\
+    乙 & A & 0.1 & 0.5\\
+    乙 & B & 0.4 & 0.4\\
+    \bottomrule
+  \end{tabular}
+  \caption{RAG的教学条件概率。第2列表示生成时读取哪个片段；第4列还以该候选的第1词元为条件。}
+  \label{tab:nlp-dialogue-rag}
+\end{table}
+
+序列级甲得分为$0.6\times0.8\times0.2+0.4\times0.2\times0.9=0.168$，乙为$0.6\times0.1\times0.5+0.4\times0.4\times0.4=0.094$。词元级甲得分为$(0.6\times0.8+0.4\times0.2)(0.6\times0.2+0.4\times0.9)=0.56\times0.48=0.2688$，乙为$(0.06+0.16)(0.30+0.16)=0.1012$。两种模型在这两个候选中都选甲，但分数含义不同。在词元级模型下，甲第一位置的片段后验为$(0.48,0.08)/0.56=(0.857,0.143)$，第二位置为$(0.12,0.36)/0.48=(0.25,0.75)$：第一词元主要依据A，第二词元主要依据B。后验的变化来自生成概率，不是新的检索调用。
+
+训练用问题与参考答案对，最小化式\eqref{eq:nlp-dialogue-rag}中相应边缘概率的负对数。由于$\pi_z$出现在似然中，梯度同样经过$p_\eta(z\mid x)$流向问题编码器，机制与式\eqref{eq:nlp-dialogue-realm-grad}相同：让答案更可能的片段得到更高的检索分数。与REALM不同，RAG在微调中固定片段编码器与索引，只更新问题编码器和生成器，因而不必刷新索引；代价是片段表示不能随任务调整。解码时，RAG-Token的每步分布本身就是对片段求和后的分布，可直接接束搜索；RAG-Sequence的似然不能按词元分解，需要先在每个片段条件下分别束搜索得到候选，再把每个候选在所有片段下重新打分求和，或者只对已出现在某片段束中的候选求和以节省计算。
+
+RAG的输出不附带来源。生成器可能凭参数知识给“14:00”较高概率，即使所读片段只有B；片段后验也只说明生成时依据了哪个片段，不说明该片段支持了哪句话。引用需要另外的输出约定和核验（第\ref{sec:nlp-dialogue-citation}小节）。
+
+\subsubsection{FiD多片段融合生成}
+\label{sec:nlp-dialogue-fid}
+
+RAG的每个生成分支只直接读到一个片段，片段之间的信息只在概率加权时汇合。若回答必须同时用到A的活动时间和B的报名截止，更直接的做法是让生成器一次看到全部片段。\term{解码器融合}（fusion-in-decoder, FiD）把这件事放在编码器—解码器结构里完成：每个问题—片段对独立编码，全部编码结果拼接后交给同一个解码器\scite{nlp-dialogue-izacard2021}。编码器—解码器与交叉注意力的计算见第\ref{sec:nlp-generation-encoder-decoder}小节。
+
+具体地，对第$j$个片段构造输入“question: 问题 title: 标题 context: 片段”，经编码器得$\bm H_j\in\mathbb R^{\ell\times d}$，再沿序列维度拼接：
+\begin{equation}
+ \bm H_j=E_\theta(q,z_j),\qquad
+ p(y\mid q,Z_k)=
+ \prod_i p_\theta\bigl(y_i\mid y_{<i},[\bm H_1;\ldots;\bm H_k]\bigr),
+ \label{eq:nlp-dialogue-fid}
+\end{equation}
+其中$[\bm H_1;\ldots;\bm H_k]\in\mathbb R^{k\ell\times d}$是解码器交叉注意力的记忆。解码器每步可以同时注意所有片段的所有位置，一个词元能依据多个片段生成。这里没有检索概率$\pi_z$，也没有对片段求和；片段的相对重要性由交叉注意力权重隐式决定。原方法以T5初始化，用BM25或DPR检索，用参考答案的词元负对数似然训练；检索器固定，不与阅读器联合训练。
+
+编码阶段的代价是FiD可以处理大量片段的原因。设每个问题—片段输入长为$\ell$，片段数为$k$，只看自注意力的位置对数，独立编码约为$k\ell^2$，把所有片段直接拼成一条长输入则约为$(k\ell)^2$。在$k=100$、$\ell=250$的教学设置下，前者为$6.25\times10^{6}$，后者为$6.25\times10^{8}$，相差$k$倍。解码器的交叉注意力仍要访问全部$k\ell$个位置，这部分代价随$k$线性增长。原文报告，片段数从10增加到100时，答案准确率持续上升，说明生成器确实能从更多片段中汇集证据。
+
+与RAG相比，FiD的融合发生在解码器内部，适合需要组合多个片段的回答，也不必为每个片段各解码一次；但它失去了显式的片段后验，无法直接说出哪个片段贡献了哪个词元，而且片段在编码阶段彼此不可见。Atlas正是利用FiD解码器对各片段的注意力或困惑度信号，反过来训练检索器（第\ref{sec:nlp-dialogue-joint-retriever}小节）。
+
+\subsubsection{查询改写与假设文档检索}
+\label{sec:nlp-dialogue-query-rewrite}
+
+RAG与FiD都直接用原问题检索。用户的问题往往口语化、省略对象，或者与答案文档的写法相差很远：“我是外校的，明天下午能直接过去吗”与片段B“校外来宾须在4月16日18:00前提交报名信息”几乎没有共同词，语义也隔了一层推断。两种方法在检索之前修改查询。
+
+\term{查询改写}（query rewriting）让一个模型先把问题改写成更适合检索的查询，再检索、阅读。Ma等提出的“改写—检索—阅读”框架把改写器作为可训练部件，阅读器是冻结的大语言模型，检索器是网络搜索引擎\scite{nlp-qa-ma2023rewrite}。改写器是T5-large，分两步训练。预热阶段，提示大语言模型改写训练集问题，只保留改写后阅读器答对的样本$\{(x,\tilde x)\}$，以标准对数似然微调改写器。强化学习阶段，把改写器看作策略，每生成一个查询词元是一步动作；改写完成后依次检索、阅读，以阅读器答案的精确匹配、F1以及检索结果是否含参考答案（含则$+1$，否则$-1$）的加权和作为奖励$R_{\mathrm{lm}}$，并减去与初始改写器的KL惩罚，
+\begin{equation}
+  R(x,\tilde x)=R_{\mathrm{lm}}(\tilde x,y)-\beta\,\mathrm{KL}\bigl(\pi_\theta\,\Vert\,\pi_0\bigr),
+  \label{eq:nlp-dialogue-rewrite-reward}
+\end{equation}
+用PPO优化。PPO的目标与优势估计见第\ref{sec:nlp-align-ppo}小节，这里的区别只在于策略输出的是查询而不是回答，奖励来自下游检索与阅读的结果。这样，改写器不必知道“好查询”长什么样，只需从阅读器能否答对中学习；代价是每个训练样本都要真正调用一次检索与阅读。
+
+另一种做法不改写问题，而是先猜答案。HyDE（hypothetical document embeddings）用指令跟随的大语言模型针对问题写一份假设文档，再用无监督对比学习得到的稠密编码器$f$（Contriever）编码它，以其向量检索真实文档\scite{rs-s30}。若生成$N$份假设文档$\hat d_1,\ldots,\hat d_N$，查询向量取它们与问题向量的平均：
+\begin{equation}
+  \hat{\bm v}_q=\frac{1}{N+1}\Bigl[\sum_{k=1}^{N}f(\hat d_k)+f(q)\Bigr],
+  \qquad s(q,d)=\hat{\bm v}_q^{\top}f(d).
+  \label{eq:nlp-dialogue-hyde}
+\end{equation}
+思路是：答案文档与答案文档之间的相似，比问题与答案文档之间的相似更容易被无监督编码器捕捉。对上面的问题，模型可能写出“外校人员参加讲座一般需提前一天在线报名，凭确认信息入场”。这段文字的具体日期与流程可能都不对，但它在写法上与B相近，向量也更接近B。假设文档只用于检索，不进入证据，回答仍以检索到的真实片段为依据；其中的错误事实因此只影响检索结果，不直接成为答案。
+
+两种方法的位置相同，代价不同。查询改写需要训练信号与在线调用，适合有问答对的任务；HyDE无需任何相关性标注，每次查询多一次生成调用。若语言模型对问题领域完全陌生，假设文档会偏离方向，检索也随之偏离。
+
+\subsubsection{检索结果重排}
+\label{sec:nlp-dialogue-rerank}
+
+双编码器让问题与片段在编码时互不可见，只在最后做一次内积，适合在全文中召回，却难以分辨“原定4月17日”与“现改至4月18日”这类只差关系词的片段。第\ref{sec:nlp-classification-rerank}小节的交叉编码器把两者拼接后联合编码，每一层都让问题与片段交互，分辨力更高；代价是片段表示不能预先计算，每个候选都要做一次完整编码。问答系统因此采用“初检取前$K$项、重排保留前$k$项”的两阶段结构。monoBERT是这一做法的代表\scite{rs-s20}：输入\code{[CLS] 问题 [SEP] 片段 [SEP]}，相关分为$s(q,z)=\sigma(\bm w^{\top}\bm h_{\mathrm C}+b)$，以初检候选中的正例与非正例训练二元交叉熵；成对、列表式目标与排序指标见第\ref{sec:nlp-classification-rerank}小节。
+
+问答中的特殊之处在于训练样本的来源。负例应取自初检排名靠前的非答案片段，使重排器学习初检分不清的情形；正例常由“片段含答案字符串”自动构造，同名或旧版本片段可能被误标为正例，需要用答案位置或版本信息过滤。
+
+重排的计算量可以直接估算。初检取$K=100$、重排后保留$k=5$，每个问题要做100次长为$|q|+|z|$的编码，而双编码器在线只编码问题一次；换来的是送入生成器的前5项更准确。重排还能把最相关的片段放到开头或紧挨问题的位置，间接缓解长上下文中的位置效应（第\ref{sec:nlp-dialogue-long-context}小节）。它只能调整已召回候选的次序，初检遗漏的片段无法找回；候选中没有合适片段时，仍需第\ref{sec:nlp-dialogue-bert-span}小节那样的分数阈值决定弃答。
+
+\subsubsection{迭代检索与多跳问答}
+\label{sec:nlp-dialogue-iterative}
+
+\term{多跳问答}（multi-hop question answering）的答案需要串联多条事实，后一条查什么取决于前一条查到了什么。HotpotQA为这类问题标注了支持事实，使答案与证据组合可以分别评价\scite{yang2018hotpotqa}。看一个教学问题：“4月18日读书会所在的楼由哪个单位管理？”另设片段D：“海棠楼由信息学院负责管理和借用审批。”用原问题检索，与“读书会”“4月18日”重合的是A；D中没有这些词，第一次检索很难找到它。只有读过A、知道地点是海棠楼，才知道下一步该查“海棠楼由谁管理”。
+
+\term{迭代检索}（iterative retrieval）让检索随推理推进。IRCoT把思维链的生成与检索交替进行\scite{rs-s40}：先用问题检索$K$个片段；然后反复执行两步，推理步在问题、已收集片段和已有推理句的条件下只生成下一句思维链，检索步以这一句为查询再取$K$个片段并入已收集集合；当生成的句子中出现“答案是”或步数达到上限时停止，见算法\ref{alg:nlp-dialogue-ircot}。思维链提示本身见第\ref{sec:nlp-execution-cot}小节。原文用BM25检索，步数上限为8，已收集片段总数上限为15，以便在上下文中留出示例的位置。
+
+\begin{algorithm}[IRCoT：推理与检索交替]
+  \label{alg:nlp-dialogue-ircot}
+  \begin{algorithmic}[1]
+    \Require 问题$q$，检索器$\mathcal R$，语言模型$M$，每步检索数$K$，步数上限$T_{\max}$，片段总数上限$C_{\max}$
+    \Ensure 已收集片段集合$\mathcal D$与思维链$r_1,\ldots,r_t$
+    \State $\mathcal D\gets\mathcal R(q,K)$；$t\gets0$
+    \Repeat
+      \State $t\gets t+1$
+      \State $r_t\gets M$在$(q,\mathcal D,r_1,\ldots,r_{t-1})$条件下生成的下一句，只保留第一句
+      \If{$r_t$含“答案是”}
+        \State \textbf{break}
+      \EndIf
+      \State $\mathcal D\gets\mathcal D\cup\mathcal R(r_t,K)$，超出$C_{\max}$时截断
+    \Until{$t=T_{\max}$}
+    \State \Return $\mathcal D$与$r_1,\ldots,r_t$；由阅读器在$\mathcal D$上作答，或直接取思维链末句的答案
+  \end{algorithmic}
+\end{algorithm}
+
+在教学问题上，第一次检索得到A。推理步生成$r_1$“读书会在海棠楼201举行。”；以$r_1$为查询，“海棠楼”与D重合，D被检索进来。第二个推理步读到D，生成$r_2$“海棠楼由信息学院管理，所以答案是信息学院。”，循环停止。检索的查询从原问题变成了推理中刚出现的中间实体，这正是一次性检索无法做到的。
+
+迭代检索的收益依赖于中间推理句是否正确。若$r_1$把地点写错，下一次检索就会沿错误方向展开，而且这种错误不会被后续步骤自动纠正。每多一步，就多一次语言模型调用和一次检索，延迟随步数线性增长。步数上限与片段上限是必须预先设定的预算；达到上限仍未得到答案时，应把剩余子问题作为未解决项报告，而不是继续搜索直到碰巧得到一个答案。
+
+\subsubsection{自适应检索与反思标记：Self-RAG}
+\label{sec:nlp-dialogue-self-rag}
+
+前面的方法对每个问题都检索固定次数。可是“写一段读书会的欢迎词”几乎不需要检索，而“读书会改到哪天”必须检索；同一回答中，有的句子陈述事实，有的只是过渡。总是检索浪费计算，也可能把无关片段引入上下文；从不检索又会让事实性陈述失去依据。\term{自适应检索}（adaptive retrieval）让模型自己决定何时检索。Self-RAG进一步让模型在生成过程中评判检索结果与自己的输出\scite{nlp-qa-asai2024selfrag}。
+
+Self-RAG在词表中加入四类\term{反思标记}（reflection token）。\code{Retrieve}在给定输入或已有输出时判断是否需要检索，取值为是、否或继续使用已有片段；\code{IsRel}判断片段$d$对输入是否相关；\code{IsSup}判断当前输出段是否被$d$完全支持、部分支持或不被支持；\code{IsUse}给整个回答的有用程度打1到5分。生成以句子为段，每段之前可以输出\code{Retrieve}，检索后在片段之后输出\code{IsRel}，生成该段后输出\code{IsSup}，回答结束时输出\code{IsUse}。
+
+训练分两步，都是普通的语言模型目标。第一步训练评判模型$C$：从训练集中抽样，用类型专属的指令提示GPT-4为四类反思标记分别打标签，每类收集数千到两万条，再以条件语言模型目标$\max_C\mathbb E\log p_C(r\mid x,y)$训练一个Llama 2-7B评判模型。第二步构造生成器的训练数据：对每条输入—输出对$(x,y)$的每个输出段，由$C$判断是否需要检索；需要时检索前$K$个片段，由$C$为每个片段预测\code{IsRel}与\code{IsSup}，选出相关且有支持的片段插入，并在段后写上相应标记；最后由$C$预测\code{IsUse}。生成器$M$在这样增强过的语料上以下一词元目标$\max_M\mathbb E\log p_M(y,r\mid x)$训练，学习同时生成正文与反思标记；插入的片段文本不计入损失。评判在离线标注时完成，训练时不需要像RLHF那样在线调用奖励模型。
+
+推断时，反思标记的概率成为可调的控制量。当\code{Retrieve=是}在该类标记内归一化后的概率超过阈值$\delta$时触发检索。检索到$K$个片段后，生成器对每个片段并行生成一个候选段$y_t$，按下式打分，并以段为单位做束宽为$B$的束搜索：
+\begin{equation}
+  f(y_t,d)=p(y_t\mid x,d,y_{<t})+\sum_{G\in\{\mathrm{Rel},\mathrm{Sup},\mathrm{Use}\}}w^{G}s_t^{G}.
+  \label{eq:nlp-dialogue-selfrag}
+\end{equation}
+其中$s_t^{G}$由第$G$类标记的概率在该类内归一化得到：$s^{\mathrm{Rel}}$为“相关”的概率；$s^{\mathrm{Sup}}$为“完全支持”的概率加上0.5倍“部分支持”的概率；$s^{\mathrm{Use}}$把1至5分依次赋权$-1,-0.5,0,0.5,1$后求期望。权重$w^{G}$在推断时设定：重视证据支持就加大$w^{\mathrm{Sup}}$，开放写作则降低检索阈值的作用、更看重有用性。原文默认取$w^{\mathrm{Rel}}=w^{\mathrm{Sup}}=1$、$w^{\mathrm{Use}}=0.5$，段级束宽为2。
+
+用一个教学例子看打分。问题是“读书会改到哪天”，检索到A与C。以A为条件的候选段“读书会改至4月18日（周五）。”生成概率0.6，\code{IsRel}中“相关”占0.9，\code{IsSup}中完全、部分支持分别占0.8与0.1，\code{IsUse}的期望权重为0.75，得分为$0.6+0.9+(0.8+0.05)+0.5\times0.75=2.725$。以C为条件的候选段“读书会仍在4月17日举行。”生成概率0.5，相关0.2，完全、部分支持为0.1、0.1，有用性期望0.25，得分为$0.5+0.2+0.15+0.125=0.975$。束搜索保留以A为依据的段。若生成器只看生成概率，两个候选的差距小得多；反思标记把“片段是否相关、陈述是否被支持”纳入了选择。
+
+Self-RAG把检索决策、相关性判断与支持判断都内化为生成器的输出，推断时不需要另外的评判模型，并能通过阈值与权重在事实性和创造性之间调节。代价有三项：训练数据依赖强模型的离线标注，标注偏差会被生成器学去；每个需要检索的段要为$K$个片段各生成一个候选；反思标记是模型对自己的评价，\code{IsSup}给出高分并不等于外部核验通过，第\ref{sec:nlp-dialogue-verification}节的核验仍然需要。
+
+\subsubsection{带引用的回答生成}
+\label{sec:nlp-dialogue-citation}
+
+前述方法得到的回答即使正确，读者也难以核对每句话依据了什么。带引用的回答生成要求回答中的每个陈述后附上所依据片段的编号，例如“活动于4月18日14:00在海棠楼201举行〔A〕”。最直接的实现是提示：把检索到的片段编号后放入上下文，在示例中示范“陈述后加编号”的格式。ALCE基准把这一任务系统化，并给出可自动计算的引用质量指标\scite{nlp-qa-gao2023alce}。
+
+引用质量用自然语言推断模型判断。设回答由陈述$s_1,\ldots,s_n$组成，陈述$s_i$所附的引用集合为$C_i$；$\phi(\text{前提},\text{假设})\in\{0,1\}$是一个蕴含判别器，前提蕴含假设时输出1，ALCE用的是T5-11B规模的TRUE模型，蕴含判断的基本概念见第\ref{sec:nlp-classification-nli}小节。\term{引用召回率}（citation recall）检查每个陈述是否被其引用整体支持：
+\begin{equation}
+  \mathrm{rec}(s_i)=\mathbb 1\bigl[C_i\neq\varnothing\ \wedge\ \phi(\operatorname{concat}(C_i),s_i)=1\bigr],
+  \qquad
+  \mathrm{CitRec}=\frac1n\sum_{i=1}^{n}\mathrm{rec}(s_i).
+  \label{eq:nlp-dialogue-cite-recall}
+\end{equation}
+\term{引用精确率}（citation precision）检查每条引用是否多余。引用$c\in C_i$称为不相关，当且仅当它单独不能支持$s_i$，且去掉它后其余引用仍能支持$s_i$，即$\phi(c,s_i)=0$且$\phi(\operatorname{concat}(C_i\setminus\{c\}),s_i)=1$。一条引用的精确度为1，当且仅当所在陈述的召回为1且它不是不相关引用；引用精确率是全部引用上的平均。召回为1被设为前提，否则条件(b)无从判断。
+
+用教学回答演算。回答为“活动于4月18日14:00在海棠楼201举行〔A〕〔C〕。校外来宾须在4月16日18:00前报名〔A〕。”第一个陈述引用A与C，A蕴含它，召回为1；C单独不支持它，去掉C后A仍支持，所以C是不相关引用，A的精确度为1。第二个陈述只引用A，A不含报名条件，召回为0，A的精确度也为0。于是引用召回率为$1/2$，引用精确率为$1/3$。正确的写法是第二句引用B。这个例子也说明了三种情况的差别：答案正确且引用正确；答案正确但引用错误，例如第二句；答案正确但没有引用，召回同样为0。三者在答案准确率上无法区分，引用指标把它们分开。
+
+引用指标衡量的是可追溯性，不是正确性：一个错误陈述若恰好被某个错误片段蕴含，召回仍为1，所以答案的正确性要另行评价。蕴含判别器本身也会出错，跨句推理、数字与日期比较是它的薄弱处；ALCE也指出，这套判定忽略了一条引用部分支持陈述的情形。
+
+\subsubsection{长上下文与检索的比较}
+\label{sec:nlp-dialogue-long-context}
+
+上下文窗口扩展到数十万词元以后，一个自然的问题是：能否不检索，把全部资料直接放进上下文？这样可以避免检索遗漏，也省去切分、索引与重排。但它带来两个新问题。
+
+第一是位置效应。第\ref{sec:nlp-inference-lost-middle}小节的控制实验表明，含答案文档处在长输入中间时最难被利用\cite{liu2024middle}；可容纳的长度不等于被有效利用的长度，资料越多，答案落在中间的机会越大。
+
+第二是成本。预填充阶段每个输入词元约需$2N$次浮点运算（$N$为参数量，见第\ref{sec:nlp-inference-autoregression}小节），注意力部分还随长度平方增长，键值缓存随长度线性增长。以教学设定计：资料共20万词元，检索增强只送入5个各300词元的片段，即1500词元，仅线性层部分的预填充计算就相差约133倍，且这一代价在每次提问时都要重新支付，除非资料前缀可以缓存复用。
+
+已有比较研究给出的结论与设置有关。Xu等在相同模型上比较发现，4K上下文的模型配合简单检索，可以达到经位置插值扩展到16K并微调后的模型的水平，而检索对扩展到32K的模型仍有帮助\scite{nlp-qa-xu2024retrieval-long}。Li等在资源充足时观察到长上下文模型的平均效果优于检索增强，但后者成本低得多；据此提出的Self-Route先让模型判断检索到的片段能否回答问题，能则直接作答，不能再转用全文长上下文，以较小的成本接近长上下文的效果\scite{nlp-qa-li2024selfroute}。表\ref{tab:nlp-dialogue-long-context}汇总两条路线的差别；长上下文结构本身见第\ref{sec:nlp-llm-long-context}节。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    比较项 & 检索增强生成 & 长上下文直接阅读\\
+    \midrule
+    证据召回 & 受检索器限制，遗漏无法补回 & 资料全部可见\\
+    位置敏感性 & 片段少，可经重排放到首尾 & 中间位置利用较差\\
+    每次提问成本 & 只处理少量片段 & 随资料长度增长\\
+    资料更新 & 重建或增量更新索引 & 直接替换输入\\
+    引用粒度 & 片段编号天然可用 & 需另行定位来源\\
+    \bottomrule
+  \end{tabular}
+  \caption{检索增强生成与长上下文直接阅读的比较。两者可以组合：先检索，判断片段不足时再改读全文。}
+  \label{tab:nlp-dialogue-long-context}
+\end{table}
+
+\subsection{结构化证据问答}
+\label{sec:nlp-dialogue-structured-qa}
+
+证据若存于数据库、知识图谱或表格，答案常需要筛选、连接或聚合，“截止前提交的校外报名有几条、合计几人”这类问题无法从任何一个文本跨度中读出。一条路线把问题转成可执行查询，执行结果即答案，查询本身就是可复核的推导；它要求查询语言覆盖问题，且需要模式链接与解析。另一条路线如TAPAS直接在表格上选单元格并预测聚合算子，不必写出查询，训练可只用答案监督，但只支持少数几种聚合。两条路线都在固定模式、数据快照和只读权限下工作，并保存查询、所选单元格与计算依据。
+
+\subsubsection{SQL与图查询的执行式问答}
+\label{sec:nlp-dialogue-execution-qa}
+
+设有额外构造的报名表\code{registration}，字段为活动编号、报名记录编号、参加者编号、身份类别、提交时刻和随行人数。四条记录为：R1，校外，4月16日17:30，2人；R2，校外，4月16日18:00，1人；R3，校内，4月17日09:00，1人；R4，校外，4月16日16:00，3人。它们都属于\code{ML-0418}，时区统一为北京时间。问题是“按时提交的校外报名有几条，合计几人”；提交记录不等于已批准的资格。
+
+从问题到查询的解析属于文本到SQL，模式链接、关系感知编码与大语言模型方法见第\ref{sec:nlp-analysis-text-to-sql}小节。问答一侧要处理的是解析之后的步骤。模式链接把“校外”对应到身份字段，把“按时”对应到通知中“截止前”的严格条件，把“几条”和“几人”分别对应到记录数与人数之和；解析出的候选查询还要检查字段、类型、只读性和条件，再绑定参数执行：
+\begin{codeblock}[language=SQL,label={code:nlp-dialogue-sql},unbreakable]{报名统计的只读查询}
+SELECT COUNT(*) AS records,
+       SUM(party_size) AS people
+FROM registration
+WHERE event_id = :event
+  AND visitor_type = :external
+  AND submitted_at < :deadline;
+\end{codeblock}
+绑定的活动为\code{ML-0418}，截止为2025年4月16日18:00。筛选留下R1、R4，结果为2条、5人。回复应为“按给定快照，截止前提交的校外报名有2条，登记人数合计5人”，并保留行编号R1、R4作为证据。若把条件误写成$\leq$，会多计R2，得到3条、6人：查询执行无错误，却没有回答原问题。
+
+执行结果需要按答案协议解释。空结果不总是零：\code{COUNT}在无匹配行时为0，空集上的\code{SUM}在多数数据库中为\code{NULL}，答案应表达为“无符合记录”还是数值零，要事先规定。两条不等价的查询可能在当前表上偶然同值，用截止恰为18:00、同名不同编号、多表连接产生重复行等反例数据复核，比只比较一次执行结果更能暴露语义错误。
+
+图数据可把活动、报名记录和参加者表示为节点，以“属于活动”“提交者”等边连接。问题到图路径的映射同样要绑定活动身份与时间条件，再计数通过筛选的报名节点；跨边连接时保存节点与边的编号作为路径证据。若一个人关联两条报名记录，计数报名节点与计数不同参加者的结果不同，问题要求哪一种必须在解析时确定。
+
+\subsubsection{TAPAS单元格选择与聚合}
+\label{sec:nlp-dialogue-tapas}
+
+执行式问答训练解析器需要问题—查询对，而这类标注昂贵；许多表格问答数据只给出答案。TAPAS绕开查询：模型直接指出哪些单元格参与回答，再预测对它们施加什么聚合，训练只需答案\scite{nlp-dialogue-herzig2020}。
+
+输入是\code{[CLS] 问题 [SEP]}后接按行展开的表格词元。每个词元的嵌入在BERT的词元、位置、段嵌入之外，再加三类与表格有关的嵌入：列编号与行编号（问题词元取0），以及数值排序编号，可解析为数值或日期的列按大小排序，最小者为1，不可比较者为0；对话场景还加一个“是否为上一问答案”的标记。排序编号让模型不必从子词中读出数值大小，就能回答“最多”“最早”这类问题。
+
+编码之后有两个输出头。单元格选择头先对每个词元的末层表示做线性变换得logit，单元格的logit取其所含词元logit的平均，经sigmoid得选择概率$p_s(c)$。原模型还加入单列选择的归纳偏置：对每列取其单元格表示的平均，经另一个线性层得列logit，再加一个表示“不选任何列”的空列，在列之间做softmax得$p_{\mathrm{col}}(\mathit{co})$；被选列之外的单元格概率置为0。聚合头对\code{[CLS]}表示做线性变换与softmax，得$p_a(\mathit{op})$，$\mathit{op}\in\{\text{NONE},\text{COUNT},\text{SUM},\text{AVERAGE}\}$。推断时取最可能的聚合算子，选出概率超过0.5的单元格并执行。
+
+训练按答案类型分两种情况。若答案能映射到单元格集合$C$，就选含$C$中单元格最多的列作为目标列$\mathit{col}$，损失由列选择、列内单元格选择与聚合三项组成：
+\begin{equation}
+\begin{aligned}
+  J_{\mathrm{CS}}={}&
+  \frac{1}{|\mathrm{Cols}|}\sum_{\mathit{co}}\mathrm{CE}\bigl(p_{\mathrm{col}}(\mathit{co}),\mathbb 1_{\mathit{co}=\mathit{col}}\bigr)\\
+  &+\frac{1}{|\mathrm{Cells}(\mathit{col})|}\sum_{c\in\mathrm{Cells}(\mathit{col})}\mathrm{CE}\bigl(p_s(c),\mathbb 1_{c\in C}\bigr)
+  -\alpha\log p_a(\text{NONE}),
+\end{aligned}
+  \label{eq:nlp-dialogue-tapas-cs}
+\end{equation}
+其中CE是二元交叉熵，$\alpha$是权重；这类样本不需要聚合，故以NONE为聚合目标。若答案是表中没有的标量$s$，哪些单元格、哪个算子都不知道，而能执行出$s$的组合可能很多，例如$s=5$时任意5个单元格的计数都对。TAPAS不去搜索这些组合，而是对每个算子构造可微的软执行：软计数为$\sum_c p_s(c)$，软求和为$\sum_c p_s(c)\,T[c]$，软平均取两者之比，$T[c]$为单元格数值。期望结果按去掉NONE后重新归一化的算子概率$\hat p_a$加权：
+\begin{equation}
+  s_{\mathrm{pred}}=\sum_{\mathit{op}\neq\text{NONE}}\hat p_a(\mathit{op})\operatorname{compute}(\mathit{op},p_s,T),\quad
+  J_{\mathrm{scalar}}=
+  \begin{cases}
+    \tfrac12 a^2, & a\leq\delta,\\
+    \delta a-\tfrac12\delta^2, & a>\delta,
+  \end{cases}
+  \label{eq:nlp-dialogue-tapas-scalar}
+\end{equation}
+其中$a=|s_{\mathrm{pred}}-s|$，$J_{\mathrm{scalar}}$是\term{Huber损失}（Huber loss），误差小时为平方、误差大时为线性，比平方损失对离群样本更稳定。总损失为$J_{\mathrm{SA}}=-\log\sum_{\mathit{op}\neq\text{NONE}}p_a(\mathit{op})+\beta J_{\mathrm{scalar}}$，第一项把概率质量推离NONE；$J_{\mathrm{scalar}}$超过设定的截断值时整条样本被忽略，因为这类样本多为离群点。
+
+固定上一小节的表，问“截止前校外报名合计几人”，答案为表中没有的标量5。设人数列被选中，四个人数单元格的选择概率为$(0.95,0.10,0.05,0.90)$，聚合概率在去掉NONE后为SUM 0.9、COUNT 0.1、AVERAGE 0。软求和为$0.95\times2+0.10\times1+0.05\times1+0.90\times3=4.75$，软计数为$2.0$，期望结果$s_{\mathrm{pred}}=0.9\times4.75+0.1\times2.0=4.475$，误差$a=0.525$；取教学值$\delta=1$，$J_{\mathrm{scalar}}=0.5\times0.525^2=0.138$。推断时阈值0.5留下R1的2与R4的3，SUM执行为离散的5。训练时的软结果与推断时的离散结果不同，这是为了让答案监督可微而付出的近似。
+
+TAPAS的优势是只用答案监督、不写查询，选出的单元格本身就是证据；代价是单列选择的偏置与三种聚合限定了能回答的问题，跨列比较、多表连接与多步计算都不在其中。弱监督还可能让一组错误的单元格偶然算出同样的总数，评价时除答案外应检查所选单元格与单位。
+
+\subsection{混合证据问答}
+\label{sec:nlp-dialogue-hybrid-qa}
+
+财报这类材料中，正文限定对象与统计口径，数值却在表格里，问题还常要多步计算。此时仅找出数字不足以形成答案，还需要把对象、时间、单位和比较范围对齐。TAGOP在一次证据选择后套用预定义算子，适合单步计算；FinQANet生成多步程序，能表达更长的计算链，代价是需要程序监督与执行器。本节只处理已可用的文本与结构化表格，不涉及页面图像与版面恢复。
+
+表\ref{tab:nlp-dialogue-operands}是独立的教学统计，与共同通知的报名记录无关。附带正文为：“比较甲校读书会的年度到场人数；两年口径相同，均按去重人数统计，不含旁听记录。”问题是“甲校2025年到场人数比2024年增长百分之几”。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{llll}
+    \toprule
+    单元格编号 & 对象 & 年份 & 到场人数\\
+    \midrule
+    T1-R1-C3 & 甲校读书会 & 2024 & 120人\\
+    T1-R2-C3 & 甲校读书会 & 2025 & 150人\\
+    T1-R3-C3 & 乙校读书会 & 2025 & 180人\\
+    \bottomrule
+  \end{tabular}
+  \caption{增长率问题的教学操作数。正文限定甲校、年度和去重口径，表格提供数值及年份；乙校一行只用作对象对齐的反例。}
+  \label{tab:nlp-dialogue-operands}
+\end{table}
+
+\subsubsection{TAGOP标签选择与符号计算}
+\label{sec:nlp-dialogue-tagop}
+
+TAT-QA基准收集了财报中表格与正文混合的问题，TAGOP是随之提出的模型\scite{nlp-dialogue-zhu2021}。它把混合问答拆成四个分类任务：选证据、选算子、定操作数顺序、定尺度，数值计算交给符号执行。问题、按行展开的表格与相关段落依次输入RoBERTa编码器，得各子词表示$\bm h_t$。
+
+证据选择采用IO标注：每个子词独立预测标签，
+\begin{equation}
+  p^{\mathrm{tag}}_t=\operatorname{softmax}\bigl(\mathrm{FFN}(\bm h_t)\bigr)\in\mathbb R^{2},
+  \label{eq:nlp-dialogue-tagop-tag}
+\end{equation}
+FFN是带GELU激活的两层前馈网络。一个单元格或一个词只要有子词被标为I就算正候选，段落中连续的正词合并为跨度。IO只区分“是否属于证据”，不像BIO那样标注边界起点，因为这里要的是证据集合而非实体边界。算子分类器以\code{[CLS]}表示预测十种算子之一：段落跨度、单元格、多项、求和、计数、平均、乘法、除法、差额与变化率，$p^{\mathrm{op}}=\operatorname{softmax}(\mathrm{FFN}(\bm h_{\mathrm{[CLS]}}))$。除法、差额与变化率对操作数顺序敏感，因此再加一个顺序分类器，输入为选择概率最高的两个词的表示的平均：$p^{\mathrm{order}}=\operatorname{softmax}(\mathrm{FFN}(\operatorname{avg}(\bm h_{t_1},\bm h_{t_2})))$。尺度分类器以$[\bm h_{\mathrm{[CLS]}};\bm h_{\mathrm{tab}};\bm h_{\mathrm{p}}]$为输入，在无、千、百万、十亿与百分比中选择，$\bm h_{\mathrm{tab}}$与$\bm h_{\mathrm{p}}$分别是表格与段落词元表示的平均。训练损失是四项负对数似然之和：
+\begin{equation}
+\begin{aligned}
+  L={}&\mathrm{NLL}(p^{\mathrm{tag}},G^{\mathrm{tag}})+\mathrm{NLL}(p^{\mathrm{op}},G^{\mathrm{op}})\\
+   &+\mathrm{NLL}(p^{\mathrm{scale}},G^{\mathrm{scale}})+\mathrm{NLL}(p^{\mathrm{order}},G^{\mathrm{order}}),
+\end{aligned}
+  \label{eq:nlp-dialogue-tagop-loss}
+\end{equation}
+各项标签由标注的支持证据、推导式与答案尺度恢复。
+
+在教学问题上，模型应把T1-R2-C3的150与T1-R1-C3的120标为I，并依靠正文确认比较对象是甲校。设两者的选择置信为$0.93$与$0.89$，乙校180的置信为$0.08$；算子分类为变化率，顺序分类确定当年数在前，尺度分类为百分比。执行得
+\begin{equation}
+ r=\frac{150\ \text{人}-120\ \text{人}}{120\ \text{人}}
+   =0.25,\qquad \text{百分比答案}=25\%.
+ \label{eq:nlp-dialogue-growth}
+\end{equation}
+人数单位在比值中消去，尺度头给出的百分比使0.25输出为25\%，而不是0.25\%。若问题改问增加多少人，算子应为差额，结果为30人。乙校180与甲校120也能执行出一个变化率，但回答了错误的对象；对象对齐依赖证据选择是否读懂了正文的限定。
+
+TAGOP把数值计算交给确定的符号操作，避免了让神经网络直接输出数字；但每题只套用一个算子，算子的输入又只取概率最高的两个数，“两个部门先合计、再减去旁听人数、然后求比值”这类多步计算超出了它的表达范围。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}
+    >{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价\\
+    \midrule
+    BiDAF & 问题信息过早压缩为单向量 & 相似矩阵上的双向注意力，逐位置表示流入建模层 & 手工交互层，无预训练，只输出单跨度\\
+    BERT阅读器 & 交互层需手工设计 & 问题与材料联合编码，跨度头与空答案阈值 & 长度上限需分窗，仍只能抽取\\
+    DPR加阅读器 & 词汇检索漏掉改写表述 & 双编码器内积检索，阅读器兼做片段选择 & 需片段标注，编码器更新需重建索引\\
+    REALM & 检索器不知阅读器需要什么 & 片段作潜变量，答案似然的梯度更新检索器 & 异步刷新索引，训练成本高\\
+    Atlas & 少样本下联合训练 & 阅读器困惑度蒸馏为检索分布 & 阅读器偏差传给检索器\\
+    RAG & 答案受跨度限制 & 生成器条件于片段，按检索概率边缘化 & 每片段一个分支，无来源标注\\
+    FiD & 片段间信息只在概率层汇合 & 独立编码、拼接后由一个解码器交叉注意 & 无显式片段后验，片段编码时互不可见\\
+    查询改写、HyDE & 问题与文档表述不一致 & 改写器以强化学习优化；假设文档向量检索 & 多一次生成调用；领域陌生时偏离\\
+    交叉编码器重排 & 双编码器排序粗 & 问题与片段联合编码打分 & 每个候选一次完整编码\\
+    IRCoT & 一次检索不足以多跳 & 推理句作为下一次检索的查询 & 调用次数随步数增长，错误推理带偏检索\\
+    Self-RAG & 检索时机固定，结果不经评判 & 反思标记决定检索并评判相关与支持 & 依赖离线标注，每片段一个候选\\
+    ALCE式引用 & 回答无法追溯 & 陈述附片段编号，蕴含模型算引用召回与精确率 & 不衡量正确性，受蕴含模型误差影响\\
+    执行式问答 & 答案需筛选与聚合 & 解析为SQL或图查询并执行 & 需模式链接与解析，查询语言需覆盖问题\\
+    TAPAS & 查询标注昂贵 & 单元格选择加聚合头，软执行用答案监督 & 聚合种类少，软结果与离散执行不一致\\
+    TAGOP & 文本与表格混合 & IO标注选证据，分类算子、顺序与尺度 & 每题一个算子，难以多步\\
+    FinQANet & 多步数值计算 & 检索事实后生成带步骤引用的程序 & 需程序标注，有步骤与终止错误\\
+    \bottomrule
+  \end{tabularx}
+  \caption{证据问答方法对照。“解决的问题”指该方法针对前一类方法或任务的哪一项困难，“新代价”是它为此付出的计算、标注或表达能力上的代价。}
+  \label{tab:nlp-dialogue-evidence-methods}
+\end{table*}
+
+\subsubsection{FinQANet程序生成与执行}
+\label{sec:nlp-dialogue-finqa}
+
+多步计算需要把中间结果写出来。FinQA数据集为财报问题标注了完整的计算程序，FinQANet随之提出，由检索器和程序生成器两部分组成\scite{nlp-dialogue-chen2021}。
+
+报告全文常超过编码器的长度限制，所以先检索。检索器用模板把表格的每一行转成句子，例如“甲校读书会2024年的到场人数为120人”，把每个候选事实与问题拼接后用BERT类分类器判断是否相关，取前$n$个事实并按其在原报告中的顺序排列，作为生成器的输入。检索器以标注的支持事实为监督。
+
+程序生成器逐个输出程序词元，词元有三个来源：输入中的数字与表格行名，其表示$\bm h_{e_i}$来自预训练编码器；限定语言中的函数名、括号与常数，嵌入$\bm h_{s_i}$随机初始化；表示已完成步骤结果的记忆标记\code{\#0}、\code{\#1}等，嵌入$\bm h_{m_i}$同样随机初始化。三者组成候选词元矩阵$\bm H=[\bm h_{e_i};\bm h_{s_i};\bm h_{m_i}]$。解码器是LSTM，第$T$步的输出$\bm h_T$分别注意输入与已解码历史，得注意力向量$\bm{att}_p$与$\bm{att}_h$，再组合成上下文向量；候选词元也按输入注意力调整，最终在候选上做softmax：
+\begin{equation}
+\begin{aligned}
+  \bm c_T&=\bm W_c[\bm{att}_p;\bm{att}_h;\bm h_T],\qquad
+  \bm H'_T=\bm W_h[\bm H;\bm H\odot\bm{att}'_p],\\
+  \bm w_T&=\operatorname{softmax}(\bm H'_T\bm c_T).
+\end{aligned}
+  \label{eq:nlp-dialogue-finqa}
+\end{equation}
+每当生成一个操作的右括号，就用$\bm a_T=\bm W_a[\bm{att}_p;\bm{att}_h;\bm h_T]$更新当前步骤记忆标记的嵌入，后续步骤便能以\code{\#0}引用它。记忆标记的嵌入只帮助生成器选择引用，实际数值仍由执行器计算。推断时按限定语言的文法在每步屏蔽非法词元，保证程序结构合法；训练以参考程序的词元负对数似然为目标，生成器的输入用检索器在训练集上的结果，若漏掉了标注事实就补上。
+
+固定表\ref{tab:nlp-dialogue-operands}与相同正文，教学程序为：
+\begin{codeblock}[language=Python,label={code:nlp-dialogue-finqa}]{从差额到增长率的限定程序}
+subtract(150, 120)   # step 0: 30 persons
+divide(#0, 120)      # step 1: 0.25
+\end{codeblock}
+这是限定语言，不是可直接执行的Python。150绑定T1-R2-C3，两个120都绑定T1-R1-C3，\code{\#0}只能引用已完成的第0步。执行器先得30人，再以120人为分母得0.25，格式化为25\%并附上正文限定与单元格来源。若生成\code{divide(120,\#0)}，程序合法但结果为4；若把120换成碰巧同值的其他部门记录，执行答案不变，证据绑定却已错误。FinQA因此同时报告执行准确率与程序准确率，程序准确率允许数学上等价的程序。
+
+相对于TAGOP内置的变化率算子，FinQANet把同一计算展开成两个可组合的步骤，能表达限定语言支持的任意多步程序；代价是需要程序级标注，并引入步骤选择、引用与终止的错误。文法掩码能阻止参数位输出非法函数，却不能判断某个数字是否来自正确的年份。通用的程序生成、测试与修订循环见第\ref{chap:nlp-solving-and-execution}章。
+
+表\ref{tab:nlp-dialogue-evidence-methods}汇总本节方法。从上到下，每一行大致回应上一行留下的问题：交互从手工设计走向预训练，检索从词汇走向稠密并与阅读器联合训练，答案从跨度走向生成，再由查询、排序、检索时机与引用逐环节改进；证据形式变为表格与混合材料时，答案的形成又从抽取转为执行。
+
+\FloatBarrier

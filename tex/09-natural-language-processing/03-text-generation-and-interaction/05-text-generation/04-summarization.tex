@@ -1,0 +1,622 @@
+\section{摘要与信息综合}
+\label{sec:nlp-generation-summarization}
+
+\term{文本摘要}（text summarization）要在长度预算内保留与用途相关的信息。
+日历条目主要保留时间和地点，参加指南必须保留行动条件，会议纪要还须分清建议、
+已作决定和待办事项。摘要面临的挑战依次是：从大量内容中选出显著信息；
+在句内压缩与跨句融合时改写表达；去除重复；保持对来源的忠实，不补造事实；
+处理超出模型长度上限的输入；多来源时还要处理转载、互补与冲突。
+
+方法谱系大致沿时间展开，每一步回应前一步留下的问题。
+位置基线与图中心性从原文选句，事实来自原句，却不能压缩句内信息；
+有监督句子抽取学习哪些句子重要，需要先从人工摘要构造句子标签；
+注意力编码器—解码器能写出原文没有的句子，却难以复制名称和数字，也容易重复；
+复制与覆盖机制补上这两点；去噪预训练先在无标注文本上学会重建，再微调到摘要；
+长文档结构与稀疏注意力把输入推到数万词元；人类反馈把训练目标从模仿参考换成人类偏好；
+多来源综合在选择、融合与预训练三个层面处理多份材料。节末
+表~\ref{tab:nlp-generation-summarization-methods}比较各法的忠实性、压缩能力、输入长度与训练数据。
+
+\subsection{抽取式摘要}
+\label{sec:nlp-generation-extractive-summary}
+
+\term{抽取式摘要}（extractive summarization）从原文选句组成摘要。
+设文档有$n$个句子，第$i$句的长度为$c_i$，抽取式摘要可以写成在预算$B$下选择句子子集
+\begin{equation}
+  S^{\ast}=\argmax_{S\subseteq\{1,\ldots,n\},\;\sum_{i\in S}c_i\leq B}\;
+  Q(S),
+  \label{eq:nlp-generation-extractive-objective}
+\end{equation}
+其中$Q$衡量所选句子的整体质量。无监督方法用位置或图中心性近似$Q$；
+有监督方法把问题简化为对每句做二分类，再按预测概率在预算内选句。
+被选的句子都是原句，事实不会被改写错，但句内的冗余无法删去，被选句也可能因指代脱离上下文
+而误导：单独摘出“这项要求不适用于校内师生”却不带上“这项要求”所指的内容，正确原句也成了
+误导性的摘要。
+
+\subsubsection{Lead与TextRank抽取摘要}
+\label{sec:nlp-generation-extractive}
+
+Lead直接按原文顺序取前若干句，直到句数或词元预算用尽。它不需要训练样本，
+在新闻这类重要信息位于开头的文体上是很强的基线，也是其他方法必须超过的参照。
+TextRank改用句子之间的联系估计重要性：把各句作为节点，用词重合或其他相似度为边赋权，
+在图上迭代传播分数，与其他句子联系越多、越强的句子得分越高\scite{nlp-mihalcea2004textrank}
+
+设$w_{i,j}\geq0$为不同句子间的对称边权，自环权为零，分数归一化为总和1：
+\begin{equation}
+  r_i^{(k+1)}
+  =\frac{1-d}{n}
+   +d\sum_{j:\,w_{j,i}>0}
+   \frac{w_{j,i}}{\sum_\ell w_{j,\ell}}r_j^{(k)}.
+  \label{eq:nlp-generation-textrank}
+\end{equation}
+$d$是沿图传播的权重，$1-d$的部分均匀跳转到任一句，保证迭代收敛；
+没有出边的句子按均匀分布分配其质量。从均匀分数开始迭代，
+到相邻两轮差小于阈值为止。按分数选完句子后，通常恢复原文次序，以免打乱条件和指代。
+
+将通知整理为三句教学输入：$s_1$“读书会改至4月18日14:00举行”，
+$s_2$“读书会4月18日在海棠楼201举行”，
+$s_3$“校外来宾参加读书会须在4月16日18:00前提交报名信息”。
+只保留检索词集合$K_1=\{\text{读书会},\text{4月18日},\text{14:00}\}$、
+$K_2=\{\text{读书会},\text{4月18日},\text{海棠楼201}\}$、
+$K_3=\{\text{读书会},\text{校外来宾},\text{报名信息}\}$，
+取$w_{i,j}=|K_i\cap K_j|$，得$w_{1,2}=2$、$w_{1,3}=w_{2,3}=1$。
+令$d=0.85$，从$(1/3,1/3,1/3)$开始，第一轮得$(0.38056,0.38056,0.23889)$，
+收敛到$(0.37013,0.37013,0.25974)$。预算为两句、平局取靠前句时，
+Lead和TextRank都选择$s_1,s_2$，重复了日期却遗漏校外要求。
+中心性奖励与其他句子相似的句子，而最独特的条件信息恰恰与其他句子相似度低；
+若查询是“校外来宾如何办理”，就需要把查询相关性写进分数，
+或用第~\ref{sec:nlp-generation-mmr}小节的方法显式去冗余。
+
+\subsubsection{有监督句子抽取：SummaRuNNer与BertSum}
+\label{sec:nlp-generation-supervised-extractive}
+
+Lead和TextRank的打分规则是人为指定的。有了大规模新闻摘要语料，就可以让模型学习
+什么样的句子应当入选。困难在于这些语料提供的是人工写的生成式摘要，而不是句子标签。
+
+\paragraph{贪心构造oracle标签}
+常用做法是用ROUGE（第~\ref{sec:nlp-generation-rouge}小节）衡量句子组合与人工摘要的重合，
+贪心地构造一个近似最优的抽取结果，作为\term{oracle摘要}（oracle summary），
+其中的句子标为1、其余标为0\scite{nallapati2017summarunner}
+
+\begin{algorithm}[贪心构造抽取式oracle标签]
+  \label{alg:nlp-generation-greedy-oracle}
+  \begin{algorithmic}[1]
+    \Require 文档句子$s_1,\ldots,s_n$，参考摘要$y^{\ast}$，评分函数$\operatorname{R}$（如ROUGE-1与ROUGE-2的F值之和）
+    \Ensure 句子标签$z_1,\ldots,z_n\in\{0,1\}$
+    \State $S\gets\varnothing$，$\mathrm{best}\gets0$
+    \Loop
+      \State $i^{\ast}\gets\argmax_{i\notin S}\operatorname{R}(S\cup\{i\},y^{\ast})$
+      \If{$\operatorname{R}(S\cup\{i^{\ast}\},y^{\ast})\leq\mathrm{best}$}
+        \State \textbf{break}\Comment{再加任何一句都不能提高分数}
+      \EndIf
+      \State $S\gets S\cup\{i^{\ast}\}$；$\mathrm{best}\gets\operatorname{R}(S,y^{\ast})$
+    \EndLoop
+    \State $z_i\gets\mathbb{I}[i\in S]$，$i=1,\ldots,n$
+  \end{algorithmic}
+\end{algorithm}
+
+用词级ROUGE-1的F值手算一例。教学参考摘要与四个句子的词如下：
+\begin{center}
+  \small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    对象 & 词\\
+    \midrule
+    参考$y^{\ast}$ & 读书会／4月18日／14:00／海棠楼201／校外来宾／报名\\
+    $s_1$ & 读书会／改期／4月18日／14:00\\
+    $s_2$ & 读书会／地点／海棠楼201\\
+    $s_3$ & 校外来宾／4月16日／报名\\
+    $s_4$ & 读书会／欢迎／参加\\
+    \bottomrule
+  \end{tabular}
+\end{center}
+ROUGE-1的F值可写成$2\times\text{匹配词数}/(\text{摘要词数}+\text{参考词数})$，
+匹配时每个参考词至多计一次。
+单句的F值分别为$0.600,0.444,0.444,0.222$，先选$s_1$。
+第二轮，$s_1{+}s_2$共7词、与参考匹配4个（“读书会”只计一次），F值为$8/13\approx0.615$；
+$s_1{+}s_3$匹配5个，F值为$10/13\approx0.769$；$s_1{+}s_4$为$6/13\approx0.462$；选$s_3$。
+第三轮，再加$s_2$虽把召回率提到1，精确率却降到0.6，F值为0.75，低于0.769，
+算法停止。oracle为$\{s_1,s_3\}$，含地点的$s_2$被标为0。
+可见oracle标签只是近似：它依赖评分函数和贪心次序，参考中出现的信息也可能因精确率惩罚而落选。
+
+\paragraph{SummaRuNNer}
+SummaRuNNer用两层双向GRU编码文档\scite{nallapati2017summarunner}
+词级GRU读入每句的词向量，句内各位置隐状态的平均作为句子输入；
+句级GRU在句子序列上运行，得到第$j$句的表示$\bm h_j\in\mathbb{R}^{2d}$（前后两向拼接）。
+文档表示为$\bm d=\tanh\bigl(\bm W_d\frac{1}{N}\sum_{j=1}^{N}\bm h_j+\bm b_d\bigr)$。
+第$j$句的入选概率由五项相加后经逻辑函数得到：
+\begin{equation}
+  P(z_j=1)=\sigma\Bigl(\underbrace{\bm w_c^{\top}\bm h_j}_{\text{内容}}
+  +\underbrace{\bm h_j^{\top}\bm W_s\bm d}_{\text{显著性}}
+  -\underbrace{\bm h_j^{\top}\bm W_r\tanh(\bm s_j)}_{\text{冗余}}
+  +\underbrace{\bm w_a^{\top}\bm p^{\mathrm{abs}}_j+\bm w_p^{\top}\bm p^{\mathrm{rel}}_j}_{\text{位置}}
+  +b\Bigr),
+  \label{eq:nlp-generation-summarunner}
+\end{equation}
+其中$\bm s_j=\sum_{i<j}\bm h_iP(z_i=1)$是到第$j$句为止的“已选摘要”表示，按各句入选概率加权；
+$\bm p^{\mathrm{abs}}_j$与$\bm p^{\mathrm{rel}}_j$是句子绝对位置与相对位置（文档分段后的段号）的嵌入。
+内容项衡量句子本身的信息量，显著性项衡量它与全文主旨的关联，冗余项扣除它与已选内容的重合，
+位置项吸收新闻开头更重要的先验。$\bm W_s,\bm W_r\in\mathbb{R}^{2d\times2d}$为双线性参数。
+训练最小化oracle标签上的二元交叉熵，推断时按概率从高到低选句，直到预算用尽。
+冗余项让抽取本身带有类似MMR的去冗余，但它是从oracle标签中间接学到的，不是显式约束。
+式~\eqref{eq:nlp-generation-summarunner}的各项都可解释，这是它相对黑盒分类器的优点。
+
+\paragraph{BertSum}
+预训练编码器出现后，句子表示可以直接来自BERT。困难在于BERT的输入原本只有一个或两个句段，
+其\code{[CLS]}向量表示整个输入。Liu与Lapata的BertSum改造了输入格式
+\scite{liu2019text}：在每个句子前插入\code{[CLS]}、句后插入\code{[SEP]}；
+\term{区间分段嵌入}（interval segment embedding）按句子的奇偶交替使用$E_A$和$E_B$，
+使模型能区分相邻句子；第$i$个\code{[CLS]}位置的顶层向量$\bm t_i\in\mathbb{R}^{768}$作为第$i$句的表示。
+图~\ref{fig:nlp-generation-bertsum}画出这一结构。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/03-text-generation-and-interaction/tikz/generation-ch12b-bertsum.tex}
+  \caption{BertSum的抽取结构。每句前插入\code{[CLS]}、句后插入\code{[SEP]}，分段嵌入按句子奇偶交替为$E_A$与$E_B$；
+  各\code{[CLS]}位置的顶层向量$\bm t_i$作为句子表示，经句间Transformer层建模句子之间的关系，
+  再由逻辑回归给出每句的入选概率。图中只画三个句子，词元数受预训练位置嵌入的长度限制。}
+  \label{fig:nlp-generation-bertsum}
+\end{figure*}
+
+句向量之上再叠加$L$层句间Transformer，让每句的表示看到其他句子，
+相当于SummaRuNNer句级GRU的作用。记$\bm T=(\bm t_1,\ldots,\bm t_N)$，
+$\bm H^{(0)}=\bm T+\operatorname{PosEmb}(\bm T)$，每层执行
+$\tilde{\bm H}^{(\ell)}=\operatorname{LN}\bigl(\bm H^{(\ell-1)}+\operatorname{MHAtt}(\bm H^{(\ell-1)})\bigr)$、
+$\bm H^{(\ell)}=\operatorname{LN}\bigl(\tilde{\bm H}^{(\ell)}+\operatorname{FFN}(\tilde{\bm H}^{(\ell)})\bigr)$，
+最后$\hat z_i=\sigma(\bm w_o^{\top}\bm h^{(L)}_i+b_o)$。原文比较了若干层数，两层效果最好。
+训练同样用oracle标签上的二元交叉熵。推断时选概率最高的若干句，并做\term{三元组阻断}
+（trigram blocking）：若候选句与已选句共有一个三元组，就跳过它。
+三元组阻断是一种简单的显式去冗余，作用与SummaRuNNer的冗余项相同，但不需要学习。
+
+从SummaRuNNer到BertSum，变化在于句子表示的来源：前者从头训练循环编码器，
+后者借预训练编码器的上下文表示，只训练少量句间层与输出层。两者都受oracle标签近似性的限制，
+输出也都不能压缩句内信息。BertSum的输入长度受预训练位置嵌入限制，长文档需要截断，
+这一问题在第~\ref{sec:nlp-generation-long-summary}小节处理。
+
+\subsection{生成式摘要}
+\label{sec:nlp-generation-abstractive}
+
+\term{生成式摘要}（abstractive summarization）逐词写出摘要，可以删去句内冗余、合并多句信息，
+也能用原文没有的词概括。它带来三个新问题：罕见的名称和数字不在词表中，
+解码器会反复关注同一片段而重复输出，生成的句子可能与来源矛盾。
+谱系依次是：注意力编码器—解码器首先在标题生成上展示生成式压缩的可行性；
+pointer-generator用复制处理罕见词、用覆盖机制抑制重复；
+去噪预训练让模型在大规模文本上先学会重建，再微调到摘要。
+三者都以式~\eqref{eq:nlp-generation-nll}的负对数似然为主要训练目标，
+差别在结构与初始化。
+
+\subsubsection{注意力编码器—解码器摘要}
+\label{sec:nlp-generation-rush-abs}
+
+Rush等把句子级摘要定义为：给定新闻首句$x_{1:M}$，生成一个更短的标题$y_{1:N}$，
+用约四百万对首句与标题训练\scite{rush2015neural}
+解码器是一个前馈神经语言模型，只看已生成摘要的最后$C$个词$\bm y_c$。
+设词嵌入矩阵为$\bm E\in\mathbb{R}^{D\times V}$，
+\begin{equation}
+  \begin{aligned}
+    \tilde{\bm y}_c&=[\bm E y_{i-C+1};\ldots;\bm E y_i]\in\mathbb{R}^{CD},\qquad
+    \bm h=\tanh(\bm U\tilde{\bm y}_c),\\
+    p(y_{i+1}\mid\bm y_c,x)&\propto\exp\bigl(\bm V\bm h+\bm W\operatorname{enc}(x,\bm y_c)\bigr),
+  \end{aligned}
+  \label{eq:nlp-generation-rush-decoder}
+\end{equation}
+其中$\bm h\in\mathbb{R}^{H}$，$\bm V,\bm W\in\mathbb{R}^{V\times H}$。
+编码器$\operatorname{enc}$是一个注意力模块：把源词嵌入为$\tilde{\bm x}_q=\bm F x_q\in\mathbb{R}^{H}$，
+对相邻$\pm Q$个位置取平均得到平滑表示$\bar{\bm x}_q$，再以摘要上下文$\tilde{\bm y}'_c$
+（用另一组嵌入）为查询计算注意力：
+\begin{equation}
+  \bm p=\operatorname{softmax}\bigl(\tilde{\bm X}^{\top}\bm P\tilde{\bm y}'_c\bigr)\in\mathbb{R}^{M},\qquad
+  \operatorname{enc}(x,\bm y_c)=\sum_{q=1}^{M}p_q\,\bar{\bm x}_q,
+  \label{eq:nlp-generation-rush-attention}
+\end{equation}
+$\tilde{\bm X}\in\mathbb{R}^{H\times M}$的各列为$\tilde{\bm x}_q$，$\bm P$为双线性参数。
+解码器每生成一个词，注意力就重新分配到源句的不同位置，作用与
+式~\eqref{eq:nlp-generation-bahdanau}的注意力相同；区别在于打分是双线性形式，
+编码器也没有循环结构，源词表示只经过局部平均。推断用束搜索。
+
+这一模型表明，不依赖句法规则、端到端学习的生成式压缩是可行的。
+它也暴露了复制问题：名称、数字等罕见词在词表中缺失或训练不足，模型常把它们换成常见词。
+原文的补救是ABS+：在对数线性框架中加入源句与摘要的一至三元词匹配特征，
+用最小错误率训练调节权重，鼓励模型照抄源句中的词。
+随后的工作把前馈解码器换成循环解码器，Nallapati等还加入在生成与指向源位置之间切换的开关，
+并把任务从单句标题扩展到多句新闻摘要\scite{nallapati2016abstractive}
+这一开关是下面pointer-generator的前身。
+
+\subsubsection{pointer-generator复制与覆盖}
+\label{sec:nlp-generation-pointer}
+
+See等的pointer-generator在CNN/DailyMail多句新闻摘要上同时处理复制与重复两个问题
+\scite{nlp-intro-see2017}
+复制部分就是第~\ref{sec:nlp-generation-copy-pointer}小节的指针生成网络：
+生成门按式~\eqref{eq:nlp-generation-pointer-generator}混合词表分布与注意力给出的复制分布，
+扩展词表让源端未登录词也有概率；门的输入、扩展词表的构造及数值算例都在那里给出。
+摘要中的具体配置是：编码器为单层双向LSTM，$\bm h_i\in\mathbb{R}^{512}$（每向256维），
+解码器为单层LSTM，源端与目标端共用最常见的五万词。复制使固定词表可以保持较小，
+而文章中的人名、地名和数字仍能原样写出。摘要特有的问题是重复，下面的覆盖机制处理它。
+
+\paragraph{覆盖机制}
+多句摘要中，解码器常在不同步骤反复关注同一片段，输出重复的句子。
+\term{覆盖机制}（coverage mechanism）维护此前各步注意力的累加，即覆盖向量
+\begin{equation}
+  \bm c_t=\sum_{t'<t}\bm a_{t'},\qquad c_{t,i}=\sum_{t'<t}a_{t',i},
+  \label{eq:nlp-generation-coverage}
+\end{equation}
+$c_{t,i}$表示源位置$i$到第$t$步为止已经被关注的总量，$\bm c_1=\bm 0$。
+覆盖向量以两种方式起作用。其一，它作为注意力打分的额外输入，
+把式~\eqref{eq:nlp-generation-bahdanau}改为
+\begin{equation}
+  e_{t,i}=\bm v^{\top}\tanh\bigl(\bm W_h\bm h_i+\bm W_s\bm s_t+\bm w_c\,c_{t,i}+\bm b\bigr),
+  \label{eq:nlp-generation-coverage-attention}
+\end{equation}
+让模型在决定当前注意哪里时知道哪里已经读过。其二，\term{覆盖损失}（coverage loss）
+惩罚当前注意力与已有覆盖的重叠：
+\begin{equation}
+  L_t=-\log p_t(y^{\ast}_t)+\lambda\sum_{i}\min(a_{t,i},c_{t,i}).
+  \label{eq:nlp-generation-coverage-loss}
+\end{equation}
+第一项是第$t$步的负对数似然，第二项在当前注意力$a_{t,i}$与覆盖$c_{t,i}$都大的位置才大，
+即只惩罚“再次关注已经关注过的位置”。用$\min$而不是乘积或$a_{t,i}$本身，
+是为了让惩罚有界：每步覆盖损失不超过$\sum_i a_{t,i}=1$。
+它不要求每个源位置都被关注到，只要求不重复关注，因为摘要本来就应跳过大量背景。
+总损失为各步$L_t$的平均，原文取$\lambda=1$。
+
+用数值核对这两项。设教学来源词元为“读书会／地点／海棠楼201／请／到／海棠楼201”，
+此前各步注意力累加得覆盖$\bm c_t=(0,0,0.6,0.1,0,0.3)$，
+本步注意力为$\bm a_t=(0.05,0.05,0.45,0.10,0.05,0.30)$，$p_{\mathrm{gen},t}=0.4$。
+若“海棠楼201”是未登录词，它的输出概率为$0.6\times(0.45+0.30)=0.45$，
+负对数似然为$-\log0.45\approx0.799$。
+覆盖损失为$\min(0.05,0)+\min(0.05,0)+\min(0.45,0.6)+\min(0.10,0.1)+\min(0.05,0)+\min(0.30,0.3)=0.85$，
+本步总损失为$0.799+0.85\approx1.649$。这一步正在重复关注两处“海棠楼201”，覆盖损失相应很大；
+若注意力转到尚未读过的“读书会”，重叠会降到接近零。
+
+覆盖损失要在模型学会对齐之后才加入。原文先不带覆盖训练至收敛，再加入覆盖机制和覆盖损失继续训练约三千步；
+从一开始就加入覆盖目标会干扰主目标、降低整体效果，
+而只加覆盖向量、不加覆盖损失时，看不出重复有所减少。
+覆盖机制只防止“重复关注”，不判断信息是否该写：它可以避免重复，
+却不能阻止模型复制一个正确名称后把它接到错误的活动上。
+
+\subsubsection{去噪预训练摘要：BART、T5与PEGASUS}
+\label{sec:nlp-generation-conditional-summary}
+
+pointer-generator的全部参数都从摘要语料学起，几十万篇文档难以教会模型丰富的语言知识。
+预训练的编码器—解码器先在大规模无标注文本上学习“从损坏的输入重建文本”，
+再以“来源→摘要”的平行数据微调。摘要所需的能力，即读懂长输入、复制关键片段、
+改写和压缩，都在重建任务中得到练习。第~\ref{sec:nlp-llm-objective-t5-bart}小节已给出
+BART与T5两种去噪目标的构造，这里说明它们与摘要的关系，并补充专为摘要设计的PEGASUS。
+
+\paragraph{BART与T5}
+BART比较了五种噪声：词元掩码、词元删除、文本填充（按泊松分布抽取跨度长度，
+每个跨度换成一个掩码符号）、句子置换和文档旋转，解码器总是重建完整原文
+\scite{lewis-etal-2020-bart}
+重建全文意味着解码器大量练习照抄未损坏的部分、补全缺失的部分，
+这与摘要“多数内容来自来源、少数需要改写”的形态接近。最终模型组合了文本填充与句子置换，
+后者要求模型理解句间顺序，对需要重组信息的摘要尤其有关。
+T5用跨度损坏，只生成被删的跨度，并把所有任务写成带前缀的文本到文本格式，
+摘要输入写作“summarize: 原文”\scite{raffel2020t5}
+两者微调到摘要时都只需把来源作为编码器输入、摘要作为解码器目标，
+复制不再需要显式的指针结构：预训练已经让交叉注意力与输出层习惯于照抄输入中的词元，
+子词切分也使罕见名称可以按片段拼出。
+
+\paragraph{PEGASUS}
+BART和T5的预训练目标是通用的。Zhang等认为，预训练目标越接近下游任务，
+微调所需的数据越少，于是设计了\term{间隔句生成}（gap sentences generation, GSG）：
+从文档中选出若干完整句子，在输入中各替换为一个掩码符号，目标是把这些句子按原顺序拼接生成出来
+\scite{zhang2020pegasus}
+被挖去的句子由剩余文档生成，这正像从文档生成一个“伪摘要”。
+
+选哪些句子是关键。随机选句和取开头几句都不如选“重要”的句子：
+PEGASUS对每个句子$s_i$计算它与文档其余部分的ROUGE-1 F值
+$\operatorname{R}_1(s_i,D\setminus\{s_i\})$，按这一分数独立排序，选前$m$句，
+$m$按句数的固定比例确定，原文的消融实验以约30\%为宜。
+与其余部分重合越多的句子越能概括全文，被挖去后也越能从剩余文本推断。
+用四句教学文档手算：$s_1$“读书会／改至／周五／下午／举行”，
+$s_2$“读书会／地点／海棠楼201”，$s_3$“周五／下午／读书会／在／海棠楼201／举行”，
+$s_4$“欢迎／参加”。按词计数、每个词的匹配次数不超过它在两侧出现的较小次数，
+$s_3$与其余三句共10个词匹配5个，
+精确率$5/6$、召回率$5/10$，F值0.625；$s_1$对其余11个词匹配4个，F值0.5；
+$s_2$为0.25，$s_4$为0。取$m=1$，挖去$s_3$，
+输入为“$s_1$ \code{[MASK1]} $s_2$ $s_4$”，目标为$s_3$。
+$s_3$同时包含时间与地点，正是这份文档最像摘要的一句。
+
+\paragraph{微调目标的构造}
+预训练决定模型会什么，微调目标决定它学会保留什么。会议纪要若只以“会议改至周五”
+这类结论句为目标，模型就学不到“建议”与“决定”的区别；目标应把二者分开写，
+并把行动项写成“负责人、动作、截止时间、决定依据”的固定格式。例如教学会议决定
+“由林岚在4月16日18:00前汇总报名信息”，行动项就是（林岚，汇总报名信息，4月16日18:00，会议决定）；
+原通知没有这位负责人，摘要不能把会议补充的事实写成通知已说过。
+目标格式越明确，生成后越容易逐项回查来源。
+
+\paragraph{比较}
+三者共享编码器—解码器结构，区别在预训练目标与摘要的距离：
+T5的跨度损坏目标短、计算省，最为通用；BART重建全文，更接近摘要中的复制与改写；
+PEGASUS直接以伪摘要为目标，在微调数据很少时优势最明显：原文只用一千个微调样本，
+就在十二个摘要数据集中的六个上超过了此前的最好结果。代价是PEGASUS的预训练专为摘要设计，
+原文也只在摘要任务上评测；三者的输入长度都受位置编码与注意力计算的限制，
+常见设置为数百到一千余词元。微调后的模型仍可能产生与来源矛盾的陈述，
+预训练提高了流畅度，并不直接约束忠实性，忠实性核验见第~\ref{sec:nlp-generation-faithfulness}小节。
+
+\subsection{长文档摘要}
+\label{sec:nlp-generation-long-summary}
+
+论文、报告和书籍章节动辄数万词元，超过上述模型的长度上限。
+完整自注意力每层计算$n\times n$的得分矩阵，计算和显存都随长度平方增长；
+简单截断又会丢掉结尾的结论。长文档摘要的路线可按“在哪里丢信息”区分。
+
+\paragraph{截断与先抽取后生成}
+最简单的是只读前$n_{\max}$个词元。新闻的开头偏重使这一做法在新闻上损失不大，
+在论文上则会丢掉方法和结论。先抽取后生成用一个廉价的抽取器（如TextRank或有监督句子打分）
+从全文选出若干句，拼成不超过长度上限的输入，再交给生成模型
+\scite{liu2018generating}
+信息在抽取阶段丢失，生成器无法恢复被抽取器误删的条件。
+
+\paragraph{分段摘要与合并}
+分治法把文档切成若干段，分别摘要再合并或再摘要一次。每段都在长度上限内，
+但段与段之间的关系在第一阶段就被切断：会议材料若先写“林岚建议改至周五”，
+后面另一段才写“与会者否决该建议”，第一阶段若只保存“会议改至周五”，
+第二阶段已经无从恢复建议状态。为此，第一阶段的输出应保存“陈述、原文范围、
+是否含条件或待决状态”，合并阶段可以回查原文。
+
+\paragraph{分层编码}
+分层编码让模型看到全文的结构。Cohan等为论文设计了两级编码器：
+词级双向LSTM在每个章节内编码，章节级LSTM在章节表示的序列上编码；
+解码时，注意力先分配到章节，再分配到章节内的词，词$i$（属于章节$j$）的权重为
+$\alpha_{t,(j,i)}\propto\beta_{t,j}\exp\bigl(\operatorname{score}(\bm h_{(j,i)},\bm s_t)\bigr)$，
+$\beta_{t,j}$是对章节的注意力\scite{cohan2018discourse}
+这样的分层注意力利用了“摘要通常按章节组织”的篇章结构，计算量也只与章节数和章节长度有关。
+
+\paragraph{稀疏注意力：LED}
+另一条路线保留全文作为输入，但让每个位置只读取一部分位置。
+Longformer把完整自注意力换成滑动窗口局部注意力加少量全局注意力：
+每个位置只读取左右各$w/2$个邻居，指定的少数位置则读取所有位置、也被所有位置读取，
+每层代价从$O(n^2)$降为$O(nw)$\scite{nlp-llm-longformer2020}
+其机制见第~\ref{sec:nlp-llm-sliding-window}小节。
+Longformer-Encoder-Decoder（LED）把这一编码器接到BART上：
+编码器自注意力换成窗口加全局注意力，解码器保持完整的因果自注意力和对编码器的完整交叉注意力；
+BART原有一千零二十四个位置嵌入，LED把它们复制十六次，把位置扩展到16384，
+免去从头学习长位置。摘要时通常只给首个词元设全局注意力，使它汇总全文。
+取$n=16384$、$w=1024$，每层得分计算从$n^2\approx2.7\times10^8$降到$nw\approx1.7\times10^7$，
+约为十六分之一；解码器的交叉注意力仍是$m\times n$，因输出长度$m$远小于$n$而可以承受。
+
+\paragraph{比较}
+截断与先抽取后生成在输入端丢信息，丢失位置固定或取决于抽取器；
+分段摘要在段边界丢失跨段关系；分层编码保留全文但把细节压到章节表示中；
+稀疏注意力保留全文的每个词元，远距离信息只能经全局位置或多层窗口接力传递。
+从前到后，保留下来的原文信息依次增多，计算量也随之上升。
+即使输入能放进上下文，模型也不一定用好全部内容，长上下文中段信息利用不足的问题
+见第~\ref{sec:nlp-inference-lost-middle}小节。
+
+\subsection{基于人类反馈的摘要}
+\label{sec:nlp-generation-feedback-summary}
+
+前面的方法都以模仿参考摘要为目标，用ROUGE评价。两者都与人们对摘要质量的判断不完全一致：
+参考摘要本身质量参差，一份摘要可以与参考措辞不同而同样好；
+ROUGE奖励词面重合，对事实错误不敏感。Stiennon等把训练目标换成人类偏好，
+用第~\ref{chap:nlp-preference-alignment}章的RLHF流程训练摘要模型
+\scite{nlp-align-stiennon2020}
+
+流程分三步。第一步，在经过筛选的Reddit帖子与作者自写摘要（TL;DR）上监督微调，
+得到策略$\pi^{\mathrm{SFT}}$。第二步，对同一帖子从若干策略采样两份摘要，请标注者选出更好的一份，
+得到比较数据$(x,y_w,y_l)$；用第~\ref{sec:nlp-align-bradley-terry}小节的
+Bradley–Terry模型训练奖励模型$r_{\bm\phi}$，损失为
+\begin{equation}
+  L_{\mathrm{RM}}(\bm\phi)=-\mathbb{E}_{(x,y_w,y_l)}
+  \Bigl[\log\sigma\bigl(r_{\bm\phi}(x,y_w)-r_{\bm\phi}(x,y_l)\bigr)\Bigr].
+  \label{eq:nlp-generation-summary-rm}
+\end{equation}
+第三步，用PPO最大化奖励减去与监督模型的KL惩罚：
+\begin{equation}
+  R(x,y)=r_{\bm\phi}(x,y)-\beta\log\frac{\pi^{\mathrm{RL}}(y\mid x)}{\pi^{\mathrm{SFT}}(y\mid x)}.
+  \label{eq:nlp-generation-summary-ppo}
+\end{equation}
+KL项把策略拴在监督模型附近，既防止它生成奖励模型没见过的文本，也保留一定的输出多样性。
+PPO的裁剪目标与价值函数见第~\ref{sec:nlp-align-ppo}小节，
+策略梯度与RLHF的一般推导可参考\BookChapterRef{chap:rl-reward}{卷七的奖励学习章}。
+用数值看一次更新的信号：设奖励模型给两份摘要打分$1.2$与$0.4$，
+则它判断前者更好的概率为$\sigma(0.8)\approx0.69$，这一对的损失为$-\log0.69\approx0.37$；
+策略生成的某份摘要奖励为$1.0$，其对数概率比监督模型高$2$，取$\beta=0.05$，
+扣除KL惩罚后$R=1.0-0.1=0.9$。
+
+摘要任务中有三点现象。其一，以人类偏好训练的13亿参数模型，在人工比较中优于十倍规模的监督模型，
+也常优于数据集中的参考摘要。用best-of-N拒绝采样比较优化对象时，
+以ROUGE为选择标准的摘要质量比以奖励模型为标准时更早见顶，峰值也明显更低。
+其二，人们倾向于偏好较长的摘要，奖励模型会学到这一偏好；原文控制长度后再比较，
+67亿参数模型的摘要仍在约65\%的比较中胜过参考摘要，但比较摘要质量时必须交代长度。
+其三，\term{过度优化}（overoptimization）：沿奖励模型持续优化、与监督模型的KL距离越拉越大时，
+奖励模型分数继续上升，真实的人类偏好却在某一点之后下降，策略开始利用奖励模型的漏洞。
+奖励模型过度优化的一般讨论见第~\ref{sec:nlp-align-overoptimization}小节。
+这一方法的代价是需要持续收集人工比较，且奖励模型只覆盖标注者关注的维度；
+一份摘要可能读起来令人满意，却漏掉了不显眼但关键的条件。
+
+\subsection{多来源信息综合}
+\label{sec:nlp-generation-multi-summary}
+
+\term{多文档摘要}（multi-document summarization）的输入是讨论同一主题的多份材料。
+来源增多后，重复不能当作多份独立证据，表面不一致也不一定是矛盾：
+旧通知的4月17日和改期通知的4月18日对应不同版本；另一活动也在4月18日举行，则属于不同对象。
+因此要先对齐“对象、属性、值、适用时点、来源”，再判断是转载、互补、条件差异还是冲突。
+确认版本关系后可以表达最新状态；两个同样有效而相互冲突的来源应并列表述或请求澄清，
+不能按转载数量投票。图~\ref{fig:nlp-generation-provenance}展示同一活动的三份教学通知中
+的重复、互补和版本差异。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/nlp-generation-provenance}
+  \caption{摘要陈述与来源的对应。三份教学通知按活动编号\code{ML-0418}对齐；
+  实线表示支持，虚线表示需要版本解释的日期差异。转载的相同日期合为一个事实，
+  地点与报名条件分别保留来源。灰框标明用途允许省略的校内规则，
+  底部警示框标明无来源支持的新增陈述，二者不能混为一类。}
+  \label{fig:nlp-generation-provenance}
+\end{figure*}
+\FloatBarrier
+
+图中$D_1$为4月15日官方改期通知，含当前时间和校外规则；
+$D_2$为同日转载，重复当前时间并补列地点；
+$D_3$为4月14日发布、现已归档的旧通知，给出原定4月17日及校内规则。
+它们都是本节构造的来源片段。支持与完整需要分开检查：
+摘要中每条陈述都有来源支持，即支持率高，也不说明该写的信息都已写出，即完整率高。
+方法谱系有三层：选择式方法从各来源选片段，来源可追溯；
+词图融合把近重复句压成一条更短的句子；分层编码与多文档预训练直接生成融合文本，
+表达能力最强，却需要事后回查来源。
+
+\subsubsection{MMR与最大覆盖的选择式综合}
+\label{sec:nlp-generation-mmr}
+
+多份材料的高相关片段往往彼此重复，只按相关性排序，同一条日期就会占满摘要。
+\term{最大边际相关性}（maximal marginal relevance, MMR）每次选择时既考虑片段对查询的相关性，
+也扣除它与已选内容的最大相似度\scite{nlp-generation-carbonell1998}
+对已选集合$S$和尚未选入的片段$i$，
+\begin{equation}
+  i^*=\argmax_{i\notin S,\;\operatorname{cost}(S\cup\{i\})\leq B}
+  \left[\lambda\,\operatorname{rel}(i,q)
+  -(1-\lambda)\max_{j\in S}\operatorname{sim}(i,j)\right].
+  \label{eq:nlp-generation-mmr}
+\end{equation}
+其中$q$为查询，$B$为预算，$\lambda\in[0,1]$权衡相关性与去冗余；$S$为空时最大相似度定义为零。
+每轮取可容纳且分数为正的最高项，直到预算不足、没有正分项或候选耗尽。
+
+在三份资料中，先把$D_1,D_2$逐字重复的当前时间聚成一个片段，保留来源集合$\{D_1,D_2\}$；
+确认$D_3$为旧版本后，将旧日期留在历史记录中，不列为当前安排候选。
+教学候选与固定分词成本如下，片段乙是$D_2$中的一句同义重述。
+
+\begin{fullwidth}
+\begin{center}
+  \begin{tabular}{@{}clrr@{}}
+    \toprule
+    片段 & 按斜线分词的内容 & 成本 & 相关性\\
+    \midrule
+    甲 & 读书会／改至／4月18日／14:00 & 4 & 0.95\\
+    乙 & 读书会／时间／已更新／至／4月18日 & 5 & 0.92\\
+    丙 & 地点／为／海棠楼201 & 3 & 0.80\\
+    丁 & 校外来宾／须／在／4月16日18:00／前／提交／报名信息 & 7 & 0.85\\
+    \bottomrule
+  \end{tabular}
+\end{center}
+\end{fullwidth}
+片段间的相似度为：甲乙0.90，甲丙0.10，甲丁0.20，乙丙0.10，乙丁0.15，丙丁0.10，均为教学输入。
+甲来自$D_1,D_2$，乙、丙来自$D_2$，丁来自$D_1$。
+
+取$\lambda=0.7$、$B=14$。首轮分数为甲0.665、乙0.644、丙0.560、丁0.595，选甲。
+第二轮乙减去$0.3\times0.9$后为0.374，丙为0.530，丁为0.535，选丁，已用成本11。
+第三轮只有丙仍可容纳，得分0.530，选入后成本恰为14。
+若只按相关性从高到低扫描可容纳项，会选甲、乙，剩余5容不下丁，再选丙，遗漏校外条件。
+
+\term{最大覆盖}（maximum coverage）换一个角度计分：不惩罚片段相似，而是奖励新覆盖的事实。
+设日期、时刻、地点、完整校外规则四个事实的权重分别为$2,1,2,4$；
+甲覆盖前两项，乙只覆盖日期，丙、丁分别覆盖后两项。若$c_i$是片段成本，目标是
+\begin{equation}
+  \max_{S:\;\sum_{i\in S}c_i\leq B}\;\sum_{f}w_f\,\mathbb{I}\bigl[f\text{被}S\text{中某个片段覆盖}\bigr].
+  \label{eq:nlp-generation-max-coverage}
+\end{equation}
+已覆盖的事实再被覆盖不加分，冗余因此自动不受奖励。
+以“新增权重／成本”贪心选择，初值为甲$3/4$、乙$2/5$、丙$2/3$、丁$4/7$，先选甲；
+此后乙的新增权重为0，再依次选丙、丁，覆盖权重9，成本14；相关性基线的甲、乙、丙只覆盖权重5。
+带预算的最大覆盖是NP困难问题，按性价比贪心的结果需要再与“单选价值最高的一项”比较取优，
+才有常数近似比保证；小例子上的贪心结果不能推广为一般最优。
+
+选取次序甲、丁、丙不是阅读次序。把甲、丙组合为“何时何地”，再表述丁的参加前提，
+按陈述保存来源：甲来自$\{D_1,D_2\}$，丙来自$D_2$，丁来自$D_1$。
+若$D_3$不是归档旧版而是同日有效的通知，冲突尚未解决，就不能在聚合时悄悄删除它，
+应保留冲突标记，并在最终表达中说明不确定性。
+
+\subsubsection{词图最短路径压缩与多句融合}
+\label{sec:nlp-generation-word-graph}
+
+选择式综合保留原句的冗长部分。对已经确认表达同一事件的近重复句簇，
+Filippova把各句的词及相邻关系构成\term{词图}（word graph），
+在图上寻找一条较短且受来源支持的路径，实现\term{多句压缩}（multi-sentence compression）
+\scite{filippova-2010-multi}
+词形和词性相同的词优先共用节点，有多个可能位置时依据相邻上下文区分；
+起止节点连接每个句子的首尾。图可能有环。一条边在句簇中出现$f(u,v)$次，
+基础版本的成本为$1/f(u,v)$，出现越多的相邻关系越便宜；
+枚举若干条短路径，按是否含动词、是否达到最小长度过滤，再选成本最低者。
+
+输入三句，分词固定为
+\begin{quote}
+读书会／于／周五／在／海棠楼201／举行。\\
+本次／读书会／周五／在／海棠楼201／举行。\\
+读书会／将／于／周五／在／海棠楼201／举行。
+\end{quote}
+“起点到读书会”出现2次，成本$1/2$；“于到周五”出现2次，成本$1/2$；
+共同尾部“周五到在、在到海棠楼201、海棠楼201到举行、举行到终点”各出现3次，各成本$1/3$；
+其他边各出现1次，成本1。
+路径“起点、读书会、周五、在、海棠楼201、举行、终点”的成本为$1/2+1+4/3=17/6$，
+恢复为“读书会周五在海棠楼201举行”。它使用第一、三句的起点边和第二句的“读书会到周五”边，
+并非照抄某一原句。经“于”的路径成本为$1/2+1+1/2+4/3=10/3$，经“本次”的路径为$13/3$。
+最短候选有五个词元并含动词“举行”，通过最小长度为五的教学过滤条件。
+
+词图方法不需训练，输出的每条边都来自某个来源句。但连通性、低成本和含动词只检查了图与表面形式，
+不保证关系正确：若把不同角色的句子错误聚为一簇，合法路径也可能生成“校内师生须提前提交”。
+句簇的划分因此必须先于压缩完成，融合互补事实也超出了它的能力。
+
+\subsubsection{分层编码与多文档预训练}
+\label{sec:nlp-generation-multi-pretraining}
+
+选择与词图都只在原句层面操作，无法把不同来源的互补信息写进一句话。
+神经生成模型可以融合，但多文档输入更长，文档之间的关系也需要建模。
+
+\paragraph{分层Transformer}
+Liu与Lapata针对由多个网页生成维基百科首段的任务，先用一个排序器给全部段落打分，
+保留排名靠前的若干段，再用分层Transformer编码\scite{liu2019hierarchical}
+每层包含两部分：局部层在每个段落内部做普通的自注意力；
+全局层先用多头池化把每个段落压成每头一个向量，即对段内各词元
+$a^{z}_{k,j}=\operatorname{softmax}_j(\bm w^{z\top}_a\bm x_{k,j})$、
+$\bm u^{z}_k=\sum_j a^{z}_{k,j}\bm W^{z}_b\bm x_{k,j}$，
+其中$\bm x_{k,j}$是第$k$段第$j$个词元的表示，$z$为头的编号；
+再在段落向量之间做多头注意力，得到每段的跨段上下文，并加回该段的每个词元。
+这样，词元级计算只在段内进行，跨段交互发生在段落向量这一级，
+计算量随段数和段长增长，而不是随总长度平方增长。
+它的思路与第~\ref{sec:nlp-generation-long-summary}小节的分层编码相同，区别在于这里的“段”来自不同文档。
+
+\paragraph{PRIMERA}
+分层Transformer需要在每个多文档数据集上从头学习跨文档关系。
+PRIMERA借鉴PEGASUS，设计专为多文档摘要的预训练\scite{xiao2022primera}
+结构上，它以LED为基础，把同一簇的各文档拼接，文档之间插入分隔符\code{<doc-sep>}，
+并给这些分隔符设全局注意力，使它们成为文档间交换信息的枢纽。
+预训练目标仍是挖去句子再生成，选句策略称为\term{实体金字塔}（entity pyramid）：
+抽取簇内所有实体，按出现在多少份文档中排序，频繁跨文档出现的实体代表簇的共同主题；
+对排名靠前的每个实体，在含有它的句子中选与簇内其他文档ROUGE最高的一句，挖去后作为生成目标。
+与PEGASUS按“与本文档其余部分的重合”选句相比，实体金字塔按“与其他文档的重合”选句，
+迫使模型从其他文档推断被挖去的内容，从而练习跨文档的信息汇聚。
+
+\paragraph{比较与来源回查}
+选择式方法每条陈述都对应原文片段，来源可追溯，但不能融合；
+词图压缩能删去冗余，却只限于同一事件的近重复句；
+分层编码与多文档预训练能把互补信息写进一句，代价是输出不再与来源一一对应，
+跨文档的对象绑定也可能出错。例如另一条教学记录说明，编号\code{IR-0418}的
+“检索系统研讨会”也在4月18日14:00举行，地点为松柏楼305；
+若模型只按日期把两份材料对齐，就可能生成“读书会在松柏楼305举行”这一语法正确的错误陈述。
+引用一份确实含有“松柏楼305”的资料并不能支持这一陈述，支持对象是完整的关系，而不是孤立的词语。
+因此，融合式生成之后需要把每条陈述拆回“对象、属性、值、来源”，逐项回查，
+具体核验见第~\ref{sec:nlp-generation-faithfulness}小节和第~\ref{chap:nlp-question-answering-dialogue}章。
+
+\paragraph{摘要方法的对照}
+表~\ref{tab:nlp-generation-summarization-methods}汇总本节方法。
+从上到下，输出越来越依赖生成而不是选择，压缩与融合能力上升，
+对来源的忠实则越来越需要额外的核验来保证；可处理的输入长度与训练数据需求，
+则分别由结构与预训练决定。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{26mm}
+    >{\raggedright\arraybackslash}p{28mm}>{\raggedright\arraybackslash}p{38mm}
+    >{\raggedright\arraybackslash}p{26mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 输入长度与数据 & 忠实性与新代价\\
+    \midrule
+    Lead、TextRank & 无训练数据 & 位置先验；句子图上的中心性传播 & 任意长度；无需标注 & 原句忠实；不能压缩，易漏独特条件\\
+    SummaRuNNer、BertSum & 规则打分不可学习 & oracle标签上的句子二分类；冗余项或三元组阻断 & BertSum受位置嵌入限制；需摘要语料 & 原句忠实；oracle标签近似\\
+    注意力编码器—解码器 & 抽取不能压缩 & 每步注意力读取源句，逐词生成 & 单句级；大规模平行对 & 罕见词复制困难\\
+    pointer-generator & 罕见词与重复 & 生成门混合复制分布；覆盖向量与覆盖损失 & 数百词元；摘要语料 & 复制正确仍可能绑定错误\\
+    BART、T5、PEGASUS & 摘要语料不足以学语言知识 & 去噪或间隔句预训练后微调 & 约一千词元；少量微调数据即可 & 流畅不等于忠实\\
+    长文档方法 & 超出长度上限 & 截断、抽取后生成、分段、分层、稀疏注意力 & 至数万词元 & 丢信息的位置各不相同\\
+    人类反馈 & 模仿参考与ROUGE偏离人类判断 & 偏好比较训练奖励模型，PPO加KL & 需持续人工比较 & 长度偏好，奖励过度优化\\
+    MMR、最大覆盖 & 多来源重复 & 相关性减冗余；覆盖事实的权重 & 片段级；无需训练 & 来源可追溯；不能融合\\
+    词图压缩 & 近重复句冗长 & 词图上的最短路径 & 同一事件的句簇 & 可能接错主体\\
+    分层编码、PRIMERA & 跨文档融合 & 段内与段间注意力；实体金字塔预训练 & 多文档拼接，数千词元 & 需回查来源与对象绑定\\
+    \bottomrule
+  \end{tabularx}
+  \caption{摘要与信息综合方法对照。“输入长度”只给典型量级，具体取决于模型配置；
+  所有生成式方法的输出都需要按第~\ref{sec:nlp-generation-faithfulness}小节的方法核验。}
+  \label{tab:nlp-generation-summarization-methods}
+\end{table*}
+\FloatBarrier
