@@ -1311,182 +1311,33 @@ Shazeer提出MQA以减少增量解码的键值访存，Ainslie等用GQA提供共
 \end{figure*}
 
 \FloatBarrier
+
 \section{理论分析}
 \label{sec:transformer-theory}
 
-一个位置可以读取哪些信息，决定目标是否可能由这些表示实现；参数怎样更新，决定训练能否找到有用的候选；训练样本之外的输入，又检验所得规则能否复用。这正是评估任何模型都绕不开的三个层层递进的问题，前面各章也都用同样的框架组织：表达能力回答“候选函数里到底有没有我们想要的那个函数”，若结构上就表达不了，再多数据和训练也无济于事；收敛性回答“梯度下降能不能、以多快速度找到一个训练误差足够小的解”；泛化性回答“在训练序列上学到的规则，换到没见过的序列上是否仍然成立”。下面按表达能力、收敛性和泛化性讨论这三个问题，把注意力尺度、归一化、长度及结构约束放入各自条件。
+注意力能够跨位置读取，但读取范围、位置信息和数值尺度仍然限制所得表示。这里保留这些结构特有的条件；一般优化与统计推导沿用前面章节。
 
 \subsection{表达能力}
 \label{sec:transformer-expressivity}
 
-注意力让一个位置读取允许集合中的其他位置，多头与FFN进一步组合这些结果。候选空间是否包含目标，取决于可见性、位置表示、宽度、深度和读出。没有位置或其他顺序线索的自注意力保持置换等变性，因而不能单靠内容判断相同词元排列的先后；因果模型只能使用前缀；需要完整后文的逐位置目标则要提供相应可见上下文。
+没有位置或其他顺序线索、并采用对称汇聚的自注意力分类器，对相同词元的排列给出相同结果。因此$(a,b)$与$(b,a)$不能仅靠增加头数或层数得到区分。因果掩码则规定每个位置只能使用前缀，不能完成必须读取尚不可见后文的判断。
 
-固定最大长度规定了候选函数的输入范围；长度继续增长时，所需传播、状态和读出也可能改变。有限层读取虽能跨越远距离，却仍要在有限维状态中选择、组合并保留所需信息。稀疏连接、低秩压缩和共享键值改变候选自由度，可能适合目标，也可能遗漏关键交互；目标所需交互决定这些约束是否合适，表示成本再据实际路径计算。
+在固定长度、可学习位置编码及指定注意力与前馈结构下，Transformer可以逼近相应连续目标；Yun等的结论采用$L^p$积分误差，并允许深度随目标和精度改变\scite{yun2020transformeruniversal}。它不直接保证固定大小、不同掩码或归一化配置的模型具有同样能力，也不提供训练成功或长度外推保证。
 
-顺序限制并非只是一项直觉。没有位置线索、所有位置共用计算且接对称汇聚的分类器满足$f(\pi x)=f(x)$，其中$\pi$为词元排列。例如$(a,b)$和$(b,a)$在该候选族中得分始终相同；若目标在两处分别取$0$与$1$，最小的最大绝对逼近误差至少为$1/2$。增加头数和层数仍保留这一对称性，需要改变位置信息或读出才能解除限制。
-
-\begin{theorem}[带可学习位置编码的Transformer对定长连续目标的逼近能力]
-\label{thm:transformer-fixed-length-approximation}
-固定$T\geq2$、输入维度$d$及非空紧域$D\subset\mathbb R^{T\times d}$。设$g:D\to\mathbb R^{T\times d}$连续，$1\leq p<\infty$。对任意$\varepsilon>0$，存在带可学习加性位置编码的Transformer候选$f$，使
-\[
- \left(\int_D\lVert f(\bm X)-g(\bm X)\rVert_p^p\,\mathrm d\bm X\right)^{1/p}<\varepsilon\text{。}
-\]
-这里矩阵范数按全部元素计算。候选使用无因果掩码的Softmax自注意力、残差连接和ReLU前馈层，允许投影与前馈层偏置；允许深度随目标和精度改变，不要求LayerNorm。构造可采用两个注意力头、每头一维投影和宽度为4的前馈隐藏层。
-\end{theorem}
-这是Yun等的定长逼近结论，采用的是Lebesgue积分下的$L^p$误差，不是一致误差\scite{yun2020transformeruniversal} 若观测输入分布$P_X$在$D$上有密度且密度不超过$M$，同一候选的$L^p(P_X)$逼近误差至多为$M^{1/p}\varepsilon$。离散词元分布不满足该密度前提，不能用这一换算；固定深度、固定位置编码、因果掩码或强制归一化的其他架构也需单独证明。该定理不提供训练方法或跨长度保证。
-
-\subsection{收敛性}
+\subsection{训练中的数值尺度}
 \label{sec:transformer-convergence}
 
-固定长度、掩码和确定性的训练目标后，注意力参数仍相互耦合，目标通常非凸。下面的存在性讨论先限于整体前向映射对参数连续的网络。固定可见集合上的Softmax注意力、连续前馈变换，以及采用固定$\varepsilon>0$的层归一化，都保留这种连续性。连续激活、正的归一化分母与连续损失使目标在非空紧参数域上取得最小值；对非负损失和全部参数的正二次惩罚也可保证无约束最小值存在。前一种情形使用连续函数在紧域上取到最小值的性质；后一种情形中，正二次项使连续目标在参数范数趋于无穷时也趋于无穷，因而可以在足够大的闭球内取得最小值。注意力结构本身不保证参数解唯一。
+查询和键的尺度共同决定Softmax得分。权重过于集中时，评分路径的梯度可能变小；多头、残差和归一化又影响深层传播，因此需要结合投影尺度、归一化分母和梯度观察选择训练设置。一般光滑目标的优化结论见第\ref{sec:ffn-convergence}节，残差路径的存在本身不保证全局收敛。
 
-硬Top-$k$路由需要另查整体连续性。固定单个输入$\bm h=1$，设两个专家的输出恒为1和0，路由得分为$(0,\tau)$，其中$\tau$是待改变的路由参数。Top-1选中后将唯一权重归一化为1，则$\tau<0$时输出为1，$\tau>0$时输出为0。平局规则只决定$\tau=0$时的取值，不能消除两侧的跳变；例如连续有界损失$\ell(s)=\min\{1,|s|\}$在这两个输出处仍相差1。专家内部连续并不足以保证复合目标连续，加入连续的正二次惩罚也不会自动消除这一跳变。因此，对这类路由不能仅沿用上述连续性论证，而要核查完整目标是否满足取得最小值的相应条件。
-
-\begin{theorem}[Transformer光滑目标的驻点收敛速度]
-\label{thm:transformer-stationary-rate}
-固定训练集、网络结构和确定性的前向计算，记全批量训练目标为$J(\bm\theta)$。假设$J\geq J_{\inf}$，且梯度在包含迭代点及更新线段的区域内为$\beta$-Lipschitz，其中$\beta>0$。采用完整梯度下降
-$\bm\theta^{(k+1)}=\bm\theta^{(k)}-\eta\nabla J(\bm\theta^{(k)})$，步长满足$0<\eta\leq1/\beta$。对任意$K\geq1$，
-\begin{equation}
- \frac1K\sum_{k=0}^{K-1}\lVert\nabla J(\bm\theta^{(k)})\rVert_2^2
- \leq\frac{2[J(\bm\theta^{(0)})-J_{\inf}]}{\eta K}\text{。}
- \label{eq:transformer-stationarity-rate}
-\end{equation}
-对任意$\varepsilon>0$，至少有一个已计算迭代点的梯度范数不超过$\varepsilon$，只需
-$K\geq2[J(\bm\theta^{(0)})-J_{\inf}]/(\eta\varepsilon^2)$。
-\end{theorem}
-证明与定理~\ref{thm:ffn-stationary-rate}相同：沿完整计算图求出梯度，使用下降引理并对更新次数求和。
-
-该界回答了接近一阶驻点需要多少次更新。它不保证驻点是全局最小点，也不保证参数序列存在唯一极限。若还满足$\lVert\nabla J\rVert_2^2\geq2\mu(J-J_*)$，其中$\mu>0$、$J_*$为最小值，再限制$\eta\leq1/\mu$，则有
-$J(\bm\theta^{(K)})-J_*\leq(1-\eta\mu)^K[J(\bm\theta^{(0)})-J_*]$。这一条件需要对具体训练问题验证，不能由网络名称推得。
-
-这要求实际目标及更新满足光滑条件。光滑激活、正的归一化分母和有界迭代区域有助于建立有限$\beta$；ReLU、离散专家选择、Dropout和Adam类更新不能直接套用同一定理。固定核的平方损失训练有另一组全局残差衰减结论，但应用于有限宽Transformer还需证明核在训练中保持相应性质，见\BookChapterRef{chap:deep-learning-theory}{卷3《基础、理论与可信性》第8章“深度学习的可学习性”}。目前本章没有给出对一般有限宽Transformer和任意初始化成立的全局最优收敛结果。
-
-\paragraph{注意力如何影响允许步长}
-
-Softmax的Jacobian矩阵$\bm J=\operatorname{diag}(\bm a)-\bm a\bm a^{\top}$的谱范数不超过$1/2$。可由每行绝对值之和$2a_j(1-a_j)\leq1/2$以及对称性得到这一界。它控制的是对得分的局部敏感度；当权重接近单点时，Jacobian矩阵还可能趋近零。因此，Softmax对得分的局部增益有界，权重趋近单点时的饱和还会削弱评分梯度。
-
-注意力对输入的敏感度还包含查询、键和值的变化。单头记$\bm Z=\bm A\bm V$，固定掩码时微分为
-\begin{equation}
-  \begin{aligned}
-    \mathrm d\bm Z&=(\mathrm d\bm A)\bm V+\bm A\,\mathrm d\bm V,\\
-    \mathrm d\bm S&=\frac{(\mathrm d\bm Q)\bm K^{\top}
-                              +\bm Q(\mathrm d\bm K)^{\top}}{\sqrt{d_k}}\text{。}
-  \end{aligned}
-  \label{eq:transformer-attention-differential}
-\end{equation}
-结合逐行Softmax界和矩阵范数不等式，可得局部估计
-\begin{equation}
-  \begin{aligned}
-    \lVert\mathrm d\bm Z\rVert_{\mathrm F}
-    &\leq\frac{\lVert\bm V\rVert_2}{2\sqrt{d_k}}
-       \left(\lVert\bm K\rVert_2\lVert\mathrm d\bm Q\rVert_{\mathrm F}
-             +\lVert\bm Q\rVert_2\lVert\mathrm d\bm K\rVert_{\mathrm F}\right)\\
-    &\quad+\lVert\bm A\rVert_2\lVert\mathrm d\bm V\rVert_{\mathrm F}\text{，}
-  \end{aligned}
-  \label{eq:transformer-attention-local-bound}
-\end{equation}
-其中矩阵$\lVert\cdot\rVert_2$为谱范数，$\lVert\cdot\rVert_{\mathrm F}$为Frobenius范数。输入到投影的敏感度还乘以各$\bm W$的范数。每行是值的凸组合，但多行可以重复读取同一个值，所以一般未必有$\lVert\bm A\rVert_2\leq1$：所有查询都读取同一个值时，该值的影响会在多行重复，谱范数可以达到$\sqrt n$。最大行向量范数逐行测量放大，谱范数测量整份矩阵，两种尺度可能具有不同长度因子。
-
-归一化的分母含$\varepsilon$，其局部导数还受可学习缩放和行内方差影响。残差堆叠则包含多个$\bm I+\bm J_l$的乘积，即使直接路径存在，其他分支仍可能累积放大、衰减或抵消。Pre-LN、残差缩放和门控改变这一乘积，完整乘积的奇异值仍由各分支导数及其组合决定。深度增加、输入长度变长或投影尺度改变，都可能使原来合理的学习率不再适合。
-
-把这些前向放大关系接到允许步长，还要追踪参数目标的梯度怎样变化。定理~\ref{thm:transformer-stationary-rate}中的$\beta$控制$\nabla J(\bm\theta)$在参数空间中的变化，式\eqref{eq:transformer-attention-local-bound}则控制中间表示的一阶增益。为说明两者的接口，固定一个训练样本$(x,y)$，将各监督位置的最终得分按固定顺序排成向量$\bm f_{\bm\theta}(x)$，记其关于全部参数的Jacobian矩阵为$\bm J_{\bm\theta}$。在网络得分与损失均二阶连续可微的区域内，令$\bm s=\bm f_{\bm\theta}(x)$，链式法则给出
-\[
-  \begin{aligned}
-    \nabla_{\bm\theta}^2
-      \ell(\bm f_{\bm\theta}(x),y)
-    &=\bm J_{\bm\theta}^{\top}
-       (\nabla_{\bm s}^2\ell)\bm J_{\bm\theta}\\
-    &\quad+\sum_r\frac{\partial\ell}{\partial s_r}
-         \nabla_{\bm\theta}^2 f_{\bm\theta,r}(x)\text{。}
-  \end{aligned}
-\]
-这里$r$遍历得分分量，损失的导数均在当前$\bm s$处计算。第一项把损失对得分的曲率通过参数Jacobian传回；第二项来自网络得分本身对参数的二阶变化，由损失的一阶导数加权。即使层输入固定，查询与键投影仍通过$\bm Q\bm K^{\top}$相乘，联合改变两组投影会产生混合二阶项；Softmax和归一化也有各自的二阶变化。
-
-训练目标的Hessian按实际损失权重汇总这些项，并计入所用正则项的Hessian。一种建立$\beta$的充分做法，是在包含迭代点和更新线段的凸区域内，将完整目标的Hessian谱范数统一控制为不超过$\beta$；沿参数线段积分便得到定理要求的梯度Lipschitz界。前述Softmax的$1/2$界和前向增益为这项估计提供部分因子，输入Jacobian还须转换为参数Jacobian，并同时控制网络的二阶变化。因此，它们本身尚未给出可以直接代入步长条件的数值$\beta$；可用步长仍由完整参数目标及其适用区域确定。
+硬Top-$k$路由还可能在专家集合切换时产生输出跳变。专家内部可微，不代表整个选择过程光滑；对这类结构，不能直接把连续网络的梯度结论当成路由参数的保证。固定的可见范围、正的归一化分母及实际采用的更新规则，都需要与训练条件对应。
 
 \subsection{泛化性}
 \label{sec:transformer-model-generalization}
 
-以完整序列及其标签为一个样本，记期望风险为$R$、经验风险为$\widehat R_S$。样本数$N$计独立序列；一条序列的多个位置可以相关。为了明确估计训练输出的期望误差，下面固定允许长度和参数范围，再将这些条件转为有限覆盖。
-
-\begin{theorem}[有界参数Transformer在独立序列上的期望风险界]
-\label{thm:transformer-parameter-risk}
-固定Transformer架构、掩码、确定性读出和最大长度。参数域$\bm\Theta\subset\mathbb R^q$包含在半径$B_\theta>0$的欧氏球内。对全部允许序列及标签，损失$\ell_{\bm\theta}(z)$在$[0,1]$内、关于样本可测，且满足
-$|\ell_{\bm\theta}(z)-\ell_{\widetilde{\bm\theta}}(z)|\leq a\lVert\bm\theta-\widetilde{\bm\theta}\rVert_2$，其中$a>0$为预先固定的统一常数。设$S$含$N$个独立同分布的序列样本。对预先固定的$\varepsilon>0$和$\delta\in(0,1)$，以至少$1-\delta$的概率，任意满足约束的训练输出$\widehat{\bm\theta}$均有
-\begin{equation}
- \begin{aligned}
- R(\widehat{\bm\theta})\leq{}&\widehat R_S(\widehat{\bm\theta})+2\varepsilon\\
- &+\sqrt{\frac{q\log(1+2B_\theta a/\varepsilon)+\log(2/\delta)}{2N}}\text{。}
- \end{aligned}
- \label{eq:transformer-generalization-bound}
-\end{equation}
-\end{theorem}
-证明沿用定理~\ref{thm:rnn-continuous-risk}的参数覆盖、Hoeffding不等式和并合界。若记误差项为$\Delta_N$，且训练的经验优化误差不超过$\xi$，同一事件上还可得
-$R(\widehat{\bm\theta})\leq\inf_{\bm\theta\in\bm\Theta}R(\bm\theta)+2\Delta_N+\xi$。该结论给出样本量、参数规模、参数范围和参数敏感度共同控制的期望误差上界。
-
-常数$a$必须覆盖允许范围内的全部输入、标签和参数，不能只取训练点上的局部梯度。先考虑没有离散分支切换、各模块在允许范围上满足相应Lipschitz界的网络。固定最大长度、每个词元向量的有界范围、各投影及归一化参数的统一上界，以及归一化分母的统一正下界，再结合激活、读出和损失的Lipschitz界，可以逐层建立有限$a$。标准LayerNorm采用固定$\varepsilon>0$，便使其分母至少为$\sqrt\varepsilon$。式\eqref{eq:transformer-attention-local-bound}从查询、键和值的变化给出注意力输出的一步估计；要将它用于参数覆盖，还需把这些变化转成参数距离，并沿后续层累积。
-
-我们先固定进入一个单头自注意力模块的同一份$\bm H$，只改变式\eqref{eq:transformer-qkv}中的三组无偏置投影。设有效长度$1\leq n\leq n_{\max}$，掩码固定且每行至少允许一个键。对全部允许输入和两套投影，预先选定正常数$B_{\mathrm H},b_{\mathrm{att}}$，使
-\[
-  \begin{aligned}
-    \lVert\bm H\rVert_{\mathrm F}&\leq B_{\mathrm H},\\
-    \lVert\bm W_s\rVert_2,
-    \lVert\widetilde{\bm W}_s\rVert_2
-      &\leq b_{\mathrm{att}},
-      \qquad s\in\{\mathrm q,\mathrm k,\mathrm v\}\text{。}
-  \end{aligned}
-\]
-首层的状态界可由词元向量界和最大长度得到；深层则先用此前各模块的统一界控制中间状态。逐块替换参数时形成的中间状态也须落在这份界内。固定$\bm H$后，投影的微分为$\mathrm d\bm Q=\bm H\,\mathrm d\bm W_{\mathrm q}$，键和值同理。有限变化也满足相同线性关系：记$\Delta\bm W_s=\bm W_s-\widetilde{\bm W}_s$，则
-\[
-  \Delta\bm Q=\bm H\Delta\bm W_{\mathrm q},\qquad
-  \Delta\bm K=\bm H\Delta\bm W_{\mathrm k},\qquad
-  \Delta\bm V=\bm H\Delta\bm W_{\mathrm v}\text{。}
-\]
-因此三种变化的Frobenius范数分别不超过$B_{\mathrm H}\lVert\Delta\bm W_s\rVert_{\mathrm F}$；任一套查询、键和值的谱范数又都不超过$B_{\mathrm H}b_{\mathrm{att}}$。
-
-注意力权重也随查询、键改变。为同时计入这条评分路径与值路径，我们对两套投影作有限替换：
-\[
-  \begin{aligned}
-    \bm Q\bm K^{\top}
-       -\widetilde{\bm Q}\widetilde{\bm K}^{\top}
-      &=\Delta\bm Q\bm K^{\top}
-        +\widetilde{\bm Q}\Delta\bm K^{\top},\\
-    \bm Z-\widetilde{\bm Z}
-      &=(\bm A-\widetilde{\bm A})\bm V
-        +\widetilde{\bm A}\Delta\bm V\text{。}
-  \end{aligned}
-\]
-这里比较的是掩码前的有限点积，两套投影使用同一个有效键集合，不对禁止位置的负无穷作相减。逐行Softmax的Jacobian谱范数在全部有效得分上不超过$1/2$，沿两套得分之间的线段积分，便将这一界用于有限权重差。另由行权重和为1，有$\lVert\bm A\rVert_2,\lVert\widetilde{\bm A}\rVert_2\leq\sqrt{n_{\max}}$。按式\eqref{eq:transformer-attention-local-bound}所用的范数运算，得到
-\[
-  \begin{aligned}
-    \lVert\bm Z-\widetilde{\bm Z}\rVert_{\mathrm F}
-    &\leq\frac{B_{\mathrm H}^3b_{\mathrm{att}}^2}{2\sqrt{d_k}}
-       \left(\lVert\Delta\bm W_{\mathrm q}\rVert_{\mathrm F}
-             +\lVert\Delta\bm W_{\mathrm k}\rVert_{\mathrm F}\right)\\
-    &\quad+\sqrt{n_{\max}}B_{\mathrm H}
-             \lVert\Delta\bm W_{\mathrm v}\rVert_{\mathrm F}\text{。}
-  \end{aligned}
-\]
-评分路径的系数含查询、键和值的尺度；值路径的系数还计入多行重复读取同一来源的可能。把这三组矩阵展平为参数向量$\bm\vartheta$，再对三个参数块使用Cauchy--Schwarz不等式，可写成
-\[
-  \begin{aligned}
-    \lVert\bm Z-\widetilde{\bm Z}\rVert_{\mathrm F}
-      &\leq C_{\mathrm{att}}
-            \lVert\bm\vartheta-\widetilde{\bm\vartheta}\rVert_2,\\
-    C_{\mathrm{att}}
-      &=\sqrt{\frac{B_{\mathrm H}^6b_{\mathrm{att}}^4}{2d_k}
-                   +n_{\max}B_{\mathrm H}^2}\text{。}
-  \end{aligned}
-\]
-这个上界统一覆盖本例允许的状态和三组投影，尚未计入其他参数块。多头拼接、输出投影、残差、FFN、归一化和可学习读出的影响，沿第\ref{sec:gnn-norm-generalization}节已经展开的逐块替换方法继续计算：固定其他参数，先将当前参数块造成的表示差传到最终得分，再计入读出和损失对得分的统一Lipschitz常数。所有参数块的贡献合并并展平后，得到定理所需的损失常数$a$；共享参数在多个位置出现时，要先合计这些使用位置的贡献。损失的常数还须对全部允许标签统一，取值在$[0,1]$和可测性仍须单独满足。头数、层数、位置编码和读出方式通过$q$与$a$进入该界，不能只比较总参数数目。
-
-前述硬Top-$k$例子的损失会随分支切换而跳变，因而不能仅由专家内部的Lipschitz性得到这样的统一$a$。若在所比较的全部参数范围内，每个允许输入对应的专家集合保持固定，可以按这些固定分支估计统一常数；允许分支切换时，则须另证复合损失仍满足定理的统一Lipschitz假设。前面用整体连续性保证最小值存在，驻点速度还要求目标梯度光滑，这里的风险界则要求统一损失敏感度；三个结论各有自己的适用条件。
-
-原始交叉熵无界，零一损失对连续得分也不是Lipschitz函数，二者不能直接套用上述定理。可使用有界Lipschitz替代损失；若它上界零一错误，例如有界的间隔斜坡损失，所得期望损失界还控制期望分类错误。这里没有给出不限制参数、长度和损失时的一般Transformer期望风险界。
-
-同分布抽样是风险保证的前提。来自同一用户的相关记录或同一文本的重叠窗口需要依赖分析；更长输入和新领域改变了评估分布。位置编码在新位置仍能计算，并不让上述同分布定理自动成为长度外推保证。
+在独立同分布序列和相应输入、参数及损失约束下，可以沿用复杂度或稳定性结论分析新样本风险，可参考\BookChapterRef{chap:deep-learning-theory}{卷3《基础、理论与可信性》的“深度学习的可学习性”章}。样本数应按实际独立记录计，同一文档的词元或重叠窗口不能各算一份独立证据。预训练、位置编码和缓存扩展了能够处理的输入，不自动保证新领域或更长序列上的误差；这些条件需要用对应数据单独检验。
 
 \FloatBarrier
+
 \section{常见应用}
 \label{sec:transformer-applications}
 
