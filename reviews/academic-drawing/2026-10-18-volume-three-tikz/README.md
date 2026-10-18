@@ -1,5 +1,15 @@
 # 卷三 TikZ 图像保真修订与书页检查
 
+## 9466b558之后的样式跟进（2026-10-18）
+
+本轮按用户45幅点名图逐项修订，并将图3.14的聚合算子纳入统一样式，共修改46幅图源。算子和噪声参照图16.2使用浅色圆角外层、较深圆芯和较大符号；保留原有照片、网络拓扑和具体图案，加粗轮廓并补充分层配色。连线按起点、方向、分叉、端口和反馈实际复核。用户已明确沿用仓库现行800页上限，本轮仅改图片，正文、图注和大纲没有改动。
+
+当前工作区为`.worktrees/volume-three-foundations-revision`，分支`codex/volume-three-foundations-revision`，基线`9466b558f76f2a3e08f11b75b041cd44dc29e8f2`。完整证据见`style-followup-summary.json`与`style-followup-pages-{basics,theory,trust-a,trust-b}.json`：68幅独立导出图均实际查看，四组21+16+13+18个最终完整书页也逐张实际打开。每图源、导出PDF、预览及书页PNG均按SHA核对，不以历史报告替代本次查看，也不据此宣称用户已认可视觉质量。
+
+卷三最终为621页，PDF SHA-256为`e8b2783871d1b19c30a47e224d8313e8d6c6033e2906a18f42c1ac5a3ce8f9f4`。正常构建及`./build.sh check-target`通过，十二卷当前成品与输入一致且均不超过800页；正常构建同时刷新卷九的关联成品记录。卷三日志没有缺字、未定义引用、重复标签、过大浮动图或致命错误。本轮68图资源/正文接入范围检查通过；全书登记检查仍有34项本轮基线即存在的其他卷迁移记录问题，详见`style-followup-integration-scope.json`，没有修补无关登记，也没有声称全书554资产检查通过。
+
+对照位于工作区`build/volume-three-tikz-redraw/style-followup/`：`requested-45-numbered-comparison.pdf`逐页列出45幅点名图，`all-68-numbered-comparison.pdf`覆盖全部68图；每页醒目标出对照序号和图号，三列为“原图—上次提交—本次修订”。本轮成果已保存但尚未提交或推送。
+
 ## 连线与局部样式复核（689bef96之后）
 
 用户在图1.3、2.3、3.1、3.3、3.4指出图标、网络比例、配色、框与箭头的问题，并要求检查其余图。此前版本的端口检查存在漏项；下文584页版本和既有JSON仅记录当时自查，不能作为本轮实际源文件的验收。本轮记录见`connection-*-followup.json`及`connection-followup-summary.json`，与当前源、导出物和最终书页分别绑定。
