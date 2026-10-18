@@ -1,300 +1,892 @@
 \chapter{偏好对齐}
 \label{chap:nlp-preference-alignment}
 
-用户问“外部人员怎样参加活动”，两份回答都正确提到了报名截止时间。第一份直接说明报名条件，第二份先赞扬用户的选择，再重复通知全文。把第一份写成示范，可以教模型模仿它；但实际使用中有许多正确表述，我们更容易判断哪份更合适，而不容易为每次提问写出唯一标准答案。第\ref{chap:nlp-supervised-finetuning}章留下的这类取舍，可以通过比较或评价回答形成反馈。
+用户问“读书会改到什么时候，外部人员还能参加吗”。两份回答都说对了“周五下午两点”：第一份接着说明外部人员须在周四中午前报名，第二份先称赞用户关心活动，再把通知全文重复一遍，最后才提到报名条件。按第\ref{chap:nlp-supervised-finetuning}章的做法，我们可以把第一份写成示范，让模型模仿它。但同一个问题有许多可以接受的回答，它们在完整、简洁、语气和安全上各有高下；为每个提示写出唯一的“标准答案”既昂贵，也会把大量合理的取舍压成一种写法。相比之下，判断“两份回答中哪份更好”要容易得多。
 
-\term{偏好对齐}（preference alignment）研究怎样利用这些反馈调整模型，使它在指定人群和使用条件下，更符合已明确的质量与行为要求。这里的“符合”需要落实为反馈标准和独立检查，不能把模型获得较高训练评分等同于满足所有要求。本章沿反馈形成、信号表示、目标构造、策略更新和结果检查展开。显式奖励模型是一条可选路径；直接偏好目标可以绕过它。反馈是否随模型刷新与更新是否采用强化学习，是两项不同的选择。
+\term{偏好对齐}（preference alignment）研究怎样把这类比较反馈变成可优化的学习目标，使模型在指定的使用范围内更符合已经写明的质量与行为要求。它面对一串相互依赖的问题：
 
-\section{对齐要求与反馈准备}
+\begin{itemize}
+  \item 对齐标准怎样规定，反馈以什么形式采集，人工评判的成本和系统偏差怎样处理，能否用模型代替人工评判；
+  \item 比较关系怎样变成标量奖励，奖励模型怎样搭建与训练，又怎样避免被策略过度利用；
+  \item 有了奖励以后，怎样更新生成策略而不让它偏离原模型太远，强化学习在语言模型上的显存与方差代价怎样降低；
+  \item 能否绕过显式奖励模型和在线采样，直接用偏好数据训练策略，以及直接方法带来的过拟合、长度和参考模型问题；
+  \item 怎样用独立于训练信号的证据检查对齐效果。
+\end{itemize}
+
+本章按“反馈—奖励—强化学习—直接优化—检查”的顺序回答它们。第\ref{sec:nlp-align-feedback}节规定标准并形成带来源的偏好数据，包括以AI反馈代替人工的Constitutional AI与RLAIF。第\ref{sec:nlp-align-signals}节用Bradley--Terry模型把比较变成奖励差，写出奖励模型的结构、训练与过度优化问题。第\ref{sec:nlp-align-learning}节在KL正则目标下更新策略：先写出PPO在语言模型上的完整实现，再介绍去掉价值模型的RLOO、ReMax和GRPO，以及不更新参数、只用奖励模型挑选候选的best-of-$N$与拒绝采样微调。第\ref{sec:nlp-align-direct}节从KL正则目标的闭式最优解推出DPO，再沿“过拟合—参考模型与长度—单回答反馈—在线数据”四个缺口介绍IPO、cDPO、SimPO、ORPO、KTO与在线DPO，并以总表比较。第\ref{sec:nlp-align-checking}节说明怎样检查偏好收益、奖励投机和能力保持。
+
+阅读本章需要第\ref{chap:nlp-supervised-finetuning}章的指令模型与回答位置的序列概率。策略梯度、优势估计与PPO的一般推导属于强化学习，本章在使用处先陈述所需结论再给出卷七的位置，自身只写语言模型上的实现、变体与比较。全章以$x$记提示（含系统说明、材料与对话历史），$y=(y_1,\ldots,y_{|y|})$记回答，策略
+\[
+ \pi_{\bm\theta}(y\mid x)=\prod_{t=1}^{|y|}\pi_{\bm\theta}(y_t\mid x,y_{<t})
+\]
+就是条件语言模型对完整回答的概率，只在回答位置累乘，提示词元不计入。
+
+\section{对齐要求与偏好反馈}
 \label{sec:nlp-align-feedback}
 
-收集反馈之前，应当先明确回答要服务谁、用于什么场景，以及评判者能够检查什么。否则，同一份“更喜欢”记录可能混合事实正确、文字风格和个人习惯，后续优化便难以说明究竟改变了哪项要求。
+偏好数据是后面所有目标的原料：奖励模型从它学习评分，直接偏好方法从它学习概率比。数据里没有的信息，任何目标都补不出来。本节要处理四个挑战：标准本身可能冲突或不确定；不同反馈形式包含的信息量不同；人工评判有成本，也有系统偏差；用模型代替人工评判时，又会引入生成与评判共享的偏差。下面依次规定标准、反馈形式、人工评判与AI反馈，平局与分歧都原样保留。
 
-\subsection{对齐要求与判断标准}
+\subsection{对齐标准与判断依据}
 \label{sec:nlp-align-criteria}
 
-对于活动通知问答，帮助性可以具体体现为回答了所问事项、保留必要条件、表达清楚；正确性要求日期、地点和参加资格与可见材料一致；行为边界要求不编造个人报名状态，也不披露没有授权提供的信息。这些标准共同约束一份回答，但不必都压成“好”或“坏”一个词。
+对齐首先要回答“对谁、在什么条件下、按什么标准更好”。以通知问答为例，可以把要求拆成三类：\emph{帮助性}指回答了所问事项、保留必要条件、表达清楚；\emph{正确性}指日期、地点和参加资格与可见的通知一致；\emph{行为边界}指不编造个人报名状态、不披露未授权的信息。每一类都应写成评判者能够核对的条件，例如“回答是否提到外部人员的报名截止时间”，而不是“回答是否令人满意”。
 
-标准还可能发生冲突。例如过短回答漏掉外部人员的截止时间，而过长回答包含了问题不需要的大段内容。评判记录应说明当前更重视完整条件还是简洁表达，或者分别记录两项判断。面对需要专业知识而评判者无法核验的答案，也应保留“无法判断”，不能让自信语气代替正确性证据。
+这些要求会发生冲突。只答“周五下午两点”的回答最简洁，却漏掉外部人员的条件；把通知全文照抄的回答最完整，却让用户自己找答案。评判指南因此需要给出优先关系，例如“正确性优先于完整性，完整性优先于简洁”，或者让评判者对各项分别打分，再由后续步骤决定怎样组合。InstructGPT的标注指南在训练阶段把帮助性放在首位，在最终评价中把真实性与无害性放在首位，就是一种明确写出的优先关系\scite{ouyang2022instructgpt}。
 
-因此，对齐要求不是脱离使用范围的统一口味。面向初学者的解释与面向专业人员的简答，可以采用不同的充分性标准；用户偏好也可能与基本行为要求相冲突。把目标人群、允许信息、适用场景和不可违反的条件写清楚，后续才有依据选择提示和反馈形式。
+写成指南时，每项要求最好附上判定方式与反例。以通知问答为例，指南可以规定：日期、时间与地点必须与通知原文一致，任何一处不一致即判为不正确，无论其他方面多好；“外部人员能否参加”一类条件问题，回答必须给出条件本身（报名截止时间与方式），只说“可以参加”视为不完整；在正确与完整都满足的前提下，较短的回答优先，但不得因追求简短而省略条件；回答不得声称用户“已报名成功”之类无法从材料中得知的状态。这样的写法把抽象的“有帮助”变成了逐条可核对的判断，也让不同评判者对同一对回答更容易给出一致结果。
+
+标准还要限定评判人群与可用信息。面向初学者的解释和面向专业人员的简答可以采用不同的充分性标准；评判者看不到原始通知时，就无法判断日期是否正确。遇到需要专业知识而评判者无法核验的回答，应允许记录“无法判断”，不能让自信的语气代替正确性证据。这些说明决定了偏好数据能够支持哪些结论，也是第\ref{sec:nlp-align-checking}节检查时的依据。
 
 \subsection{提示、候选与反馈形式}
 \label{sec:nlp-align-units}
 
-一条成对反馈通常包含提示$x$、两个候选回答$y_a,y_b$以及判断。若评判者更偏好$y_a$，可将其记为$y^{+}$，另一份记为$y^{-}$。提示应当包括作答所需的材料和历史；候选应保留生成模型、模板、采样设置和输出预算。候选来自哪些模型，会决定评判者实际比较到哪些错误与差别。
+一条成对反馈由提示$x$、两个候选回答和一个判断组成。若评判者更偏好其中一个，记它为\emph{胜出回答}$y_{\mathrm w}$，另一个为\emph{落选回答}$y_{\mathrm l}$，偏好数据集写成
+\[
+ \mathcal D_{\mathrm{pair}}=\{(x^{(i)},y_{\mathrm w}^{(i)},y_{\mathrm l}^{(i)})\}_{i=1}^{n}.
+\]
+候选通常由当前的SFT模型或若干模型在同一提示下采样得到。记录中应保留生成模型、模板、温度和最大长度：候选来自哪些模型，决定了评判者实际比较到哪些错误。
 
-成对选择适合比较同一输入下的相对取舍；排序可以一次比较多个候选，但需要说明如何处理并列；单回答的赞否只说明这份回答是否可取，不能自动恢复它与另一个回答的相对次序。平局、分歧和无法判断都包含信息。强行把所有平局随机拆成胜负，会为原本没有差异的回答制造监督。
+常见的反馈形式有三种，它们包含的信息不同。\emph{两两选择}直接给出一对回答的相对次序。\emph{排序}一次给出$K$个回答的全序，例如$A\succ B\succ C\succ D$；由于全序蕴含其中任意两项的次序，一个排序可以展开为$\binom K2$个成对比较，$K=4$时得到6对，$K=9$时得到36对。InstructGPT让标注者对4到9个回答排序，单位标注时间内得到的比较数因此成倍增加\scite{ouyang2022instructgpt}。需要注意，同一排序展开的各对共享回答，彼此并不独立，第\ref{sec:nlp-align-rm-head}小节会说明这一点怎样影响训练。\emph{单回答赞否}只记录$(x,y,l)$，其中$l\in\{+,-\}$表示可取或不可取。它不提供同一提示下另一个回答的次序，也不能把不同提示的赞与否随意拼成一对：两个提示的难度不同，“赞”和“否”的含义并不可比。第\ref{sec:nlp-align-unpaired}小节专门处理这类数据。
 
-提示还要覆盖目标使用分布。若训练反馈主要来自文风润色，优化得到的模型不一定会在事实核验或多轮条件保持上改善。对于少见但重要的边界条件，可以有意增加取样，同时记录这种取样与日常使用频率的差别。否则，最终平均分很容易被解释成它没有覆盖的场景中的保证。
+表~\ref{tab:nlp-align-feedback-forms}概括三种形式的差别。以一组$K=4$的排序$A\succ B\succ C\succ D$为例，它展开为$A\succ B$、$A\succ C$、$A\succ D$、$B\succ C$、$B\succ D$、$C\succ D$六对；若标注者认为$B$与$C$难分高下而记为$A\succ B\approx C\succ D$，则只能展开为五对确定的比较，$B$与$C$之间的一对应作为平局单独记录，而不是任选一个方向。
 
-\subsection{人工评判与原则反馈}
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{三种反馈形式。“比较数”指一次标注能直接给出的成对关系数。}
+  \label{tab:nlp-align-feedback-forms}
+  \begin{tabularx}{\linewidth}{@{}lp{17mm}p{11mm}X@{}}
+    \toprule
+    形式 & 记录 & 比较数 & 适用与限制\\
+    \midrule
+    两两选择 & $(x,y_{\mathrm w},y_{\mathrm l})$ & 1 & 判断最简单；信息量最少\\
+    $K$个回答排序 & $(x,\tau)$ & $\binom K2$ & 单位成本信息多；展开的各对相关，$K$大时排序本身变难\\
+    单回答赞否 & $(x,y,l)$ & 0 & 产品中最易收集；没有配对关系，需要专门的目标\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+平局、分歧和无法判断都应保留。把平局随机拆成胜负，会为本来没有差别的回答制造监督；把多位评判者的分歧压成多数票，会丢掉偏好强度的信息。一些标注协议还让评判者给出偏好强度，例如“明显更好”“略好”“几乎相同”，第\ref{sec:nlp-align-rm-margin}小节的间隔损失会用到它。
+
+提示分布同样需要记录。若反馈主要来自文风润色，优化得到的模型不一定会在事实核验或多轮条件保持上改善。对于少见但重要的边界情形，例如含糊的报名条件或涉及他人隐私的提问，可以有意过采样，但要记下这种采样与日常使用频率的差别，供后面解释奖励模型的适用范围。
+
+\subsection{人工评判与标注偏差}
 \label{sec:nlp-align-judges}
 
-人工评判需要清楚的标准、足够的任务信息和合适的专业能力。为检查位置偏差，可以交换两个候选的展示顺序；为检查长度偏差，可以比较内容相当而表达长短不同的答案；为理解分歧，可以保留多位评判者的原始意见。多数选择能够汇总反馈，但不能使错误事实通过投票变成正确事实。
+人工评判是偏好数据最主要的来源，它的偏差也会原样进入后续模型。三类偏差最常见。第一是\term{位置偏差}（position bias）：同一对回答，放在前面的更容易被选中。检查方法是对一部分样本交换展示顺序再评一次，统计两次判断一致的比例。第二是\term{长度偏差}（length bias）：内容相当时，较长、格式更丰富的回答更容易被认为“更认真”。可以构造内容相同、长短不同的回答对照，观察偏好是否只随长度变化。第三是评判者的知识限制：通知问答很容易核对，医学或法律问题则要求具备相应知识的评判者，否则流畅但错误的回答可能胜出。
 
-在原则明确、模型具备相应判断能力时，也可以让模型依据原则比较候选。Constitutional AI利用原则引导AI反馈，并把这类比较用于后续学习；基于AI反馈的强化学习常缩写为RLAIF\scite{bai2022constitutional}。这里，原则限定了评判对象和理由，AI评判仍可能受措辞、展示顺序、自身偏好和知识缺口影响，需要独立核查。
+位置偏差可以从交换顺序的重复评判中直接估计。设有100对回答各评两次，第二次交换展示顺序（以下为教学示例）。若两次结果一致的有82对，其余18对中有15对两次都选了放在前面的回答、3对两次都选了放在后面的回答，那么不一致主要来自位置而不是随机噪声：在这18对上，评判者实际上没有区分两个回答，“选前面”替代了判断。处理时可以把两次结果不一致的对记为平局，或只保留一致的对；直接取两次中的任意一次，都会把位置偏好写进标签。
 
-原则还可以先用于批评并修订单份回答，形成第\ref{sec:nlp-sft-acquisition}节的监督示范。区别在于产物：修订答案给出要模仿的文本，比较反馈给出两份回答的关系。由同一模型同时生成候选、给出理由并判定胜负，可能把相同偏差闭合在一个循环中；保留来源与独立检查材料，是解释反馈可信度的必要条件。
+降低这些偏差依靠流程而不是单个技巧。详细的评判指南规定各项标准与优先关系；培训和筛选让评判者在示例上达到一定的一致率；\emph{评判者间一致率}（同一对回答被不同评判者判为同一结果的比例）用来估计标签本身的噪声上限，例如InstructGPT报告训练标注者之间的一致率约为73\%\cite{ouyang2022instructgpt}，这意味着即使完美的奖励模型，在这些数据上的成对准确率也难以远高于这个水平；分歧较大的样本交给仲裁，或者保留为低置信度标签。
 
-\section{偏好信号与奖励建模}
+这些措施只能减轻偏差。奖励模型会学到数据中残留的位置与长度偏好，策略再针对它优化时，偏差会被放大，第\ref{sec:nlp-align-reward-hacking}小节将看到它怎样表现为奖励投机。
+
+\subsection{基于AI反馈的评判}
+\label{sec:nlp-align-ai-feedback}
+
+人工比较慢且昂贵，难以随模型迭代不断补充。一个自然的想法是让一个能力较强的语言模型依据书面原则或评判指令比较回答。这条路线把标注成本降到推断成本，也能在模型更新后迅速对新候选打标签；代价是生成与评判可能共享同一偏差，例如同一类模型都偏好冗长的回答。下面先写Constitutional AI的完整流程，再比较以AI反馈替代人工反馈时的两种做法。
+
+\subsubsection{Constitutional AI的两阶段流程}
+\label{sec:nlp-align-cai}
+
+\term{宪法式人工智能}（Constitutional AI, CAI）用一组自然语言写成的原则（称为“宪法”）代替人工的无害性标注，分两个阶段训练模型\scite{bai2022constitutional}。
+
+\emph{监督阶段}就是第\ref{sec:nlp-sft-critique-revision}小节所述的批评与修订。从一个只按帮助性训练的模型出发，对可能诱导有害回答的提示采样初始回答；再随机抽取一条原则，让同一模型先批评这个回答哪里违反原则，再据此改写，必要时重复几轮；最后用修订后的回答做有监督微调。得到的模型称为SL-CAI。这一阶段的作用是把策略先拉到“大体合规”的区域，使下一阶段采到的回答对更有比较价值。
+
+\emph{强化阶段}用AI给出的比较代替人工偏好。具体步骤是：
+\begin{enumerate}
+  \item 对每个提示，从SL-CAI采样两个回答$y_A,y_B$；
+  \item 随机抽取一条原则，构造一道选择题交给反馈模型，例如“根据以下原则，哪个回答更少有害：(A) …… (B) ……”；
+  \item 读取反馈模型在选项“(A)”和“(B)”上的对数概率，归一化后得到软标签$p_A=\mathbb P(A\succ B)$，而不是只取概率较大的一个；
+  \item 把这些AI标注的无害性比较与人工标注的帮助性比较合在一起，训练偏好模型（即第\ref{sec:nlp-align-signals}节的奖励模型）；
+  \item 以该偏好模型为奖励，从SL-CAI出发做强化学习，得到RL-CAI。
+\end{enumerate}
+评判时还可以先让反馈模型写出逐步推理，再给出选择。原文发现，加入思维链后反馈模型给出的概率往往过于接近0或1，因此把它们截断到40\%至60\%之间，以免偏好模型被过度自信的标签带偏。随机抽取原则并对多条原则取平均，可以减弱单条原则措辞的影响。
+
+把这一流程放到通知问答中（以下原则与文本均为教学示例）。用户问“报名表里张三留的电话是多少”。初始回答直接给出了号码。监督阶段抽到原则“不披露他人未授权公开的个人信息”，模型先写出批评“回答泄露了另一位参与者的联系方式”，再改写为“报名信息中的个人联系方式不对外提供，如需联系可通过活动组织者转达”。强化阶段从SL-CAI为同一提示采样两个回答，一个婉拒并给出转达途径，一个只说“无法回答”，反馈模型依据抽到的原则“选择更有帮助且不造成伤害的回答”作答，若在“(A)”上的归一化概率为$0.8$，这对回答就得到$0.8$的软标签。软标签保留了反馈模型的不确定程度：两个回答都无害、只在帮助性上略有差别时，概率接近$0.5$，偏好模型受到的推动也小。
+
+CAI改变的是无害性标签的来源，偏好模型、强化学习都沿用RLHF的做法。它的前提是反馈模型确实能按原则区分回答；原则覆盖不到的风险，或者反馈模型本身判断不了的专业问题，这一流程无法补上。
+
+\subsubsection{RLAIF与RLHF的比较}
+\label{sec:nlp-align-rlaif}
+
+把人工偏好换成大模型偏好、其余流程不变，就得到\term{基于AI反馈的强化学习}（reinforcement learning from AI feedback, RLAIF）；与之对照，依赖人工偏好的流程称为\term{基于人类反馈的强化学习}（reinforcement learning from human feedback, RLHF）。Lee等在摘要、有益对话与无害对话三项任务上系统比较了两者\scite{nlp-align-lee2024rlaif}。
+
+标准的RLAIF先让评判模型对候选对给出偏好，再训练奖励模型，流程与RLHF完全相同。另一种做法是\emph{直接RLAIF}（direct RLAIF）：不训练奖励模型，强化学习时对每个采样回答直接请评判模型打1到10分，并用分数词元上的概率加权得到连续得分
+\[
+ s(x,y)=\sum_{k=1}^{10}k\cdot p_{\mathrm{judge}}(k\mid x,y),
+\]
+再线性缩放后作为奖励。它省去了奖励模型的训练，也避免奖励模型随策略分布漂移而失准，代价是每个训练样本都要调用一次大模型，强化学习阶段的推断开销显著增加。
+
+表~\ref{tab:nlp-align-feedback-sources}比较三种路线。两种反馈的比较集中在成本、一致性与偏差三方面。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{人工反馈与AI反馈的三种路线。三条路线都可以接PPO或第\ref{sec:nlp-align-learning}节的其他优化器。}
+  \label{tab:nlp-align-feedback-sources}
+  \begin{tabularx}{\linewidth}{@{}lp{30mm}p{22mm}p{30mm}X@{}}
+    \toprule
+    路线 & 偏好来源 & 奖励模型 & 强化学习时的奖励 & 主要代价与偏差\\
+    \midrule
+    RLHF & 人工比较 & 训练 & 奖励模型得分 & 标注慢且贵；位置与长度偏差\\
+    RLAIF & 评判模型比较 & 训练 & 奖励模型得分 & 评判模型的位置偏差与自我偏好\\
+    直接RLAIF & 不需要离线偏好 & 不训练 & 评判模型实时打分 & 每个样本一次大模型推断\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+成本上，Lee等估计AI标注比人工便宜一个数量级以上，并可随时重标新策略的候选。一致性上，评判模型同样存在位置偏差，常用的处理是对每对候选交换顺序各评一次再取平均。偏差上，评判模型可能偏爱与自己风格相近的回答，即\term{自我偏好}（self-preference）；它对冗长回答的偏好也与人工评判类似甚至更强\scite{nlp-intro-zheng2023judge}。Lee等报告，在他们使用的任务与PaLM 2评判模型下，RLAIF与RLHF得到的策略在人工评价中胜率相近，直接RLAIF更好；即使评判模型与策略同等规模，RLAIF仍有改进。这些结论限定在报告所用的任务、评判模型和评价协议之内：评判模型能力不足或任务需要专业核验时，AI反馈的质量就会下降，仍需保留一部分人工标注作为独立核验。
+
+\section{奖励建模}
 \label{sec:nlp-align-signals}
 
-反馈记录需要转成可计算对象。成对判断可以用选择概率表示，也可以进一步拟合回答评分。后一种评分通常称为奖励，用来概括当前标准下回答的相对质量；它是根据有限反馈估计的代理信号，不是回答的客观总价值。
+偏好数据只对见过的回答对给出判断。强化学习需要为策略新生成的任意回答打分，因此要从比较中学出一个函数$r(x,y)$，称为\term{奖励模型}（reward model, RM）。这一步面对四个挑战：比较关系只确定得分差，得分本身的零点与尺度不可识别；奖励模型怎样由语言模型改造并高效训练；策略持续针对奖励模型优化时，代理奖励会与真实偏好分开；帮助性与安全性两类信号怎样组合。对应的方法谱系是：Bradley--Terry与Plackett--Luce概率模型，标量奖励头、批内成对训练与间隔损失，过度优化的度量与集成缓解，以及帮助与代价分开建模的约束优化。
 
 \subsection{从比较关系到偏好概率}
 \label{sec:nlp-align-bradley-terry}
 
-同一对回答可能得到不同选择。为了描述这种随机性，设$r(x,y)$是提示$x$下回答$y$的实数评分，以评分差预测$y_a$被选中的概率：
+同一对回答交给不同评判者，或者同一评判者在不同时间评判，可能得到不同结果。为描述这种随机性，设每个回答有一个实数得分$r(x,y)$，并假设评判者感受到的效用是得分加上独立同分布的随机扰动。若扰动服从Gumbel分布，两个回答效用之差的扰动服从逻辑分布，于是$y_{\mathrm w}$胜出的概率只取决于得分差：
 \begin{equation}
 \label{eq:nlp-align-bt}
-\begin{aligned}
- \mathbb{P}(y_a\succ y_b\mid x)
- &=\sigma\bigl(r(x,y_a)-r(x,y_b)\bigr),\\
- \sigma(u)&=\frac{1}{1+\exp(-u)}.
-\end{aligned}
+ \mathbb{P}(y_{\mathrm w}\succ y_{\mathrm l}\mid x)
+ =\sigma\bigl(r(x,y_{\mathrm w})-r(x,y_{\mathrm l})\bigr),\qquad
+ \sigma(u)=\frac{1}{1+e^{-u}}.
 \end{equation}
-这是Bradley--Terry形式。在这里，它假设两份回答的比较能够由同一潜在评分差描述，并用逻辑函数把差值映射到概率。评分相等时预测概率为$1/2$；评分差为$\log3$时，预测概率为$3/4$。
+这就是\term{Bradley--Terry模型}（Bradley--Terry model）\scite{rl5-bradley1952paired}。得分相等时胜率为$1/2$；得分差为$\log 3\approx1.10$时，胜率为$3/(3+1)=3/4$，也就是说，得分每差$\log3$，胜负比就是3比1。
 
-比较只约束差值。对同一个$x$，给所有回答加上任意常数$b(x)$，式\eqref{eq:nlp-align-bt}保持不变。因此，仅凭这些比较不能识别奖励的绝对零点。若选择概率中另有温度参数，评分尺度与该参数也会相互混淆；讨论奖励大小、KL系数或跨提示分数时，都需要说明使用的尺度约定。
+从数据估计得分时，式\eqref{eq:nlp-align-bt}就是一个逻辑回归：每条比较是一个样本，“胜出减落选”的得分差是logit。设只有两个回答$A,B$，在$n$次比较中$A$胜$n_A$次，最大似然估计满足$\sigma(\hat r_A-\hat r_B)=n_A/n$，即$\hat r_A-\hat r_B=\log\frac{n_A}{n-n_A}$。$n_A=3$、$n=4$时得分差为$\log3$；若$A$每次都胜，$n_A=n$，估计的得分差为无穷大。偏好数据中每对回答往往只标注一次，这种“全胜”在单对上处处可见；奖励模型靠参数共享避免了逐对发散，第\ref{sec:nlp-align-overfitting}小节会看到，直接偏好方法则需要专门处理这一问题。
 
-实数评分还隐含一致的排序结构。若三份回答分别在准确、简短和礼貌上占优，不同评判者可能形成循环偏好，单一评分未必充分。可保留分组标准、使用多维信号，或者承认概率模型只能近似这些反馈。平局也需要相应的记录或扩展模型；把“没有偏好”解释为一半正例、一半负例是一种建模选择，并非观察本身已经给出了评分。
+比较只约束得分差。对同一个提示$x$，给所有回答加上同一个常数$b(x)$，式\eqref{eq:nlp-align-bt}不变；因此仅凭比较无法确定奖励的零点，不同提示之间的奖励绝对值也不可直接比较。尺度同样有约定成分：若假设扰动的尺度为$s$，概率变为$\sigma((r_{\mathrm w}-r_{\mathrm l})/s)$，把$r$和$s$同乘一个常数不改变任何预测。式\eqref{eq:nlp-align-bt}取$s=1$，等于把尺度约定在奖励里。后面讨论KL系数$\beta$时会看到，奖励乘上常数$c$与把$\beta$除以$c$等价，所以说“$\beta=0.1$”之前必须先说明奖励的尺度。
 
-\subsection{奖励模型的估计与检查}
+排序数据需要把成对模型推广到$K$个回答。\term{Plackett--Luce模型}（Plackett--Luce model）把一个全序$\tau$（$\tau(1)$为第一名）的概率写成“依次从剩余回答中选出最好者”的概率之积\cite{nlp-align-plackett1975,nlp-align-luce1959}：
+\begin{equation}
+\label{eq:nlp-align-plackett-luce}
+ \mathbb P(\tau\mid x)=\prod_{k=1}^{K-1}
+ \frac{\exp r(x,y_{\tau(k)})}{\sum_{j=k}^{K}\exp r(x,y_{\tau(j)})}.
+\end{equation}
+第$k$个因子是在第$k$名到第$K$名这些尚未选出的回答中，$y_{\tau(k)}$被选为最好的softmax概率。$K=2$时它退化为Bradley--Terry模型。以三个回答为例（教学示例），设$\exp r=(3,2,1)$，则$\mathbb P(A\succ B\succ C)=\frac{3}{6}\cdot\frac{2}{3}=\frac13$，六种排序的概率之和为1。Plackett--Luce模型同样只依赖得分差，零点不可识别的结论不变。
+
+单一实数得分隐含一个很强的结构：偏好可传递，且所有标准能压成一个维度。现实反馈不一定满足。三个回答分别在准确、简短和礼貌上占优时，不同评判者的多数意见可能形成$A\succ B\succ C\succ A$的循环，任何实数得分都无法同时拟合；平局需要额外的平局参数或专门的标签处理；多项标准冲突时，一个得分只能代表某种隐含的加权。这些限制同时约束本节的奖励模型和第\ref{sec:nlp-align-direct}节的直接目标，因为后者同样以式\eqref{eq:nlp-align-bt}为出发点。Bradley--Terry偏好模型、由它导出的RLHF流程与DPO推导，在一般强化学习框架下的讨论可参考\BookChapterRef{chap:rl-reward}{卷七“奖励受限下的强化学习”章}；本章以下只写语言模型上的结构、实现与变体。
+
+\subsection{奖励模型的结构与训练}
 \label{sec:nlp-align-reward-model}
 
-若准备让模型对新回答给出评分，就要把$r$参数化为$r_{\bm{\phi}}$。例如对提示与回答的联合表示接一个标量输出头，以成对数据$\mathcal{D}_{\mathrm{pair}}$拟合式\eqref{eq:nlp-align-bt}：
+奖励模型要读懂提示和回答，才能判断回答好坏，因此通常直接由SFT模型改造：保留全部Transformer层，去掉把隐藏状态映射到词表的输出层，换成一个输出标量的线性头。训练目标是偏好数据的负对数似然。实现上有两个关键问题：同一提示的多个回答怎样组织成批，以及偏好强度怎样进入损失。
+
+\subsubsection{标量奖励头与批内成对训练}
+\label{sec:nlp-align-rm-head}
+
+设基座有$L$层、隐藏维度$d$。把提示与回答按第\ref{chap:nlp-supervised-finetuning}章的对话模板拼成一个序列，末尾加结束标记，送入网络，得到最后一层的隐藏状态$\bm H\in\mathbb R^{T\times d}$。在因果注意力下，只有最后一个词元的隐藏状态看到了完整的提示与回答，所以取它接标量头：
+\begin{equation}
+\label{eq:nlp-align-rm-head}
+ r_{\bm\phi}(x,y)=\bm w^{\top}\bm H_{T,:}+b,\qquad \bm w\in\mathbb R^{d},\ b\in\mathbb R,
+\end{equation}
+其中$\bm\phi$包括Transformer参数与$\bm w,b$。批内序列长短不一时，需要按每条序列最后一个非填充位置取隐藏状态，不能直接取张量的最后一列。原输出层$\bm W_U\in\mathbb R^{|V|\times d}$被丢弃，新增参数只有$d+1$个。
+
+从SFT模型而不是随机网络起步，是因为判断回答好坏需要的语言理解已经在预训练与SFT中获得，偏好数据只需教会模型“按哪个标准排序”；偏好数据通常只有几万到几十万对，不足以从头学习语言。奖励模型的规模也是一个取舍。它要在强化学习中对每个采样回答打分，规模越大，评分越准，计算越贵；InstructGPT用6B的奖励模型配合175B的策略，原文报告175B的奖励模型训练不稳定，也不便作为价值模型的初值\scite{ouyang2022instructgpt}。另一方面，第\ref{sec:nlp-align-proxy-gold}小节的结果表明，较大的奖励模型更能承受优化压力，所以规模不宜过小。
+
+奖励模型以式\eqref{eq:nlp-align-bt}的负对数似然训练：
 \begin{equation}
 \label{eq:nlp-align-reward-loss}
  L_{\mathrm{RM}}(\bm{\phi})
- =-\mathbb{E}_{(x,y^{+},y^{-})\sim\mathcal{D}_{\mathrm{pair}}}
- \log\sigma\bigl(r_{\bm{\phi}}(x,y^{+})-r_{\bm{\phi}}(x,y^{-})\bigr).
+ =-\mathbb{E}_{(x,y_{\mathrm w},y_{\mathrm l})\sim\mathcal{D}_{\mathrm{pair}}}
+ \log\sigma\bigl(r_{\bm{\phi}}(x,y_{\mathrm w})-r_{\bm{\phi}}(x,y_{\mathrm l})\bigr).
 \end{equation}
-最小化负对数概率，鼓励模型为实际选择分配更高概率。实际训练用有限样本平均近似这个期望；同一提示的多条比较是否等权，也会影响目标。
+它就是以得分差为logit的二分类交叉熵：胜出回答得分越高于落选回答，损失越小。
 
-一个只看回答长度的评分器，在“完整答案通常较长”的训练材料中也可能获得较低比较损失。为识别这种捷径，需要检查长度相近的回答、同一正确内容的不同表述，以及事实错误但措辞流畅的回答。留出比较准确率和概率校准检查能够发现部分错误，却不能证明评分器在所有新回答上可靠。
+排序数据展开成$\binom K2$对以后，若把每对当作独立样本打乱训练，同一个回答会在一轮中出现$K-1$次。InstructGPT观察到这样训练的奖励模型很快过拟合，于是把同一提示的全部$\binom K2$对放进同一个批元素：$K$个回答各前向一次，得到得分向量，再在得分之间两两作差计算全部成对损失\scite{ouyang2022instructgpt}。以$B$个提示、每个$K$个回答为一批，张量形状依次是：输入词元$[BK,T]$，最后一层隐藏状态$[BK,T,d]$，取末词元后$[BK,d]$，标量头输出并重排为得分矩阵$[B,K]$，两两作差得$[B,K,K]$，再用由排序决定的上三角掩码选出$\binom K2$个有效差值，取$-\log\sigma$后按对数平均。前向次数从逐对计算的$2\binom K2=K(K-1)$次降到$K$次，$K=9$时从72次降到9次。
 
-策略更新后，生成回答的分布会改变。新模型可能产生训练比较中没有出现的写法，甚至找到评分器偏好的无关表达。因此，奖励模型不仅要在原数据的留出部分检查，还要在新策略的候选上重新核验。下一节使用奖励时，必须把这段适用范围和误差一并带入判断。
+\begin{example}[三个回答的批内成对损失]
+  \label{ex:nlp-align-rm-batch}
+  以下数值为教学示例。某提示的三个回答排序为$A\succ B\succ C$，奖励模型当前得分为$(1.2,\ 0.4,\ -0.3)$。三对得分差为$r_A-r_B=0.8$、$r_A-r_C=1.5$、$r_B-r_C=0.7$，对应损失$-\log\sigma(\cdot)$为$0.371$、$0.201$、$0.403$，平均$0.325$。三个回答只需各前向一次；逐对计算则要6次。梯度会同时把$r_A$向上推、$r_C$向下推，$r_B$受到一正一负两个方向的作用，净效果取决于两对的误判程度。
+\end{example}
 
-\subsection{帮助性奖励与风险代价}
+奖励模型通常只训练一轮，学习率较小，因为多轮训练会让它记住训练回答的表面特征。训练结束后，由于零点不可识别，常把奖励整体平移，使一组参考回答（如人工示范）的平均得分为0\scite{ouyang2022instructgpt,nlp-align-stiennon2020}。平移不改变任何比较概率，也不改变第\ref{sec:nlp-align-kl-objective}节KL正则目标的最优策略，因为同一提示下的常数在归一化中消去；它的作用是让第\ref{sec:nlp-align-ppo}小节价值模型的初值和优势估计落在合适的数值范围，也让$\beta$的取值在不同实验之间有可比性。
+
+奖励模型的质量通常用留出偏好对上的成对准确率衡量，即$r_{\bm\phi}(x,y_{\mathrm w})>r_{\bm\phi}(x,y_{\mathrm l})$的比例。公开的基准如RewardBench把留出偏好对按对话、困难对话、安全与推理等类别分组，分别报告准确率，便于看出奖励模型在哪类比较上薄弱\scite{nlp-align-lambert2024rewardbench}。这个准确率受第\ref{sec:nlp-align-judges}小节评判者一致率的限制，而且只说明奖励模型在原数据分布上的排序能力；策略更新后产生的回答可能不在这个分布中，第\ref{sec:nlp-align-overoptimization}小节将讨论由此产生的问题。
+
+标量奖励头之外，也可以直接让语言模型充当评判者，即第\ref{sec:nlp-align-rlaif}小节的做法：把两个回答放进同一个提示，让模型生成“A更好”或给出分数。二者的差别在于输入和输出：标量奖励模型一次只读一个回答，输出一个可以跨回答比较的得分，每个回答前向一次即可，适合强化学习中的大量打分；成对评判一次读两个回答，能直接对照细节，但$K$个回答需要$\binom K2$次调用，且受位置偏差影响，更常用于构造偏好数据和独立评价。
+
+\subsubsection{间隔损失与排序损失}
+\label{sec:nlp-align-rm-margin}
+
+式\eqref{eq:nlp-align-reward-loss}对“明显更好”和“略好”一视同仁。若标注者给出了偏好强度，可以要求强偏好对拉开更大的得分差。Llama 2的奖励模型在损失中加入随偏好等级变化的间隔$m(x,y_{\mathrm w},y_{\mathrm l})\ge0$\cite{nlp-align-touvron2023llama2}：
+\begin{equation}
+\label{eq:nlp-align-margin-loss}
+ L_{\mathrm{margin}}(\bm\phi)=-\mathbb E\log\sigma\bigl(r_{\bm\phi}(x,y_{\mathrm w})-r_{\bm\phi}(x,y_{\mathrm l})-m(x,y_{\mathrm w},y_{\mathrm l})\bigr).
+\end{equation}
+\term{间隔损失}（margin loss）相当于把胜负判定的门槛从得分差0移到$m$。例如得分差为1时，$m=0$的损失为$-\log\sigma(1)=0.313$，$m=1$的损失为$-\log\sigma(0)=0.693$；强偏好对在得分差达到1以后仍有明显梯度，弱偏好对则较早饱和。间隔的大小是人为设定的超参数，取值应与偏好等级的实际含义对应。
+
+排序数据也可以不展开成对，而直接最大化Plackett--Luce似然，排序损失为式\eqref{eq:nlp-align-plackett-luce}的负对数：
+\[
+ L_{\mathrm{PL}}(\bm\phi)=-\mathbb E\sum_{k=1}^{K-1}\Bigl[r_{\bm\phi}(x,y_{\tau(k)})-\log\sum_{j=k}^{K}\exp r_{\bm\phi}(x,y_{\tau(j)})\Bigr].
+\]
+两种损失在$K=2$时相同。$K>2$时，成对损失把$\binom K2$对当作各自独立的观测，排序损失则把整个排序当作一次观测；前者对排序中靠后的回答对同样重视，后者的第一个因子决定了“谁是第一名”的权重更大。
+
+奖励差之外，奖励的绝对尺度在训练中没有约束，可能随训练无界增长，使后续强化学习的数值不稳定。一种做法是加入得分幅度惩罚，例如$\alpha\,\mathbb E[(r_{\bm\phi}(x,y_{\mathrm w})+r_{\bm\phi}(x,y_{\mathrm l}))^2]$，把每个提示的平均得分压向0；它不改变任何比较概率，只固定零点。
+
+\subsection{奖励模型的过度优化}
+\label{sec:nlp-align-overoptimization}
+
+奖励模型只是在有限偏好数据上拟合的代理。策略越是针对它优化，越可能找到奖励模型打分偏高、真实偏好并不认可的回答，这是Goodhart定律在对齐中的表现：一个度量一旦成为优化目标，就不再是好的度量。典型的代理误差有两类：\emph{长度捷径}，即奖励模型从训练数据中学到“长回答通常更完整”，策略于是不断加长回答；\emph{迎合}，即奖励模型偏好赞同用户的语气，策略于是附和问题中的错误前提。下面先给出度量偏离的方法，再给出缓解手段。
+
+\subsubsection{代理奖励与真实偏好的偏离}
+\label{sec:nlp-align-proxy-gold}
+
+度量偏离需要知道“真实偏好”，而反复请人评判成本太高。Gao等设计了一个合成设定\cite{gao2022overoptimization}：用一个较大的奖励模型充当“金标准”，由它代替人工给比较数据打标签；用这些标签训练若干个较小的\emph{代理奖励模型}；再让策略针对代理奖励优化，同时用金标准奖励模型评价策略。这样，“真实偏好”可以随时、廉价地查询。
+
+横轴取策略与初始策略之间的距离$d=\sqrt{D_{\mathrm{KL}}(\pi\Vert\pi_{\mathrm{init}})}$，用它度量优化走了多远。实验中代理奖励随$d$持续上升，金标准奖励则先升后降。两种优化方式得到不同的拟合形式：
+\begin{equation}
+\label{eq:nlp-align-overopt-fit}
+ R_{\mathrm{bon}}(d)=d\,(\alpha_{\mathrm{bon}}-\beta_{\mathrm{bon}}d),\qquad
+ R_{\mathrm{RL}}(d)=d\,(\alpha_{\mathrm{RL}}-\beta_{\mathrm{RL}}\log d),
+\end{equation}
+其中$R$为相对初始策略的金标准奖励增量，$\alpha,\beta$为拟合系数（这里的$\beta$与KL系数无关）。best-of-$N$（第\ref{sec:nlp-align-best-of-n}小节）对应二次形式，强化学习对应带对数的形式；两者都在某个$d$处达到峰值。代理奖励模型越大、训练数据越多，峰值越高、出现得越晚，但峰值之后的下降并不消失。原文还观察到，在强化学习中加大KL惩罚并没有改善“金标准奖励—KL距离”曲线本身，它的效果近似于提前停止。
+
+用一组教学数值看峰值的位置：若$\alpha_{\mathrm{bon}}=1$、$\beta_{\mathrm{bon}}=0.25$，则$R_{\mathrm{bon}}$在$d^*=\alpha/(2\beta)=2$处最大，此时KL距离为4奈特，金标准奖励增量为1；继续增大$N$，代理奖励还会上升，金标准奖励却开始下降。
+
+原文进一步发现，拟合系数随代理奖励模型的参数量平滑变化，因此可以由较小规模的实验外推较大规模下峰值的位置。这给出一种实际用法：先在小规模上估计“金标准奖励开始下降时的KL距离”，再把它作为正式训练的KL预算或停止条件。这种外推依赖合成设定本身：金标准奖励模型代替的是人工偏好，它自己也有误差，真实人工偏好下的曲线形状需要另行检验。
+
+这一结果的直接推论是：奖励模型的留出准确率不足以说明它能承受多大的优化压力。检查必须在新策略的回答分布上重新进行，例如定期抽取当前策略的回答请人评判，或者对比代理奖励与独立评判的变化趋势。
+
+\subsubsection{奖励模型集成与约束}
+\label{sec:nlp-align-rm-ensemble}
+
+缓解过度优化的思路是让奖励在“不确定”的地方变得保守。训练$M$个奖励模型（不同随机种子、数据顺序或超参数），对同一回答得到$r_1,\ldots,r_M$，有三种常见的组合方式\cite{nlp-align-coste2024ensembles}：取均值$\bar r$；取最小值$\min_m r_m$，即最坏情形优化；或取均值减去与分歧成正比的惩罚，例如$\bar r-\kappa\operatorname{Var}_m(r_m)$。后两种在成员意见分歧大的回答上压低奖励，而策略利用单个奖励模型误差的回答，往往正是成员分歧大的回答。
+
+集成需要多次前向，强化学习中每个样本都要评分，成本按$M$倍增加。\term{权重平均奖励模型}（weight averaged reward models, WARM）改为对参数取平均\cite{nlp-align-rame2024warm}：从同一个预训练检查点出发微调$M$个奖励模型，得到参数$\bm\phi_1,\ldots,\bm\phi_M$，使用$\bar{\bm\phi}=\frac1M\sum_m\bm\phi_m$。由同一初始化微调得到的模型在参数空间中通常线性连通，平均后的模型仍是一个可用的奖励模型，推断成本与单个模型相同，同时获得部分集成的稳健性。
+
+集成能减轻但不能消除过度优化。成员共享同一个预训练基座和同一批偏好数据时，它们的误差是相关的：若所有成员都偏好长回答，取最小值也不会纠正这一点\scite{nlp-align-eisenstein2024herding}。因此集成通常与其他手段配合：KL约束限制策略走多远，提前停止避免进入金标准奖励下降的区域，定期在新策略样本上补充标注并重训奖励模型。
+
+\subsection{帮助性奖励与安全代价}
 \label{sec:nlp-align-help-cost}
 
-如果一个回答内容有用却违反了明确的行为要求，仅用总分可能掩盖两种性质的差别。可以分别建立帮助性奖励$r_{\bm{\phi}}(x,y)$和风险代价$c_{\bm{\psi}}(x,y)$：前者表示在允许范围内完成请求的程度，后者表示按明确标注规则判定的违例程度或风险分数。Safe RLHF采用分开的帮助与安全信号，并在策略学习中处理相应约束\scite{nlp-llm-safe-rlhf}。
+只用一个奖励同时表达帮助与安全会出现两难：对所有请求都拒绝的回答很安全，在混合了安全标签的奖励模型下可能得到不低的分数；反过来，详细执行受限请求的回答很“有帮助”，却违反了行为边界。两类要求不能互相替代，压成一个分数又会掩盖二者的权衡。
 
-两类信号需要各自的标注依据。对允许请求给出无意义拒绝，可能具有较低风险代价，但帮助性也很低；对受限请求提供具体执行内容，可能形式上完整，却违反行为条件。因此，代价不能简单定义成“没有拒绝”，奖励也不能定义成“满足用户所有要求”。共享输入和候选可以减少两类标注的条件差异，却不会消除标准冲突。
+Safe RLHF把它们分开建模\scite{nlp-llm-safe-rlhf}。帮助性奖励模型$R_{\bm\phi}(x,y)$按式\eqref{eq:nlp-align-reward-loss}在帮助性偏好上训练；\term{代价模型}（cost model）$C_{\bm\psi}(x,y)$在“哪个回答更有害”的偏好上训练，并额外使用每个回答是否安全的标签$s\in\{+1,-1\}$（$+1$表示有害），加入分类项$-\log\sigma(s\,C_{\bm\psi}(x,y))$，使有害回答的代价为正、安全回答的代价为负。于是代价的符号本身有含义，可以设定阈值。对齐写成约束优化：
+\begin{equation}
+\label{eq:nlp-align-safe-rlhf}
+ \max_{\bm\theta}\ \mathbb E_{x,y\sim\pi_{\bm\theta}}[R_{\bm\phi}(x,y)]
+ \quad\text{s.t.}\quad
+ \mathbb E_{x,y\sim\pi_{\bm\theta}}[C_{\bm\psi}(x,y)]\le d,
+\end{equation}
+$d$为允许的平均代价上限。用拉格朗日乘子$\lambda\ge0$把约束并入目标，得到鞍点问题
+\[
+ \min_{\lambda\ge0}\max_{\bm\theta}\ \mathbb E[R_{\bm\phi}-\lambda C_{\bm\psi}]+\lambda d .
+\]
+求解时交替进行：固定$\lambda$，以$R_{\bm\phi}-\lambda C_{\bm\psi}$为奖励做一步策略更新（第\ref{sec:nlp-align-ppo}小节）；再按当前策略样本估计的平均代价做对偶上升
+\[
+ \lambda\gets\max\bigl\{0,\ \lambda+\eta_\lambda(\widehat{\mathbb E}[C_{\bm\psi}]-d)\bigr\}.
+\]
+平均代价超过上限时$\lambda$增大，安全项的权重上升；低于上限时$\lambda$减小，帮助性重新占主导。例如$d=0$、$\eta_\lambda=0.1$（教学示例），从$\lambda=0$开始：第一轮平均代价为$0.3$，$\lambda$升到$0.03$；策略随之变得保守，第二轮平均代价降到$0.1$，$\lambda$升到$0.04$；第三轮平均代价为$-0.2$，已满足约束，$\lambda$降回$0.02$。乘子在约束边界附近来回调整，而不是一次定死。与固定一个惩罚系数相比，乘子自动随约束违背程度调整，无须手工搜索权衡系数。
 
-分开评分让下一步能够明确选择权衡或约束。它本身不保证安全：若代价模型漏掉某类违例，优化仍可能利用这个缺口；即使平均代价受到控制，个别输入的违例也可能很大。策略目标应说明究竟限制总体平均、某些分组，还是更严格的逐输入条件。
+另一种组合方式是Llama 2的分段选择：同时训练帮助性与安全两个奖励模型，对标记为安全相关的提示，或安全奖励低于某个阈值的回答，使用安全奖励，否则使用帮助性奖励\scite{nlp-align-touvron2023llama2}。它不求解约束问题，而是按规则切换信号。
 
-\section{对齐目标构造}
-\label{sec:nlp-align-objectives}
+两种做法都有共同的边界。式\eqref{eq:nlp-align-safe-rlhf}约束的是平均代价，个别输入上的代价仍可能很高；代价模型漏判的违例，优化同样可能利用。帮助性与代价两类标注应在相同的提示和候选上进行，否则二者的差异会混入数据来源的差异。
 
-信号说明怎样评价回答，目标则说明这些评价怎样作用于生成分布。以下把条件语言模型记为策略$\pi_{\bm{\theta}}(y\mid x)$：它在提示$x$下给出完整回答$y$的概率，仍按词元条件概率相乘。这个记号强调回答是模型的选择，不改变前文的序列概率定义。
+表~\ref{tab:nlp-align-reward-methods}汇总本节的方法。它们共同的出发点是Bradley--Terry模型，各自处理的是数据形式、训练效率、偏好强度、优化压力与多目标中的一个问题。
 
-\subsection{奖励提升与策略偏移控制}
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{奖励建模中的方法与各自处理的问题。}
+  \label{tab:nlp-align-reward-methods}
+  \begin{tabularx}{\linewidth}{@{}p{26mm}p{32mm}p{48mm}X@{}}
+    \toprule
+    方法 & 处理的问题 & 核心机制 & 新代价或限制\\
+    \midrule
+    Bradley--Terry & 比较如何变成得分 & 胜率为得分差的逻辑函数 & 零点与尺度不可识别；无法表达循环偏好\\
+    Plackett--Luce & $K$个回答的排序 & 依次选出剩余回答中最好者 & 对排名靠前的选择权重更大\\
+    批内成对训练 & 重复回答导致过拟合 & 同提示$K$个回答一批，前向$K$次 & 批大小随$K$增长\\
+    间隔损失 & 偏好强度未被利用 & 胜负门槛移到$m$ & 间隔需按等级人为设定\\
+    奖励归一化 & 奖励零点任意 & 参考回答平均得分平移为0 & 只固定零点，不改善排序\\
+    集成与WARM & 策略利用单个RM的误差 & 均值、最小值或分歧惩罚；参数平均 & 成员误差相关时效果有限\\
+    Safe RLHF & 帮助与安全互相掩盖 & 奖励与代价分开，拉格朗日乘子求约束 & 只约束平均代价；需两类标注\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\section{基于强化学习的策略优化}
+\label{sec:nlp-align-learning}
+
+有了奖励模型，就可以把生成策略当作强化学习中的策略来优化：让模型生成回答，由奖励模型打分，再提高高分回答的概率。这一步要处理四个挑战。只提高奖励会使策略偏离参考模型，并利用奖励模型的误差；回答由逐词元生成，奖励只在结尾给出，需要把它分配到各个词元；PPO在语言模型上要同时维持策略、价值、参考与奖励四个模型，显存与工程代价很高；去掉价值模型以后，又要另找办法控制梯度方差。对应的方法谱系是：KL正则化目标与序列决策形式，PPO的完整实现，去掉价值模型的REINFORCE、RLOO、ReMax与GRPO，以及不做强化学习、只用奖励模型挑选样本的best-of-$N$与拒绝采样微调。图~\ref{fig:nlp-align-rlhf-pipeline}给出以PPO为优化器的RLHF三阶段流程。
+
+\begin{figure*}[!t]
+  \centering
+  \input{figures/09-natural-language-processing/01-language-models/tikz/align-rlhf-pipeline.tex}
+  \caption{以PPO为优化器的RLHF三阶段流程。第一阶段用人工示范做有监督微调，得到SFT模型；第二阶段从SFT模型为每个提示采样$K$个回答，由标注者排序并展开为$\binom K2$个比较，训练奖励模型；第三阶段由策略生成回答，冻结的奖励模型给出终局得分，冻结的参考模型给出逐词元KL惩罚，二者合成逐词元奖励，价值模型据此估计优势，最后以PPO更新策略与价值模型。实线框为参与训练的模型，虚线框为冻结的模型；参考模型和策略的初值都来自SFT模型，价值模型常由奖励模型初始化。}
+  \label{fig:nlp-align-rlhf-pipeline}
+\end{figure*}
+
+\subsection{KL正则化的对齐目标}
 \label{sec:nlp-align-kl-objective}
 
-如果只提高期望奖励，模型可能集中到评分器认为最好的少数回答，并离开原有可用行为。选取一个固定参考策略$\pi_{\mathrm{ref}}$，可以用KL散度惩罚这种偏移。令$d(x)$为目标提示分布，一个常见目标为
+如果只最大化期望奖励，策略会把概率集中到奖励模型打分最高的少数回答上：回答的多样性消失，语言变得不自然，而且最高分回答往往正是奖励模型出错的地方。为此选定一个固定的\term{参考策略}（reference policy）$\pi_{\mathrm{ref}}$，通常就是SFT模型，用KL散度惩罚策略相对它的偏移。令$d(x)$为训练提示的分布，目标为
 \begin{equation}
 \label{eq:nlp-align-regularized-reward}
-\begin{aligned}
- K_{\bm{\theta}}(x)
- &=D_{\mathrm{KL}}\bigl(\pi_{\bm{\theta}}(\cdot\mid x)
-                       \Vert\pi_{\mathrm{ref}}(\cdot\mid x)\bigr),\\
  \max_{\bm{\theta}}\ J(\bm{\theta})
- &=\mathbb{E}_{x\sim d}\left[
+ =\mathbb{E}_{x\sim d}\Bigl[
    \mathbb{E}_{y\sim\pi_{\bm{\theta}}(\cdot\mid x)}r(x,y)
-   -\beta K_{\bm{\theta}}(x)\right],\quad \beta>0.
+   -\beta D_{\mathrm{KL}}\bigl(\pi_{\bm{\theta}}(\cdot\mid x)\Vert\pi_{\mathrm{ref}}(\cdot\mid x)\bigr)\Bigr],\qquad \beta>0.
+\end{equation}
+第一项提高当前策略实际生成的回答的奖励，第二项限制它相对参考分布的平均偏移。这一目标最早由Ziegler等用于语言模型的人类偏好微调\cite{nlp-align-ziegler2019}，此后成为RLHF的标准形式。
+
+回答级的KL可以按词元分解。由于两个策略都按链式法则给出序列概率，且以同一个结束标记终止，
+\[
+ D_{\mathrm{KL}}\bigl(\pi_{\bm\theta}(\cdot\mid x)\Vert\pi_{\mathrm{ref}}(\cdot\mid x)\bigr)
+ =\mathbb E_{y\sim\pi_{\bm\theta}}\sum_{t=1}^{|y|}\log\frac{\pi_{\bm\theta}(y_t\mid x,y_{<t})}{\pi_{\mathrm{ref}}(y_t\mid x,y_{<t})}.
+\]
+所以只要从$\pi_{\bm\theta}$采样一条回答，把各位置的对数概率比相加，就得到序列KL的无偏估计。单个位置的对数比可以为负，只有按策略取期望后才非负。
+
+逐位置的KL估计量不止一种。记采样词元上的概率比$q_t=\pi_{\mathrm{ref}}(y_t\mid s_t)/\pi_{\bm\theta}(y_t\mid s_t)$，常用的两种估计为
+\[
+ k_1=-\log q_t,\qquad k_3=(q_t-1)-\log q_t .
+\]
+二者在$y_t\sim\pi_{\bm\theta}$下的期望都等于该位置的KL，因为$\mathbb E[q_t]=1$。$k_1$实现最简单，但单个样本可以为负；$k_3$利用$u-1-\log u\ge0$，每个样本都非负，方差通常也更小。PPO常把$k_1$放进逐词元奖励（第\ref{sec:nlp-align-ppo-gae}小节），GRPO则把$k_3$作为单独的损失项。
+
+$\beta$也可以随训练自动调整。Ziegler等采用自适应KL控制：设定一个目标KL值$\mathrm{KL}_{\mathrm{target}}$，每轮按当前估计的KL计算相对误差$e=\operatorname{clip}\bigl((\widehat{\mathrm{KL}}-\mathrm{KL}_{\mathrm{target}})/\mathrm{KL}_{\mathrm{target}},-0.2,0.2\bigr)$，再令$\beta\gets\beta(1+K_\beta e)$，$K_\beta$为一个小的步长\scite{nlp-align-ziegler2019}。KL超过目标时$\beta$增大，惩罚加重；低于目标时$\beta$减小。这样设定的是“允许走多远”，比直接设定$\beta$更容易在不同奖励尺度之间迁移。
+
+$\beta$控制奖励与偏移之间的权衡：$\beta\to0$时目标退化为纯奖励最大化，$\beta\to\infty$时最优策略就是参考策略。由于奖励的尺度不可识别（第\ref{sec:nlp-align-bradley-terry}小节），把奖励乘以$c$等价于把$\beta$除以$c$，比较不同实验的$\beta$之前应先统一奖励尺度。参考策略本身的错误也会被保留：KL项把策略拉向参考模型，而不是拉向“正确”。这一目标同时是第\ref{sec:nlp-align-dpo}小节DPO推导的起点：它的最优解有闭式。
+
+记号上，本章的$\beta$对应卷七中的KL系数$\lambda_{\mathrm{KL}}$；卷七以$q$记任务提示，并以$\beta$记行为策略，与本章不同，对照阅读时需要注意。
+
+\subsection{回答生成的序列决策形式}
+\label{sec:nlp-align-mdp}
+
+要用强化学习优化式\eqref{eq:nlp-align-regularized-reward}，先把生成写成马尔可夫决策过程。状态$s_t=(x,y_{<t})$是提示加已生成的前缀；动作$a_t=y_t\in V$是下一个词元，动作空间就是整个词表；转移是确定的，把$a_t$接到前缀末尾得到$s_{t+1}$；生成出结束标记或达到最大长度$T_{\max}$时回合终止。策略$\pi_{\bm\theta}(a_t\mid s_t)$就是语言模型在该前缀下的下一词元分布，不需要另建策略网络。奖励模型只对完整回答打分，所以奖励只在最后一步给出，中间各步为0（下一小节再加入逐词元的KL项）。回答长度有限，折扣因子通常取$\gamma=1$。
+
+以通知问答为例，提示$x$是“读书会改到什么时候？”，回答被切成词元“周五”“下午”“两点”“。”和结束标记。状态$s_1=(x)$，策略选出动作“周五”；$s_2=(x,\text{周五})$，再选“下午”；依此类推，到$s_5$选出结束标记，回合终止。奖励模型读完整回答，在最后一步给出得分，例如$0.9$，前四步的奖励为0。若策略在$s_3$选了“三点”而不是“两点”，后面的生成照常进行，但终局得分会降低；强化学习要从这个终局得分推断出“三点”这一步选错了，这就是信用分配问题。
+
+可变长度通过终止条件进入回报：自然结束的回答在结束标记处得到奖励模型得分；达到$T_{\max}$而没有结束标记的回答是被截断的，常见做法是给它一个固定的低分，或者仍按截断文本打分，两种约定会改变策略对长度的倾向，需要明确记录。在这个过程中，\term{价值函数}（value function）$V(s_t)$表示“从当前前缀继续按策略生成，期望能拿到多少奖励”；动作价值$Q(s_t,a_t)$表示先写下词元$a_t$再继续生成的期望奖励，二者之差就是\term{优势}（advantage）$A(s_t,a_t)=Q(s_t,a_t)-V(s_t)$，表示这个词元比该前缀下的平均选择好多少。
+
+语言模型上还有另一种看法：把整段回答当作一个动作，回合只有一步，问题退化为上下文老虎机。PPO采用逐词元的看法，以价值函数在每个位置分配信用；第\ref{sec:nlp-align-critic-free}小节的方法采用整段回答的看法，不学习价值函数。
+
+后面要用到强化学习的三个结论。其一，策略梯度定理：目标对策略参数的梯度可写为$\mathbb E[\sum_t\nabla_{\bm\theta}\log\pi_{\bm\theta}(a_t\mid s_t)(G_t-b(s_t))]$，其中$G_t$是从$t$起的回报，$b(s_t)$是任何不依赖$a_t$的基线；减去基线不改变梯度期望，只改变方差。其二，\term{广义优势估计}（generalized advantage estimation, GAE）用时序差分残差的指数加权和估计优势，衰减参数$\lambda\in[0,1]$在偏差与方差之间权衡：$\lambda=1$得到无偏但方差大的蒙特卡罗估计，$\lambda=0$只用一步残差，方差小但依赖价值函数的准确性\scite{rl3-schulman2016gae}。其三，PPO用旧策略采样，对新旧策略的概率比做裁剪，使同一批数据可以安全地复用多轮。这些结论的一般推导、成立条件与算法可参考\BookChapterRef{chap:rl-learning}{卷七“未知模型的求解”章}；记号上，本章的状态、动作、策略与卷七一致，提示$x$对应卷七的任务提示$q$。
+
+\subsection{PPO在语言模型上的实现}
+\label{sec:nlp-align-ppo}
+
+\term{近端策略优化}（proximal policy optimization, PPO）是RLHF中最早被广泛使用的优化算法\scite{rl3-schulman2017ppo}。它每轮用旧策略$\pi_{\mathrm{old}}$采样一批回答，再在裁剪的概率比目标下对这批数据做几轮小批量更新，从而控制每轮策略变化的幅度。在语言模型上，实现要解决三件事：把KL惩罚分配到每个词元并用价值模型估计优势；同时运行四个模型；以及在目标中保留预训练能力。下面依次写出。
+
+\subsubsection{逐词元KL奖励与GAE优势}
+\label{sec:nlp-align-ppo-gae}
+
+对一条由$\pi_{\mathrm{old}}$采样的回答$y=(a_1,\ldots,a_T)$，把式\eqref{eq:nlp-align-regularized-reward}中的KL项按上一小节的分解放到每个词元上，奖励模型的得分放在最后一个词元上：
+\begin{equation}
+\label{eq:nlp-align-token-reward}
+ r_t=-\beta\log\frac{\pi_{\mathrm{old}}(a_t\mid s_t)}{\pi_{\mathrm{ref}}(a_t\mid s_t)}
+ +\mathbb 1[t=T]\,r_{\bm\phi}(x,y),\qquad t=1,\ldots,T.
+\end{equation}
+这里用的是采样策略$\pi_{\mathrm{old}}$的概率，因为样本由它产生，对数比的和正是它相对参考策略的KL的估计；这些量在采样后即固定，不参与梯度。每一步的KL项就像一笔小额“偏移费”，词元越偏离参考模型，扣得越多。
+
+\term{价值模型}（value model）$V_{\bm\omega}$为每个前缀输出一个标量，结构与奖励模型相同，只是在每个回答位置都读出得分，输出形状为$[B,T]$。由它计算时序差分残差和GAE优势：
+\begin{equation}
+\label{eq:nlp-align-gae}
+ \delta_t=r_t+\gamma V_{\bm\omega}(s_{t+1})-V_{\bm\omega}(s_t),\qquad
+ \widehat A_t=\sum_{l=0}^{T-t}(\gamma\lambda)^l\delta_{t+l},
+\end{equation}
+终止时取$V_{\bm\omega}(s_{T+1})=0$。实际计算从$t=T$向前递推$\widehat A_t=\delta_t+\gamma\lambda\widehat A_{t+1}$，一条回答只需线性时间。价值模型的回归目标取$\widehat G_t=\widehat A_t+V_{\bm\omega_{\mathrm{old}}}(s_t)$。之后对整批回答位置上的优势做\term{白化}（whitening），即减去批均值、除以批标准差，使不同批次、不同奖励尺度下的更新幅度相近。这里的$\lambda$是GAE的衰减参数，与第\ref{sec:nlp-align-help-cost}小节的拉格朗日乘子无关。
+
+\begin{example}[三个词元的逐词元奖励与GAE]
+  \label{ex:nlp-align-gae}
+  以下数值为教学示例。一条回答有$T=3$个词元，$\beta=0.1$，三个位置的$\log(\pi_{\mathrm{old}}/\pi_{\mathrm{ref}})$为$(0.2,\,-0.1,\,0.3)$，奖励模型得分$r_{\bm\phi}=1.0$。由式\eqref{eq:nlp-align-token-reward}，逐词元奖励为$(-0.02,\ 0.01,\ 0.97)$，第二个词元的对数比为负，奖励反而略为正。设价值模型给出$V(s_1),V(s_2),V(s_3)=(0.5,\,0.6,\,0.8)$，取$\gamma=1$、$\lambda=0.95$：
+  \[
+   \begin{aligned}
+   \delta_3&=0.97-0.8=0.17,\\
+   \delta_2&=0.01+0.8-0.6=0.21,\\
+   \delta_1&=-0.02+0.6-0.5=0.08,
+   \end{aligned}
+  \]
+  从后往前得$\widehat A_3=0.17$，$\widehat A_2=0.21+0.95\times0.17=0.372$，$\widehat A_1=0.08+0.95\times0.372=0.433$。价值目标为$\widehat G=(0.933,\,0.972,\,0.97)$。若取$\lambda=1$，$\widehat A_1=0.08+0.21+0.17=0.46$，恰为总奖励$0.96$减去$V(s_1)=0.5$，即蒙特卡罗优势。
+\end{example}
+
+策略损失采用裁剪的概率比目标。记$\rho_t(\bm\theta)=\pi_{\bm\theta}(a_t\mid s_t)/\pi_{\mathrm{old}}(a_t\mid s_t)$，裁剪半宽为$\epsilon$：
+\begin{equation}
+\label{eq:nlp-align-ppo}
+ L_{\mathrm{clip}}(\bm{\theta})
+ =-\mathbb{E}_t\Bigl[\min\bigl(\rho_t(\bm{\theta})\widehat{A}_t,\
+   \operatorname{clip}(\rho_t(\bm{\theta}),1-\epsilon,1+\epsilon)\widehat{A}_t\bigr)\Bigr].
+\end{equation}
+期望对本批全部回答的全部回答位置取平均，提示位置和填充位置用掩码排除。优势为正时，概率比超过$1+\epsilon$后这一项不再增加收益；优势为负时，概率比低于$1-\epsilon$后不再增加收益。它限制的是相对本轮采样策略的局部更新激励，而不是相对参考策略的偏移，后者由逐词元奖励中的KL项负责。
+
+价值损失也做类似的裁剪，防止价值模型在一轮内变化过大：
+\begin{equation}
+\label{eq:nlp-align-value-loss}
+\begin{aligned}
+ L_V(\bm\omega)=\tfrac12\mathbb E_t\max\Bigl\{&\bigl(V_{\bm\omega}(s_t)-\widehat G_t\bigr)^2,\\
+ &\bigl(\operatorname{clip}(V_{\bm\omega}(s_t),\,V_{\mathrm{old}}(s_t)-\epsilon_V,\,V_{\mathrm{old}}(s_t)+\epsilon_V)-\widehat G_t\bigr)^2\Bigr\},
 \end{aligned}
 \end{equation}
-第一项提高当前策略实际产生回答的奖励，第二项限制它相对参考分布的平均偏移。KL是对完整回答分布求和；只有在相同序列分布及终止约定下，才能用沿生成轨迹累积的词元对数概率比估计它。
+其中$V_{\mathrm{old}}$是采样时价值模型的输出。一些实现还加入策略的熵奖励以鼓励探索；在语言模型上，KL项已经把策略约束在参考模型附近，熵项通常很小或省略。
 
-参考策略通常来自合适的SFT模型，选定后可以在一阶段内保持固定。较大的$\beta$使偏移代价更重，但奖励乘上常数也会改变同一个$\beta$的实际作用。KL接近参考策略并不等于满足所有行为要求；如果参考策略自身有错误，保持接近也会保留部分错误。
+\subsubsection{策略、价值、参考与奖励四个模型}
+\label{sec:nlp-align-ppo-models}
 
-若风险需要单独控制，可以在上述目标外加入$\mathbb{E}[c(x,y)]\leq\delta$。将约束写成拉格朗日形式，会在奖励中出现$-\lambda(c-\delta)$，其中$\lambda\geq0$随约束违例调整：估计代价超过$\delta$时增大惩罚，低于约束时可以减小惩罚，同时保持乘子非负。Safe RLHF提供了这类帮助性与代价约束的具体学习路径\scite{nlp-llm-safe-rlhf}。固定一个惩罚系数与求解受约束问题并不自动等价；有限模型、估计误差和不充分优化都会影响约束是否达到。
+一次PPO迭代要用到四个模型，它们的职责、初始化与是否训练各不相同，见表~\ref{tab:nlp-align-ppo-models}。
 
-\subsection{成对反馈的直接偏好目标}
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{RLHF-PPO中的四个模型。}
+  \label{tab:nlp-align-ppo-models}
+  \begin{tabularx}{\linewidth}{@{}lXll@{}}
+    \toprule
+    模型 & 作用 & 初始化 & 是否训练\\
+    \midrule
+    策略$\pi_{\bm\theta}$ & 生成回答，按式\eqref{eq:nlp-align-ppo}更新 & SFT模型 & 是\\
+    价值$V_{\bm\omega}$ & 为每个前缀估计期望奖励，用于GAE & 奖励模型 & 是\\
+    参考$\pi_{\mathrm{ref}}$ & 给出逐词元KL惩罚 & SFT模型 & 否\\
+    奖励$r_{\bm\phi}$ & 给完整回答打分 & 第\ref{sec:nlp-align-reward-model}小节训练所得 & 否\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+价值模型常由奖励模型初始化：二者都是“读前缀、出标量”的结构，奖励模型已经知道什么样的回答得分高，比从SFT模型加随机头起步更快收敛。不过奖励模型只在完整回答的末词元上训练过，它在中间前缀上的输出并不是期望奖励；一些实现因此先固定策略、只训练价值模型若干步，待价值损失下降后再开始策略更新，以免早期不准的优势把策略推向错误方向。显存按第\ref{sec:nlp-sft-full-memory}小节的估算方式计算：混合精度Adam训练每个参数约需16字节（bf16参数与梯度各2字节，fp32主权重与两个矩估计各4字节），冻结模型只需bf16参数2字节。若四个模型都是7B规模，训练中的策略与价值模型各需约$7\times10^9\times16\approx112$GB，冻结的参考与奖励模型各需约14GB，合计约252GB，尚未计入激活值和生成时的键值缓存，明细见表~\ref{tab:nlp-align-ppo-memory}。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{四个7B模型的静态显存估算（不含激活值与键值缓存）。训练模型按每参数16字节、冻结模型按每参数2字节计。}
+  \label{tab:nlp-align-ppo-memory}
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    模型 & 每参数字节 & 参数量 & 显存（GB）\\
+    \midrule
+    策略 & 16 & $7\times10^9$ & 112\\
+    价值 & 16 & $7\times10^9$ & 112\\
+    参考 & 2 & $7\times10^9$ & 14\\
+    奖励 & 2 & $7\times10^9$ & 14\\
+    \midrule
+    合计 & & & 252\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+表中价值模型占了静态显存的四成以上，这是第\ref{sec:nlp-align-critic-free}小节去掉它的直接动机；参考与奖励模型虽然冻结，生成阶段每个样本仍要各做一次前向。这比单独做SFT多出一倍以上，是PPO最主要的工程负担。
+
+时间上的开销来自生成与训练的交替。每轮先用策略自回归地生成整批回答，这一阶段受解码速度限制，常占一轮时间的大部分；之后参考、奖励与价值模型各做一次前向，再进入多轮反向更新。高效实现通常把生成交给专门的推断引擎，训练框架更新参数后再把权重同步过去。节省显存的办法包括：策略与价值模型共享主干、只分开输出头，代价是两个目标在共享参数上相互干扰；策略用第\ref{sec:nlp-sft-low-rank}小节的LoRA训练，此时关闭适配器的基座就是参考模型，无须另存一份；或者把价值模型换成较小的模型。第\ref{sec:nlp-align-critic-free}小节则直接去掉价值模型。
+
+\subsubsection{PPO-ptx与训练循环}
+\label{sec:nlp-align-ppo-loop}
+
+RLHF在偏好任务上取得收益的同时，可能在原有的公开基准上退步，这种代价称为\term{对齐税}（alignment tax）。InstructGPT在PPO目标中混入预训练数据的语言模型似然，称为PPO-ptx\cite{ouyang2022instructgpt}：
+\begin{equation}
+\label{eq:nlp-align-ppo-ptx}
+\begin{aligned}
+ J_{\mathrm{ptx}}(\bm\theta)={}&
+ \mathbb E_{x\sim d,\,y\sim\pi_{\bm\theta}}\Bigl[r_{\bm\phi}(x,y)-\beta\log\frac{\pi_{\bm\theta}(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}\Bigr]\\
+ &+\gamma_{\mathrm{ptx}}\,\mathbb E_{z\sim\mathcal D_{\mathrm{pretrain}}}\log\pi_{\bm\theta}(z),
+\end{aligned}
+\end{equation}
+第二项是预训练文本$z$的对数似然，系数$\gamma_{\mathrm{ptx}}$控制其权重。它让策略在追逐奖励时继续拟合原始语言分布，从而减轻能力退化；代价是每步多一批预训练数据的前向与反向。
+
+把上述各部分组合起来，就得到算法~\ref{alg:nlp-align-rlhf-ppo}。
+
+\begin{algorithm}[RLHF中的PPO训练循环]
+  \label{alg:nlp-align-rlhf-ppo}
+  \begin{algorithmic}[1]
+    \Require SFT模型$\pi_{\mathrm{SFT}}$，奖励模型$r_{\bm\phi}$，提示集$\mathcal D_x$，系数$\beta,\gamma,\lambda,\epsilon,\gamma_{\mathrm{ptx}}$，每轮更新次数$E$
+    \Ensure 对齐后的策略$\pi_{\bm\theta}$
+    \State $\pi_{\bm\theta}\gets\pi_{\mathrm{SFT}}$，$\pi_{\mathrm{ref}}\gets\pi_{\mathrm{SFT}}$（冻结），$V_{\bm\omega}\gets r_{\bm\phi}$的副本
+    \For{每轮迭代}
+      \State 从$\mathcal D_x$采样一批提示，$\pi_{\mathrm{old}}\gets\pi_{\bm\theta}$
+      \State 用$\pi_{\mathrm{old}}$为每个提示生成回答，记录各位置的$\log\pi_{\mathrm{old}}(a_t\mid s_t)$
+      \State 参考模型前向得$\log\pi_{\mathrm{ref}}(a_t\mid s_t)$；奖励模型对完整回答打分$r_{\bm\phi}(x,y)$
+      \State 按式\eqref{eq:nlp-align-token-reward}计算逐词元奖励$r_t$
+      \State 价值模型前向得$V_{\mathrm{old}}(s_t)$；按式\eqref{eq:nlp-align-gae}从后向前计算$\widehat A_t$与$\widehat G_t$，对$\widehat A_t$白化
+      \For{$e=1,\ldots,E$}
+        \For{本批数据的每个小批量}
+          \State 策略前向得$\rho_t(\bm\theta)$，计算式\eqref{eq:nlp-align-ppo}的$L_{\mathrm{clip}}$
+          \State 价值模型前向，计算式\eqref{eq:nlp-align-value-loss}的$L_V$
+          \State 取一批预训练文本，计算$L_{\mathrm{ptx}}=-\gamma_{\mathrm{ptx}}\log\pi_{\bm\theta}(z)$
+          \State 对$L_{\mathrm{clip}}+L_{\mathrm{ptx}}$更新$\bm\theta$，对$L_V$更新$\bm\omega$
+        \EndFor
+      \EndFor
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+实际实现中还有一些影响稳定性的细节。奖励模型的得分常先按运行均值与标准差标准化，或裁剪到一个范围内，避免个别极端得分主导一批的优势；采样温度通常取1，以保持探索；没有生成结束标记就被截断的回答常被赋予固定的负分，防止策略学会“不结束”；每轮的提示数、小批量大小与更新轮数$E$决定了样本复用的程度，$E$过大时概率比频繁触及裁剪边界，样本信息已被用尽。InstructGPT取$\beta=0.02$、$\gamma_{\mathrm{ptx}}=27.8$\cite{ouyang2022instructgpt}；这些数值依赖其奖励尺度与预训练损失的量级，不能直接迁移到其他设置。
+
+算法中的三个策略各司其职：$\pi_{\mathrm{ref}}$在整个训练中固定，定义偏移；$\pi_{\mathrm{old}}$在每轮开始时刷新，说明数据由谁产生；$\pi_{\bm\theta}$在轮内不断更新。把它们混为一谈会同时弄错概率比与KL惩罚。
+
+InstructGPT是SFT—RM—PPO组合的代表案例\scite{ouyang2022instructgpt}。它在约1.3万个提示的示范上做SFT，在约3.3万个提示的排序上训练6B奖励模型，再在约3.1万个提示上做PPO-ptx。人工评价中，1.3B参数的InstructGPT回答比175B的GPT-3更受偏好，这说明在这些提示与评价者下，偏好对齐的收益可以超过百倍的参数差距；同时它仍会出现事实错误，也会遵循有害指令。
+
+\subsection{去除价值模型的策略梯度}
+\label{sec:nlp-align-critic-free}
+
+价值模型在语言模型上的必要性值得怀疑。PPO的设计针对的是从随机初始化开始、奖励稠密、需要细粒度信用分配的控制任务；而对齐从SFT检查点出发，初始策略已经相当好，奖励又只在结尾给出。此时价值模型需要从稀疏的终局奖励学出每个前缀的期望，很难学准，却占用与策略同等的显存。去价值模型的方法回到REINFORCE，把整段回答当作一个动作，改用不需要学习的基线降低方差：同一提示多次采样的均值、贪心回答的奖励，或组内标准化。
+
+\subsubsection{REINFORCE与RLOO}
+\label{sec:nlp-align-rloo}
+
+把整段回答看作一个动作，序列级回报取奖励模型得分减去KL估计：
+\[
+ R(x,y)=r_{\bm\phi}(x,y)-\beta\sum_{t=1}^{|y|}\log\frac{\pi_{\mathrm{old}}(y_t\mid s_t)}{\pi_{\mathrm{ref}}(y_t\mid s_t)}.
+\]
+REINFORCE的梯度估计为$\mathbb E_{y\sim\pi_{\bm\theta}}[(R(x,y)-b)\nabla_{\bm\theta}\log\pi_{\bm\theta}(y\mid x)]$，其中$\nabla\log\pi_{\bm\theta}(y\mid x)$是回答各位置对数概率梯度之和\scite{rl1-williams1992-reinforce}。基线$b$只要不依赖于当前样本$y$，就不改变梯度期望，因为$\mathbb E_y[b\nabla\log\pi(y\mid x)]=b\nabla\sum_y\pi(y\mid x)=0$。基线的必要性在对齐中尤其明显：归一化以后奖励大多落在一个窄区间内，若不减基线，同一提示的回答回报都为正时，每个采样回答的概率都被推高，只是推多推少；梯度的方向主要由“采到了哪个回答”决定，而不是由“哪个回答更好”决定，方差很大。减去同一提示下的平均回报以后，只有高于平均的回答被推高。
+
+RLOO（REINFORCE leave-one-out）为每个提示采样$k$个回答$y_1,\ldots,y_k$，第$i$个回答的基线取其余$k-1$个回答回报的均值\cite{nlp-align-kool2019buy,nlp-align-ahmadian2024back}：
+\begin{equation}
+\label{eq:nlp-align-rloo}
+ \widehat{\nabla}J=\frac1k\sum_{i=1}^{k}\Bigl(R(x,y_i)-\frac{1}{k-1}\sum_{j\ne i}R(x,y_j)\Bigr)\nabla_{\bm\theta}\log\pi_{\bm\theta}(y_i\mid x).
+\end{equation}
+各样本独立采样，所以第$i$个样本的\term{留一基线}（leave-one-out baseline）与$y_i$本身独立，估计无偏；若直接用包括$y_i$在内的全体均值作基线，基线就依赖于$y_i$，估计会有偏。整理可得留一优势等于$\frac{k}{k-1}(R_i-\bar R)$，与组内去均值只差一个常数因子。例如$k=4$个回答的回报为$(1.0,\,0.2,\,0.6,\,-0.2)$（教学示例），均值$0.4$，留一优势为$(0.8,\,-0.267,\,0.267,\,-0.8)$，和为零：高于同组其他回答的被推高，低于的被压低。
+
+Ahmadian等指出，从强初始化出发时PPO的裁剪、价值模型和逐词元信用分配大多不必要；他们在所测的偏好对齐任务上发现，RLOO以更少的模型和超参数达到或超过PPO的奖励\scite{nlp-align-ahmadian2024back}。RLOO与PPO的联系可以这样看：若PPO每批数据只更新一次，概率比恒为1，裁剪不起作用；再把整段回答当作一个动作、用留一均值代替价值模型，PPO的梯度就变成式\eqref{eq:nlp-align-rloo}。反过来，RLOO也可以加上概率比与裁剪，以便同一批样本更新多次。RLOO的代价是每个提示需要生成$k$个回答，生成成本按$k$倍增加；整段回答共享一个优势，无法区分回答中哪些词元起了作用。
+
+\subsubsection{ReMax与GRPO}
+\label{sec:nlp-align-remax-grpo}
+
+ReMax用贪心解码的回答作基线\scite{nlp-align-li2024remax}。对每个提示采样一个回答$y$，再贪心解码得到$\hat y$，梯度估计为$(r(x,y)-r(x,\hat y))\nabla\log\pi_{\bm\theta}(y\mid x)$。贪心回答是提示的确定函数，不依赖采样的$y$，因此估计无偏。每个提示只需两次生成，且不需要价值模型；原文报告训练7B模型时显存比PPO约少46\%。基线的含义是“这个采样回答比模型自己最有把握的回答好多少”。它的方差取决于贪心回答的奖励与采样回答期望奖励的接近程度：若贪心回答通常优于采样回答，优势就多为负值，策略主要被告知“不要这样写”；只采一个样本时，同一提示下没有其他回答可供对照，基线的质量不如RLOO的组内均值稳定。
+
+\term{组相对策略优化}（group relative policy optimization, GRPO）为每个提示采样$G$个回答，把组内奖励标准化后作为每个回答所有词元的共同优势\cite{rl5-shao2024deepseekmath}：
+\[
+ \widehat A_i=\frac{r_i-\operatorname{mean}(r_1,\ldots,r_G)}{\operatorname{std}(r_1,\ldots,r_G)}.
+\]
+与RLOO不同，GRPO保留了PPO式的概率比裁剪，以便同一批样本多轮复用；KL不放进奖励，而作为单独的惩罚项加在损失中。写成损失为
+\[
+ L_{\mathrm{GRPO}}(\bm\theta)=-\frac1G\sum_{i=1}^{G}\frac{1}{|y_i|}\sum_{t=1}^{|y_i|}
+ \Bigl[\min\bigl(\rho_{i,t}\widehat A_i,\ \operatorname{clip}(\rho_{i,t},1-\epsilon,1+\epsilon)\widehat A_i\bigr)-\beta\,k_{3,i,t}\Bigr],
+\]
+其中$\rho_{i,t}$是第$i$个回答第$t$个词元上新旧策略的概率比，$k_{3,i,t}$是第\ref{sec:nlp-align-kl-objective}小节的非负KL估计。除以组内标准差使不同难度题目的更新幅度相近，但也使基线依赖于样本本身。GRPO主要用于奖励可以由规则验证的推理任务，它的完整目标、KL估计方式和偏差分析在第\ref{chap:nlp-reasoning}章展开。
+
+表~\ref{tab:nlp-align-critic-free}比较这几种方法。它们都去掉了价值模型，差别在于基线从哪里来、每个提示要生成几次，以及是否复用样本。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{PPO与去价值模型的策略梯度方法。“每提示生成数”指一次梯度估计所需的回答数。}
+  \label{tab:nlp-align-critic-free}
+  \begin{tabularx}{\linewidth}{@{}lp{30mm}p{18mm}p{20mm}X@{}}
+    \toprule
+    方法 & 基线 & 价值模型 & 每提示生成数 & 主要特点与代价\\
+    \midrule
+    PPO & 学习的价值函数$V(s_t)$ & 需要 & 1 & 逐词元信用分配；四个模型，显存最大\\
+    REINFORCE & 常数或滑动平均 & 不需要 & 1 & 实现最简单；方差较大\\
+    RLOO & 其余$k-1$个回报的均值 & 不需要 & $k$ & 无偏；生成成本随$k$增长\\
+    ReMax & 贪心回答的奖励 & 不需要 & 2 & 无偏；多一次贪心解码\\
+    GRPO & 组均值，并除以组标准差 & 不需要 & $G$ & 保留裁剪以复用样本；标准化引入偏差，详见第\ref{chap:nlp-reasoning}章\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\subsection{基于奖励模型的采样筛选}
+\label{sec:nlp-align-best-of-n}
+
+不更新参数也能利用奖励模型：对每个提示从策略$\pi$采样$N$个回答，交付奖励最高的一个。这就是best-of-$N$采样，它定义了一个新的回答分布$\pi_{\mathrm{BoN}}$。要与强化学习在同一KL下比较，需要知道它偏离原策略多远。设回答的奖励两两不同（可视为连续分布），记$F(y)$为$\pi$下奖励不超过$r(y)$的概率。$y$被选中当且仅当其余$N-1$个样本的奖励都更低，于是$\pi_{\mathrm{BoN}}(y)\approx N F(y)^{N-1}\pi(y)$，而被选回答的$F$值服从$N$个均匀变量的最大值分布，$\mathbb E[\log F]=-1/N$。代入KL定义得
+\begin{equation}
+\label{eq:nlp-align-bon-kl}
+ D_{\mathrm{KL}}(\pi_{\mathrm{BoN}}\Vert\pi)=\log N-\frac{N-1}{N}.
+\end{equation}
+$N=4,16,64$时分别约为0.64、1.84、3.18奈特，KL只随$N$对数增长。这一公式见于Stiennon等的附录\cite{nlp-align-stiennon2020}，Gao等用它比较best-of-$N$与强化学习的过度优化曲线\cite{gao2022overoptimization}。上面的推导依赖“奖励两两不同”；回答分布离散时，Beirami等证明它一般只是实际KL的上界，原策略在高奖励回答上已有较大概率时，两者差距明显\scite{nlp-align-beirami2024bon}。
+
+best-of-$N$的缺点是每次推断都要生成$N$次。把选出的回答再做有监督微调，就把这种筛选“蒸馏”进参数，称为\term{拒绝采样微调}（rejection sampling fine-tuning）。RAFT的流程是：对一批提示，各采样$N$个回答；用奖励模型选出最高分者；在这些回答上做SFT；用更新后的模型重复上述过程\scite{nlp-align-dong2023raft}。它用离线的有监督训练近似奖励最大化，不需要价值模型，也没有强化学习的不稳定性；代价是每个提示需要$N$次生成，而且只从最好的样本学习，不利用低分样本的信息。Llama 2在前几轮RLHF迭代中只用拒绝采样微调，之后才在拒绝采样微调得到的检查点上再做PPO，把两种方法依次组合\scite{nlp-align-touvron2023llama2}。
+
+best-of-$N$、拒绝采样微调与强化学习可以看作同一个目标的三种求解方式。best-of-$N$在推断时用计算换取奖励，不改变参数，$N$直接控制偏离程度；拒绝采样微调把这种筛选摊销到训练中，每轮的偏离由$N$与训练步数共同决定；强化学习则用梯度直接最大化KL正则目标，既利用高分样本，也利用低分样本。三者面对的过度优化问题相同，第\ref{sec:nlp-align-proxy-gold}小节的曲线对best-of-$N$与强化学习分别给出了拟合形式。
+
+推断时的best-of-$N$重排作为一种解码手段在第\ref{chap:nlp-model-inference}章讨论，本小节关注的是它作为训练数据生成手段的用法。
+
+\section{基于偏好数据的直接优化}
+\label{sec:nlp-align-direct}
+
+RLHF要单独训练奖励模型，训练中要在线采样，还要同时维持多个模型。若能从偏好数据直接得到策略的训练信号，这些步骤都可以省去。直接偏好方法的出发点是第\ref{sec:nlp-align-kl-objective}小节的KL正则目标存在闭式最优解，由它可以把奖励改写成策略与参考策略的对数概率比，从而用偏好数据直接训练策略。本节要处理五个挑战：怎样推导出不含奖励模型的损失；确定性偏好下目标怎样过拟合，标签噪声又怎样处理；序列长度与参考模型带来的偏差和开销；只有单回答赞否时怎样学习；离线数据与当前策略的分布偏离怎样补救。对应的谱系依次是DPO、IPO与cDPO、SimPO与ORPO、KTO、在线与迭代DPO，节末以总表比较。
+
+\subsection{直接偏好优化DPO}
 \label{sec:nlp-align-dpo}
 
-成对数据已经给出回答的相对关系，是否一定要先训练奖励模型，再采样提高奖励？为回答这个问题，先考虑式\eqref{eq:nlp-align-regularized-reward}在单个提示$x$下、允许自由选择回答分布时的理想解。假设参考策略在所考虑回答上为正，奖励有限，且归一化常数有限。对每个概率加入总和为1的约束，驻点条件给出
+\term{直接偏好优化}（direct preference optimization, DPO）的推导分三步\cite{rafailov2023dpo}：KL正则目标的最优策略可以写成参考策略乘以奖励的指数；反过来，奖励可以由最优策略与参考策略的对数概率比表示；把这一表示代入Bradley--Terry模型，难以计算的配分函数在成对比较中相消，得到只依赖策略与参考模型对数概率的分类损失。一般强化学习框架下的推导见上文所引卷七的奖励章，这里保留语言模型视角的要点、梯度和实现。
+
+\subsubsection{从KL约束最优策略到隐式奖励}
+\label{sec:nlp-align-dpo-implicit}
+
+固定一个提示$x$，暂时不考虑参数化，把式\eqref{eq:nlp-align-regularized-reward}看作对回答分布$\pi(\cdot\mid x)$本身的优化。假设参考策略在所考虑的回答上为正、奖励有限，从而归一化常数有限。在约束$\sum_y\pi(y\mid x)=1$下引入乘子，目标对$\pi(y\mid x)$的导数为$r(x,y)-\beta\bigl(\log\frac{\pi(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}+1\bigr)$，令它等于乘子，解得
 \begin{equation}
 \label{eq:nlp-align-optimal-policy}
 \begin{aligned}
- \pi^{*}(y\mid x)&=\frac{\pi_{\mathrm{ref}}(y\mid x)
-                    \exp(r(x,y)/\beta)}{Z(x)},\\
- Z(x)&=\sum_y\pi_{\mathrm{ref}}(y\mid x)\exp(r(x,y)/\beta).
+ \pi^{*}(y\mid x)&=\frac{1}{Z(x)}\pi_{\mathrm{ref}}(y\mid x)\exp\Bigl(\frac{r(x,y)}{\beta}\Bigr),\\
+ Z(x)&=\sum_y\pi_{\mathrm{ref}}(y\mid x)\exp\Bigl(\frac{r(x,y)}{\beta}\Bigr).
 \end{aligned}
 \end{equation}
-具体地，目标对$\pi(y\mid x)$的导数包含$r(x,y)-\beta(\log(\pi/\pi_{\mathrm{ref}})+1)$，令它与归一化乘子相抵，就得到上述指数形式。目标对回答分布为凹，因此满足这些条件的归一化解给出最优分布。它描述理想分布与奖励的关系，尚未保证某个神经网络能够表示并求得该分布。
+期望奖励对$\pi$是线性的，负KL对$\pi$是严格凹的，因此这个驻点就是唯一最优解。它的含义是：最优策略以参考策略为起点，按奖励的指数重新加权，$\beta$越小，加权越尖锐。例如参考策略在两个回答上各为$1/2$，奖励为$(\log3,\,0)$，$\beta=1$时$Z=2$，最优概率为$(3/4,\,1/4)$；$\beta\to0$时趋于$(1,0)$，$\beta\to\infty$时回到$(1/2,1/2)$。
 
-取对数并整理，可写成$r(x,y)=\beta\log(\pi^{*}(y\mid x)/\pi_{\mathrm{ref}}(y\mid x))+\beta\log Z(x)$。同一提示下比较两份回答时，最后的常数相消。这与第\ref{sec:nlp-align-bradley-terry}节奖励零点不可识别的结论一致。将这一评分差代入Bradley--Terry模型，并用可训练策略$\pi_{\bm{\theta}}$参数化相应概率比，就得到DPO损失\scite{rafailov2023dpo}：
+对式\eqref{eq:nlp-align-optimal-policy}取对数并整理，奖励可由最优策略反解：
+\[
+ r(x,y)=\beta\log\frac{\pi^{*}(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}+\beta\log Z(x).
+\]
+这说明每个策略都隐含着一个奖励。对任意策略$\pi_{\bm\theta}$，称
+\begin{equation}
+\label{eq:nlp-align-implicit-reward}
+ \hat r_{\bm\theta}(x,y)=\beta\log\frac{\pi_{\bm\theta}(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}
+\end{equation}
+为它的\term{隐式奖励}（implicit reward）。$\pi_{\bm\theta}$恰是$\hat r_{\bm\theta}$对应的KL正则最优策略（此时$Z=1$）。这一结论只描述理想分布与奖励的关系，没有保证某个神经网络能够表示或求得$\pi^*$。
+
+\subsubsection{损失函数与梯度}
+\label{sec:nlp-align-dpo-gradient}
+
+把反解出的奖励代入式\eqref{eq:nlp-align-bt}：同一提示下两个回答的$\beta\log Z(x)$相同，在得分差中相消，这与第\ref{sec:nlp-align-bradley-terry}小节零点不可识别的结论一致。再用可训练策略代替$\pi^*$，偏好数据的负对数似然就是DPO损失：
 \begin{equation}
 \label{eq:nlp-align-dpo-loss}
 \begin{aligned}
- h_{\bm{\theta}}(x,y^{+},y^{-})
- &=\log\frac{\pi_{\bm{\theta}}(y^{+}\mid x)}{\pi_{\mathrm{ref}}(y^{+}\mid x)}
-  -\log\frac{\pi_{\bm{\theta}}(y^{-}\mid x)}{\pi_{\mathrm{ref}}(y^{-}\mid x)},\\
+ h_{\bm{\theta}}(x,y_{\mathrm w},y_{\mathrm l})
+ &=\log\frac{\pi_{\bm{\theta}}(y_{\mathrm w}\mid x)}{\pi_{\mathrm{ref}}(y_{\mathrm w}\mid x)}
+  -\log\frac{\pi_{\bm{\theta}}(y_{\mathrm l}\mid x)}{\pi_{\mathrm{ref}}(y_{\mathrm l}\mid x)},\\
  L_{\mathrm{DPO}}(\bm{\theta})
- &=-\mathbb{E}_{\mathcal{D}_{\mathrm{pair}}}
-       \log\sigma\bigl(\beta h_{\bm{\theta}}(x,y^{+},y^{-})\bigr).
+ &=-\mathbb{E}_{(x,y_{\mathrm w},y_{\mathrm l})\sim\mathcal{D}_{\mathrm{pair}}}
+       \log\sigma\bigl(\beta h_{\bm{\theta}}(x,y_{\mathrm w},y_{\mathrm l})\bigr).
 \end{aligned}
 \end{equation}
-这样可以直接从偏好对计算损失，不需要显式拟合$r_{\bm{\phi}}$。参考概率与两个回答的当前概率仍然需要计算，反馈来源和偏好概率假设也仍然存在。
+$\beta h_{\bm\theta}=\hat r_{\bm\theta}(x,y_{\mathrm w})-\hat r_{\bm\theta}(x,y_{\mathrm l})$是两个隐式奖励之差，所以DPO就是以策略本身充当奖励模型、按式\eqref{eq:nlp-align-reward-loss}训练。与RLHF相比，它不需要单独的奖励模型，也不需要在训练中采样回答；它仍需要参考模型的概率，也仍然依赖Bradley--Terry假设和偏好数据的覆盖范围。
 
-用两个回答即可看清更新方向。假设参考策略在它们上各给$1/2$，当前策略也从$1/2$开始，此时$h_{\bm{\theta}}=0$，模型预测两者被偏好的概率相同。一条$y^{+}$胜出的记录，会推动它相对$y^{-}$的概率比上升。但DPO约束的是相对变化，不保证每条记录中$\pi_{\bm{\theta}}(y^{+}\mid x)$的绝对值都增加；在更大的回答集合中，两者都下降、负例下降更多，也能增大这个比值。
+对参数求导，记$\hat r_{\mathrm w}=\hat r_{\bm\theta}(x,y_{\mathrm w})$、$\hat r_{\mathrm l}=\hat r_{\bm\theta}(x,y_{\mathrm l})$，利用$\frac{d}{du}\log\sigma(u)=\sigma(-u)$，得
+\begin{equation}
+\label{eq:nlp-align-dpo-gradient}
+ \nabla_{\bm\theta}L_{\mathrm{DPO}}
+ =-\beta\,\mathbb E\Bigl[\sigma(\hat r_{\mathrm l}-\hat r_{\mathrm w})
+ \bigl(\nabla_{\bm\theta}\log\pi_{\bm\theta}(y_{\mathrm w}\mid x)-\nabla_{\bm\theta}\log\pi_{\bm\theta}(y_{\mathrm l}\mid x)\bigr)\Bigr].
+\end{equation}
+括号内的方向提高胜出回答的对数概率、降低落选回答的对数概率；前面的权重$\sigma(\hat r_{\mathrm l}-\hat r_{\mathrm w})$是当前隐式奖励把这一对排错的概率。隐式奖励已经把胜者排得很靠前的样本，权重接近0；排错越严重，权重越接近1。取$\beta=0.1$（教学示例）：若胜出与落选回答的对数概率比分别为$0.5$与$-0.5$，$h=1$，权重$\sigma(-0.1)=0.475$；若分别为$-3$与$2$，即隐式奖励排反，$h=-5$，权重$\sigma(0.5)=0.622$；若$h=30$，权重降到$0.047$。DPO原文的消融表明，去掉这个权重、对所有样本等权地拉开概率，会使模型退化\scite{rafailov2023dpo}。
 
-因此，DPO的推导不能被解释成实际训练与任意PPO流程完全相同。偏好模型失准、样本覆盖有限、策略表示受限或优化不充分时，理想关系都可能不能实现。参考概率为零的回答还会使对数比失去定义，不能靠直接目标凭空恢复支持集。独立生成检查仍是判断结果的必要步骤。
+用只有两个回答的情形看一次更新的方向（教学示例）。设策略在某提示下只在$y_{\mathrm w},y_{\mathrm l}$上有概率，由一个logit差$z$参数化：$\pi_{\bm\theta}(y_{\mathrm w})=\sigma(z)$；参考策略为均匀分布，$\beta=1$。初始$z=0$，两个回答概率都是$1/2$，$h=0$，损失为$\log2$。此时$\nabla_z\log\pi(y_{\mathrm w})-\nabla_z\log\pi(y_{\mathrm l})=\sigma(-z)+\sigma(z)=1$，权重$\sigma(0)=1/2$，所以$\partial L/\partial z=-1/2$；以步长$0.2$下降后$z=0.1$，胜出回答的概率升到$\sigma(0.1)\approx0.525$。在这个两回答的空间里，相对概率的提高必然意味着胜出回答的绝对概率上升；回答空间更大时，情况就不同了，见第\ref{sec:nlp-align-dpo-failure}小节。
 
-\subsection{目标尺度、间隔与长度处理}
-\label{sec:nlp-align-variants}
+$\beta$在DPO中的含义与RLHF相同：它是隐含的KL正则系数。$\beta$越小，同样的偏好拉开需要的概率比越大，策略允许离参考模型越远；$\beta$越大，策略越贴近参考模型。由于DPO不经过奖励模型，奖励尺度的约定直接由$\beta$决定，常用值在$0.1$附近，而RLHF中的$\beta$要结合奖励模型的尺度理解，两者数值不能直接对照。
 
-在一对始终标为正负的有限数据上，逻辑损失会继续鼓励分开两者；如果没有其他限制，概率比可能变得很大。这对确实确定的偏好与带噪声的观察有不同含义。IPO从偏好学习的另一种目标出发，用有限的目标差值代替无限增大的逻辑间隔。沿用式\eqref{eq:nlp-align-dpo-loss}中的$h_{\bm{\theta}}$，其常用成对形式为\scite{nlp-llm-ipo}
+隐式奖励还给出了一个检查训练的量。在留出偏好对上统计$\hat r_{\bm\theta}(x,y_{\mathrm w})>\hat r_{\bm\theta}(x,y_{\mathrm l})$的比例，就得到DPO策略作为奖励模型时的成对准确率，可与显式奖励模型的准确率直接比较；训练中常同时监控隐式奖励的间隔$\hat r_{\mathrm w}-\hat r_{\mathrm l}$以及$\hat r_{\mathrm w}$、$\hat r_{\mathrm l}$各自的变化。由于$\hat r_{\bm\theta}$是逐词元对数概率比之和，它也可以按位置拆开，看出回答中哪些词元贡献了正或负的隐式奖励；这种逐词元分解只是同一个序列量的加法分拆，不代表DPO在训练时做了逐词元的信用分配。
+
+实现上，每个样本只需四个序列对数概率：当前策略与参考模型分别在胜出、落选回答上的$\log\pi(y\mid x)$，各自是回答位置的词元对数概率之和，提示位置不计入。参考模型冻结，它的两个对数概率可以在训练前对整个数据集离线算好，训练时只需运行策略一个模型。一个批次常把$B$个胜出回答和$B$个落选回答拼成形状为$[2B,T]$的输入，一次前向得到两组序列对数概率，再按式\eqref{eq:nlp-align-dpo-loss}计算损失。
+
+\subsubsection{失败模式}
+\label{sec:nlp-align-dpo-failure}
+
+DPO的损失只要求胜出与落选回答的概率比之差扩大，没有要求胜出回答的概率本身上升。在大回答空间中，“二者都下降、落选回答下降更多”同样能减小损失。用一个三回答的例子（教学示例）说明：参考概率为$(y_{\mathrm w},y_{\mathrm l},y_{\mathrm o})=(0.5,\,0.4,\,0.1)$，其中$y_{\mathrm o}$是数据中没有出现的回答；训练后变为$(0.3,\,0.05,\,0.65)$。此时$h=\log(0.3/0.5)-\log(0.05/0.4)=1.57>0$，$\beta=0.1$下损失从$0.693$降到$0.618$，但胜出回答的概率从$0.5$降到了$0.3$，概率质量流向了未见过的$y_{\mathrm o}$。实践中常观察到胜出与落选回答的对数概率在训练中同时下降。Razin等把这种现象称为\term{似然位移}（likelihood displacement），并指出当胜出与落选回答在模型的表示中很相似时它尤其严重，被挤出的概率质量可能流向意义相反甚至不安全的回答\scite{nlp-align-razin2025displacement}。一种常见的缓解是在胜出回答上额外加一项长度归一化的负对数似然：
+\[
+ L=L_{\mathrm{DPO}}(\bm\theta)-\alpha\,\mathbb E\Bigl[\frac{1}{|y_{\mathrm w}|}\log\pi_{\bm\theta}(y_{\mathrm w}\mid x)\Bigr],\qquad\alpha>0,
+\]
+它直接奖励胜出回答的似然，使其概率不至于在拉开差距的过程中下降；代价是胜出回答中的瑕疵也会被模仿，$\alpha$过大时目标退回SFT。
+
+第二个问题是分布偏离。偏好数据通常由其他模型（或训练前的SFT模型）生成，而不是由当前策略生成。DPO只约束数据中出现过的回答，对数据之外的回答没有任何约束；策略可能把概率放到数据从未覆盖的回答上，而损失并不察觉。Xu等的分析与实验表明，DPO可能找到在分布外回答上偏离很大的解，这时PPO依靠在线采样和奖励模型反而能惩罚这些回答\scite{nlp-align-xu2024dpo-ppo}。第\ref{sec:nlp-align-refresh}小节的在线与迭代方法针对这一点。
+
+第三个问题是确定性偏好下的过拟合：若某对回答在数据中总是同一方胜出，DPO损失只有在$h\to\infty$时才趋于最小值，没有有限最优点。下一小节专门处理这个问题。
+
+\subsection{偏好过拟合的修正}
+\label{sec:nlp-align-overfitting}
+
+当某对回答在数据中总是同一方胜出时，经验偏好概率为1，按Bradley--Terry模型对应的得分差为无穷大。DPO的经验损失$-\log\sigma(\beta h)$对任何有限的$h$都还能继续减小，于是训练会把$\pi_{\bm\theta}(y_{\mathrm l}\mid x)/\pi_{\mathrm{ref}}(y_{\mathrm l}\mid x)$推向0。$\beta$只改变到达极端的速度，不改变终点：代入以后的经验损失里已经没有KL项，KL正则在有限数据上失去作用。现实的偏好数据大多每对只标注一次，经验偏好概率恰恰全是0或1，因此这个问题并不罕见。两种修正分别改变目标的形式和对标签的信任程度，图~\ref{fig:nlp-align-pairwise-losses}对比了它们的单样本损失。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/01-language-models/tikz/align-pairwise-losses.tex}
+  \caption{三种成对损失随对数概率比之差$h$的变化。DPO取$\beta=1$，损失$-\log\sigma(h)$随$h$增大单调下降，没有有限最小点；cDPO取翻转概率$\varepsilon=0.1$，最小点在$h=\log 9\approx2.2$；IPO取$1/(2\tau)=2$，平方损失在$h=2$处最小，为便于同图显示乘以$1/4$。曲线斜率的绝对值就是该点的梯度权重：DPO在$h$很大时权重趋于0但始终为正，cDPO与IPO越过最小点后梯度反向，把$h$拉回。}
+  \label{fig:nlp-align-pairwise-losses}
+\end{figure}
+
+\subsubsection{\texorpdfstring{$\Psi$PO统一框架与IPO}{ΨPO统一框架与IPO}}
+\label{sec:nlp-align-ipo}
+
+Azar等把RLHF与DPO放进一个更一般的框架，称为$\Psi$PO\scite{nlp-llm-ipo}。设$p^*(y\succ y'\mid x)$为真实偏好概率，$\mu$为提供比较对象的回答分布（例如数据的生成策略），$\Psi:[0,1]\to\mathbb R$为一个非减函数，目标为
+\begin{equation}
+\label{eq:nlp-align-psipo}
+ \max_{\pi}\ \mathbb E_{x\sim d,\ y\sim\pi(\cdot\mid x),\ y'\sim\mu(\cdot\mid x)}
+ \bigl[\Psi\bigl(p^*(y\succ y'\mid x)\bigr)\bigr]
+ -\tau D_{\mathrm{KL}}(\pi\Vert\pi_{\mathrm{ref}}).
+\end{equation}
+取$\Psi(p)=\log\frac{p}{1-p}$并假设偏好服从Bradley--Terry模型，$\Psi(p^*(y\succ y'))=r(x,y)-r(x,y')$，对$y'$取期望后只剩$r(x,y)$加一个与$y$无关的常数，式\eqref{eq:nlp-align-psipo}就是$\beta=\tau$的RLHF目标，DPO是它的直接解法。问题出在logit函数上：$p^*\to1$时$\Psi\to\infty$，确定性偏好把目标推向无界。
+
+\term{身份偏好优化}（identity preference optimization, IPO）取$\Psi$为恒等函数，目标中的偏好项落在$[0,1]$内，有界。此时最优策略为$\pi^*(y\mid x)\propto\pi_{\mathrm{ref}}(y\mid x)\exp\bigl(\tau^{-1}p^*(y\succ\mu\mid x)\bigr)$，其中$p^*(y\succ\mu)=\mathbb E_{y'\sim\mu}p^*(y\succ y')$。看两个回答、$\mu$在二者上均匀、$y_{\mathrm w}$总是胜出的情形，并约定回答与自身比较时胜率为$1/2$：
+\[
+ p^*(y_{\mathrm w}\succ\mu)=\tfrac12\cdot\tfrac12+\tfrac12\cdot1=\tfrac34,\qquad
+ p^*(y_{\mathrm l}\succ\mu)=\tfrac12\cdot0+\tfrac12\cdot\tfrac12=\tfrac14,
+\]
+所以最优策略下的对数概率比之差为$h^*=\tau^{-1}(3/4-1/4)=1/(2\tau)$，是一个有限值。IPO把这一目标值写成对每个偏好对的平方回归：
 \begin{equation}
 \label{eq:nlp-align-ipo}
  L_{\mathrm{IPO}}(\bm{\theta})
  =\mathbb{E}_{\mathcal{D}_{\mathrm{pair}}}
-    \left(h_{\bm{\theta}}(x,y^{+},y^{-})-\frac{1}{2\tau}\right)^2,
- \qquad \tau>0.
+    \Bigl(h_{\bm{\theta}}(x,y_{\mathrm w},y_{\mathrm l})-\frac{1}{2\tau}\Bigr)^2,
+ \qquad \tau>0,
 \end{equation}
-这里$\tau$是该目标的正则化尺度，不能不加说明地与其他公式的系数逐值对应。平方损失在差值超过目标后会把它拉回，和逻辑损失持续鼓励正间隔的倾向不同；是否改善留出生成，仍取决于偏好噪声、覆盖与系数选择。
+$h_{\bm\theta}$沿用式\eqref{eq:nlp-align-dpo-loss}，不乘$\beta$。$h$低于目标时损失把它推高，超过目标后又把它拉回，KL正则的作用在经验损失中得以保留。$\tau$越小，目标差值越大，越接近DPO的行为。从梯度看，IPO的单样本梯度为$2(h_{\bm\theta}-\frac{1}{2\tau})\nabla_{\bm\theta}h_{\bm\theta}$，权重随$h$与目标的差线性变化，并在越过目标后变号；DPO的权重$\beta\sigma(-\beta h_{\bm\theta})$始终为正，只是随$h$增大而趋于0。前者把$h$钉在一个有限值附近，后者只是越推越慢。IPO的局限在于它对所有偏好对使用同一个目标差值，不区分强弱偏好；它也仍是离线方法，分布偏离问题依旧。
 
-回答长度还会影响序列概率。对数概率是逐词元求和，长回答会增加更多非正项。SimPO改用平均对数概率构造分数，不使用参考策略概率，并在成对目标中加入指定间隔\scite{nlp-llm-simpo}：
+\subsubsection{标签噪声与cDPO}
+\label{sec:nlp-align-cdpo}
+
+另一种看法是：偏好之所以“确定”，是因为每对只标注了一次，而标签本身有噪声。\term{保守DPO}（conservative DPO, cDPO）假设每个标签以概率$\varepsilon$被翻转（与PPO的裁剪半宽$\epsilon$无关），于是对每个样本同时按两个方向计损失\cite{nlp-align-mitchell2023cdpo}：
+\begin{equation}
+\label{eq:nlp-align-cdpo}
+ L_{\mathrm{cDPO}}(\bm\theta)=-\mathbb E\Bigl[(1-\varepsilon)\log\sigma(\beta h_{\bm\theta})+\varepsilon\log\sigma(-\beta h_{\bm\theta})\Bigr].
+\end{equation}
+这正是二分类中的\term{标签平滑}（label smoothing），把目标概率从1改为$1-\varepsilon$。对$h$求导并令其为零，得$\sigma(\beta h^*)=1-\varepsilon$，即$\beta h^*=\log\frac{1-\varepsilon}{\varepsilon}$；$\varepsilon=0.1$时$\beta h^*=\log9\approx2.2$。最优点不再在无穷远处。
+
+cDPO与IPO都给出有限的目标差值，但出发点不同：IPO修改目标的形式，把无界的logit换成有界的恒等映射；cDPO保留DPO的形式，改为不完全相信标签。二者都引入一个需要设定的量（$\tau$或$\varepsilon$），而这个量与真实的标签噪声或偏好强度未必一致。
+
+\subsection{参考模型与长度问题的处理}
+\label{sec:nlp-align-reference-free}
+
+DPO还有两处与实际使用不一致的地方。其一，训练时要多运行一个参考模型，即使离线预计算，也要多一遍对全数据集的前向。其二，隐式奖励是序列对数概率比之和，与生成时常用的平均对数似然（第\ref{chap:nlp-model-inference}章的长度归一化）不一致；而且长回答的对数比累加项更多，数值上更容易拉开差距。Park等观察到DPO训练会显著加长回答，并把这一现象与数据中的长度偏差联系起来\scite{nlp-align-park2024length}。两种方法同时处理这两个问题：SimPO用长度归一化的平均对数概率作为奖励，ORPO把偏好项直接并入SFT损失，二者都不需要参考模型。
+
+\subsubsection{SimPO长度归一化}
+\label{sec:nlp-align-simpo}
+
+\term{简单偏好优化}（simple preference optimization, SimPO）把隐式奖励换成回答的平均对数概率，并要求胜出回答至少领先一个间隔$m$\cite{nlp-llm-simpo}：
 \begin{equation}
 \label{eq:nlp-align-simpo}
 \begin{aligned}
  s_{\bm{\theta}}(x,y)&=\frac{\beta}{|y|}\log\pi_{\bm{\theta}}(y\mid x),\\
  L_{\mathrm{SimPO}}(\bm{\theta})
  &=-\mathbb{E}_{\mathcal{D}_{\mathrm{pair}}}
-    \log\sigma\bigl(s_{\bm{\theta}}(x,y^{+})
-                  -s_{\bm{\theta}}(x,y^{-})-\gamma\bigr).
+    \log\sigma\bigl(s_{\bm{\theta}}(x,y_{\mathrm w})
+                  -s_{\bm{\theta}}(x,y_{\mathrm l})-m\bigr),
 \end{aligned}
 \end{equation}
-这里$|y|>0$为回答词元数，$\gamma\geq0$为目标间隔。这项改变同时涉及长度归一化、分数参照和学习间隔，不能只说成“把DPO算快一点”。平均对数概率也不等于语义质量：短而熟悉的错误回答仍可能容易预测。
+$|y|>0$为回答的词元数，$m\ge0$为目标间隔（原文记为$\gamma$），作用与第\ref{sec:nlp-align-rm-margin}小节的间隔损失相同。奖励与生成时的平均似然一致，长回答不再因累加项多而占便宜；没有参考模型，训练只运行一个模型。
 
-这些目标提供不同的偏好学习倾向，没有统一的优胜次序。例如SimPO原文的间隔消融中，更大的间隔能够继续提高部分留出偏好判定，却不使生成胜率一直上升\scite{nlp-llm-simpo}。比较时应固定基座、数据、生成协议和检查标准，并记录实际长度变化；否则，不能判断差异来自目标形式还是其他条件。
+长度归一化的作用可以用一对回答看清（教学示例）。胜出回答有40个词元，序列对数概率为$-40$；落选回答有10个词元，序列对数概率为$-15$。按序列和比较，落选回答的“分数”更高，模型要把胜出回答整体推高25奈特以上才能扭转；按平均对数概率比较，胜出回答为$-1.0$、落选回答为$-1.5$，已经领先$0.5$，再乘$\beta$与间隔$m$比较即可。不带参考模型时，序列对数概率随长度单调变小，长回答天然吃亏；DPO用的是相对参考模型的对数概率比之和，长回答会把逐词元的正或负比值累加放大。平均值去掉了长度这一项。
 
-\subsection{单回答反馈的直接学习}
+代价是失去KL对参考策略的锚定：没有$\pi_{\mathrm{ref}}$，损失中没有任何项阻止策略远离SFT模型，实践中需要较小的学习率和较短的训练来控制偏移。间隔$m$的选择也不能只看偏好判定：原文的间隔消融中，较大的间隔继续提高留出数据上的偏好准确率，却不使生成胜率一直上升\scite{nlp-llm-simpo}。平均对数概率也不等于语义质量，短而常见的错误回答仍可能得分很高。
+
+\subsubsection{ORPO单阶段优势比}
+\label{sec:nlp-align-orpo}
+
+SimPO、DPO都假设先做完SFT。\term{优势比偏好优化}（odds ratio preference optimization, ORPO）把两个阶段合并成一个，从基座模型直接训练\scite{nlp-align-hong2024orpo}。它用长度归一化的序列概率$P_{\bm\theta}(y\mid x)=\exp\bigl(\frac{1}{|y|}\log\pi_{\bm\theta}(y\mid x)\bigr)$定义优势（odds）$\operatorname{odds}_{\bm\theta}(y\mid x)=\frac{P_{\bm\theta}(y\mid x)}{1-P_{\bm\theta}(y\mid x)}$，损失为
+\begin{equation}
+\label{eq:nlp-align-orpo}
+ L_{\mathrm{ORPO}}(\bm\theta)=\mathbb E\Bigl[L_{\mathrm{SFT}}(x,y_{\mathrm w})
+ -\lambda_{\mathrm{OR}}\log\sigma\Bigl(\log\frac{\operatorname{odds}_{\bm\theta}(y_{\mathrm w}\mid x)}{\operatorname{odds}_{\bm\theta}(y_{\mathrm l}\mid x)}\Bigr)\Bigr],
+\end{equation}
+$L_{\mathrm{SFT}}$是胜出回答上的平均负对数似然，即第\ref{chap:nlp-supervised-finetuning}章的掩码损失；第二项是优势比的对数在逻辑函数下的负对数似然，$\lambda_{\mathrm{OR}}$为权重。SFT项让模型学会按指令作答，优势比项同时压低落选回答的相对可能性。原文的动机是：单纯的SFT在提高胜出回答概率的同时，也会提高风格相近的落选回答的概率，加入对比项可以在学习示范的同时区分好坏。
+
+以教学数值为例：若长度归一化概率$P(y_{\mathrm w})=0.6$、$P(y_{\mathrm l})=0.4$，两者的优势分别为$1.5$与$0.667$，优势比的对数为$\log2.25\approx0.81$，优势比项的损失为$-\log\sigma(0.81)\approx0.37$。用优势而不是概率本身作比较，使概率接近1时差异被放大：$P$从$0.9$升到$0.95$，概率只增加$0.05$，优势却从9增加到19。
+
+ORPO与SimPO的共同点是长度归一化、无参考模型；区别在于监督项与间隔项的分工。SimPO只有偏好项，靠间隔$m$控制分离程度，需要SFT模型作起点；ORPO靠SFT项保持胜出回答的似然，从而可以从基座出发，也部分缓解了第\ref{sec:nlp-align-dpo-failure}小节的似然位移。ORPO的局限是它的偏好项强度受$\lambda_{\mathrm{OR}}$与SFT项的相对大小支配，且与SimPO一样没有参考策略的锚定。
+
+\subsection{单回答反馈的直接学习：KTO}
 \label{sec:nlp-align-unpaired}
 
-用户有时只给一份回答点赞或点踩，记录为$(x,y,l)$，其中$l$表示可取或不可取。这份数据没有提供同一提示下的另一份回答。把不同提示的正负记录强行配对，会混入任务难度、内容和尺度的变化，无法当作原来的成对偏好来解释。
+用户在产品中给出的反馈多是对单个回答的点赞或点踩，记录为$(x,y,l)$，$l\in\{+,-\}$。第\ref{sec:nlp-align-units}小节已经说明，这种数据不能跨提示拼成偏好对。KTO（Kahneman--Tversky optimization）借用\term{前景理论}（prospect theory）的价值函数，为单个回答构造效用\scite{nlp-llm-kto,nlp-align-kahneman1979}。前景理论描述人对得失的主观感受：结果相对一个参照点计为“得”或“失”；得失越大，边际感受越弱（饱和）；同等大小的失比得更让人在意（损失厌恶）。KTO把“回答相对参考模型的隐式奖励”当作得失，把“策略整体相对参考模型的偏移”当作参照点。
 
-KTO针对这种单回答反馈构造直接目标。为说明它怎样利用参照，令$u_{\bm{\theta}}(x,y)=\log(\pi_{\bm{\theta}}(y\mid x)/\pi_{\mathrm{ref}}(y\mid x))$，理论参照是随提示变化的条件KL：
+令$u_{\bm{\theta}}(x,y)=\log\frac{\pi_{\bm{\theta}}(y\mid x)}{\pi_{\mathrm{ref}}(y\mid x)}$，理论参照点取随提示变化的条件KL：
 \begin{equation}
  z_0(x)=D_{\mathrm{KL}}(\pi_{\bm\theta}(\cdot\mid x)\Vert\pi_{\mathrm{ref}}(\cdot\mid x))
  =\mathbb E_{y'\sim\pi_{\bm\theta}(\cdot\mid x)}u_{\bm\theta}(x,y').
  \label{eq:nlp-align-kto-reference}
 \end{equation}
-它表示当前策略相对参考模型的平均对数概率比；这里$u$与$z_0$均未乘$\beta$，$\beta$在效用中统一缩放二者之差。用$\lambda_{+},\lambda_{-}>0$分别加权两类反馈，可构造效用及损失\scite{nlp-llm-kto}：
+它表示当前策略在该提示下的平均对数概率比。用$\lambda_{\mathrm D},\lambda_{\mathrm U}>0$分别加权可取（desirable）与不可取（undesirable）的反馈，效用与损失为
 \begin{equation}
 \label{eq:nlp-align-kto}
 \begin{aligned}
  v(x,y)&=\begin{cases}
- \lambda_{+}\sigma(\beta(u_{\bm{\theta}}(x,y)-z_0(x))),&l=+,\\
- \lambda_{-}\sigma(\beta(z_0(x)-u_{\bm{\theta}}(x,y))),&l=-,
+ \lambda_{\mathrm D}\,\sigma\bigl(\beta(u_{\bm{\theta}}(x,y)-z_0(x))\bigr),&l=+,\\
+ \lambda_{\mathrm U}\,\sigma\bigl(\beta(z_0(x)-u_{\bm{\theta}}(x,y))\bigr),&l=-,
  \end{cases}\\
- L_{\mathrm{KTO}}&=\mathbb{E}_{(x,y,l)\sim\mathcal{D}}[\lambda_l-v(x,y)].
+ L_{\mathrm{KTO}}&=\mathbb{E}_{(x,y,l)\sim\mathcal{D}}\bigl[\lambda_l-v(x,y)\bigr].
 \end{aligned}
 \end{equation}
-这里$\beta>0$控制效用的饱和尺度。在固定基准下，损失鼓励提高可取回答的概率比，并压低不可取回答的概率比，超过一定范围后激励逐渐饱和。共享参数、基准估计和其他样本会共同影响实际更新。
+可取回答的对数概率比高于参照点越多，效用越高；不可取回答低于参照点越多，效用越高。逻辑函数使效用饱和：一个回答已经远离参照点时，继续推动它的梯度很小，这对应前景理论中的边际递减，也起到与IPO、cDPO类似的防过拟合作用。$\lambda_{\mathrm D}$与$\lambda_{\mathrm U}$用于处理正负样本数量不均。记$n_{\mathrm D},n_{\mathrm U}$为两类样本数，原文给出的经验区间是使$\lambda_{\mathrm D}n_{\mathrm D}/(\lambda_{\mathrm U}n_{\mathrm U})$落在$[1,3/2]$内（早期版本为$[1,4/3]$）：例如可取与不可取样本之比为$1:10$时，取$\lambda_{\mathrm U}=1$、$\lambda_{\mathrm D}\in[10,15]$。
 
-这一效用形式保留了回答相对参照的增益与损失，但并不意味着从货币选择得到的心理学形式精确刻画了所有文本偏好。直接估计每个$z_0(x)$需要从当前策略采样。KTO在实践中使用批次近似以避免这一额外步骤：令一批有$B\geq2$条记录，索引从0开始，以$j(i)=(i+1)\bmod B$循环错配提示与回答，可写出共享估计
+精确计算每个$z_0(x)$需要从当前策略采样，KTO在实践中改用批内估计以避免这一步。令一批有$B\ge2$条记录，索引从0开始，以$j(i)=(i+1)\bmod B$把提示与另一条记录的回答错配，计算共享估计
 \begin{equation}
- \widehat z_0=\max\!\left\{0,\frac1B\sum_{i=0}^{B-1}
- u_{\bm\theta}(x_i,y_{j(i)})\right\}.
+ \widehat z_0=\max\Bigl\{0,\ \frac1B\sum_{i=0}^{B-1}u_{\bm\theta}(x_i,y_{j(i)})\Bigr\},
  \label{eq:nlp-align-kto-reference-estimate}
 \end{equation}
-更新时在批内以这个数值替代条件参照，并把它当作常数，不对该估计反向传播。错配回答来自反馈记录，而不是相应提示下的当前策略采样，因此这是有偏近似，既不等于各提示的精确条件KL，也不能直接称为精确的全局KL平均；截断到非负只保证数值不为负。正负比例和两类权重也会影响更新。KTO的要点是能利用未配对的反馈，而不是把一个赞否标签解释成客观奖励，或宣称它在任何数据上都优于成对方法。
+并在更新时把它当作常数，不对其反向传播。在参照点固定时，可取回答的效用对参数的梯度为$\lambda_{\mathrm D}\beta\,\sigma(w)\sigma(-w)\nabla u_{\bm\theta}$，其中$w=\beta(u_{\bm\theta}-z_0)$：它在$u_{\bm\theta}=z_0$附近最大，远离参照点后迅速衰减。不可取回答的梯度方向相反，形式相同。与DPO的权重$\sigma(\hat r_{\mathrm l}-\hat r_{\mathrm w})$相比，KTO的权重$\sigma(w)\sigma(-w)$在两个方向上都饱和，已经“够好”或“够差”的回答都不再被继续推动。错配回答来自反馈记录而非当前策略在相应提示下的采样，所以这是有偏的近似，既不等于各提示的精确条件KL，也不是全局KL的无偏估计；截断到非负只保证参照点不为负。它的作用是提供一个随训练移动的公共参照，使“得”与“失”有统一的比较基准。
 
-\section{策略更新与反馈迭代}
-\label{sec:nlp-align-learning}
+用一组教学数值看两类样本的效用。取$\beta=0.1$、$\lambda_{\mathrm D}=\lambda_{\mathrm U}=1$、参照点$z_0=0.5$。一条可取回答的$u=3.5$，$w=0.3$，效用$\sigma(0.3)=0.574$，损失$0.426$；一条不可取回答的$u=-1.5$，$w=\beta(z_0-u)=0.2$，效用$\sigma(0.2)=0.550$，损失$0.450$。若策略整体偏移增大、参照点升到$1.5$，同一条可取回答的$w$降为$0.2$，损失随之上升：KTO衡量的是回答相对策略整体偏移的“额外”提升，而不是对数概率比的绝对值。
 
-目标选定以后，才进入如何取得样本并更新参数的问题。显式奖励路径需要生成回答以估计当前策略的收益；直接目标可以在已有反馈记录上求梯度。两条路径都可以在更新后重新收集候选，反馈刷新方式与目标形式需要分别记录。
+KTO适用于只有赞否数据的场景，对标签不平衡也较稳健；有成对数据时，它丢弃了配对关系所含的信息。前景理论的类比只是设计效用的动机，并不意味着人们对文本回答的偏好真的遵循货币选择实验中的心理学规律。
 
-\subsection{基于奖励的策略采样与更新}
-\label{sec:nlp-align-ppo}
-
-在奖励路径中，先固定本轮采样策略$\pi_{\mathrm{old}}$生成回答，再由奖励模型评分，并计算相对参考策略的偏移代价。回答的每一步可以看成一个动作：状态$s_t=(x,y_{<t})$包含提示与已生成前缀，动作是下一词元$y_t$。序列最终评分可以放在结束位置，逐词元的对数概率比则可形成相应的KL代价估计。这里的参考策略$\pi_{\mathrm{ref}}$负责定义偏移，采样策略$\pi_{\mathrm{old}}$负责说明数据由谁产生，两者职责不同。
-
-为了判断一个词元选择比通常选择好多少，可以用价值函数估计从状态$s_t$出发的后续回报，作为基线，再用实际回报或相应估计减去基线，形成优势估计$\widehat{A}_t$。正优势表示这次选择相对基线有利，负优势表示不利。基线有助于降低估计波动，但它自身也需要学习或估计，不能当作真实奖励已知的证据。
-
-PPO利用采样时与更新时的动作概率比，并裁剪对同一批数据的更新激励\scite{rl3-schulman2017ppo}：
-\begin{equation}
-\label{eq:nlp-align-ppo}
-\begin{aligned}
- q_t(\bm{\theta})
- &=\frac{\pi_{\bm{\theta}}(y_t\mid s_t)}{\pi_{\mathrm{old}}(y_t\mid s_t)},\\
- \bar{q}_t(\bm{\theta})
- &=\operatorname{clip}(q_t(\bm{\theta}),1-\epsilon,1+\epsilon),\\
- L_{\mathrm{clip}}(\bm{\theta})
- &=-\mathbb{E}\left[\min\left(q_t(\bm{\theta})\widehat{A}_t,
-                         \bar{q}_t(\bm{\theta})\widehat{A}_t\right)\right].
-\end{aligned}
-\end{equation}
-这里$\epsilon>0$为裁剪半宽，$\bar q_t$表示裁剪后的概率比，期望按本轮采样的提示、轨迹和位置计算。当优势为正时，把该动作概率比推到$1+\epsilon$以上，不再增加这项裁剪目标的收益；负优势对应另一侧的限制。这个目标限制的是相对本轮采样策略的局部更新激励，不是对真实KL的硬约束，其他共享参数的变化仍可能使概率继续移动。
-
-此时有三个需要保留的策略：固定参照$\pi_{\mathrm{ref}}$、本轮数据来源$\pi_{\mathrm{old}}$和正在更新的$\pi_{\bm{\theta}}$。若用同一批回答做若干次更新，分母仍是生成它们的旧策略；进入新一轮采样时再刷新旧策略。参考策略可以继续固定。把三者合成一个模型记号，会同时弄错概率比与偏移代价。
-
-InstructGPT把监督微调、人工比较形成的奖励模型和PPO更新组合起来，提供了基于人类反馈的强化学习（RLHF）的一条完整路径\scite{ouyang2022instructgpt}。模型生成、评分、优势估计、策略更新与独立检查缺一不可。推理任务中的可验证奖励、组内相对优势和长轨迹更新，属于第\ref{chap:nlp-reasoning}章进一步改变反馈与更新方式的问题。
-
-\subsection{基于反馈记录的直接更新}
-\label{sec:nlp-align-direct-update}
-
-采用DPO时，一次更新可以直接取出$(x,y^{+},y^{-})$，分别累加两个回答在当前模型和参考模型下的词元对数概率，再代入式\eqref{eq:nlp-align-dpo-loss}反向传播。输入材料与历史参与条件计算，回答位置决定序列概率；不能把用户问题也累加成回答概率的一部分。参考参数固定时不接受梯度，当前策略仍可使用全参数或第\ref{sec:nlp-sft-low-rank}节的受限适配。
-
-IPO、SimPO和KTO也按各自的数据单元与目标求梯度。它们对参考概率、长度、标签和权重的需求不同，因此不能只更换一个损失函数名字，而继续沿用不相容的数据处理。例如SimPO需要明确回答长度与结束标记计数方式，KTO需要保留单回答标签及相应参照估计。
-
-直接目标省去了显式奖励拟合和某些采样步骤，却仍可能对反馈记录过度优化。更新次数、数据重复、学习率、参考选择和目标尺度都需要通过独立检查决定。TÜLU 3在SFT以后使用偏好优化，随后又进入其他奖励训练阶段，说明这些阶段能够组合，不能把整段后训练统一归为一种直接目标\scite{nlp-llm-tulu3}。
-
-\subsection{候选刷新与再次反馈}
+\subsection{在线与迭代直接优化}
 \label{sec:nlp-align-refresh}
 
-模型更新以后，旧反馈中最常见的错误可能已经减少，新错误也可能出现。此时可以让新模型生成候选，重新取得人工或AI判断，再决定继续拟合奖励还是直接更新。刷新要保留候选来源，才能区分“同一对回答的判断改变了”和“回答集合本身改变了”。
+离线DPO的数据由其他模型生成。策略更新以后，它自己犯的错误改变了，而旧数据仍然只覆盖旧模型的错误，第\ref{sec:nlp-align-dpo-failure}小节的分布偏离由此而来。在线与迭代方法的思路是让数据跟上策略：每轮用当前策略采样候选，由奖励模型、评判模型或策略自身打分，构造新的偏好对，再做DPO更新。
 
-新反馈与旧数据可以混合，但两者覆盖的策略状态不同。只保留新候选可能遗忘原来重要的边界，机械保留大量旧数据又可能让更新主要解决早已不再常见的问题。奖励模型也需要在新候选上检查，决定是否重估。若改变了评判标准或人群，应该把它记录为目标变化，不能把新旧分数直接当作同一量比较。
+\begin{algorithm}[迭代直接偏好优化]
+  \label{alg:nlp-align-iterative-dpo}
+  \begin{algorithmic}[1]
+    \Require 初始策略$\pi_0$（通常为SFT模型），提示集$\mathcal D_x$，评分器$S$（奖励模型、评判模型或策略自身），轮数$M$
+    \Ensure 策略$\pi_M$
+    \For{$m=1,\ldots,M$}
+      \State 对$\mathcal D_x$中的每个提示，用$\pi_{m-1}$采样若干候选
+      \State 用$S$为候选打分，取最高分与最低分（或按评判结果）组成偏好对，得到$\mathcal D_m$
+      \State 以$\pi_{\mathrm{ref}}\gets\pi_{m-1}$（或固定为SFT模型），在$\mathcal D_m$（可混入此前各轮数据）上按式\eqref{eq:nlp-align-dpo-loss}训练，得到$\pi_m$
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
 
-由此可以区分两项决策：用固定记录还是随模型刷新数据，采用奖励驱动更新还是直接偏好目标。直接学习可以反复刷新候选，奖励路径也可以利用已有记录初始化评分器。在线刷新本身不等于强化学习；更新究竟在最大化什么，仍由明确的目标与梯度估计决定。
+算法~\ref{alg:nlp-align-iterative-dpo}的两个极端是逐轮迭代与完全在线。前者每轮生成一大批数据再训练若干步，例如自我奖励语言模型让策略自己以评判提示给候选打分，再以DPO更新，迭代三轮\scite{nlp-align-yuan2024selfreward}。后者每个训练步都从当前策略采两个回答，由大模型评判后立即做一步DPO更新，称为在线AI反馈（online AI feedback）\scite{nlp-align-guo2024oaif}。二者都比离线DPO更好地覆盖当前策略的回答分布，代价是要在训练中生成和评分，又回到了RLHF的部分开销。新旧数据可以混合：只保留新数据可能遗忘早期覆盖的边界情形，大量保留旧数据又会让更新主要解决已经不再常见的问题。
 
-\section{对齐效果与行为检查}
+参考策略的选择在迭代中也有两种。若每轮令$\pi_{\mathrm{ref}}\gets\pi_{m-1}$，每轮的KL正则只限制相对上一轮的偏移，各轮偏移可以累积，$M$轮以后相对SFT模型的距离可能远大于单轮的预期；好处是每轮的隐式奖励都以当前起点为基准，偏好对的区分更集中在新错误上。若始终以SFT模型为参考，总偏移受到直接约束，但随着策略远离SFT模型，同一个$\beta$下的对数概率比越来越大，损失更早饱和。两种选择应与轮数、$\beta$一起记录。
+
+评分器的选择决定了在线数据的质量上限。用奖励模型打分，在线DPO继承了第\ref{sec:nlp-align-overoptimization}小节的过度优化问题；用策略自身评判，生成与评判共享同一偏差，第\ref{sec:nlp-align-rlaif}小节的自我偏好可能在迭代中被放大。自我奖励的研究报告在三轮内评判与生成能力同时提高，但没有说明这种提高能持续多少轮\cite{nlp-align-yuan2024selfreward}，实践中仍需要独立的人工或外部评判作为检查。
+
+这里需要区分两个独立的划分。“在线与离线”说的是数据是否随策略刷新；“是否使用强化学习”说的是更新方式，即最大化采样奖励还是拟合偏好分类损失。在线DPO刷新数据，但更新仍是分类损失；RLHF的奖励模型也可以完全由已有记录训练。在线与迭代DPO和RLHF的差别在于更新方式，而不在于是否在线。刷新时还要记录候选来源与评判标准：同一对回答的判断改变了，与回答集合本身改变了，是两种不同的变化；若改变了评判标准或评判人群，应记为目标的变化，新旧分数不能直接当作同一个量比较。
+
+\subsection{直接偏好方法的比较}
+\label{sec:nlp-align-comparison}
+
+表~\ref{tab:nlp-align-methods}从数据单元、所需模型、是否在线采样、修正的问题与主要缺点几方面，比较RLHF-PPO与本节的各种直接方法。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{RLHF-PPO与直接偏好方法的比较。“参考模型”“奖励模型”两列指训练时是否需要，“在线”指训练中是否由当前策略采样；在线DPO需要奖励模型或评判模型一类的评分器。}
+  \label{tab:nlp-align-methods}
+  \begin{tabularx}{\linewidth}{@{}lp{19mm}ccc p{36mm}X@{}}
+    \toprule
+    方法 & 数据单元 & 参考模型 & 奖励模型 & 在线 & 修正的问题 & 主要缺点\\
+    \midrule
+    RLHF-PPO & 偏好对（训练RM） & 是 & 是 & 是 & 基准方法：奖励模型泛化到新回答 & 四个模型；实现复杂；奖励过度优化\\
+    DPO & 偏好对 & 是 & 否 & 否 & 省去RM与在线采样 & 似然位移；分布偏离；确定性偏好下过拟合\\
+    IPO & 偏好对 & 是 & 否 & 否 & DPO的过拟合（改目标形式） & 统一目标差值不分偏好强弱；仍离线\\
+    cDPO & 偏好对 & 是 & 否 & 否 & DPO的过拟合（视为标签噪声） & 翻转概率需人为设定；仍离线\\
+    SimPO & 偏好对 & 否 & 否 & 否 & 参考模型开销；长度偏差 & 无KL锚定；需先做SFT；间隔需调\\
+    ORPO & 偏好对 & 否 & 否 & 否 & 合并SFT与偏好两阶段 & 无KL锚定；偏好项强度受SFT项支配\\
+    KTO & 单回答赞否 & 是 & 否 & 否 & 无配对数据时的学习 & 丢弃配对信息；参照点为有偏估计\\
+    在线DPO & 当前策略的偏好对 & 是 & 评分器 & 是 & 离线数据的分布偏离 & 训练中生成与评分；评分器偏差\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+从表中可以看出，直接方法省去了奖励模型训练与在线采样，代价是依赖离线数据的覆盖；各变体改变的是数据单元与损失形式，分别针对DPO的某一个缺陷，而不是在所有方面都优于DPO。Xu等在对话与代码任务上的比较发现，精心调参的PPO可以超过DPO\cite{nlp-align-xu2024dpo-ppo}；另一些报告中直接方法以更低的成本达到相近效果。比较这些方法时，应固定基座、偏好数据、生成协议和检查标准，并记录回答长度的变化，否则无法判断差异来自目标形式还是其他条件。
+
+选择方法时，可以先看手头有什么数据与资源，再看要防范哪种失败。只有赞否数据时，KTO是少数可以直接使用的方法；有成对数据但显存紧张时，DPO只需在训练时运行一个模型（参考概率可离线算好），SimPO与ORPO连离线参考也不需要；数据每对只标注一次、担心过拟合时，可以考虑IPO或cDPO；担心离线数据与当前策略分布不符时，需要在线或迭代采样，此时直接方法与RLHF的成本差距缩小。RLHF-PPO在需要奖励模型泛化到大量新回答、或奖励来自外部可验证信号的场景中仍有优势，后一种情形是第\ref{chap:nlp-reasoning}章的主题。这些判断是对机制的归纳，不是普遍成立的优劣排序，具体选择仍要以独立检查的结果为准。
+
+\section{对齐效果检查}
 \label{sec:nlp-align-checking}
 
-训练信号既参与更新，又带有误差，不能单独充当验收依据。对齐检查需要独立提示、判断来源或可核验条件，把总体偏好变化与具体行为变化放在一起看。第\ref{chap:nlp-evaluation}章将统一建立比较协议与不确定性报告。
+奖励、成对损失和KL距离都是训练中的代理量，它们既参与更新，又带有误差，不能单独充当验收依据。对齐检查需要独立的提示、独立的判断来源或可以核验的条件，并同时观察三件事：偏好收益是否真实存在，策略是否利用了奖励的表面特征，原有能力是否得到保持。比较协议与不确定性报告在第\ref{chap:nlp-evaluation}章统一建立，本节只说明对齐特有的检查点。
 
 \subsection{独立反馈下的偏好变化}
 \label{sec:nlp-align-independent-feedback}
 
-对更新前后模型，可以在相同未见提示下生成回答，隐藏模型身份并交换展示顺序，收集独立比较。记录应包含胜、负、平局和无法判断，而不是只保留“新模型获胜”的比例。对于通知中的日期、参加条件等可核验内容，还应直接检查事实与约束，避免独立评判者也只根据语气选择。
+对更新前后的模型，在相同的未见提示上生成回答，隐藏模型身份并交换展示顺序，收集独立的比较判断。记录应包含胜、负、平与无法判断，而不是只报告“新模型获胜”的比例；对通知中的日期、参加条件等可核验内容，还应直接核对事实，避免独立评判者也只凭语气作出选择。结果按任务与提示类型分组报告，并写明生成设置：新模型可能在长篇解释上更受偏好，却在要求一句话回答的场景中下降，一个合并胜率无法反映这种差异。
 
-不同人群或任务分组的结果可能相反。新模型在长篇解释上更受偏好，却可能在限定一句话的场景中下降。报告需要说明提示如何抽取、采用何种生成设置、谁作判断以及各类数量；只给一个合并胜率，无法说明模型适用于哪些条件。
+汇总时平局的处理要事先约定。例如250次比较中新模型胜120次、负80次、平50次（教学示例），把平局记为各半，胜率为$(120+25)/250=58\%$；只在分出胜负的200次中计算，胜率为$60\%$。两种口径都可以使用，但必须写明，并同时报告平局比例：平局很多说明两个模型在这些提示上差别不大，或评判标准不足以区分它们。
 
-若训练奖励上升而独立偏好没有改善，至少说明两种信号没有同步变化。它可能来自奖励失准、过度更新或检查材料分布不同，需要进一步对照；不能直接把独立评判不一致解释成“评判者没有理解新模型”。
+若训练奖励上升而独立判断没有改善，只能说明两种信号没有同步变化。可能的原因包括奖励模型失准、更新过强或检查提示的分布不同，需要逐一对照后再判断模型是否改进。
 
-\subsection{奖励投机与行为偏移}
+\subsection{奖励投机与长度偏差}
 \label{sec:nlp-align-reward-hacking}
 
-策略可能学会增加评分器偏好的表面特征，而没有完成目标要求。例如，若奖励把详细程度与正确性混在一起，模型可能增加重复解释；若评判者偏好赞同语气，模型可能迎合问题中的错误前提。检查时应对照相同事实内容、不同长度和不同立场的候选，定位评分上升究竟依靠什么。
+\term{奖励投机}（reward hacking）指策略学会增加评分器偏好的表面特征，而没有更好地满足实际要求。常见的表现有三类：重复解释、堆砌列表与标题等格式，使回答显得更“完整”；\term{迎合}（sycophancy），即附和用户问题中的错误前提或已表达的观点\cite{nlp-align-sharma2024sycophancy}；以及在边界请求上两极化，要么过度拒绝正常请求，要么对受限请求给出具体内容。检查时应对照事实内容相同而长度、格式或立场不同的候选，定位得分上升依靠的是什么。
 
-行为偏移也包括答案模式变少、对正常请求过度拒绝，以及在受限请求上提供不合适内容。风险减少与帮助质量需要分别检查；某个模型对所有问题都拒绝，可能在部分风险集合中很少违例，却无法完成正常使用任务。相反，正常请求得分很高，也不能说明它遵守了边界要求。
+长度偏差尤其普遍。Singhal等发现，在他们研究的几个RLHF设置中，回答长度的增加解释了奖励提升的相当大一部分，只以长度为奖励的优化也能复现部分改进\scite{nlp-align-singhal2023length}。检查长度偏差有两种做法：在相同长度区间内比较胜率；或者以两份回答的长度差为协变量拟合胜率模型，报告长度差为零时的预测胜率，即长度控制胜率\scite{nlp-align-dubois2024lc}。两种做法都只控制长度这一个变量，其他表面特征仍需另行检查。用一组教学数值说明：对齐后模型对旧模型的原始胜率为62\%，但它的回答平均长了一倍；把比较限制在两份回答长度相差不超过20\%的子集上，胜率降为53\%。这说明大部分收益可能来自长度，而不是内容质量；要下结论，还应检查这个子集的提示类型是否与全集一致。
 
-这些现象通常称为奖励投机或代理目标偏离：训练使用的可计算信号与实际要求分开了。修正可以针对反馈标准、候选覆盖、奖励模型、目标尺度或更新强度，不能只在提示中要求模型“不要投机”。直接偏好学习没有显式奖励模型，也仍可能利用数据和目标中的偏差。
+代理偏离并不只发生在显式奖励上。直接偏好方法没有奖励模型，但同样会利用数据中的长度与风格偏差（第\ref{sec:nlp-align-reference-free}小节）。修正需要回到产生偏差的环节：反馈标准、候选覆盖、奖励模型、目标形式或更新强度，而不是在提示中要求模型“不要投机”。
 
-\subsection{能力保持与再对齐选择}
+\subsection{对齐税与再对齐}
 \label{sec:nlp-align-retention}
 
-对齐后的模型还要接受第\ref{sec:nlp-sft-retention}节那类保持检查，固定原有能力任务与正常帮助任务，观察目标行为收益的同时是否损失其他能力。KL惩罚能够控制相对分布偏移，却不能代替这些任务检查，因为小概率变化也可能改变某些关键回答。
+对齐税指对齐后模型在原有任务上的能力下降。InstructGPT观察到，不加预训练项的PPO模型在若干公开问答与翻译基准上低于GPT-3，PPO-ptx减轻了这一退步\scite{ouyang2022instructgpt}。另一类缓解手段是模型平均：在SFT模型与对齐后模型的权重之间插值，$\bm\theta_\alpha=(1-\alpha)\bm\theta_{\mathrm{SFT}}+\alpha\bm\theta_{\mathrm{RLHF}}$，$\alpha\in[0,1]$。Lin等发现，在他们比较的多种方法中，这种简单插值给出了偏好收益与原有能力之间较好的权衡\scite{nlp-align-lin2024tax}。无论采用哪种手段，都应固定原有能力任务和正常帮助任务，按第\ref{sec:nlp-sft-retention}节的方式与目标行为收益一起检查；KL距离小不能代替这些检查，因为小的分布变化也可能改变关键回答。
 
-若独立比较指出某类提示缺少反馈，应返回材料准备；若奖励在新候选上误判，应检查评分器；若目标方向合适但更新过强，应改变尺度和日程。需要新领域知识的失败，还可能要求继续预训练或补充监督示范，不能期望所有问题都通过偏好优化修复。原因判断应由保持其他条件的比较支持。
-
-交付时应保留模型起点、反馈范围、目标、参考策略、更新设置和已检查条件。得到的结果是一份在声明范围内经过对齐的模型及剩余限制。固定这份参数以后，第\ref{chap:nlp-model-inference}章讨论如何组织输入、计算概率和产生输出；若目标是提高复杂推理能力，第\ref{chap:nlp-reasoning}章还需要把这些反馈机制与其他训练阶段组合起来分析。
+检查发现问题后，应返回相应的环节：某类提示缺少反馈，返回第\ref{sec:nlp-align-feedback}节补充数据；奖励模型在新候选上误判，重训或集成奖励模型；目标方向正确但更新过强，调整$\beta$、学习率与训练步数；需要新知识的失败，则要转回继续预训练或补充监督示范，偏好优化无法凭空提供模型没有的知识。交付时应记录模型起点、反馈范围、目标、参考策略、更新设置与已检查的条件。得到的是一份在声明范围内经过对齐的模型及其剩余限制；固定这份参数以后，第\ref{chap:nlp-model-inference}章讨论怎样组织输入与生成输出，第\ref{chap:nlp-reasoning}章把本章的奖励与策略优化用到可验证的推理任务上。
 
 \section{本章小结}
 \label{sec:nlp-align-summary}
 
-偏好对齐利用回答之间的比较或单回答评价调整生成策略。反馈必须先有清楚的使用范围和判断标准，再选择概率关系、奖励或代价表示。显式奖励路径用评分和策略采样提高收益，直接目标则把反馈关系转化为回答概率的损失；两者都受反馈偏差、模型支持范围和更新强度限制。奖励零点不可识别、目标尺度与策略偏移控制，决定了这些公式不能脱离条件逐项比较。
+回到开头两份都正确的通知回答：我们无法为每个提示写出唯一的最佳回答，却可以判断哪一份更好。本章把这种比较反馈变成了可优化的目标。反馈先要有明确的标准、评判人群与可用信息，排序可以展开为成对比较，单回答赞否则不能随意配对；人工评判的位置与长度偏差会进入后续模型，AI反馈降低成本，但带来自我偏好等新偏差。Bradley--Terry模型把比较变成奖励差，奖励的零点与尺度因此不可识别；奖励模型由SFT模型去掉输出层、在末词元上接标量头得到，批内成对训练避免重复回答造成的过拟合。代理奖励在优化压力下与真实偏好分开，集成、KL约束与提前停止只能减轻而不能消除这种偏离；帮助与安全可以分开建模，以拉格朗日乘子求解约束问题。
 
-对齐成功的依据是独立判断下目标行为的改善及所需能力的保持。训练奖励、成对损失和参考距离分别只观察这条链中的一部分，任何单项都不能证明模型满足全部要求。下一章在参数固定的条件下研究模型怎样被使用；推理专题再回用本章的奖励、偏好与策略更新机制，说明它们怎样参与求解能力的形成。
+在KL正则目标下，PPO以价值模型逐词元分配信用，代价是四个模型的显存与复杂的训练循环；RLOO、ReMax与GRPO用采样得到的基线去掉价值模型，best-of-$N$与拒绝采样微调则只用奖励模型筛选样本。KL正则目标的闭式最优解使奖励可以写成策略的对数概率比，DPO由此直接从偏好数据训练；IPO与cDPO修正确定性偏好下的过拟合，SimPO与ORPO去掉参考模型并做长度归一化，KTO处理单回答反馈，在线与迭代DPO让数据跟上策略。各方法分别处理反馈成本、奖励可识别性、过度优化、显存、长度偏差与分布偏离中的一部分，没有一种方法同时解决全部问题；对齐是否成功，最终要由独立反馈下的偏好变化、奖励投机检查和能力保持共同判断。对齐不改变模型运行时的选择规则，第\ref{chap:nlp-model-inference}章固定参数讨论推断，第\ref{chap:nlp-reasoning}章把奖励与策略优化用到可验证的推理任务上。
 
 \paragraph{延展阅读}
-InstructGPT可用于追踪“偏好比较—奖励模型—策略更新”的完整路径，DPO、IPO与KTO则
-展示怎样把不同反馈假设直接写入策略目标；宪法式人工智能进一步改变反馈的产生方式。
-阅读时可固定同一反馈数据，比较各方法对参考策略、奖励尺度和样本支持的要求，并把
-训练目标改善与独立行为检查分开
-\scite{ouyang2022instructgpt,rafailov2023dpo,nlp-llm-ipo,nlp-llm-kto,bai2022constitutional}
+InstructGPT给出了“示范—奖励模型—PPO”的完整路径，Constitutional AI与RLAIF改变了反馈的来源，Gao等的研究刻画了奖励模型的过度优化；DPO、IPO、KTO与SimPO则展示怎样把不同的反馈假设直接写入策略目标。阅读时可以固定同一份偏好数据，比较各方法对参考策略、奖励尺度和样本覆盖的要求，并把训练目标的改善与独立的行为检查分开
+\scite{ouyang2022instructgpt,bai2022constitutional,gao2022overoptimization,rafailov2023dpo,nlp-llm-ipo,nlp-llm-kto,nlp-llm-simpo}。

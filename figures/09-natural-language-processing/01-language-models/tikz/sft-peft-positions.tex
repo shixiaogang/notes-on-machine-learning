@@ -1,0 +1,94 @@
+% 第九卷 4.4.1 节：参数高效微调方法在一层解码器中的附加位置。
+% 主链路沿用第 3 章解码器层（前置 RMSNorm、因果注意力、SwiGLU 前馈），省略 RoPE 与归一化细节。
+% 蓝色：输入与键值前缀；黄色：激活变换（Adapter、(IA)^3 缩放）；红色：可加低秩增量的线性层；白框：普通运算。
+% 右侧图例按附加位置列出方法；BitFit 的偏置在 LLaMA 类线性层中不存在，只在图例中说明。
+\begin{tikzpicture}[
+  x=1mm,y=1mm,
+  every node/.style={font=\figurefont\footnotesize,text=FigureInk},
+  op/.style={rectangle,rounded corners=1.8pt,draw=FigureStroke,line width=0.6pt,fill=white,
+    minimum height=6mm,inner sep=1.1mm,align=center},
+  lin/.style={op,draw=FigureRed,line width=0.8pt,fill=FigureRedFill},
+  pre/.style={op,draw=FigureBlue,line width=0.8pt,fill=FigureBlueFill},
+  act/.style={op,draw=FigureYellow,line width=0.8pt,fill=FigureYellowFill},
+  dot/.style={circle,draw=FigureStroke,line width=0.6pt,fill=white,inner sep=0pt,minimum size=4.6mm},
+  flow/.style={-{Stealth[length=1.8mm,width=1.3mm]},draw=FigureStroke,line width=0.7pt},
+  skip/.style={-{Stealth[length=1.8mm,width=1.3mm]},draw=FigureMuted,line width=0.7pt,rounded corners=1.8pt},
+  dim/.style={font=\figurefont\scriptsize,text=FigureMuted,inner sep=0.8pt},
+  key/.style={font=\figurefont\scriptsize,text=FigureInk,anchor=west,align=left,text width=56mm}
+]
+  % 输入与软提示。
+  \node[op,draw=none,fill=none] (emb) at (40,0) {词元嵌入$\bm H^{(0)}$};
+  \node[pre,minimum width=16mm] (p) at (12,0) {软提示$\bm P$};
+  \node[op,minimum width=30mm] (cat) at (40,-10) {拼接$[\bm P;\bm H^{(0)}]$};
+  \draw[flow] (emb) -- (cat);
+  \draw[flow] (p) |- (cat.west);
+  \node[dim,anchor=west] at (56,-10) {$(k+T)\times d$};
+
+  % 注意力子层：键、值先经 (IA)^3 缩放，再拼接前缀。
+  \node[op,minimum width=22mm] (n1) at (40,-20) {RMSNorm};
+  \draw[flow] (cat) -- (n1);
+  \node[lin,minimum width=17mm] (wq) at (17,-31) {$\bm W_Q{+}\bm B\bm A$};
+  \node[lin,minimum width=17mm] (wk) at (40,-31) {$\bm W_K{+}\bm B\bm A$};
+  \node[lin,minimum width=17mm] (wv) at (63,-31) {$\bm W_V{+}\bm B\bm A$};
+  \coordinate (s1) at (40,-25.5);
+  \draw[draw=FigureStroke,line width=0.7pt] (n1.south) -- (s1);
+  \draw[flow] (s1) -| (wq.north);
+  \draw[flow] (s1) -- (wk.north);
+  \draw[flow] (s1) -| (wv.north);
+  \node[act,minimum width=12mm] (lk) at (40,-41) {$\bm l_k\odot\bm K$};
+  \node[act,minimum width=12mm] (lv) at (63,-41) {$\bm l_v\odot\bm V$};
+  \node[pre,minimum width=12mm] (pk) at (40,-51) {$[\bm P_K;\,\cdot\,]$};
+  \node[pre,minimum width=12mm] (pv) at (63,-51) {$[\bm P_V;\,\cdot\,]$};
+  \draw[flow] (wk) -- (lk);
+  \draw[flow] (wv) -- (lv);
+  \draw[flow] (lk) -- (pk);
+  \draw[flow] (lv) -- (pv);
+  \node[op,minimum width=58mm] (att) at (40,-61) {因果注意力};
+  \draw[flow] (wq) -- (wq |- att.north);
+  \draw[flow] (pk) -- (att.north -| pk);
+  \draw[flow] (pv) -- (att.north -| pv);
+  \node[lin,minimum width=17mm] (wo) at (40,-71) {$\bm W_O{+}\bm B\bm A$};
+  \draw[flow] (att) -- (wo);
+  \node[act,minimum width=17mm] (ad1) at (40,-81) {Adapter};
+  \draw[flow] (wo) -- (ad1);
+  \node[dot] (a1) at (40,-90) {$+$};
+  \draw[flow] (ad1) -- (a1);
+  \draw[skip] (40,-15) -- (78,-15) -- (78,-90) -- (a1.east);
+
+  % 前馈子层。
+  \node[op,minimum width=22mm] (n2) at (40,-100) {RMSNorm};
+  \draw[flow] (a1) -- (n2);
+  \node[lin,minimum width=17mm] (w1) at (24,-111) {$\bm W_1{+}\bm B\bm A$};
+  \node[lin,minimum width=17mm] (w3) at (56,-111) {$\bm W_3{+}\bm B\bm A$};
+  \coordinate (s2) at (40,-105.5);
+  \draw[draw=FigureStroke,line width=0.7pt] (n2.south) -- (s2);
+  \draw[flow] (s2) -| (w1.north);
+  \draw[flow] (s2) -| (w3.north);
+  \node[act,minimum width=40mm] (m) at (40,-122) {$\bm l_{\mathrm{ff}}\odot\bigl(\operatorname{SiLU}(\cdot)\odot(\cdot)\bigr)$};
+  \draw[flow] (w1) -- (w1 |- m.north);
+  \draw[flow] (w3) -- (w3 |- m.north);
+  \node[dim,anchor=west] at (61,-122) {$T\times d_{\mathrm{ff}}$};
+  \node[lin,minimum width=17mm] (w2) at (40,-132) {$\bm W_2{+}\bm B\bm A$};
+  \draw[flow] (m) -- (w2);
+  \node[act,minimum width=17mm] (ad2) at (40,-142) {Adapter};
+  \draw[flow] (w2) -- (ad2);
+  \node[dot] (a2) at (40,-151) {$+$};
+  \draw[flow] (ad2) -- (a2);
+  \draw[skip] (40,-95) -- (78,-95) -- (78,-151) -- (a2.east);
+  \node[op,draw=none,fill=none] (out) at (40,-160) {层输出};
+  \draw[flow] (a2) -- (out);
+
+  % 图例：按附加位置列出方法。
+  \begin{scope}[shift={(88,-6)}]
+    \node[pre,minimum width=6mm,minimum height=4mm] at (2,0) {};
+    \node[key] at (6,0) {输入前缀：Prompt tuning的软提示$\bm P\in\mathbb R^{k\times d}$，只加在第一层之前};
+    \node[pre,minimum width=6mm,minimum height=4mm] at (2,-13) {};
+    \node[key] at (6,-13) {键值前缀：Prefix tuning与P-tuning v2的$\bm P_K,\bm P_V\in\mathbb R^{k\times H_{\mathrm{kv}}d_h}$，每层各一组};
+    \node[act,minimum width=6mm,minimum height=4mm] at (2,-28) {};
+    \node[key] at (6,-28) {激活变换：Adapter瓶颈层（Houlsby式两处，Pfeiffer式只在前馈后一处）；(IA)$^3$的逐元素缩放$\bm l_k,\bm l_v,\bm l_{\mathrm{ff}}$};
+    \node[lin,minimum width=6mm,minimum height=4mm] at (2,-45) {};
+    \node[key] at (6,-45) {权重增量：LoRA的低秩增量$\bm B\bm A$，可加在任一线性层；DoRA再为每个输出单元学习幅度};
+    \node[op,minimum width=6mm,minimum height=4mm] at (2,-60) {};
+    \node[key] at (6,-60) {偏置：BitFit只训练各线性层与归一化层的偏置；LLaMA类模型的线性层不含偏置};
+  \end{scope}
+\end{tikzpicture}

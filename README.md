@@ -1,6 +1,6 @@
 # 机器学习笔记
 
-基于 `tufte-book` 的中文 LaTeX 机器学习笔记，按十二卷独立组织与出版，不生成全集。卷目、分部、章纲与正文进度见[正文大纲索引](plans/README.md)，构建目录由 [tex/volumes.json](tex/volumes.json) 登记。每卷总页数不超过600页。
+基于 `tufte-book` 的中文 LaTeX 机器学习笔记，按十二卷独立组织与出版，不生成全集。卷目、分部、章纲与正文进度见[正文大纲索引](plans/README.md)，构建目录由 [tex/volumes.json](tex/volumes.json) 登记。每卷总页数不超过800页。
 
 ## 构建
 
