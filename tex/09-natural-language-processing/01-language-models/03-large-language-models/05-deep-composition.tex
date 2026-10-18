@@ -1,0 +1,52 @@
+\section{深层网络的稳定组合}
+\label{sec:nlp-llm-layer-composition}
+
+前两节分别改变了注意力的历史读取方式和前馈层的参数调用方式。第三个可改的部件是层与层之间的连接。大语言模型通常有数十到上百层，信号要从第一层传到最后一层，梯度要从损失传回第一层；任何一处的尺度持续放大或缩小，多层叠加后都会造成训练发散或深层失效。本节讨论两个问题：归一化放在残差分支之内还是之外，怎样影响梯度路径和对学习率预热的依赖；单一的残差流是否限制了层间信息组合，把它扩展为多路时又怎样保持稳定。对应的谱系是Post-LN、Pre-LN与RMSNorm，以及超连接与mHC。残差与归一化位置的一般说明见第\ref{sec:nlp-llm-computation}节开头所引卷五的Transformer章。
+
+\subsection{残差连接与归一化位置}
+\label{sec:nlp-llm-residual-normalization}
+
+原始Transformer采用\term{后置层归一化}（post-layer normalization, Post-LN），在残差相加之后归一化：
+\begin{equation}
+ \bm x_{\ell+1}=\operatorname{Norm}\bigl(\bm x_\ell+F_\ell(\bm x_\ell)\bigr),
+ \label{eq:nlp-llm-post-ln}
+\end{equation}
+其中$F_\ell$是第$\ell$个子层（注意力或前馈）。GPT-2以后的大语言模型普遍改用第\ref{sec:nlp-llm-rmsnorm}小节的前置层归一化（Pre-LN），只对进入子层的副本归一化，原表示不经归一化直接相加；式\eqref{eq:nlp-llm-decoder-layer}就是一个完整的Pre-LN解码器层，其中的前馈子层也可以换成第\ref{sec:nlp-llm-experts}节的专家组合。归一化函数多为同一小节定义的RMSNorm\scite{zhang2019rmsnorm}。
+
+两种位置的差别体现在梯度路径上。把一个子层看作$\bm x\mapsto\bm y$，对Pre-LN有$\partial\bm y/\partial\bm x=\bm I+\bm J_F\bm J_{\mathrm{N}}$，其中$\bm J_F$与$\bm J_{\mathrm N}$分别是子层与归一化的雅可比矩阵。$L$个子层连乘后展开，结果中始终含有单位阵这一项，即存在一条从最后一层直达第一层、不经过任何归一化与子层的梯度路径。对Post-LN则有$\partial\bm y/\partial\bm x=\bm J_{\mathrm N}(\bm I+\bm J_F)$，每层的直达路径也要乘上归一化的雅可比矩阵，它把梯度按当前激活的尺度重新缩放，连乘后没有不受干扰的恒等项。Xiong等在特定初始化下分析表明，Post-LN在初始化时靠近输出的层参数梯度较大，若一开始就用较大学习率，训练容易发散，需要学习率预热逐步放大步长；Pre-LN的梯度尺度在各层更均匀，可以缩短甚至去掉预热\scite{xiong2020layernorm}。
+
+Pre-LN也有代价。每层都把未归一化的增量加到残差流上，残差流的范数随层数增长；深层子层的输出相对于已累积的残差流越来越小，对最终表示的影响可能减弱。为此Pre-LN模型在最后一层之后再加一次最终归一化，再送入输出层。另一类方案保留Post-LN的表达方式而调整尺度，例如DeepNet在相加前把残差乘以大于1的常数并配合缩小的初始化，使千层规模的Post-LN训练保持稳定\scite{wang2022deepnet}。
+
+恒等路径保证了梯度有一条不衰减的通道，但不保证其他路径不放大。子层雅可比矩阵在训练中可能变大，注意力logits随查询和键的范数增长也可能失控。这类问题需要在优化环节处理，例如第\ref{sec:nlp-llm-stability}小节的QK归一化、z-loss与梯度裁剪。
+
+\subsection{多路残差与超连接}
+\label{sec:nlp-llm-hyperconnections}
+
+Pre-LN的单一残差流把所有层的输出加在同一个向量上，每层只能读取这个总和，也只能写回这个总和。层间组合方式因此是固定的：第$\ell$层无法选择只读取较早几层的输出，也无法把结果只留给后面特定的层。\term{超连接}（hyper-connections）把残差流扩展为$n$路，用可学习的系数决定每层从哪些流读取、写回哪些流，以及各流之间怎样混合\scite{nlp-llm-hyperconnections2024}。设$\bm X^{(\ell)}\in\mathbb R^{n\times d}$按行保存$n$条流，一层的计算可以写成
+\begin{equation}
+ \bm X^{(\ell+1)}=
+ \bm M_\ell\bm X^{(\ell)}+
+ \bm b_\ell\,F_\ell\bigl(\bm a_\ell^{\top}\bm X^{(\ell)}\bigr),
+ \label{eq:nlp-llm-hyperconnection}
+\end{equation}
+其中读出向量$\bm a_\ell\in\mathbb R^n$把$n$条流加权合成子层输入，写入向量$\bm b_\ell\in\mathbb R^n$决定子层输出写回各流的比例，流间混合矩阵$\bm M_\ell\in\mathbb R^{n\times n}$决定旁路上各流怎样重新组合。取$n=1$、$\bm M_\ell=1$、$\bm a_\ell=\bm b_\ell=1$，就回到普通残差连接。动态版本还让这些系数依赖当前输入。$n$通常取4左右，额外参数和计算很少，但残差流的显存与读写量扩大到$n$倍。
+
+自由的混合矩阵带来新的稳定性问题：式\eqref{eq:nlp-llm-hyperconnection}的旁路在$L$层之后变为$\bm M_L\cdots\bm M_1$，若各$\bm M_\ell$的范数略大于1，连乘就会放大信号，破坏了残差连接原有的恒等传播。\term{流形约束超连接}（manifold-constrained hyper-connections, mHC）把$\bm M_\ell$约束为\term{双随机矩阵}（doubly stochastic matrix），即元素非负、每行与每列之和都为1\scite{nlp-llm-mhc2025}。这一约束有两点好处：每条输出流是输入流的凸组合，不会超出输入流的范围；双随机矩阵的乘积仍是双随机矩阵，所以多层连乘后旁路仍是凸组合，信号不会被放大。实现时先由参数得到正矩阵，再做有限步Sinkhorn迭代（交替把各行、各列归一化）投影到双随机矩阵附近。有限步迭代只近似满足行列和为1，上述性质也只针对旁路混合，整个网络还包含子层计算，传播结论不能直接扩大到整个模型。超连接与mHC属于近期探索，收益与代价仍需在更多规模与设置下检验。
+
+表~\ref{tab:nlp-llm-layer-composition}汇总了本节的层间连接方式。
+
+\begin{table}[htbp]
+ \begin{tabularx}{\linewidth}{@{}p{16mm}p{22mm}X@{}}
+  \toprule
+  方法 & 解决的问题 & 主要代价\\
+  \midrule
+  Post-LN & 控制每层输出尺度 & 直达路径经过归一化，需学习率预热\\
+  Pre-LN & 保留恒等梯度路径 & 残差流范数增长，需最终归一化\\
+  RMSNorm & 减少归一化计算 & 不消除均值\\
+  超连接 & 单一残差流组合受限 & 残差流显存与读写扩大$n$倍\\
+  mHC & 多流混合连乘放大 & Sinkhorn迭代，约束为近似\\
+  \bottomrule
+ \end{tabularx}
+ \caption{层间连接方式的对照。Pre-LN与RMSNorm常一起使用；超连接与mHC在其上扩展残差流。}
+ \label{tab:nlp-llm-layer-composition}
+\end{table}

@@ -1,304 +1,1000 @@
 \chapter{基础模型}
 \label{chap:nlp-classical-models}
 
-同一句“读书会改至周五”可以有不同的分析结果，但在计算分析之前，还有一个更基本的问题：
-我们用什么数学对象描述语言规律？若给每个完整句子单独计数，几乎每个新句子都没有记录；
-若把句子拆成相互独立的词，又会丢掉“改至”与新日期之间的联系。统计建模需要在保留依赖
-和获得足够样本之间作出取舍。本章的“基础模型”指大语言模型普及以前形成的主要建模思路，
-其中也包括早期神经语言模型，不把它用作英文foundation model的译名。
+一段通知写着“会议改至周五”。要让计算机判断“改至”后面更可能接日期而不是人名，最直接的办法是统计语料中出现过的句子；可是几乎每个新句子都没有在语料中完整出现过，直接给整句计数，绝大多数句子的概率都是零。若把句子拆成互不相关的词，又会丢掉“改至”与日期之间的联系。本章要回答的问题是：怎样用有限语料为语言序列赋予合理的概率，并让这些概率模型服务于标注、句法分析和表示学习。
 
-我们把建模分成四个相互配合的决定：描述哪些变量的概率，怎样分解变量间的依赖，怎样用
-有限参数表达局部规律，以及怎样根据观测估计参数。这些决定不是互斥的模型类别。
-同一个线性链模型既可以用概率表参数化，也可以采用神经网络计算势函数；同一个词向量又
-可以服务于顺序预测或结构化判定。沿这四个决定展开，才能在后续任务变化时复用建模认识，
-而不是为分类、标注和生成各背一套模型名单。
+这个问题沿途会遇到五个困难。第一，序列空间随长度指数增长，直接计数必然稀疏，需要截断历史并重新分配概率。第二，词性、句法和主题等结构不能直接观测，计算观测概率需要在指数级多的隐结构上求和，解码需要求最大。第三，标注任务希望同时使用词缀、上下文窗口等相互重叠的特征，又要保持整条标签序列的一致性。第四，神经模型能让相似词共享证据，但对大词表归一化的代价很高，而“每个词一个向量”的静态表示无法随上下文区分词义。第五，标注数据通常稀少，需要把大规模无标注文本中学到的表示迁移到具体任务。
 
-\section{语言现象的概率描述}
+本章沿“统计—神经—上下文预训练”的顺序回答这些困难。第~\ref{sec:nlp-classical-probability}节固定随机对象，写出链式分解和比较模型的困惑度；第~\ref{sec:nlp-classical-ngram-models}节用有限历史和平滑处理计数稀疏；第~\ref{sec:nlp-classical-structures}节用动态规划在链、树和混合结构上求和与求最大，并引入判别式序列模型；第~\ref{sec:nlp-classical-neural}节用连续表示共享参数，处理大词表输出与静态词向量；第~\ref{sec:nlp-classical-contextual-pretraining}节讲ELMo、GPT、BERT及其改进。读者需要熟悉条件概率、最大似然估计和梯度下降；前馈网络、循环网络与Transformer的通用结构在卷五介绍，本章只写语言模型特有的部分。这里的“基础模型”指大语言模型普及以前形成的主要建模思路，不是英文foundation model的译名。本章的BERT与任务头也是第~\ref{chap:nlp-text-analysis}章至第~\ref{chap:nlp-classification-matching-organization}章“预训练编码器加任务头”的共同基准。
+
+\section{语言模型的概率描述}
 \label{sec:nlp-classical-probability}
+
+给整句计数之所以稀疏，是因为样本空间太大。在讨论任何估计方法以前，需要先说清楚概率分配给了什么对象：词元怎样切分，序列怎样结束，哪些量可以观测。随后，我们把联合分布写成逐位置的条件分布，引入不可观测的隐结构，最后定义比较语言模型的共同指标。
 
 \subsection{观测序列与随机对象}
 \label{sec:nlp-classical-objects}
 
-先固定词元化规则和有限词表$\mathcal V$，把文本写成$w_{1:T}$。词元可以是词、字或子词，
-选择改变了样本空间，也改变了计数的含义。结束符属于序列的一部分；没有长度上界时，模型
-还须以概率一结束，才能在有限字符串集合上形成归一化分布。固定长度的条件分布与任意长度
-文本的分布是不同对象，不能只写一个乘积就忽略结束问题。
+先固定词元化规则和有限词表$\mathcal V$，把一段文本写成词元序列$x_{1:T}=(x_1,\ldots,x_T)$。词元可以是词、字或子词；切分方式改变了样本空间，也改变了“一次出现”的含义。序列末尾追加结束标记EOS，并把EOS算作词表中的一项。这样做是为了让可变长度序列的概率能够归一：若模型只给定长序列分配概率而不预测何时结束，长度为2的全部序列的概率之和就已经是1，长度为3的序列便没有概率可分。加入EOS后，一条序列的概率包含“在第$T$步结束”这一事件，所有有限序列的概率之和才可能为1；没有长度上界时，还要求模型以概率1在有限步内产生EOS。预测第一个词元时，在序列前补一个只作条件、不被预测的起始标记BOS。
 
-为了说明这些决定，以下采用人工构造的小语料：“会议／改至／周五／EOS”出现两次，
-“会议／定于／周五／EOS”出现一次。我们暂时把每一行视为一次独立观测。这个假设使各行
-的似然可以相乘，却没有要求一行内部的词元独立。实际重复转载的三行可能只有一个信息
-来源，独立行的数学形式不能替代对语料来源的判断。
+下面用一份人工构造的五行教学语料贯穿第~\ref{sec:nlp-classical-probability}节和第~\ref{sec:nlp-classical-ngram-models}节：
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+行 & 词元序列\\
+\midrule
+1、2 & 会议／改至／周五／EOS（出现两次）\\
+3 & 讲座／改至／周五／EOS\\
+4 & 会议／定于／周四／EOS\\
+5 & 讲座／延至／周四／EOS\\
+\bottomrule
+\end{tabular}
+\end{center}
+被预测的词表共有$V=8$项：会议、讲座、改至、定于、延至、周五、周四、EOS。我们把每一行视为一次独立观测，于是全部语料的似然是各行概率之积；这个假设只说行与行之间独立，并不要求一行内部的词元独立。真实语料中，同一通知的多次转载并不提供独立证据，这类来源相关性要靠去重处理，见第~\ref{chap:nlp-large-language-models}章。
 
-\subsection{联合分布与条件分布}
+\subsection{联合分布与链式分解}
 \label{sec:nlp-classical-joint-conditional}
 
-若希望比较文本本身的可能性，可以直接描述$p(w_{1:T})$。若输入文本$x$已经给出，需要
-比较的是一个标注序列$y$，则可以描述联合分布$p(x,y)$，也可以直接描述条件分布$p(y\mid x)$。
-前者必须同时分配不同文本的概率；后者只要求对同一个$x$下的所有合法$y$归一化。
-当$p(x)>0$时，两者通过$p(y\mid x)=p(x,y)/\sum_{y'}p(x,y')$联系，但从条件分布不能唯一
-恢复输入分布。因此，二者并不是同一个学习问题的不同写法。
+同一句话可以配上不同的标签。例如“周五”可以标作日期，也可以是作品名称的一部分。若要描述词与标签怎样共同出现，就建模联合分布$p(x,y)$，它必须对所有文本和标签的组合归一；若文本$x$在使用时已经给定，只需比较不同标签序列$y$，就可以直接建模条件分布$p(y\mid x)$，它只对同一个$x$下的合法$y$归一。联合模型可以导出条件模型：$p(y\mid x)=p(x,y)/\sum_{y'}p(x,y')$。反过来不成立，同一个条件模型可以配上任意的输入分布$p(x)$，对应许多不同的联合模型。这一区别决定了第~\ref{sec:nlp-classical-structures}节生成式与判别式序列模型的分工。
 
-例如“周五”可能标作日期，也可能出现在作品名称中。联合模型要说明词与标签如何共同
-出现，条件模型则可以把整段文本中的引号、位置和相邻词作为已知信息。是否使用未来词元，
-取决于输入在应用时是否已经完整可见；对已收到整段通知的标注器可见，不表示实时逐词
-预测也能使用。先确定可用信息，再决定模型条件，才能避免把测试时没有的线索放进计算。
+对文本本身，我们要描述的是$p(x_{1:T})$。概率的链式法则把它写成逐位置的条件概率之积：
+\begin{equation}
+  p(x_{1:T})=\prod_{t=1}^{T}p(x_t\mid x_{<t}),
+  \label{eq:nlp-classical-chain}
+\end{equation}
+其中$x_{<t}=(x_1,\ldots,x_{t-1})$是第$t$个位置之前的全部历史，$x_T=\mathrm{EOS}$。这个分解是恒等式，不包含任何近似。近似只发生在后面：截断历史（第~\ref{sec:nlp-classical-ngram-models}节），或用有限参数的函数表示条件分布（第~\ref{sec:nlp-classical-neural}节）。式~\eqref{eq:nlp-classical-chain}按从左到右的顺序展开，这对应逐词生成时只能看到已写出内容的情形；若任务在运行时能看到整段文本，就可以让每个位置同时利用左右两侧，这一区别在第~\ref{sec:nlp-classical-contextual-pretraining}节区分自回归目标与遮蔽目标时起决定作用。
 
 \subsection{隐变量与可观测证据}
 \label{sec:nlp-classical-latent}
 
-有些依赖不能直接从词面读出。我们可以引入词性、句法树或主题等隐变量$z$，用
+有些规律作用在不能直接读出的结构上，例如词性序列、句法树和文档主题。我们引入隐变量$z$表示这类结构，观测序列的概率就需要对所有与$x$相容的结构求和：
 \begin{equation}
- p_{\bm\theta}(x)=\sum_{z\in\mathcal Z(x)}p_{\bm\theta}(x,z)
- \label{eq:nlp-classical-marginal}
+  p_{\bm\theta}(x)=\sum_{z\in\mathcal Z(x)}p_{\bm\theta}(x,z),
+  \label{eq:nlp-classical-marginal}
 \end{equation}
-对所有允许的隐结构求和。$\mathcal Z(x)$是与输入相容的结构集合，$\bm\theta$是参数。
-求和保留了多种解释的不确定性；只取概率最大的$z$是近似或另一个预测目标，一般不等于
-求和。例如两种结构的联合概率为$0.3$和$0.2$，观测概率是$0.5$，最大项却只有$0.3$。
+其中$\mathcal Z(x)$是与$x$相容的结构集合，$\bm\theta$是模型参数。这一运算称为边缘化。它与“找出最可能的结构”是两个不同的问题。设某句话只有两种结构，联合概率分别为$0.3$和$0.2$：观测概率是$0.5$，而最可能结构的概率只有$0.3$。前者用于给句子打分和估计参数，后者用于输出一个具体的分析结果。$\mathcal Z(x)$通常随长度指数增长，两类计算都需要利用结构的局部性，形成“求和型”与“最大型”两类动态规划，第~\ref{sec:nlp-classical-structures}节的HMM和PCFG分别给出链和树上的实例。
 
-隐变量的名称不保证它就是人类期望的语言概念。如果交换两个隐状态的编号不改变所有观测
-概率，数据就无法确定哪个状态该叫“名词”。加入标注、结构约束或先验可以减少这种
-不确定性，但解释仍须由外部证据检查。这使下一步的结构选择既是计算决定，也是对可表达
-规律的限制。
+隐变量的名字并不保证它就是人们期望的语言概念。交换两个隐状态的编号，同时交换它们的全部参数，所有观测概率都不变；只凭无标注文本，数据无法决定哪个状态应当叫“名词”。这种\term{不可识别性}（non-identifiability）意味着，无监督学到的状态需要借助少量标注、结构约束或人工检查才能赋予语义。
 
-\section{语言依赖的结构分解}
-\label{sec:nlp-classical-dependencies}
+\subsection{困惑度与交叉熵}
+\label{sec:nlp-classical-perplexity}
 
-\subsection{有限历史与局部链式依赖}
-\label{sec:nlp-classical-local-chain}
-
-概率的链式法则总能把固定序列分成逐位置条件概率；计算困难在于每个条件可能包含整个
-历史。$n$元模型（$n$-gram model）采用有限历史近似：
+比较两个语言模型时，直接比较留出语料的总概率并不方便：序列越长，概率越小，总概率随长度变化。我们需要一个按位置平均、与长度无关的指标。设留出序列共有$T$个被预测的词元（含EOS），模型$q$对它的平均负对数似然为
 \begin{equation}
- p(w_{1:T})=\prod_{t=1}^T p(w_t\mid w_{<t})
- \;\approx\;\prod_{t=1}^T p(w_t\mid w_{\max(1,t-n+1):t-1}).
- \label{eq:nlp-classical-ngram}
+  H(\hat p,q)=-\frac1T\sum_{t=1}^{T}\log q(x_t\mid x_{<t}).
+  \label{eq:nlp-classical-cross-entropy}
 \end{equation}
-开头用约定的起始符补足历史，末尾预测EOS。左侧等式来自概率法则，右侧近似来自建模
-假设；数据再多也不会让固定二元模型重新读取被删除的更早词元。
-
-\term{隐马尔可夫模型}（hidden Markov model, HMM）把局部依赖放在隐状态$z_t$上。
-为单独比较状态依赖，这里切换为已经分段的正文观测：$T$只计正文词元，
-观测词表不含EOS，式子只描述给定长度的正文与状态。
-用初始概率$\pi$、转移表$A$和发射表$B$写成
+它可以看作模型分布$q$相对于留出数据经验分布$\hat p$的\term{交叉熵}（cross-entropy）。把它取指数，就得到\term{困惑度}（perplexity, PPL）：
 \begin{equation}
- p(w_{1:T},z_{1:T}\mid T)=\pi_{z_1}B_{z_1,w_1}
- \prod_{t=2}^T A_{z_{t-1},z_t}B_{z_t,w_t}.
- \label{eq:nlp-classical-hmm}
+  \mathrm{PPL}=\exp\!\Bigl(-\frac1T\sum_{t=1}^{T}\log q(x_t\mid x_{<t})\Bigr).
+  \label{eq:nlp-classical-ppl}
 \end{equation}
-这里显式以长度$T$为条件；若用于产生可变长完整语串，就须另建长度或结束机制。状态能汇集不相邻的
-词面证据，但给定$z_t$后当前词只依赖该状态，是实质性的条件独立假设。
-HMM的概率与推断基础可参考\BookChapterRef{chap:pgm-dynamic}{隐马尔可夫模型}。
-本章关注这项假设如何把一个全句问题改成可反复计算的局部量。
+困惑度可以理解为模型在每个位置平均面对多少个“等可能的候选”。若模型对$V$个词元始终给出均匀分布，每个位置的概率都是$1/V$，困惑度恰为$V$；对教学语料的八项词表，均匀模型的困惑度是8。模型越能把概率集中在实际出现的词元上，困惑度越低；只要有一个词元的概率为零，困惑度就是无穷大。
 
-对给定文本的标签序列，\term{线性链条件随机场}（conditional random field, CRF）保留标签链，
-但允许局部势读取整段$x$：
+降低困惑度为什么意味着更好的模型？设数据来自真实分布$p$，在足够长的留出数据上，交叉熵逼近$H(p,q)=-\mathbb E_{p}[\log q]$，而
+\[
+  H(p,q)=H(p)+D_{\mathrm{KL}}(p\,\Vert\, q).
+\]
+$H(p)$是数据本身的熵，与模型无关；KL散度非负，当且仅当$q=p$时为零。所以在同一份留出数据上，交叉熵或困惑度更低，说明模型分布离数据分布更近，熵$H(p)$是任何模型都无法突破的下界。
+
+对数的底改为2时，交叉熵的单位是“比特每词元”。设一个模型对一条留出序列的四个词元分别给出概率$0.5$、$0.25$、$0.125$、$0.5$（教学数值），总信息量为$1+2+3+1=7$比特，平均每词元$1.75$比特，困惑度为$2^{1.75}\approx3.36$。若同一段文本按字切分成7个词元，而模型给整段文本的总概率不变，总信息量仍是7比特，每词元降为1比特，困惑度变成2。两种切分描述的是同一段文本、同一个总概率，困惑度却不同。因此，词元化不同的模型不能直接比较困惑度，需要把总比特数除以共同的单位，如字符数或字节数，得到比特每字符（bits per character）或比特每字节；上例的文本若共7个字符，两种切分的比特每字符都是1。留出集的选择与计算口径在第~\ref{chap:nlp-evaluation}章展开。
+
+\section{有限历史下的计数语言模型}
+\label{sec:nlp-classical-ngram-models}
+
+式~\eqref{eq:nlp-classical-chain}中每个条件分布都依赖全部历史，而长历史在语料中几乎不会重复出现，无法直接计数。本节先用马尔可夫假设截断历史，得到$n$元模型；截断以后仍有大量搭配没有出现过，需要平滑。平滑方法可以按两个问题排列成谱系：从已观测事件中折扣出多少概率质量，以及把这部分质量交给谁。加性平滑把质量均匀分给所有候选，Good--Turing估计按“频次的频次”决定未见事件的总质量，Katz回退和绝对折扣把质量交给低阶模型，Kneser--Ney进一步改变低阶模型本身的定义，插值系数则在留出数据上估计。节末的词类模型代表另一条路线：不重新分配概率，而是合并事件以减少参数。全节都在第~\ref{sec:nlp-classical-objects}节的教学语料上计算，便于逐项比较。
+
+\subsection{n元模型与最大似然估计}
+\label{sec:nlp-classical-ngram-mle}
+
+\term{n元模型}（$n$-gram model）假设当前词元只依赖前$n-1$个词元：
 \begin{equation}
- p_{\bm\theta}(y\mid x)=\frac{1}{Z_{\bm\theta}(x)}
- \exp\!\left\{\sum_{t=1}^{T}\bm\theta^{\mathsf T}
- \bm f(y_{t-1},y_t,x,t)\right\}.
- \label{eq:nlp-classical-crf}
+  p(x_t\mid x_{<t})\approx p(x_t\mid x_{t-n+1:t-1}),
+  \label{eq:nlp-classical-ngram}
 \end{equation}
-$\bm f$是特征向量，$y_0$是起始标签，$Z_{\bm\theta}(x)$对合法标签序列求和归一化。
-它没有沿词元轴对观测作HMM式独立假设；高效链式求和依赖于标签耦合仍局限在相邻位置。
-若势同时连接任意远处的多个标签，原来的动态规划就不能直接复用。
+历史不足$n-1$个时用BOS补齐。$n=2$称为二元模型，$n=3$称为三元模型。这一近似来自建模假设，数据再多也不会让二元模型重新读取更早的词元。
 
-\subsection{层次组合与递归依赖}
-\label{sec:nlp-classical-hierarchy}
-
-局部链条可以描述相邻关系，却不直接表达“一个名词短语可以包含另一个修饰短语”的
-嵌套结构。\term{概率上下文无关文法}（probabilistic context-free grammar, PCFG）为产生式
-$A\to\beta$分配概率，并要求相同左部$A$的各规则概率之和为一。这里由文法另行规定终结符词表，
-句尾由有限推导树的结束确定；若要统一到含EOS的字符串接口，可以给顶层增加
-生成EOS的确定性规则。对一棵有限推导树$\tau$，其联合概率由所有规则应用相乘：
+在这个假设下，参数就是每个历史$h$下的条件分布$\theta_{h,w}=p(w\mid h)$。记$c(h,w)$为历史$h$后紧跟$w$的次数，$c(h)=\sum_w c(h,w)$。训练语料的对数似然是$\sum_{h,w}c(h,w)\log\theta_{h,w}$，约束是每个历史下$\sum_w\theta_{h,w}=1$。对每个$h$引入拉格朗日乘子$\mu_h$，令$\sum_{h,w}c(h,w)\log\theta_{h,w}-\sum_h\mu_h(\sum_w\theta_{h,w}-1)$对$\theta_{h,w}$的偏导为零，得到$\theta_{h,w}=c(h,w)/\mu_h$；代入归一化约束得$\mu_h=c(h)$。于是最大似然估计就是相对频率：
 \begin{equation}
- p(w,\tau)=\prod_{r\in\tau}p(r),\qquad p(w)=\sum_{\tau:\,\operatorname{yield}(\tau)=w}p(w,\tau).
- \label{eq:nlp-classical-pcfg}
+  \hat p_{\mathrm{ML}}(w\mid h)=\frac{c(h,w)}{c(h)}.
+  \label{eq:nlp-classical-ngram-mle}
 \end{equation}
-树的叶序列$\operatorname{yield}(\tau)$等于观测句子。这里相同非终结符使用同一规则分布，
-所以递归可以扩展到训练中未出现的树形；也正因为这种共享，规则选择看不到任意祖先与
-词汇条件。递归文法还需检查终止性，局部规则归一化并不自动保证有限句子的总概率为一。
+在教学语料中，“会议”作为历史出现3次，其后“改至”2次、“定于”1次，所以$\hat p_{\mathrm{ML}}(\text{改至}\mid\text{会议})=2/3$。这里计数的是有序搭配，与第~\ref{sec:nlp-model-output-interfaces}节朴素贝叶斯只统计词项出现次数不同。
 
-若$S\to NP\ VP$的概率为一，$NP\to$“会议”的概率为$0.6$，$VP\to$“改期”的概率
-为$0.4$，则这棵特定树产生“会议改期”的概率为$0.24$。另一个合法树若产生同一句子，
-句子概率必须把它加进来。应用章的句法分析将研究怎样找树；此处先明确，句子相同不代表
-隐结构相同，结构概率最大与句子边缘概率最大也不是同一对象。
+最大似然估计有两个直接的问题。第一是参数量。二元模型每个历史有$V-1$个自由参数，共$V(V-1)$个；$n$元模型共$V^{n-1}(V-1)$个。$V=5\times10^4$时，三元模型的自由参数约为$1.25\times10^{14}$，远多于任何语料的词元数，绝大多数参数没有数据支持。第二是零概率。教学语料中“定于”只接过“周四”，于是$\hat p_{\mathrm{ML}}(\text{周五}\mid\text{定于})=0$；留出句“会议／定于／周五／EOS”的概率因此为零，困惑度为无穷大。未出现的历史更糟，$c(h)=0$时式~\eqref{eq:nlp-classical-ngram-mle}是$0/0$，条件分布根本没有定义。这两个问题分别引出平滑与参数共享。
 
-\subsection{交换性与混合结构}
-\label{sec:nlp-classical-mixture}
-
-有时需要保留的是文档中哪些词共同出现，而不是它们的先后顺序。\term{潜在狄利克雷分配}
-（latent Dirichlet allocation, LDA）让每篇文档$d$有主题比例$\bm\vartheta_d$，每个
-主题$k$有词分布$\bm\phi_k$，并令每个词元先选择主题，再选择词：
-\begin{equation}
- p(w_{dn}=v\mid\bm\vartheta_d,\bm\phi)
- =\sum_{k=1}^{K}\vartheta_{dk}\phi_{kv},\qquad
- p(w_{d,1:N_d}\mid\bm\vartheta_d,\bm\phi)
- =\prod_{n=1}^{N_d}\sum_k\vartheta_{dk}\phi_{k,w_{dn}}.
- \label{eq:nlp-classical-lda}
-\end{equation}
-通常再为比例与主题词分布指定狄利克雷先验。给定这些量时，交换词元位置不改变概率，
-这就是该模型保留的交换性。积分掉共同的文档比例后，文档内词元会相关，不能再把“给定
-隐变量时独立”说成“边缘上独立”\scite{blei2003}。
-
-交换性用失去语序换取集合统计的简化。“允许校外参加，禁止校内参加”和“允许校内参加，禁止校外参加”
-在相同分词下具有同样的词袋，却把允许与禁止绑定到了不同人群；这不是调优主题数就能消除的问题。链、树和混合结构分别
-保留不同依赖，任务需要哪种证据，才决定哪种简化可接受。下一节固定结构，考察局部规律
-怎样用参数表达。
-
-\section{语言规律的参数化与共享}
-\label{sec:nlp-classical-parameterization}
-
-\subsection{概率表与离散事件共享}
-\label{sec:nlp-classical-tables}
-
-二元模型可以为每个历史词$h$存一行概率$p(v\mid h)$。行内各项非负且和为一，历史完全
-不同的两行则可以自由变化。词表大小为$V$时，完整二元表约有$V(V-1)$个自由参数；
-$n$增大后，历史组合数量随$V^{n-1}$增长。这个数量描述候选模型的表达自由度，不意味着
-所有单元都能从有限语料得到可靠估计。
-
-把未知词映射到同一符号、把历史归入词类，或对低阶分布作插值，都会使不同事件共享信息。
-例如两个罕见地点都映射为“地点”，能增加统计量，却丢失它们之间的差别。平滑是在给定
-计数与约束下重新分配概率，下一节具体计算；结构聚合则直接改变了模型能区分哪些历史。
-这两类操作都能缓解稀疏，但作用对象不同。
-
-\subsection{特征组合与对数线性评分}
-\label{sec:nlp-classical-loglinear}
-
-若希望一个词的后缀、左右词和位置都参与判断，为每种组合独立建表会继续放大稀疏。
-可以为候选$v$计算特征$\bm f(h,v)$，把各特征的贡献相加，再归一化：
-\begin{equation}
- s_{\bm\theta}(h,v)=\bm\theta^{\mathsf T}\bm f(h,v),\qquad
- p_{\bm\theta}(v\mid h)=\frac{\exp s_{\bm\theta}(h,v)}
- {\sum_{u\in\mathcal V}\exp s_{\bm\theta}(h,u)}.
- \label{eq:nlp-classical-loglinear}
-\end{equation}
-这就是对数线性参数化：概率的对数在归一化常数之外是特征的线性组合。
-同一个特征权重用于所有触发该特征的样本，因此少量参数可以联系许多表格单元。
-若全部特征都是独立单元的指示函数，足够自由的有限权重可以表示任意严格正的行概率表，
-例如取权重为各项概率的对数。概率为零的表格边界则需要权重趋向负无穷的极限，
-或者另加硬掩码排除相应事件；有限softmax本身不会产生精确零概率。
-因此，使用特征参数化并不意味着自动获得有用共享。
-
-在式~\eqref{eq:nlp-classical-crf}中，把候选从单个词换成整条标签序列，把特征沿位置相加，
-就得到全局归一化的结构评分。局部归一化与全局归一化的分母不同，不能把每一步的softmax
-相乘后仍称作同一个CRF。特征也只能使用运行时可用的信息；表达能力强不代表允许读取答案。
-
-\subsection{连续表示与上下文状态共享}
-\label{sec:nlp-classical-neural}
-
-人工特征明确规定了哪些事件共享权重，但未规定的相似性仍无法传递。早期神经概率语言
-模型把每个词映射为可学习的连续向量，把有限历史的向量拼接后经过非线性映射，再预测
-下一词。这使不同但表示接近的历史能够产生相近的输出，词表示与预测参数共同接受似然
-训练，而不是先靠人工给词指定语义坐标\scite{nlp-classical-bengio2003}。
-
-为简化记号，令$\bm e(w)$为词嵌入，$\sigma$为逐分量非线性函数。有限窗口网络与递归
-网络分别可写成
-\begin{align}
- \bm h_t&=\sigma\!\left(\bm W[\bm e(w_{t-m});\ldots;\bm e(w_{t-1})]+\bm b\right),
- \label{eq:nlp-classical-window}\\
- \bm h_t&=\sigma(\bm U\bm h_{t-1}+\bm W\bm e(w_{t-1})+\bm b),\qquad
- p(w_t\mid w_{<t})=\operatorname{softmax}(\bm O\bm h_t+\bm a)_{w_t}.
- \label{eq:nlp-classical-rnn}
-\end{align}
-两式是对上下文状态的两种选择，不是同时对同一$\bm h_t$施加的等式。窗口网络只读最近
-$m$个词；递归网络让历史反复进入同一个状态更新，因而没有显式的固定窗口，但有限维
-状态和训练中的梯度传播限制了它保留远处细节的能力。共享向量使平滑成为可学习的函数，
-也带来参数之间的耦合和非凸优化问题。
-
-因此，神经模型与统计建模并非对立分类。它仍然指定概率、结构和估计准则，只是把局部表
-换成了可共享的连续函数。下一章的Transformer将进一步改变历史信息如何进入计算，
-而不是从此取消概率建模的四个决定。
-
-\section{语言模型的估计与求解}
-\label{sec:nlp-classical-estimation}
-
-\subsection{似然估计与稀疏事件平滑}
+\subsection{稀疏事件的平滑}
 \label{sec:nlp-classical-smoothing}
 
-固定二元结构后，若历史$h$出现$c(h)$次，其中后继$v$出现$c(h,v)$次，最大似然估计为
-$c(h,v)/c(h)$。这由带行归一化约束的对数似然最大化得到：拉格朗日一阶条件使每个概率
-正比于对应计数，归一化再确定比例。$c(h)=0$时数据没有决定这一行，不能把$0/0$当作零。
+“定于周五”的概率为零，是因为样本有限，而不是因为语言中不可能出现。平滑的共同做法是：把已观测事件的一部分概率质量折扣出来，分配给未观测事件，同时保证每个历史下的条件分布仍然归一。下面各方法都给出同一历史“定于”下的条件概率，汇总在表~\ref{tab:nlp-classical-smoothing-example}中。为便于手算，先列出教学语料的计数。二元搭配共$N=20$次，分属11种类型；以计数论，出现1次的类型有$N_1=5$种（会议定于、讲座改至、讲座延至、定于周四、延至周四），出现2次的$N_2=3$种（BOS讲座、会议改至、周四EOS），出现3次的$N_3=3$种（BOS会议、改至周五、周五EOS）。被预测词元的一元计数为：EOS 5次，会议、改至、周五各3次，讲座、周四各2次，定于、延至各1次。
 
-在教学语料中，“会议”后的“改至”有两次、“定于”有一次；最大似然概率为$2/3$和$1/3$，
-未出现过的后继概率为零。只要测试句用到一个零概率事件，整句似然就变为零。加性平滑
-引入$\alpha>0$并给所有$V$个候继保留质量：
+\subsubsection{加性平滑与Good--Turing估计}
+\label{sec:nlp-classical-additive-gt}
+
+最简单的做法是给每个候选的计数都加上一个正数$\delta$，称为\term{加性平滑}（additive smoothing）：
 \begin{equation}
- \widehat p_\alpha(v\mid h)=\frac{c(h,v)+\alpha}{c(h)+\alpha V}.
- \label{eq:nlp-classical-additive}
+  \hat p_{\delta}(w\mid h)=\frac{c(h,w)+\delta}{c(h)+\delta V}.
+  \label{eq:nlp-classical-additive}
 \end{equation}
-设固定词表为“会议、改至、定于、周五、取消、EOS”六项，取$\alpha=1$，
-“会议”之后的“改至”和“定于”概率分别成为$3/9$和$2/9$，其余四项各为$1/9$。这是构造算例，说明概率从已见事件转给未见事件；它不说明加一平滑
-就是自然语言中的最优选择。较大词表会分走大量概率，$\alpha$应在独立验证材料上选择。
+分母加$\delta V$保证归一。取$\delta=1$（加一平滑），历史“会议”下“改至”与“定于”的概率分别从$2/3$、$1/3$变成$3/11$、$2/11$，其余6项各为$1/11$；历史“定于”下，“周四”为$2/9$，其余7项各$1/9$。加性平滑的问题在于分配方式与证据无关：“周五”“会议”“EOS”在“定于”之后得到同样的$1/9$。词表很大时，未见事件的数目接近$V$，即使$\delta$很小，它们合起来也会分走大部分概率；“会议”只出现3次，加一平滑就把$6/11$的质量交给了未见事件。$\delta$需要在留出数据上选择。
 
-也可按$p(v\mid h)=\lambda(h)p_{\rm high}(v\mid h)+(1-\lambda(h))p_{\rm low}(v)$
-在高阶与低阶分布间插值。两个分布都归一化且$\lambda\in[0,1]$时，结果仍是分布。
-低阶分布怎样估计、计数少时怎样回退，会实质改变未见事件的排序；回退不能理解为
-简单地给每个零单元填一个相同常数。
-
-\subsection{隐结构边缘化与迭代估计}
-\label{sec:nlp-classical-em}
-
-HMM的词序列可见而状态不可见时，完整状态计数不能直接取得。对每个候选前缀定义
-前向量$\alpha_t(j)=p(w_{1:t},z_t=j)$，利用链结构得到
+\term{Good--Turing估计}（Good--Turing estimation）不再凭经验决定折扣量，而是用“出现$c$次的事件有多少种”来估计。记$N_c$为恰好出现$c$次的事件类型数，$N=\sum_c cN_c$。Good--Turing把出现$c$次的事件的计数调整为
 \begin{equation}
- \alpha_1(j)=\pi_jB_{j,w_1},\qquad
- \alpha_t(j)=B_{j,w_t}\sum_i\alpha_{t-1}(i)A_{ij}.
- \label{eq:nlp-classical-forward}
+  c^{*}=(c+1)\frac{N_{c+1}}{N_c},
+  \label{eq:nlp-classical-good-turing}
 \end{equation}
-末尾求和得到观测概率。状态数为$K$时，朴素稠密转移的计算量为$O(TK^2)$；
-这是把指数条路径中的共享前缀合并计算的结果，并没有把求和改成最大值。
-前向--后向计算还能给出各位置状态和相邻状态对的后验概率。
+并把未见事件的总概率估计为$N_1/N$\scite{nlp-classical-good1953}。直觉是：在再抽一个样本时，“这次看到一个从未见过的事件”的概率，可以用“目前只见过一次的事件”所占的比例来估计，因为这些事件刚好是“在少一个样本时还没见过”的那一类。教学语料中，未见二元搭配的总质量估计为$N_1/N=5/20=0.25$。
 
-\term{期望最大化}（expectation--maximization, EM）据此交替计算后验期望计数和更新概率表。
-在第$r$轮，用旧参数构造
+调整计数直接套用式~\eqref{eq:nlp-classical-good-turing}却会出问题：$c^*_1=2\times3/5=1.2$，比原计数还大；$N_4=0$使$c^*_3=0$，最常见的三种搭配概率反而变成零。原因是高频段的$N_c$很稀疏、不单调。实际使用时，先对$N_c$随$c$的变化做平滑拟合，再计算$c^*$，并且只对小计数（例如$c\leq5$）作调整，大计数视为可靠而保持不变。Good--Turing只回答“未见事件合计分多少”，没有回答这部分质量在各个未见事件之间怎样分；这正是下面回退与插值方法要补上的部分。
+
+\subsubsection{Katz回退与绝对折扣}
+\label{sec:nlp-classical-katz-absolute}
+
+对“定于”之后的未见词，比均匀分配更合理的依据是低阶模型：一个词整体上越常见，它接在陌生历史之后的可能性越大。\term{Katz回退}（Katz backoff）对已见搭配使用折扣后的计数，未见搭配则回退到低阶分布\scite{nlp-classical-katz1987}：
 \begin{equation}
- Q(\bm\theta\mid\bm\theta^{(r)})=
- \mathbb E_{z\mid w,\bm\theta^{(r)}}[\log p_{\bm\theta}(w,z)],\qquad
- \bm\theta^{(r+1)}\in\arg\max_{\bm\theta}Q(\bm\theta\mid\bm\theta^{(r)}).
- \label{eq:nlp-classical-em}
+  p_{\mathrm{Katz}}(w\mid h)=
+  \begin{cases}
+    \dfrac{c^{*}(h,w)}{c(h)}, & c(h,w)>0,\\[2ex]
+    \alpha(h)\,p_{\mathrm{Katz}}(w\mid h'), & c(h,w)=0,
+  \end{cases}
+  \label{eq:nlp-classical-katz}
 \end{equation}
-例如状态转移表按后验期望的$i\to j$次数归一化。精确E步与不降低$Q$的M步可以保证观测
-对数似然不下降，却不保证找到全局最优，更不保证状态对应预期语义。近似后验、平滑项
-和数值误差都会改变需要检查的目标；不能把精确EM的结论原封不动移给任意近似更新。
+其中$h'$是去掉最早一个词元的较短历史（二元模型的$h'$为空，低阶分布即一元分布），$c^*$是Good--Turing折扣计数。回退权重$\alpha(h)$由归一化条件确定：已见搭配折扣后留下的质量$\beta(h)=1-\sum_{w:c(h,w)>0}c^*(h,w)/c(h)$，要恰好分给未见词，所以
+\[
+  \alpha(h)=\frac{\beta(h)}{\sum_{w:c(h,w)=0}p_{\mathrm{Katz}}(w\mid h')}.
+\]
+分母只对未见词求和，因为低阶分布中已见词的那一部分不能再分给它们。教学语料的$N_c$太少，Good--Turing计数不可靠，下面用“每个已见计数减$0.5$”代替$c^*$演示结构。历史“定于”下，“周四”得$0.5/1=0.5$，留下$\beta=0.5$；除“周四”以外的七个词一元概率之和为$1-2/20=0.9$，于是$\alpha=0.5/0.9$，$p(\text{周五}\mid\text{定于})=(0.5/0.9)\times(3/20)\approx0.083$，$p(\mathrm{EOS}\mid\text{定于})\approx0.139$。Katz回退只在高阶计数为零时才使用低阶模型。
 
-\subsection{条件目标、先验与泛化检查}
-\label{sec:nlp-classical-conditional-learning}
-
-有标注$(x_i,y_i)$时，可以最大化条件对数似然。以线性链CRF为例，一条样本的梯度是
+\term{绝对折扣}（absolute discounting）把折扣方式简化为从每个非零计数中减去同一个常数$D\in(0,1)$，并且对所有候选都加上低阶分布的一份，即插值而不是回退：
 \begin{equation}
- \begin{aligned}
- \nabla_{\bm\theta}\log p_{\bm\theta}(y_i\mid x_i)
- &=\bm F(x_i,y_i)-\mathbb E_{Y\mid x_i,\bm\theta}[\bm F(x_i,Y)],\\
- \bm F(x,y)&=\sum_t\bm f(y_{t-1},y_t,x,t).
- \end{aligned}
- \label{eq:nlp-classical-crf-gradient}
+  p_{\mathrm{abs}}(w\mid h)=\frac{\max\{c(h,w)-D,0\}}{c(h)}+\lambda(h)\,p_{\mathrm{low}}(w),\qquad
+  \lambda(h)=\frac{D\,N_{1+}(h\,\bullet)}{c(h)},
+  \label{eq:nlp-classical-absolute}
 \end{equation}
-第一项是参考结构中的特征次数，第二项是模型在所有合法结构下预期的次数。梯度推动
-模型减少两者差异；归一化项的导数解释了第二项为何不能省略。线性链结构使后验期望
-可用动态规划计算，换成复杂结构则未必仍然可行。
+其中$N_{1+}(h\,\bullet)=|\{w:c(h,w)>0\}|$是历史$h$之后出现过的不同词数。$\lambda(h)$的形式由归一化推出：第一项对$w$求和等于$(c(h)-D\,N_{1+}(h\,\bullet))/c(h)$，要使总和为1，第二项的系数必须恰为$D\,N_{1+}(h\,\bullet)/c(h)$。这个系数还有直观含义：历史之后接过的词种类越多（相对于它的出现次数），说明后继越分散，越应该相信低阶分布。固定$D$的依据是Good--Turing的经验观察：对计数至少为2的事件，$c-c^*$大致是一个常数。常用估计为$D=N_1/(N_1+2N_2)$，教学语料中为$5/11\approx0.45$；为便于手算，下面取$D=0.5$。若低阶分布取一元最大似然估计，历史“定于”下$\lambda=0.5\times1/1=0.5$，$p(\text{周四}\mid\text{定于})=0.5+0.5\times2/20=0.55$，$p(\text{周五}\mid\text{定于})=0.5\times3/20=0.075$。
 
-若取零均值、各向同性高斯先验$\bm\theta\sim\mathcal N(\bm0,\sigma^2\bm I)$，
-把其对数加入条件对数似然，就相当于扣除$\lVert\bm\theta\rVert_2^2/(2\sigma^2)$。
-这种平方范数惩罚表示在有限数据以外偏好较小参数，而不是增加了观测证据。验证集选择惩罚强度，测试集只用于最终比较。
-似然、结构准确率和业务代价回答不同问题：局部概率更校准可能不改变最大分标签，
-标签准确率更高也可能漏掉一条关键报名条件。第\ref{chap:nlp-evaluation}章将统一评价协议，应用章再给出各输出
-对象的具体核验办法。
+\subsubsection{Kneser--Ney延续计数与插值}
+\label{sec:nlp-classical-kneser-ney}
+
+上面两种方法都让“周五”在“定于”之后获得较高的低阶概率，因为“周五”在语料中出现了3次。但这3次全部跟在“改至”之后：它频繁，是因为“改至周五”这个搭配反复出现，而不是因为它能接在许多不同的词后面。低阶分布只在高阶证据不足时才起作用，也就是在一个新历史之后才被使用；这时应当问的不是“这个词出现过多少次”，而是“这个词接在过多少种不同的历史之后”。“周四”只出现2次，却跟在“定于”和“延至”两种历史之后，作为陌生历史的后继反而更有代表性。
+
+\term{Kneser--Ney平滑}（Kneser--Ney smoothing）据此把低阶分布换成\term{延续概率}（continuation probability）\scite{nlp-classical-kneser1995}：
+\begin{equation}
+  p_{\mathrm{cont}}(w)=\frac{N_{1+}(\bullet\,w)}{N_{1+}(\bullet\,\bullet)},\qquad
+  N_{1+}(\bullet\,w)=|\{v:c(v,w)>0\}|,
+  \label{eq:nlp-classical-kn-continuation}
+\end{equation}
+分母$N_{1+}(\bullet\,\bullet)$是不同二元搭配类型的总数。教学语料中，“周五”的延续计数是1，“周四”“改至”“EOS”各是2，类型总数为11，所以$p_{\mathrm{cont}}(\text{周五})=1/11$，而一元频率是$3/20$。插值Kneser--Ney的二元形式与式~\eqref{eq:nlp-classical-absolute}相同，只是低阶分布换成$p_{\mathrm{cont}}$；推广到任意阶时写成递归：
+\begin{equation}
+  p_{\mathrm{KN}}(w\mid h)=\frac{\max\{c_{\mathrm{KN}}(h,w)-D,0\}}{\sum_{u}c_{\mathrm{KN}}(h,u)}
+  +\frac{D\,N_{1+}(h\,\bullet)}{\sum_{u}c_{\mathrm{KN}}(h,u)}\,p_{\mathrm{KN}}(w\mid h').
+  \label{eq:nlp-classical-kn}
+\end{equation}
+最高阶使用原始计数$c_{\mathrm{KN}}(h,w)=c(h,w)$；较低各阶使用延续计数$c_{\mathrm{KN}}(h,w)=N_{1+}(\bullet\,h\,w)$，即$hw$前面出现过多少种不同的词元；递归在一元分布处终止，最低层再与均匀分布$1/V$插值，以便为完全未见的词元保留概率。
+
+\begin{example}[历史“定于”下的Kneser--Ney计算]
+  \label{ex:nlp-classical-kneser-ney}
+  取$D=0.5$。历史“定于”出现1次，只接过“周四”，所以$N_{1+}(\text{定于}\,\bullet)=1$，$\lambda(\text{定于})=0.5\times1/1=0.5$。于是
+  \[
+  \begin{aligned}
+    p_{\mathrm{KN}}(\text{周四}\mid\text{定于})&=\frac{1-0.5}{1}+0.5\times\frac{2}{11}\approx0.591,\\
+    p_{\mathrm{KN}}(\text{周五}\mid\text{定于})&=0.5\times\frac{1}{11}\approx0.045,\\
+    p_{\mathrm{KN}}(\mathrm{EOS}\mid\text{定于})&=0.5\times\frac{2}{11}\approx0.091.
+  \end{aligned}
+  \]
+  八项合计为$0.5+0.5\times\sum_w p_{\mathrm{cont}}(w)=1$。与以一元频率为低阶分布的绝对折扣相比，“周五”从$0.075$降到$0.045$，“改至”从$0.075$升到$0.091$：“改至”接过两种历史，而“周五”的频次只来自一个固定搭配。
+\end{example}
+
+折扣常数也可以按计数细分。\term{修正Kneser--Ney平滑}（modified Kneser--Ney smoothing）对计数为1、2和至少为3的搭配分别使用$D_1$、$D_2$、$D_{3+}$，由频次的频次估计：
+\[
+  Y=\frac{N_1}{N_1+2N_2},\quad D_1=1-2Y\frac{N_2}{N_1},\quad D_2=2-3Y\frac{N_3}{N_2},\quad D_{3+}=3-4Y\frac{N_4}{N_3},
+\]
+插值系数相应地改为$\lambda(h)=[D_1N_1(h\,\bullet)+D_2N_2(h\,\bullet)+D_{3+}N_{3+}(h\,\bullet)]/c(h)$，其中$N_k(h\,\bullet)$是历史$h$之后恰好出现$k$次的词种数。教学语料给出$D_1\approx0.45$、$D_2\approx0.64$；由于$N_4=0$，$D_{3+}=3$会把计数3的搭配全部折扣掉，这又一次说明小语料无法可靠估计高频段。Chen与Goodman在多种语料、阶数和训练规模上系统比较了平滑方法，发现插值的修正Kneser--Ney整体表现最好，它因此成为后来$n$元工具包的常用默认设置\scite{nlp-classical-chen1999}。
+
+\subsubsection{插值系数的留出估计}
+\label{sec:nlp-classical-interpolation-em}
+
+绝对折扣与Kneser--Ney的插值系数由折扣量推出。另一种做法是直接对多个阶的分布做\term{线性插值}（linear interpolation）：
+\[
+  p_{\mathrm{interp}}(w\mid h)=\sum_{k=1}^{K}\lambda_k\,p_k(w\mid h),\qquad \lambda_k\geq0,\quad\sum_k\lambda_k=1,
+\]
+其中$p_k$是第$k$个分量模型，例如三元、二元和一元的最大似然估计。系数不能在训练集上估计：训练集上高阶最大似然模型最贴合数据，系数会全部压到最高阶，平滑就失去意义。正确做法是在一份不参与计数的留出数据上最大化$\sum_t\log p_{\mathrm{interp}}(x_t\mid h_t)$。
+
+这个优化可以用期望最大化算法求解。把“第$t$个词元由哪个分量生成”看作隐变量。E步用当前系数计算各分量的后验责任
+\begin{equation}
+  r_{t,k}=\frac{\lambda_k\,p_k(x_t\mid h_t)}{\sum_{j}\lambda_j\,p_j(x_t\mid h_t)},
+  \label{eq:nlp-classical-interp-em}
+\end{equation}
+M步把系数更新为责任的平均值$\lambda_k\gets\frac1T\sum_t r_{t,k}$。每一轮都不会降低留出数据的对数似然。以留出句“会议／定于／周五／EOS”为例，混合二元与一元最大似然模型，初值$\lambda_{\text{二元}}=0.5$。四个位置的二元概率为$0.6,1/3,0,1$，一元概率为$0.15,0.05,0.15,0.25$；二元分量的责任依次为$0.80,0.87,0,0.80$，平均得新系数$0.617$。留出困惑度从$4.15$降到$3.99$，继续迭代收敛到$\lambda_{\text{二元}}\approx0.68$、困惑度约$3.97$。由于系数是在这句话上拟合的，最终评价还需另一份测试数据。
+
+一组全局系数忽略了历史本身的可靠程度：出现上千次的历史应当更相信高阶分布，只出现一次的历史应当更依赖低阶分布。实践中按历史计数$c(h)$分桶，每个桶估计一组系数。这正是绝对折扣中$\lambda(h)$随$c(h)$变化的离散版本。这里的EM也是第~\ref{sec:nlp-classical-baum-welch}节Baum--Welch算法最简单的实例：隐变量只有一个“分量编号”，没有链式依赖。
+
+表~\ref{tab:nlp-classical-smoothing-example}汇总了各方法在同一历史下的结果，表~\ref{tab:nlp-classical-smoothing-methods}则按“折扣多少、交给谁”对它们归类。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    方法 & 周四 & 周五 & 改至 & EOS\\
+    \midrule
+    最大似然 & 1 & 0 & 0 & 0\\
+    加一平滑 & 0.222 & 0.111 & 0.111 & 0.111\\
+    Katz回退（折扣0.5） & 0.500 & 0.083 & 0.083 & 0.139\\
+    绝对折扣，一元低阶（$D=0.5$） & 0.550 & 0.075 & 0.075 & 0.125\\
+    插值Kneser--Ney（$D=0.5$） & 0.591 & 0.045 & 0.091 & 0.091\\
+    \bottomrule
+  \end{tabular}
+  \caption{教学语料中历史“定于”之后若干词元的平滑概率。“定于”只出现一次、只接过“周四”；各行的差别来自折扣量和低阶分布的选择。Katz一行以固定折扣代替Good--Turing计数，仅作结构演示。}
+  \label{tab:nlp-classical-smoothing-example}
+\end{table}
+
+\begin{table*}[htbp]
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{27mm}>{\raggedright\arraybackslash}p{36mm}>{\raggedright\arraybackslash}p{38mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 从已见事件折扣多少 & 折扣质量交给谁 & 解决的问题与新代价\\
+    \midrule
+    加性平滑 & 每项加$\delta$，间接折扣 & 所有候选均匀分配 & 消除零概率；大词表下未见事件分走过多质量\\
+    Good--Turing & 按$N_{c+1}/N_c$调整计数 & 未见事件合计$N_1/N$ & 有依据地估计折扣量；需平滑$N_c$，不决定未见事件之间怎样分\\
+    Katz回退 & Good--Turing折扣 & 仅未见事件，按低阶分布 & 利用低阶证据并严格归一；需计算回退权重$\alpha(h)$\\
+    绝对折扣 & 每个非零计数减$D$ & 所有候选，按低阶分布插值 & 折扣简单，系数随后继多样性变化；低阶仍用原始频率\\
+    Kneser--Ney & 减$D$（修正版分三档） & 所有候选，按延续概率 & 低阶分布衡量“能接在多少种历史后”；实践中最常用\\
+    线性插值 & 由系数$\lambda_k$决定 & 各阶分布按$\lambda_k$混合 & 系数可在留出数据上用EM估计；需按历史计数分桶\\
+    \bottomrule
+  \end{tabularx}
+  \caption{$n$元平滑方法的谱系。各方法的区别集中在折扣量与低阶分布的选择上；它们都保持每个历史下的条件分布归一。}
+  \label{tab:nlp-classical-smoothing-methods}
+\end{table*}
+
+\subsection{基于词类的参数共享}
+\label{sec:nlp-classical-class-models}
+
+平滑在事件之间重新分配概率，却不改变模型能区分哪些事件。另一条减少稀疏的路线是直接合并事件：把语法或语义相近的词归入同一个类，让它们共享统计量。设映射$\mathrm{cl}:\mathcal V\to\{1,\ldots,C\}$把每个词分到一个类，记$c_t=\mathrm{cl}(x_t)$。\term{类二元模型}（class-based bigram model）写成
+\begin{equation}
+  p(x_t\mid x_{t-1})=p(x_t\mid c_t)\,p(c_t\mid c_{t-1}),
+  \label{eq:nlp-classical-class-bigram}
+\end{equation}
+先由前一个类预测当前类，再在类内选词。参数从约$V^2$降到约$C^2+V$。在教学语料中取三个类：事件类（会议、讲座）、动词类（改至、定于、延至）、日期类（周五、周四）。动词类共出现5次，其中“延至”1次，事件类之后总是动词类，于是未见搭配“会议延至”得到$p(\text{延至}\mid\text{会议})=(1/5)\times1=0.2$，而$p(\text{改至}\mid\text{会议})=3/5$，与最大似然的$2/3$不同。可以看到类模型的代价：“会议”和“讲座”被迫共享同一后继分布，原本区分二者的证据丢失了。
+
+类怎样得到？\term{Brown聚类}（Brown clustering）从每个词自成一类开始，每次合并两个类，使类二元模型的训练似然下降最少，直到剩下$C$个类\scite{nlp-classical-brown1992}。类二元模型的平均对数似然可以写成$I(C_{t-1};C_t)-H(X)$，第一项是相邻类之间的互信息，第二项是词的熵，与分类无关；所以每次合并等价于让相邻类的互信息损失最小。记录合并顺序就得到一棵二叉树，每个词的类可以用从根到叶的0、1路径编码，路径前缀给出不同粒度的类，这些编码后来常被用作序列标注的特征。类模型对低频词更稳健，但损失了同类词的区分，实践中一般与词级$n$元模型插值使用。连续表示是同一思路的推广：不再把词硬性归入离散类，而是用向量的远近表示相似程度，这在第~\ref{sec:nlp-classical-neural}节展开。
+
+\section{隐状态与结构依赖的建模}
+\label{sec:nlp-classical-structures}
+
+许多语言规律作用在不可直接观测的结构上：词性序列、句法树和文档主题。处理这类结构有四项挑战。其一，结构的数目随长度指数增长，必须在其上高效地求和或求最大。其二，训练数据往往只有词序列，参数要从不完整数据中估计。其三，标注任务希望使用大量相互重叠的观测特征，同时保持整条标签序列的一致性。其四，上下文无关一类的独立假设过强时，需要把丢失的依赖补回来。本节的方法谱系分四支：链结构上的生成式模型HMM；链结构上的判别式模型，从最大熵模型到MEMM再到线性链CRF；树结构上的PCFG；以及依赖交换性的主题混合模型LDA。各小节都写出动态规划递推、复杂度与参数估计；这些模型的一般概率图推导在卷六相应各章，本节只写语言处理所需的递推、特征和实现。
+
+\subsection{隐马尔可夫模型}
+\label{sec:nlp-classical-hmm}
+
+以词性标注为例。给定一句话，每个词背后有一个词性，词性序列本身有规律（名词后常接动词），每个词性又倾向于产生某些词。\term{隐马尔可夫模型}（hidden Markov model, HMM）把这两种规律分开描述：隐状态序列$z_{1:T}$是一阶马尔可夫链，每个观测$o_t$只依赖当前状态。为单独研究状态依赖，这里把观测切换为不含EOS的定长正文，以长度$T$为条件。设状态数为$K$，参数包括初始分布$\pi_i=p(z_1=i)$、转移矩阵$\bm A\in\mathbb R^{K\times K}$（$a_{i,j}=p(z_t=j\mid z_{t-1}=i)$）和发射分布$b_j(v)=p(o_t=v\mid z_t=j)$。联合概率按“转移乘发射”分解：
+\begin{equation}
+  p(o_{1:T},z_{1:T}\mid T)=\pi_{z_1}b_{z_1}(o_1)\prod_{t=2}^{T}a_{z_{t-1},z_t}b_{z_t}(o_t).
+  \label{eq:nlp-classical-hmm}
+\end{equation}
+给定$z_t$后当前词只依赖该状态，这是一个实质性的条件独立假设，它使模型无法直接使用“前一个词是什么”“当前词以什么结尾”这类观测特征。
+
+HMM需要回答三个问题：观测序列的概率是多少；最可能的状态序列是什么；只有观测时怎样估计参数。三者的朴素做法都要枚举$K^T$条状态路径，而它们共享前缀和后缀，所以能用动态规划把代价降到$O(TK^2)$。缩放的前向后向算法、一般图模型上的推导可参考\BookChapterRef{chap:pgm-dynamic}{卷六动态有向模型章}；本小节给出递推、手算小例和语言处理中的用法\scite{nlp-classical-rabiner1989}。
+
+下面的三个算法都使用同一个教学模型：状态N（名词类）与V（动词类），$\pi=(0.7,0.3)$，转移$a_{\mathrm{N},\mathrm{N}}=0.4$、$a_{\mathrm{N},\mathrm{V}}=0.6$、$a_{\mathrm{V},\mathrm{N}}=0.8$、$a_{\mathrm{V},\mathrm{V}}=0.2$，发射概率如下表，观测序列为“会议／改至／周五”。
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+状态 & 会议 & 改至 & 周五\\
+\midrule
+N & 0.5 & 0.1 & 0.4\\
+V & 0.1 & 0.8 & 0.1\\
+\bottomrule
+\end{tabular}
+\end{center}
+表中只列出这三个词的发射概率，各行其余的概率质量分给词表中的其他词。
+
+\subsubsection{前向算法与序列概率}
+\label{sec:nlp-classical-forward}
+
+要计算$P(o_{1:T})=\sum_{z_{1:T}}p(o_{1:T},z_{1:T})$。定义前向变量$\alpha_t(j)=p(o_{1:t},z_t=j)$，即到时刻$t$处于状态$j$、并已产生前$t$个观测的概率。到达$(t,j)$的所有路径都来自某个$(t-1,i)$，因此
+\begin{equation}
+  \begin{aligned}
+    \alpha_1(j)&=\pi_jb_j(o_1),\qquad
+    \alpha_t(j)=\Bigl[\sum_{i=1}^{K}\alpha_{t-1}(i)\,a_{i,j}\Bigr]b_j(o_t),\\
+    P(o_{1:T})&=\sum_{j=1}^{K}\alpha_T(j).
+  \end{aligned}
+  \label{eq:nlp-classical-forward}
+\end{equation}
+每一步对$K$个目标状态各做$K$项求和，总代价$O(TK^2)$。
+
+在教学模型上，初值为$\alpha_1(\mathrm N)=0.7\times0.5=0.35$、$\alpha_1(\mathrm V)=0.3\times0.1=0.03$。后两步按式~\eqref{eq:nlp-classical-forward}递推：
+\[
+\begin{aligned}
+  \alpha_2(\mathrm N)&=(0.35\times0.4+0.03\times0.8)\times0.1=0.0164,\\
+  \alpha_2(\mathrm V)&=(0.35\times0.6+0.03\times0.2)\times0.8=0.1728,\\
+  \alpha_3(\mathrm N)&=(0.0164\times0.4+0.1728\times0.8)\times0.4=0.05792,\\
+  \alpha_3(\mathrm V)&=(0.0164\times0.6+0.1728\times0.2)\times0.1=0.00444.
+\end{aligned}
+\]
+于是$P(o)=0.05792+0.00444=0.06236$。直接枚举需要计算$2^3=8$条路径的概率再相加，结果相同；$T$增大时，枚举量指数增长，前向算法只线性增长。
+
+\subsubsection{Viterbi解码}
+\label{sec:nlp-classical-viterbi}
+
+词性标注要输出一条状态序列$\hat z=\argmax_z p(z\mid o)=\argmax_z p(o,z)$。把前向递推中的求和换成取最大，定义$\delta_t(j)$为到时刻$t$、终于状态$j$的所有路径中联合概率的最大值，同时用回溯指针$\psi_t(j)$记下取得最大值的前一状态：
+\begin{equation}
+  \delta_t(j)=\max_{i}\bigl[\delta_{t-1}(i)\,a_{i,j}\bigr]b_j(o_t),\qquad
+  \psi_t(j)=\argmax_{i}\,\delta_{t-1}(i)\,a_{i,j}.
+  \label{eq:nlp-classical-viterbi}
+\end{equation}
+初值$\delta_1(j)=\pi_jb_j(o_1)$。末端取$\hat z_T=\argmax_j\delta_T(j)$，再按$\hat z_{t-1}=\psi_t(\hat z_t)$回溯。这就是\term{Viterbi算法}（Viterbi algorithm），复杂度同样是$O(TK^2)$。它之所以正确，是因为最优路径的任何前缀也必须是到达该前缀终点的最优路径，否则替换前缀就能得到更优的整条路径。实际实现在对数域进行，把乘积变成求和，以避免长序列上概率连乘造成的数值下溢。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/01-language-models/tikz/classical-hmm-trellis.tex}
+  \caption{教学HMM在观测“会议／改至／周五”上的Viterbi格点。每列是一个时刻，上下两行是状态N与V；细灰线是全部转移，旁注给出$\delta_t$与回溯指针$\psi$。末端$\delta_3(\mathrm N)$最大，沿指针回溯得到加粗的最优路径N、V、N。前向算法在同一格点上把取最大换成求和。}
+  \label{fig:nlp-classical-hmm-trellis}
+\end{figure*}
+
+图~\ref{fig:nlp-classical-hmm-trellis}给出教学模型上的计算。$\delta_2(\mathrm V)=\max(0.35\times0.6,\,0.03\times0.2)\times0.8=0.168$，指针指向N；末端$\delta_3(\mathrm N)=0.05376$大于$\delta_3(\mathrm V)=0.00336$，回溯得到N、V、N。这条路径的联合概率占观测概率的$0.05376/0.06236\approx86\%$。
+
+最优路径与“逐位置取后验最大”是两种不同的解码目标。后者先算每个位置的后验$p(z_t=j\mid o)$，再各自取最大，它最大化的是期望的逐位置正确数，而Viterbi最大化整条序列完全正确的概率。二者可能给出不同结果：设某个两位置问题的路径后验为$AB:0.4$、$BA:0.3$、$BB:0.3$，Viterbi输出$AB$；而第一位置的边缘后验$B$占$0.6$，第二位置$B$占$0.7$，逐位置解码输出$BB$。当状态转移带有硬约束时（例如BIO标注中I不能直接跟在O后），逐位置解码甚至可能拼出概率为零的非法序列，因此结构化输出通常用Viterbi。
+
+\subsubsection{Baum--Welch估计}
+\label{sec:nlp-classical-baum-welch}
+
+有标注语料时，HMM的最大似然估计就是数转移和发射的相对频率。只有观测时，状态计数不可见，需要用期望计数代替。为此还要引入后向变量$\beta_t(i)=p(o_{t+1:T}\mid z_t=i)$，它满足$\beta_T(i)=1$与
+\[
+  \beta_t(i)=\sum_{j=1}^{K}a_{i,j}\,b_j(o_{t+1})\,\beta_{t+1}(j).
+\]
+前向变量汇总了$t$之前的观测，后向变量汇总了$t$之后的观测，二者相乘就得到经过某个状态的全部路径。由此得到状态后验与相邻状态对的后验：
+\begin{equation}
+  \begin{aligned}
+    \gamma_t(j)&=p(z_t=j\mid o)=\frac{\alpha_t(j)\beta_t(j)}{P(o)},\\
+    \xi_t(i,j)&=p(z_t=i,z_{t+1}=j\mid o)=\frac{\alpha_t(i)\,a_{i,j}\,b_j(o_{t+1})\,\beta_{t+1}(j)}{P(o)}.
+  \end{aligned}
+  \label{eq:nlp-classical-posteriors}
+\end{equation}
+\term{Baum--Welch算法}（Baum--Welch algorithm）交替执行两步。E步用当前参数计算$\gamma$与$\xi$；M步把它们当作计数，重新归一化：
+\begin{equation}
+  \pi_j\gets\gamma_1(j),\qquad
+  a_{i,j}\gets\frac{\sum_{t=1}^{T-1}\xi_t(i,j)}{\sum_{t=1}^{T-1}\gamma_t(i)},\qquad
+  b_j(v)\gets\frac{\sum_{t:o_t=v}\gamma_t(j)}{\sum_{t=1}^{T}\gamma_t(j)}.
+  \label{eq:nlp-classical-baum-welch}
+\end{equation}
+多条训练序列时，分子分母分别对所有序列累加。在教学模型上，$\beta_2=(0.22,0.34)$，$\beta_1=(0.172,0.072)$，可以核对$\sum_j\pi_jb_j(o_1)\beta_1(j)=0.06236=P(o)$。状态后验为$\gamma_1(\mathrm N)\approx0.965$、$\gamma_2(\mathrm V)\approx0.942$、$\gamma_3(\mathrm N)\approx0.929$；$\xi_1(\mathrm N,\mathrm V)\approx0.916$，$\xi_2(\mathrm N,\mathrm V)\approx0.016$。于是一轮更新后$a_{\mathrm N,\mathrm V}\gets(0.916+0.016)/(0.965+0.058)\approx0.911$，原来的$0.6$被这条序列强烈地推向“N之后接V”。
+
+Baum--Welch是\term{期望最大化}（expectation--maximization, EM）算法在HMM上的实例：E步计算的是完整数据对数似然在隐变量后验下的期望所需的充分统计量，M步对这一期望求最大。精确E步与精确M步保证观测对数似然每轮不下降，但只收敛到局部最优，结果依赖初值；状态编号的不可识别性（第~\ref{sec:nlp-classical-latent}节）也意味着学到的状态需要事后对照标注才能命名。EM的一般收敛性质可参考\BookChapterRef{chap:pgm-parameter-learning}{卷六参数学习章}。在纯无监督词性归纳中，EM倾向于让各隐状态覆盖的词元数大致均衡，而真实词性的频率分布高度偏斜，所以学到的状态与人工词性体系对得不好\scite{nlp-classical-johnson2007}；HMM在语言处理中更常见的用法是有监督训练后的Viterbi解码，或作为语音识别中声学模型的一部分（第~\ref{chap:nlp-speech-tasks}章）。
+
+\subsection{判别式序列模型}
+\label{sec:nlp-classical-discriminative}
+
+HMM为观测本身建模，这使它难以使用相互重叠的特征。设我们想同时利用当前词、它的后缀“至”、前一个词和后一个词：这些特征彼此高度相关，生成式模型要为它们的联合出现负责，否则独立相乘就会重复计算同一份证据。若任务只需要在已知文本上输出标签，更直接的做法是建模$p(y\mid x)$：观测$x$只作为条件，可以任意使用，不必为它分配概率。本小节沿“单位置分类—局部归一化的序列—全局归一化的序列”推进，用标注偏置问题说明为什么需要全局归一化，最后与HMM并列比较。无向图模型的一般形式可参考\BookChapterRef{chap:pgm-dynamic-undirected}{卷六动态无向模型章}，第~\ref{chap:nlp-text-analysis}章的序列标注只讲合法标签约束与跨度恢复，CRF的定义与梯度以本小节为准。
+
+\subsubsection{对数线性模型与最大熵}
+\label{sec:nlp-classical-maxent}
+
+先考虑单个位置的分类：给定上下文$x$，从标签集合$\mathcal Y$中选$y$。为每个$(x,y)$组合定义特征向量$\bm f(x,y)\in\mathbb R^d$，例如“当前词是‘周五’且$y=$日期”时取1的指示特征。\term{对数线性模型}（log-linear model）把特征的加权和作为得分，再归一化：
+\begin{equation}
+  p_{\bm w}(y\mid x)=\frac{\exp\bigl(\bm w^{\top}\bm f(x,y)\bigr)}{Z(x)},\qquad
+  Z(x)=\sum_{y'\in\mathcal Y}\exp\bigl(\bm w^{\top}\bm f(x,y')\bigr).
+  \label{eq:nlp-classical-loglinear}
+\end{equation}
+同一个特征权重用于所有触发它的样本，所以少量参数可以联系大量$(x,y)$组合。
+
+这一形式也可以从\term{最大熵原理}（maximum entropy principle）推出\scite{nlp-classical-berger1996}。要求模型在训练集上的特征期望与经验期望一致，即$\sum_i\sum_y p(y\mid x_i)\bm f(x_i,y)=\sum_i\bm f(x_i,y_i)$，在满足这些约束的条件分布中，选择条件熵最大的那一个，也就是除约束外不作任何额外假设。对这个带约束的凸优化问题引入拉格朗日乘子$\bm w$，令拉格朗日函数对$p(y\mid x_i)$的导数为零，解出的分布恰好是式~\eqref{eq:nlp-classical-loglinear}的形式；对偶问题则恰是该模型的条件对数似然最大化。所以“最大熵模型”与“对数线性模型的最大似然估计”是同一个解。
+
+训练时最大化条件对数似然$\ell(\bm w)=\sum_i\log p_{\bm w}(y_i\mid x_i)$。对$\log Z(x)$求导得到模型下的特征期望，于是梯度为
+\begin{equation}
+  \nabla_{\bm w}\ell=\sum_i\Bigl[\bm f(x_i,y_i)-\mathbb E_{y\sim p_{\bm w}(\cdot\mid x_i)}\bm f(x_i,y)\Bigr]-\frac{\bm w}{\sigma^2}.
+  \label{eq:nlp-classical-maxent-gradient}
+\end{equation}
+第一项是参考标签的特征，第二项是模型预期的特征；梯度为零时二者相等，正是最大熵的约束。最后一项来自权重的零均值高斯先验$\mathcal N(\bm0,\sigma^2\bm I)$，等价于L2惩罚，用来防止只在少数样本中出现的特征获得过大的权重。$\ell$是凹函数，没有局部最优问题，可以用L-BFGS或随机梯度求解。
+
+\subsubsection{最大熵马尔可夫模型与标注偏置}
+\label{sec:nlp-classical-memm}
+
+把单位置分类扩展到序列，最直接的做法是让每一步的分类器同时以前一个标签为条件。\term{最大熵马尔可夫模型}（maximum entropy Markov model, MEMM）写成
+\begin{equation}
+  \begin{aligned}
+    p(y_{1:T}\mid x)&=\prod_{t=1}^{T}p(y_t\mid y_{t-1},x,t),\\
+    p(y_t\mid y_{t-1},x,t)&=\frac{\exp\bigl(\bm w^{\top}\bm f(y_{t-1},y_t,x,t)\bigr)}{\sum_{y'}\exp\bigl(\bm w^{\top}\bm f(y_{t-1},y',x,t)\bigr)},
+  \end{aligned}
+  \label{eq:nlp-classical-memm}
+\end{equation}
+其中特征可以读取整句$x$\scite{nlp-classical-mccallum2000}。训练时每一步是一个独立的对数线性分类问题，比HMM灵活得多；解码时乘积结构仍然允许Viterbi。
+
+问题出在归一化的位置。每一步的分母只对当前步的候选求和，所以从每个前驱状态出发的概率之和恒为1。一个状态若只有一个合法后继，无论当前观测如何，它都会把全部概率传给那个后继；当前观测只能在后继之间重新分配概率，不能降低“经过这个状态”的总分。这就是\term{标注偏置}（label bias）问题\scite{nlp-classical-lafferty2001}。
+
+用两条路径的小例说明。设第一步根据观测选择状态A或B，局部概率分别为$0.6$和$0.4$；A只能转到A$'$，B只能转到B$'$。第二个观测明显支持B$'$。在MEMM中，$p(\mathrm A'\mid\mathrm A,x)$只在一个候选上归一化，恒等于1，第二个观测的证据完全被吸收掉，路径A、A$'$以$0.6$胜出。若改用全局归一化，把各步的非负势相乘后再对整条路径归一化：设第一步势为$0.6,0.4$，第二步在当前观测下A$'$的势为$0.1$、B$'$的势为$1.0$，则两条路径的概率为$0.06/0.46\approx0.13$和$0.40/0.46\approx0.87$，第二个观测纠正了第一步的倾向。
+
+\subsubsection{线性链CRF与全局归一化}
+\label{sec:nlp-classical-crf}
+
+\term{线性链条件随机场}（linear-chain conditional random field, linear-chain CRF）正是对整条标签序列做一次归一化的对数线性模型\scite{nlp-classical-lafferty2001}：
+\begin{equation}
+  \begin{aligned}
+    p_{\bm w}(y\mid x)&=\frac{1}{Z(x)}\exp\Bigl\{\sum_{t=1}^{T}\bm w^{\top}\bm f(y_{t-1},y_t,x,t)\Bigr\},\\
+    Z(x)&=\sum_{y'}\exp\Bigl\{\sum_{t=1}^{T}\bm w^{\top}\bm f(y'_{t-1},y'_t,x,t)\Bigr\}.
+  \end{aligned}
+  \label{eq:nlp-classical-crf}
+\end{equation}
+$y_0$是固定的起始标签。它与MEMM使用相同的特征，区别只在于分母：MEMM在每一步对局部候选归一化，CRF对全部$K^T$条标签序列归一化。各步的得分不再被强制为概率，后面的观测可以通过降低整条路径的得分纠正前面的选择，标注偏置因此消失。它与HMM的关系是：若特征只取“转移指示”和“发射指示”，权重取对应概率的对数，CRF的打分就与HMM的联合概率成正比；所以HMM对应的条件分布是CRF的特例，而CRF允许特征读取整句。
+
+记第$t$步的势矩阵$\Psi_t(i,j)=\exp\{\bm w^{\top}\bm f(i,j,x,t)\}$。$Z(x)$与HMM的观测概率结构相同，用前向递推计算：
+\begin{equation}
+  \alpha_1(j)=\Psi_1(y_0,j),\qquad
+  \alpha_t(j)=\sum_{i}\alpha_{t-1}(i)\,\Psi_t(i,j),\qquad
+  Z(x)=\sum_j\alpha_T(j).
+  \label{eq:nlp-classical-crf-forward}
+\end{equation}
+后向变量$\beta_T(i)=1$，$\beta_t(i)=\sum_j\Psi_{t+1}(i,j)\beta_{t+1}(j)$；相邻标签对的边缘后验为$p(y_{t-1}=i,y_t=j\mid x)=\alpha_{t-1}(i)\Psi_t(i,j)\beta_t(j)/Z(x)$（$t=1$时取$\alpha_0$只在$y_0$处为1）。
+
+训练最大化带L2惩罚的条件对数似然。记整条序列的特征和$\bm F(x,y)=\sum_t\bm f(y_{t-1},y_t,x,t)$，与式~\eqref{eq:nlp-classical-maxent-gradient}同理，梯度为参考序列的特征减模型期望特征：
+\begin{equation}
+  \nabla_{\bm w}\log p_{\bm w}(y\mid x)
+  =\bm F(x,y)-\sum_{t=1}^{T}\sum_{i,j}p(y_{t-1}=i,y_t=j\mid x)\,\bm f(i,j,x,t).
+  \label{eq:nlp-classical-crf-gradient}
+\end{equation}
+期望项看似要对$K^T$条序列求和，但特征只涉及相邻标签，期望可以分解到每个位置的相邻标签对上，由前向后向得到的边缘后验在$O(TK^2)$内算出。算法~\ref{alg:nlp-classical-crf-gradient}列出一条样本的计算步骤。解码时求$\argmax_y\sum_t\log\Psi_t(y_{t-1},y_t)$，用Viterbi即可，归一化常数不影响最大值。
+
+\begin{algorithm}[线性链CRF一条样本的对数似然与梯度]
+  \label{alg:nlp-classical-crf-gradient}
+  \begin{algorithmic}[1]
+    \Require 句子$x$（长度$T$），参考标签$y_{1:T}$，权重$\bm w$，标签数$K$
+    \Ensure $\log p_{\bm w}(y\mid x)$及其梯度$\bm g$
+    \For{$t=1,\ldots,T$}
+      \State 对所有$(i,j)$计算对数势$\log\Psi_t(i,j)=\bm w^{\top}\bm f(i,j,x,t)$
+    \EndFor
+    \State 在对数域按式~\eqref{eq:nlp-classical-crf-forward}计算前向变量$\alpha_t$与$\log Z(x)$
+    \State 在对数域计算后向变量$\beta_t$
+    \State $\log p\gets\sum_t\log\Psi_t(y_{t-1},y_t)-\log Z(x)$
+    \State $\bm g\gets\bm F(x,y)$
+    \For{$t=1,\ldots,T$ 及所有$(i,j)$}
+      \State $q\gets\alpha_{t-1}(i)\Psi_t(i,j)\beta_t(j)/Z(x)$ \Comment{相邻标签对的边缘后验}
+      \State $\bm g\gets\bm g-q\,\bm f(i,j,x,t)$
+    \EndFor
+    \State \Return $\log p$与$\bm g$；对全部样本累加后减去$\bm w/\sigma^2$，交给L-BFGS或随机梯度更新
+  \end{algorithmic}
+\end{algorithm}
+
+CRF的效果主要取决于特征模板。模板规定了从$(y_{t-1},y_t,x,t)$生成特征的方式，例如“$y_t$与当前词$x_t$”“$y_t$与$x_t$的后缀”“$y_t$与$x_{t-1}$、$x_{t+1}$”“$y_t$与是否为数字”，以及只依赖标签对的转移特征“$(y_{t-1},y_t)$”。观测部分可以任意读取整句，代价落在特征数量上：模板与词表组合后常有数百万个特征，需要L2或L1正则。后来的神经序列标注保留CRF的转移层，只把手工观测特征换成BiLSTM或预训练编码器输出的发射得分（第~\ref{chap:nlp-text-analysis}章）。CRF的限制在于标签耦合只到相邻位置；若势要连接任意远处的多个标签，链式动态规划就不再适用。
+
+\subsubsection{生成式与判别式序列模型的比较}
+\label{sec:nlp-classical-sequence-comparison}
+
+表~\ref{tab:nlp-classical-sequence-models}把三种模型放在同一组维度上比较。
+
+\begin{table*}[htbp]
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{17mm}>{\raggedright\arraybackslash}p{23mm}>{\raggedright\arraybackslash}p{28mm}>{\raggedright\arraybackslash}p{28mm}>{\raggedright\arraybackslash}p{30mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    模型 & 建模对象 & 归一化范围 & 观测特征 & 训练 & 解码与代价\\
+    \midrule
+    HMM & 联合分布$p(x,y)$ & 每个转移、每个发射各自归一 & 只读当前词，条件独立 & 有标注时闭式计数；无标注时Baum--Welch（EM，局部最优） & Viterbi，$O(TK^2)$；可用无标注数据\\
+    MEMM & 条件分布$p(y\mid x)$ & 每一步局部归一 & 可读整句，可重叠 & 逐步独立的凸优化 & Viterbi，$O(TK^2)$；有标注偏置\\
+    线性链CRF & 条件分布$p(y\mid x)$ & 整条序列全局归一 & 可读整句，可重叠 & 凸优化，每次梯度需前向后向 & Viterbi，$O(TK^2)$；训练比MEMM昂贵\\
+    \bottomrule
+  \end{tabularx}
+  \caption{三种链式序列模型的对照。三者共用同一类格点动态规划；区别在于建模对象、归一化位置以及由此决定的特征自由度与训练代价。}
+  \label{tab:nlp-classical-sequence-models}
+\end{table*}
+
+这张表说明，三者共用同一类动态规划，差别在于建模对象和归一化位置。生成式与判别式各有适用条件：HMM的独立假设在数据很少时相当于一种强先验，参数少、估计快，还能利用无标注数据；特征丰富、标注充足时，判别式模型能把更多证据用于决策。Ng与Jordan在朴素贝叶斯与逻辑回归的比较中给出过同类结论：生成式模型更快接近自己的渐近误差，判别式模型的渐近误差更低\scite{ng2001}。
+
+\subsection{层次组合与概率上下文无关文法}
+\label{sec:nlp-classical-pcfg}
+
+链结构只描述相邻关系，无法直接表示短语的嵌套，例如名词短语内部又含一个修饰它的短语，或者主语与相隔很远的谓语之间的一致关系。上下文无关文法用递归规则描述嵌套结构，\term{概率上下文无关文法}（probabilistic context-free grammar, PCFG）再给每条规则一个概率。它在树上面临与HMM相同的三个问题：句子概率要对指数级多的树求和，最优树要求最大，无树库时规则概率要用期望计数估计；此外，上下文无关假设本身过强，需要补回依赖。第~\ref{chap:nlp-text-analysis}章的句法分析以本小节为基础。
+
+\subsubsection{PCFG与上下文无关假设}
+\label{sec:nlp-classical-pcfg-definition}
+
+PCFG由非终结符集合、终结符（词）集合、起始符号S和一组带概率的规则$A\to\beta$组成，要求同一左部的规则概率之和为1：$\sum_{\beta}p(A\to\beta)=1$。一棵推导树$\tau$的概率是它所用全部规则概率之积，句子$w$的概率是所有以$w$为叶序列的推导树的概率之和：
+\begin{equation}
+  p(w,\tau)=\prod_{(A\to\beta)\in\tau}p(A\to\beta),\qquad
+  p(w)=\sum_{\tau:\,\operatorname{yield}(\tau)=w}p(w,\tau).
+  \label{eq:nlp-classical-pcfg}
+\end{equation}
+相同的非终结符在树中任何位置都使用同一个规则分布，这就是上下文无关假设：一个NP怎样展开，与它在句中做主语还是宾语无关。这个共享让有限的规则能组合出训练中从未见过的树，也是第~\ref{sec:nlp-classical-annotation}节要修补的弱点。
+
+用一个最小例子区分树概率与句子概率。设$\mathrm S\to\mathrm{NP}\ \mathrm{VP}$概率为1，$\mathrm{VP}\to\mathrm V\ \mathrm{NP}$概率为1，$\mathrm{NP}\to$会议概率为$0.6$，$\mathrm{NP}\to$周五概率为$0.4$，$\mathrm V\to$改至概率为1。句子“会议／改至／周五”只有一棵树，概率为$1\times0.6\times1\times1\times0.4=0.24$，句子概率也是$0.24$。一旦句子有多棵树，句子概率就要把它们全部加起来，下面的歧义例子就是这种情况。另一方面，规则局部归一并不自动保证所有有限句子的概率之和为1：若递归规则的概率过大，推导可能以正概率永不终止。把推导看作多类型分支过程，各非终结符期望产生的非终结符个数构成一个矩阵，其谱半径小于1是推导以概率1终止的一个充分条件。
+
+\subsubsection{CKY与inside算法}
+\label{sec:nlp-classical-cky}
+
+求句子概率需要对所有树求和。把文法化为\term{乔姆斯基范式}（Chomsky normal form, CNF），即规则只有$A\to B\,C$和$A\to w$两种形式。对句子$w_{1:n}$定义\term{inside概率}（inside probability）$\beta(i,j,A)=p(A\Rightarrow^{*}w_{i:j})$，即非终结符$A$推导出片段$w_{i:j}$的概率。片段要么是单个词，要么在某个分裂点$k$处由两个子片段组成：
+\begin{equation}
+  \begin{aligned}
+    \beta(i,i,A)&=p(A\to w_i),\\
+    \beta(i,j,A)&=\sum_{A\to B\,C}\ \sum_{k=i}^{j-1}p(A\to B\,C)\,\beta(i,k,B)\,\beta(k+1,j,C),
+  \end{aligned}
+  \label{eq:nlp-classical-inside}
+\end{equation}
+句子概率为$\beta(1,n,\mathrm S)$。按片段长度从短到长填表，共$O(n^2)$个片段，每个片段枚举$O(n)$个分裂点和$|G|$条二元规则，总复杂度$O(n^3|G|)$。把求和换成取最大，并记录取得最大值的规则和分裂点，就得到概率CKY算法，回溯即得最优树。这与HMM中前向算法和Viterbi的关系完全对应。
+
+以经典的歧义短语“咬死了／猎人／的／狗”为例。它既可以是“咬死了[猎人的狗]”，也可以是“[咬死了猎人的]狗”。采用以下乔姆斯基范式文法（教学设定）：$\mathrm S\to\mathrm V\ \mathrm{NP}$（0.6），$\mathrm S\to\mathrm{RC}\ \mathrm N$（0.4），$\mathrm{NP}\to\mathrm{DP}\ \mathrm N$（1），$\mathrm{DP}\to\mathrm N\ \mathrm{DE}$（1），$\mathrm{RC}\to\mathrm{VO}\ \mathrm{DE}$（1），$\mathrm{VO}\to\mathrm V\ \mathrm N$（1），$\mathrm V\to$咬死了（1），$\mathrm{DE}\to$的（1），$\mathrm N\to$猎人（0.5），$\mathrm N\to$狗（0.5）。其中DP表示“名词＋的”构成的定语，RC表示“动宾＋的”构成的关系从句。表~\ref{tab:nlp-classical-cky-chart}给出inside表中所有非零项。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    片段 & 非零项 & 来源\\
+    \midrule
+    $[1,1]$至$[4,4]$ & V:1，N:0.5，DE:1，N:0.5 & 词规则\\
+    $[1,2]$咬死了猎人 & VO:0.5 & $\mathrm{VO}\to\mathrm V\,\mathrm N$\\
+    $[2,3]$猎人的 & DP:0.5 & $\mathrm{DP}\to\mathrm N\,\mathrm{DE}$\\
+    $[1,3]$咬死了猎人的 & RC:0.5 & $\mathrm{RC}\to\mathrm{VO}[1,2]\,\mathrm{DE}[3,3]$\\
+    $[2,4]$猎人的狗 & NP:0.25 & $\mathrm{NP}\to\mathrm{DP}[2,3]\,\mathrm N[4,4]$\\
+    $[1,4]$全句 & S:$0.15+0.10=0.25$ & $\mathrm V[1,1]\,\mathrm{NP}[2,4]$；$\mathrm{RC}[1,3]\,\mathrm N[4,4]$\\
+    \bottomrule
+  \end{tabular}
+  \caption{“咬死了／猎人／的／狗”的inside表。全句的两种分裂分别对应两棵树，概率$0.15$与$0.10$；句子概率为二者之和$0.25$，概率CKY取最大，选出“咬死了[猎人的狗]”。}
+  \label{tab:nlp-classical-cky-chart}
+\end{table*}
+
+\subsubsection{inside--outside估计}
+\label{sec:nlp-classical-inside-outside}
+
+只有句子而没有树库时，规则使用次数不可见，要像Baum--Welch那样用期望次数代替。inside概率汇总片段内部，还需要汇总片段外部的\term{outside概率}（outside probability）$\alpha(i,j,A)=p(\mathrm S\Rightarrow^{*}w_{1:i-1}\,A\,w_{j+1:n})$，即从起始符号推导出“片段外的词加上一个占位的$A$”的概率。它自顶向下计算，$\alpha(1,n,\mathrm S)=1$；片段$[i,j]$上的$B$要么是某个父节点的左孩子，要么是右孩子：
+\begin{equation}
+  \begin{aligned}
+    \alpha(i,j,B)={}&\sum_{A\to B\,C}\sum_{k>j}p(A\to B\,C)\,\alpha(i,k,A)\,\beta(j+1,k,C)\\
+    &+\sum_{A\to C\,B}\sum_{k<i}p(A\to C\,B)\,\alpha(k,j,A)\,\beta(k,i-1,C).
+  \end{aligned}
+  \label{eq:nlp-classical-outside}
+\end{equation}
+inside与outside相乘就是经过某个片段和非终结符的全部树的概率。规则$A\to B\,C$的期望使用次数为
+\begin{equation}
+  \begin{aligned}
+    \mathbb E[\#(A\to B\,C)]={}&\frac{1}{p(w)}\sum_{1\leq i\leq k<j\leq n}\alpha(i,j,A)\\
+    &\times p(A\to B\,C)\,\beta(i,k,B)\,\beta(k+1,j,C),
+  \end{aligned}
+  \label{eq:nlp-classical-rule-count}
+\end{equation}
+词规则的期望次数为$\frac{1}{p(w)}\sum_{i:w_i=v}\alpha(i,i,A)p(A\to v)$。M步把同一左部各规则的期望次数归一化，得到新的规则概率。这就是\term{inside--outside算法}（inside--outside algorithm），每轮代价$O(n^3|G|)$\scite{nlp-classical-lari1990}。在上例中，$\mathrm S\to\mathrm V\,\mathrm{NP}$的期望次数为$0.15/0.25=0.6$，$\mathrm S\to\mathrm{RC}\,\mathrm N$为$0.4$，归一化后正好等于原值；“猎人”和“狗”在两棵树中各用一次，N的两条词规则也保持$0.5$，所以当前参数已是这句话的不动点。
+
+链是树的特例：把HMM看成只有右分支规则“状态$\to$词 下一状态”的文法，inside概率退化为后向变量，outside概率退化为前向变量，inside--outside就是Baum--Welch。与HMM一样，inside--outside只保证似然不下降，从无标注句子归纳出的文法往往与语言学家的短语结构不一致；它更可靠的用途是在已有树库结构的基础上估计细化后的隐含子类别。
+
+\subsubsection{词汇化与父节点标注}
+\label{sec:nlp-classical-annotation}
+
+在树库上直接数规则频率得到的PCFG，分析准确率并不高，原因是上下文无关假设过强。两个例子足以说明。其一，英语树库中主语位置的NP更常展开为代词，宾语位置的NP更常展开为带修饰语的长名词短语，但PCFG让二者共用同一个NP规则分布。其二，介词短语附着在动词还是名词上，取决于具体的中心词。英语“saw the man with the telescope”中的介词短语更可能修饰动词saw，换成“with the hat”则更可能修饰名词man；两句的类别序列完全相同，只看非终结符类别无法区分。
+
+两种改写把依赖补回规则中。\term{父节点标注}（parent annotation）把每个非终结符改写为“类别加父节点类别”，例如主语NP记作$\mathrm{NP}^{\wedge}\mathrm S$，宾语NP记作$\mathrm{NP}^{\wedge}\mathrm{VP}$，二者从此拥有不同的展开分布\scite{nlp-classical-johnson1998}。Klein与Manning进一步系统地拆分非终结符类别，表明不引入词汇信息也能显著提高未词汇化PCFG的准确率\scite{v9a-klein2003}。\term{词汇化}（lexicalization）则在每个非终结符上附加其中心词，例如$\mathrm{VP}(\text{saw})\to\mathrm V(\text{saw})\ \mathrm{NP}(\text{man})\ \mathrm{PP}(\text{with})$，规则还可以进一步以介词宾语的中心词telescope为条件，让规则概率直接依赖中心词之间的搭配\scite{nlp-classical-collins2003}。两者都以参数数量的成倍增长为代价：父节点标注使非终结符数量成倍增加，词汇化使规则数乘上词表规模，必须用回退和平滑估计，这又回到了第~\ref{sec:nlp-classical-smoothing}节的问题。
+
+\subsection{交换性与主题混合}
+\label{sec:nlp-classical-topic}
+
+有些任务关心的是一篇文档中哪些词共同出现，而不是它们的先后顺序，例如把新闻归入若干主题。若只保留每篇文档的词频，就假设了词在文档内的位置可以任意交换而不改变概率，这一性质称为\term{交换性}（exchangeability）。主题混合模型在交换性之上加入隐结构：每篇文档有一个主题比例，每个主题有一个词分布，每个词先选主题、再从该主题选词。给定主题后各词条件独立，但对主题边缘化以后，同一文档中的词变得相关：看到“选举”会提高“投票”的概率，因为二者可能来自同一主题。
+
+交换性的代价是失去语序。“允许校外参加，禁止校内参加”和“允许校内参加，禁止校外参加”在相同分词下词袋完全相同，却把允许与禁止绑定到了相反的人群；任何只依赖词袋的模型都无法区分它们，调整主题数也无济于事。主题模型适合回答“文档大致讲什么”，不适合回答“谁被允许做什么”。
+
+\subsubsection{LDA的生成过程}
+\label{sec:nlp-classical-lda}
+
+\term{潜在狄利克雷分配}（latent Dirichlet allocation, LDA）为主题比例和主题词分布都加上狄利克雷先验\scite{blei2003}。设有$K$个主题、词表大小$V$、$D$篇文档，第$d$篇有$N_d$个词。生成过程为：
+\begin{equation}
+  \begin{aligned}
+    &\bm\phi_k\sim\mathrm{Dir}(\beta\bm 1_V),\quad k=1,\ldots,K;\\
+    &\bm\theta_d\sim\mathrm{Dir}(\alpha\bm 1_K),\quad d=1,\ldots,D;\\
+    &z_{d,n}\sim\mathrm{Mult}(\bm\theta_d),\quad w_{d,n}\sim\mathrm{Mult}(\bm\phi_{z_{d,n}}),\quad n=1,\ldots,N_d.
+  \end{aligned}
+  \label{eq:nlp-classical-lda}
+\end{equation}
+$\bm\theta_d\in\mathbb R^K$是第$d$篇文档的主题比例，$\bm\phi_k\in\mathbb R^V$是第$k$个主题的词分布，$z_{d,n}$是第$n$个词的主题编号。联合分布为
+\[
+  p(\bm w,\bm z,\bm\theta,\bm\phi)=\prod_k p(\bm\phi_k\mid\beta)\prod_d\Bigl[p(\bm\theta_d\mid\alpha)\prod_{n}\theta_{d,z_{d,n}}\phi_{z_{d,n},w_{d,n}}\Bigr].
+\]
+对$z$求和后，单个词的分布是主题词分布的混合$p(w_{d,n}=v\mid\bm\theta_d,\bm\phi)=\sum_k\theta_{d,k}\phi_{k,v}$。
+
+LDA之前的\term{概率潜在语义分析}（probabilistic latent semantic analysis, pLSA）也用这种混合，但把每篇训练文档的主题比例当作单独的参数。这样参数随文档数线性增长，而且新文档没有对应的参数，主题比例无定义。LDA把$\bm\theta_d$变成从共同的狄利克雷先验抽取的随机变量，新文档的主题比例便有了后验分布；$\alpha<1$时先验偏好只集中在少数主题上的稀疏比例，符合一篇文档通常只涉及少数主题的观察。pLSA与LDA的一般推导可参考\BookChapterRef{chap:pgm-static-directed}{卷六静态有向模型章}。
+
+\subsubsection{LDA的近似推断}
+\label{sec:nlp-classical-lda-inference}
+
+使用LDA要计算后验$p(\bm z,\bm\theta,\bm\phi\mid\bm w)$。归一化常数需要对$K^{\sum_dN_d}$种主题分配求和并对$\bm\theta,\bm\phi$积分，$\bm\theta$与$\bm\phi$又通过$z$耦合，无法闭式计算，只能近似。
+
+\term{折叠Gibbs采样}（collapsed Gibbs sampling）利用狄利克雷与多项分布的共轭性，把$\bm\theta$和$\bm\phi$积分掉，只对主题分配$\bm z$采样\scite{nlp-classical-griffiths2004}。每次取出一个词$i$（位于文档$d$、词为$w$），在其余所有分配固定的条件下重新抽取它的主题：
+\begin{equation}
+  p(z_i=k\mid\bm z_{-i},\bm w)\propto\bigl(n_{d,k}^{-i}+\alpha\bigr)\,\frac{n_{k,w}^{-i}+\beta}{n_{k}^{-i}+V\beta}.
+  \label{eq:nlp-classical-lda-gibbs}
+\end{equation}
+上标$-i$表示计数中排除当前词。三个计数各有含义：$n_{d,k}$是文档$d$中已分给主题$k$的词数，体现“这篇文档常谈主题$k$”；$n_{k,w}$是词$w$在全语料中被分给主题$k$的次数，体现“主题$k$常用这个词”；$n_k$是主题$k$的总词数，用来把第二个因子归一化成概率。超参数$\alpha,\beta$充当伪计数，保证没出现过的组合仍有机会。例如设$\alpha=0.1$、$\beta=0.01$、$V=1000$，文档$d$中已有3个词属于主题1、1个词属于主题2，当前词$w$在主题1中出现过2次、在主题2中出现过5次，两个主题的总词数分别为20与30（均为教学数值）。两个主题的未归一化权重为$3.1\times2.01/30\approx0.208$和$1.1\times5.01/40\approx0.138$，归一化后约为$0.60$和$0.40$：文档偏好与词偏好相互抵消，主题1略占优势。所有词扫过一遍为一轮；收敛后由计数估计$\hat\phi_{k,w}=(n_{k,w}+\beta)/(n_k+V\beta)$与$\hat\theta_{d,k}\propto n_{d,k}+\alpha$。
+
+另一条路线是\term{变分推断}（variational inference）：用可分解的分布$q(\bm\theta,\bm z)=\prod_dq(\bm\theta_d)\prod_nq(z_{d,n})$近似后验，在E步迭代更新各因子以最大化证据下界，在M步更新主题词分布，即变分EM。它是确定性迭代，便于判断收敛和做在线更新；Gibbs采样实现简单，渐近上无偏。变分推断的一般方法可参考\BookChapterRef{chap:pgm-variational}{卷六变分推断章}；第~\ref{chap:nlp-classification-matching-organization}章的文本组织会使用本小节的主题表示。
+
+\section{基于神经网络的语言模型}
+\label{sec:nlp-classical-neural}
+
+$n$元模型把每个搭配当作独立事件。语料中出现过“会议改至周五”，并不能让“会议改至周四”获得更多证据，除非人为规定“周五”和“周四”同属一个类。历史长度也被阶数限制，阶数每加一，参数就乘上词表规模。神经语言模型用连续向量表示词，让表示相近的词在参数中自动共享统计强度。本节依次处理四项挑战：怎样用连续表示计算条件分布；输出层对整个词表归一化的代价；若只为学习词表示，怎样简化模型以便在更大的语料上训练；以及怎样突破固定窗口的历史限制。对应的方法谱系是前馈神经语言模型、大词表输出的近似、静态词向量与循环神经语言模型。
+
+\subsection{前馈神经语言模型}
+\label{sec:nlp-classical-nplm}
+
+\term{神经概率语言模型}（neural probabilistic language model, NPLM）保留$n$元模型的固定窗口，但不再为每个历史单独存一行概率，而是把窗口内的词映射为向量，再用一个神经网络计算下一个词的分布\scite{nlp-classical-bengio2003}。目标有两个：相似的词得到相近的向量，从而共享证据；参数量随窗口长度线性增长，而不是指数增长。
+
+\subsubsection{共享查找表与窗口网络}
+\label{sec:nlp-classical-nplm-structure}
+
+设窗口长度为$n-1$，词向量维数为$m$，隐层宽度为$h$。模型的计算分为四步，图~\ref{fig:nlp-classical-nplm}给出了对应的结构。第一步，用共享查找表$\bm C\in\mathbb R^{V\times m}$把每个历史词的编号映射为它所在的行，同一个词无论处在窗口哪个位置都用同一行。第二步，把这些行向量拼接为$\bm x\in\mathbb R^{(n-1)m}$。第三步，经过一个双曲正切隐层。第四步，输出层计算全部$V$个词的得分并做softmax：
+\begin{equation}
+  \begin{aligned}
+    \bm x&=[\bm C_{x_{t-1},:};\,\bm C_{x_{t-2},:};\,\ldots;\,\bm C_{x_{t-n+1},:}],\\
+    \bm h_t&=\tanh(\bm H\bm x+\bm d),\\
+    \bm y&=\bm b+\bm W\bm x+\bm U\bm h_t,\qquad
+    p(x_t=v\mid x_{t-n+1:t-1})=\frac{\exp y_v}{\sum_{u=1}^{V}\exp y_u}.
+  \end{aligned}
+  \label{eq:nlp-classical-nplm}
+\end{equation}
+其中$\bm H\in\mathbb R^{h\times(n-1)m}$、$\bm d\in\mathbb R^{h}$是隐层参数，$\bm U\in\mathbb R^{V\times h}$、$\bm b\in\mathbb R^{V}$是输出层参数。$\bm W\in\mathbb R^{V\times(n-1)m}$是可选的直连权重，让词向量不经隐层直接影响输出，不用时置零。训练时用随机梯度最大化训练语料的对数似然，梯度同时流回$\bm C$，所以词表示与预测函数一起学习。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/01-language-models/tikz/classical-nplm.tex}
+  \caption{前馈神经概率语言模型的结构，窗口长度$n-1=4$。四个历史词经同一张查找表$\bm C$得到词向量，拼接后通过双曲正切隐层，再由输出层给出全部$V$个词的得分并归一化；虚线是可选的直连权重。右侧标注各量的形状；红框标出的输出层与词表规模成正比，是每个位置计算量的主要来源。}
+  \label{fig:nlp-classical-nplm}
+\end{figure*}
+
+参数总量为$Vm+h(n-1)m+h+V(n-1)m+Vh+V$，对窗口长度线性增长。相似词怎样共享证据？若“周五”和“周四”出现在相似的上下文中，梯度会把它们的行向量推向相近的位置；之后即使“会议改至周四”从未出现，它的输入也与“会议改至周五”相近，经过平滑的网络函数后得到相近的输出分布。这种平滑是从数据中学到的，而不是像第~\ref{sec:nlp-classical-class-models}节那样事先规定。代价是目标函数不再是凸的，训练需要调学习率和初始化，也比计数慢得多。
+
+\subsubsection{输出层的计算瓶颈}
+\label{sec:nlp-classical-output-bottleneck}
+
+为每个位置计算一次条件分布，输出层要算出$V$个得分，再对它们做指数求和得到归一化常数。取教学配置$V=5\times10^4$、$m=100$、$n-1=4$、$h=200$，各部分每个位置的乘加次数为：隐层$\bm H\bm x$约$200\times400=8\times10^4$；输出层$\bm U\bm h$约$5\times10^4\times200=10^7$；直连$\bm W\bm x$约$5\times10^4\times400=2\times10^7$；softmax还需$5\times10^4$次指数运算。输出相关的计算占总量的99\%以上。训练时反向传播的代价与前向同阶，评价困惑度时同样要算完整的归一化常数。词表越大，这一项越占主导。若只是为了训练，能否不显式计算完整的归一化常数？这引出下一小节的三种近似。
+
+\subsection{大词表输出的近似计算}
+\label{sec:nlp-classical-large-vocab}
+
+三种近似对应三种思路。层次softmax改变概率的分解方式，让每个词的概率只涉及树上的一条路径；噪声对比估计把密度估计改写为区分数据与噪声的二分类，从而避开归一化常数；负采样进一步简化这个二分类目标，放弃概率的一致性，只为学习表示服务。三者的通用形式在多类分类中已有讨论，可参考\BookChapterRef{chap:classification}{卷四分类章}；下面写它们在语言模型中的具体用法。记上下文表示为$\bm h\in\mathbb R^{h}$（NPLM的隐层输出），词$w$的输出向量为$\bm u_w$，得分$s(w,\bm h)=\bm u_w^{\top}\bm h+b_w$。
+
+\subsubsection{层次softmax}
+\label{sec:nlp-classical-hierarchical-softmax}
+
+\term{层次Softmax}（hierarchical softmax）把词表放在一棵二叉树的叶子上，每个内部节点$n$有一个参数向量$\bm v_n$\scite{nlp-classical-morin2005}。从根走到词$w$的叶子，每个节点处做一次二分类：向左的概率为$\sigma(\bm v_n^{\top}\bm h)$，向右为$1-\sigma(\bm v_n^{\top}\bm h)=\sigma(-\bm v_n^{\top}\bm h)$。设路径上的内部节点依次为$n_1,\ldots,n_{L(w)}$，$d_j\in\{+1,-1\}$表示第$j$步向左还是向右，则
+\begin{equation}
+  p(w\mid\bm h)=\prod_{j=1}^{L(w)}\sigma\bigl(d_j\,\bm v_{n_j}^{\top}\bm h\bigr).
+  \label{eq:nlp-classical-hsoftmax}
+\end{equation}
+每个内部节点把到达它的概率完整分给两个孩子，所以全部叶子的概率之和自动为1，不需要计算归一化常数。平衡树的路径长度约为$\log_2V$，$V=5\times10^4$时约16步，每个位置的输出计算从$Vh=10^7$降到约$16h=3200$次乘加。
+
+树怎样构造会影响模型质量和速度。按词频构造的Huffman树让高频词的路径更短，平均路径长度接近词频分布的熵（以比特计），比平衡树更快；word2vec采用这一做法。但Huffman树只考虑频率，同一节点下的两个子树可能毫无语义联系，节点分类器就要学一个难以概括的划分。用词聚类结果或语义层次建树，能让每次二分类更有意义，但构造本身需要额外的工作。层次softmax的代价还在于：要找出概率最高的词或计算完整分布，仍需遍历整棵树。
+
+\subsubsection{噪声对比估计}
+\label{sec:nlp-classical-nce}
+
+\term{噪声对比估计}（noise-contrastive estimation, NCE）不改变模型的形式，而是改变训练问题\scite{pgm-parameter-learning-gutmann2012}。对每个出现在上下文$\bm h$后的数据词$w$，从一个已知的噪声分布$q$（通常是一元分布）中抽取$k$个噪声词，训练一个分类器判断每个词来自数据还是噪声。数据与噪声的比例为$1:k$，由贝叶斯公式，一个词来自数据的后验为
+\[
+  P(D=1\mid w,\bm h)=\frac{p_{\bm\theta}(w\mid\bm h)}{p_{\bm\theta}(w\mid\bm h)+k\,q(w)}=\sigma\bigl(\log p_{\bm\theta}(w\mid\bm h)-\log(kq(w))\bigr).
+\]
+NCE用未归一化的模型$\log p_{\bm\theta}(w\mid\bm h)=s(w,\bm h)-c_{\bm h}$代入，其中$c_{\bm h}$本应是对数归一化常数。在语言模型中，Mnih与Teh发现可以直接令$c_{\bm h}=0$，模型在训练中会自行学到近似归一化的得分，称为自归一化\scite{nlp-classical-mnih2012}。于是每个数据词的目标为
+\begin{equation}
+  \begin{aligned}
+    J^{\mathrm{NCE}}={}&\log\sigma\bigl(s(w,\bm h)-\log kq(w)\bigr)\\
+    &+\sum_{i=1}^{k}\log\sigma\bigl(-s(\tilde w_i,\bm h)+\log kq(\tilde w_i)\bigr),\qquad \tilde w_i\sim q.
+  \end{aligned}
+  \label{eq:nlp-classical-nce}
+\end{equation}
+每步只计算$k+1$个得分，代价$O((k+1)h)$；取$V=5\times10^4$、$k=25$，约为完整softmax的$26/(5\times10^4)$，即两千分之一左右。
+
+NCE为什么能逼近最大似然？对目标关于$\bm\theta$求期望梯度，可以写成
+\[
+  \nabla J^{\mathrm{NCE}}=\sum_{w}\frac{kq(w)}{p_{\bm\theta}(w\mid\bm h)+kq(w)}\bigl[p_{\mathrm{d}}(w\mid\bm h)-p_{\bm\theta}(w\mid\bm h)\bigr]\nabla\log p_{\bm\theta}(w\mid\bm h),
+\]
+其中$p_{\mathrm d}$是数据分布。$k\to\infty$时权重因子趋于1，梯度变为$\sum_w[p_{\mathrm d}-p_{\bm\theta}]\nabla\log p_{\bm\theta}$，正是对数似然的梯度。所以NCE是最大似然的一个一致近似，$k$越大越接近，噪声分布越接近数据分布，所需的$k$越小。它的局限在于：训练得到的得分只是近似归一化，评价困惑度时仍要计算完整的softmax加以核对。
+
+\subsubsection{负采样}
+\label{sec:nlp-classical-negative-sampling}
+
+\term{负采样}（negative sampling）把NCE中的$\log kq(w)$修正项去掉，直接用得分做二分类\scite{nlp-classical-mikolov2013distributed}：
+\begin{equation}
+  J^{\mathrm{NEG}}=\log\sigma\bigl(s(w,\bm h)\bigr)+\sum_{i=1}^{k}\log\sigma\bigl(-s(\tilde w_i,\bm h)\bigr),\qquad \tilde w_i\sim q.
+  \label{eq:nlp-classical-neg}
+\end{equation}
+比较两式可见，负采样相当于在NCE中令$kq(w)\equiv1$；只有当$q$是均匀分布且$k=V$时二者才一致。一般情形下，负采样的最优得分不再对应归一化的条件概率，所以它不适合作为语言模型输出概率。它的目标只是拉开正例与负例的得分，这恰好是学习词表示所需要的，计算也比NCE更简单。表~\ref{tab:nlp-classical-output-approx}对三种近似作了比较。
+
+\begin{table*}[htbp]
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}>{\raggedright\arraybackslash}p{30mm}>{\raggedright\arraybackslash}p{30mm}>{\raggedright\arraybackslash}p{32mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 改变了什么 & 每位置训练代价 & 是否给出归一化概率 & 依赖与代价\\
+    \midrule
+    完整softmax & 不近似 & $O(Vh)$ & 是 & 词表大时最慢\\
+    层次softmax & 概率的分解方式 & $O(h\log V)$ & 是，按树精确归一 & 树的划分影响质量；求最高概率词仍需遍历\\
+    噪声对比估计 & 训练问题改为二分类 & $O((k+1)h)$ & 近似（自归一化） & 依赖噪声分布与$k$；$k\to\infty$时梯度趋于最大似然\\
+    负采样 & 去掉NCE的噪声修正 & $O((k+1)h)$ & 否 & 实现最简单；只适合学习表示\\
+    \bottomrule
+  \end{tabularx}
+  \caption{大词表输出的三种近似，以$V=5\times10^4$、$h=200$、$k=25$为例，完整softmax约$10^7$次乘加，层次softmax约$3\times10^3$次，后两者约$5\times10^3$次。评价困惑度时，后两者仍需计算完整softmax。}
+  \label{tab:nlp-classical-output-approx}
+\end{table*}
+
+\subsection{静态词向量}
+\label{sec:nlp-classical-word-vectors}
+
+若目的只是得到可以复用的词表示，就不必保留NPLM的非线性隐层：去掉隐层，用更简单的预测任务，就能在大得多的语料上训练。这条路线有两种实现：word2vec逐个窗口做预测，GloVe直接拟合全局共现计数；二者通过点互信息矩阵的分解联系起来。两者得到的都是“每个词一个向量”的静态表示，其局限在本小节末尾讨论。
+
+\subsubsection{Skip-gram与CBOW}
+\label{sec:nlp-classical-skipgram}
+
+word2vec为每个词维护两个向量：作为中心词时的输入向量$\bm v_w\in\mathbb R^{d}$（矩阵$\bm V\in\mathbb R^{|\mathcal V|\times d}$的一行），作为上下文时的输出向量$\bm u_w\in\mathbb R^{d}$（矩阵$\bm U$的一行）\scite{nlp-classical-mikolov2013efficient}。在训练语料中取窗口半径$m$，中心词$c$与窗口内每个词$o$构成一个训练对。
+
+\term{Skip-gram}模型用中心词预测上下文词，若用完整softmax，
+\[
+  p(o\mid c)=\frac{\exp(\bm u_o^{\top}\bm v_c)}{\sum_{w\in\mathcal V}\exp(\bm u_w^{\top}\bm v_c)},
+\]
+训练目标是语料中全部训练对的$\sum\log p(o\mid c)$。与NPLM相比，这里没有隐层，没有词序，得分就是两个向量的内积。分母要遍历整个词表，所以实际训练使用层次softmax或负采样。负采样的目标为：
+\begin{equation}
+  J(o,c)=\log\sigma(\bm u_o^{\top}\bm v_c)+\sum_{i=1}^{k}\mathbb E_{\tilde w_i\sim P_n}\log\sigma(-\bm u_{\tilde w_i}^{\top}\bm v_c),\qquad
+  P_n(w)\propto U(w)^{3/4},
+  \label{eq:nlp-classical-skipgram-neg}
+\end{equation}
+其中$U(w)$是一元频率。噪声分布取频率的$3/4$次方，是Mikolov等通过实验选定的，作用是让低频词更常被选为负例：两个词的频率为$0.9$和$0.1$时，取$3/4$次方再归一化，抽中概率变为约$0.84$和$0.16$。图~\ref{fig:nlp-classical-skipgram}画出一个训练对的计算。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/01-language-models/tikz/classical-skipgram-negative-sampling.tex}
+  \caption{Skip-gram负采样的一个训练步骤。中心词“改至”与窗口内的“周五”构成正例，另从噪声分布中抽取$k=2$个负例；每个配对的得分是输出向量与中心词输入向量的内积，正例以$\log\sigma(s)$计分，负例以$\log\sigma(-s)$计分。梯度只更新$\bm v_{\text{改至}}$和三个输出向量，与词表规模无关。}
+  \label{fig:nlp-classical-skipgram}
+\end{figure*}
+
+\term{连续词袋模型}（continuous bag-of-words, CBOW）把方向反过来：用窗口内$2m$个上下文词输入向量的平均$\bar{\bm v}=\frac{1}{2m}\sum_{-m\leq j\leq m,\,j\neq0}\bm v_{x_{t+j}}$预测中心词，得分为$\bm u_{x_t}^{\top}\bar{\bm v}$，同样用负采样训练。CBOW每个窗口只做一次预测，训练更快；Skip-gram每个窗口做$2m$次预测，低频词获得的更新更多，表示通常更好。
+
+还有两项训练细节影响结果。其一是高频词\term{子采样}（subsampling）。像“的”和“是”这样的词几乎和所有词共现，提供的信息很少。训练时每个出现以概率$1-\sqrt{t/f(w)}$被丢弃（$f(w)$为词频，$t$约为$10^{-5}$），频率低于$t$的词全部保留；这既加快训练，也让窗口实际覆盖更远的有效词。其二是动态窗口：每个中心词的窗口半径从$1$到$m$中均匀抽取，相当于让近处的上下文词获得更大权重。学习率在训练中线性衰减到零。
+
+\subsubsection{GloVe共现矩阵分解}
+\label{sec:nlp-classical-glove}
+
+Skip-gram逐个窗口扫描语料，没有直接利用全局的共现统计。设$X_{i,j}$为词$j$出现在词$i$的上下文窗口中的总次数，$P(j\mid i)=X_{i,j}/\sum_kX_{i,k}$。Pennington等观察到，共现概率的比值比概率本身更能区分词义：对探针词$k$，若$P(k\mid i)/P(k\mid j)$远大于1，说明$k$与$i$相关而与$j$无关；比值接近1，说明$k$与二者都相关或都无关。例如以“会议”和“讲座”为$i,j$，“议程”应使比值偏大，“讲师”偏小，“改至”这类与二者都相关的词接近1。由此要求词向量的差能够表达对数比值，推导出的目标是一个加权最小二乘问题\scite{nlp-classical-pennington2014}：
+\begin{equation}
+  \begin{aligned}
+    J&=\sum_{i,j:\,X_{i,j}>0}f(X_{i,j})\bigl(\bm w_i^{\top}\tilde{\bm w}_j+b_i+\tilde b_j-\log X_{i,j}\bigr)^2,\\
+    f(x)&=\begin{cases}(x/x_{\max})^{\alpha},&x<x_{\max},\\1,&x\geq x_{\max},\end{cases}
+  \end{aligned}
+  \label{eq:nlp-classical-glove}
+\end{equation}
+$\bm w_i,\tilde{\bm w}_j$分别是中心词与上下文词的向量，$b_i,\tilde b_j$是偏置。权重函数$f$起两个作用：$f(0)=0$使从未共现的词对不进入目标，避免$\log0$；$x\geq x_{\max}$时截断为1，防止极高频的共现主导目标。原文取$x_{\max}=100$、$\alpha=3/4$。训练只遍历非零项，代价与非零共现数成正比；最终词向量常取$\bm w_i+\tilde{\bm w}_i$。与Skip-gram相比，GloVe每轮训练不必重新扫描语料，统计量一次收集即可反复使用；代价是要先构造并存储共现矩阵，其非零项随词表和窗口增大而迅速增多，权重函数中的$x_{\max}$与$\alpha$也成为需要选择的超参数。
+
+GloVe显式地分解对数共现矩阵，Skip-gram看似不同，实际也在隐式地做同类分解。Levy与Goldberg分析了负采样目标的最优解\scite{nlp-classical-levy2014}。设语料中词对$(w,c)$共现$\#(w,c)$次，词$w$与$c$分别出现$\#(w)$与$\#(c)$次，总训练对数为$|D|$。若向量维数足够大，使每个内积$x=\bm u_c^{\top}\bm v_w$可以独立取值，那么式~\eqref{eq:nlp-classical-skipgram-neg}对$(w,c)$的局部目标为$\#(w,c)\log\sigma(x)+k\,\#(w)\frac{\#(c)}{|D|}\log\sigma(-x)$（这里噪声取未平滑的一元分布）。对$x$求导并令其为零，得$\sigma(-x)\#(w,c)=k\,\#(w)\#(c)\sigma(x)/|D|$，即
+\begin{equation}
+  \bm u_c^{\top}\bm v_w=\log\frac{\#(w,c)\,|D|}{\#(w)\,\#(c)}-\log k=\mathrm{PMI}(w,c)-\log k.
+  \label{eq:nlp-classical-pmi}
+\end{equation}
+所以Skip-gram负采样隐式地分解了一个按$\log k$平移的\term{点互信息}（pointwise mutual information, PMI）矩阵。PMI衡量两个词共现的频率比独立情形高出多少。这一结论把预测式的词向量与计数式的方法连到一起：潜在语义分析对词—文档或词—上下文矩阵做截断奇异值分解，同样是共现矩阵的低秩近似，可参考\BookChapterRef{chap:dimensionality-reduction}{卷四降维章}。三者的差别在于被分解的矩阵（原始计数、对数计数或PMI）、加权方式和优化方法，而不在于“预测”与“计数”的对立。
+
+\subsubsection{词向量的类比结构与局限}
+\label{sec:nlp-classical-analogy}
+
+训练好的词向量常呈现近似的线性结构：语义关系对应向量差。类比问题“$a$之于$b$，如同$a'$之于？”的求解方法是计算$\bm q=\bm v_b-\bm v_a+\bm v_{a'}$，在排除$a,b,a'$之后，找与$\bm q$余弦相似度最大的词。用二维教学向量说明：设中国$(1,0)$、北京$(1,1)$、日本$(3,0)$、东京$(3,1.1)$、大阪$(3.5,0.6)$，则“中国之于北京，如同日本之于？”的查询向量为$(3,1)$，与东京的余弦相似度约为$0.9996$，与大阪约为$0.989$，答案是东京。词向量的常用内在评测包括这类类比任务，以及与人工相似度评分的相关系数。
+
+静态词向量有三个结构性的局限。第一，每个词只有一个向量，多义词的各个义项被平均到一起：“苹果”在“吃苹果”和“苹果发布会”中共用同一个向量。第二，表示由上下文分布决定，而反义词常出现在相同的上下文中，“上涨”与“下跌”的向量往往很接近，单凭余弦相似度无法区分同义与反义。第三，训练中没见过的词没有向量。第三点可以用子词缓解：fastText把每个词表示为其字符$n$元向量之和，加上表示词边界的符号后，“meeting”的三元组为“<me”“mee”“eet”“eti”“tin”“ing”“ng>”，新词可以由已知的字符$n$元组合出向量\scite{nlp-classical-bojanowski2017}。前两点要求表示随上下文变化，这由下一小节的循环模型和第~\ref{sec:nlp-classical-contextual-pretraining}节的上下文预训练回答。
+
+\subsection{循环神经语言模型}
+\label{sec:nlp-classical-rnnlm}
+
+前馈模型与$n$元模型一样只看固定窗口。循环神经网络用一个隐藏状态递推地汇总全部历史，取消了显式的阶数限制。RNN、LSTM、GRU的结构，以及随时间反向传播与梯度消失的一般推导，可参考\BookChapterRef{chap:recurrent-networks}{卷五循环神经网络章}；那里的结论是：误差信号沿时间反传时反复乘以循环权重的雅可比矩阵，长距离的梯度容易指数衰减或爆炸，门控结构通过加性的记忆更新缓解衰减。本小节只写语言模型训练特有的做法：长语料怎样截断反传，LSTM语言模型用哪些正则化防止过拟合，以及输入单位怎样从词换成字符和子词。
+
+\subsubsection{RNN语言模型与截断BPTT}
+\label{sec:nlp-classical-rnn-bptt}
+
+RNN语言模型把词向量$\bm e_{x_t}\in\mathbb R^{m}$和上一时刻的隐藏状态$\bm h_{t-1}\in\mathbb R^{h}$结合，预测下一个词\scite{nlp-classical-mikolov2010}：
+\begin{equation}
+  \bm h_t=\tanh(\bm W\bm h_{t-1}+\bm U\bm e_{x_t}+\bm b),\qquad
+  p(x_{t+1}\mid x_{1:t})=\operatorname{softmax}(\bm O\bm h_t+\bm c)_{x_{t+1}},
+  \label{eq:nlp-classical-rnn}
+\end{equation}
+其中$\bm W\in\mathbb R^{h\times h}$、$\bm U\in\mathbb R^{h\times m}$、$\bm O\in\mathbb R^{V\times h}$。与NPLM相比，参数量与历史长度无关，第$t$步的状态原则上依赖全部历史；输出层仍是$O(Vh)$，第~\ref{sec:nlp-classical-large-vocab}节的近似同样适用。新的代价在于递推本身：$\bm h_t$必须等$\bm h_{t-1}$算完，同一序列的各时间步无法并行计算，而NPLM各位置的窗口可以同时处理。
+
+语言模型的训练语料是一条极长的词元流，不可能对整条序列做反向传播。常用的做法是\term{截断随时间反向传播}（truncated BPTT）：把语料流切成长度为$L$的连续片段，依次处理；处理下一片段时，隐藏状态的数值从上一片段末尾继承，但梯度在片段边界截断。为了并行，先把语料流平均分成$B$条子流，每条子流内部保持连续，于是每一批是一个$B\times L$的词元矩阵。算法~\ref{alg:nlp-classical-tbptt}列出这一过程。
+
+\begin{algorithm}[RNN语言模型的截断随时间反向传播]
+  \label{alg:nlp-classical-tbptt}
+  \begin{algorithmic}[1]
+    \Require 词元流$x_{1:N}$，子流数$B$，片段长度$L$，学习率$\eta$
+    \Ensure 训练后的参数
+    \State 把词元流切成$B$条等长的连续子流，排成$B\times(N/B)$的矩阵
+    \State 隐藏状态$\bm h\gets\bm 0\in\mathbb R^{B\times h}$
+    \For{每个起点$s=1,1+L,1+2L,\ldots$}
+      \State 输入为第$s$至$s+L-1$列，目标为第$s+1$至$s+L$列
+      \State 从$\bm h$出发前向计算$L$步，累加$B\times L$个位置的交叉熵
+      \State 反向传播，梯度只回传到本片段的起点
+      \State 裁剪梯度范数，按学习率$\eta$更新参数
+      \State $\bm h\gets$本片段末尾的隐藏状态，并切断其梯度
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+这种做法在前向中保留了跨片段的记忆，模型可以利用超过$L$个词元以前的信息；但参数只从$L$步以内的误差中学习如何保存信息，距离超过$L$的依赖无法直接得到梯度。即使在片段之内，简单RNN的梯度也会随距离指数衰减，实际能学到的依赖远短于$L$，这是换用LSTM的主要原因。
+
+\subsubsection{LSTM语言模型与正则化}
+\label{sec:nlp-classical-lstm-regularization}
+
+LSTM用输入门、遗忘门和输出门控制一个记忆单元，记忆以加法方式更新，梯度沿记忆单元传播时不必反复乘以同一个矩阵，远距离依赖更容易学到\scite{hochreiter1997}。LSTM语言模型的结构与式~\eqref{eq:nlp-classical-rnn}相同，只是把$\tanh$递推换成LSTM单元，通常堆叠两到三层。LSTM参数多、容量大，在中小规模语料上很快过拟合，正则化就成了语言模型训练的核心问题。Merity等把一组有效的做法组合成AWD-LSTM\scite{nlp-classical-merity2018}：
+\begin{itemize}
+  \item 普通dropout只作用于非循环连接，即层与层之间和输入输出处。若在隐藏到隐藏的循环连接上每步独立丢弃，噪声会随时间累积，破坏长程记忆\scite{nlp-classical-zaremba2014}。
+  \item 变分dropout：在同一序列的所有时间步共用一个dropout掩码，而不是每步重新抽取，从而可以安全地作用在更多位置\scite{nlp-classical-gal2016}。
+  \item DropConnect：对隐藏到隐藏的权重矩阵本身随机置零，每个批次只抽一次。它正则化了循环连接，又不改变每步的计算方式。
+  \item 嵌入dropout：以一定概率把某个词的整个嵌入向量置零，相当于在该批次中让这个词完全缺席。
+  \item 权重绑定：令输出矩阵与输入嵌入矩阵相同，$\bm O=\bm E$，要求最后一层隐藏宽度等于嵌入维数。参数减少了$Vh$个，输出层也能从输入端获得关于词相似性的信号\scite{nlp-llm-press2017tying}。
+  \item 平均随机梯度：在验证困惑度不再改善时，改为输出训练后期参数的平均值。
+\end{itemize}
+这些做法都只改变训练过程或参数共享，不改变模型的概率形式；它们说明，在固定的数据规模下，语言模型的困惑度很大程度上取决于正则化，而不只是结构。
+
+\subsubsection{字符与子词输入}
+\label{sec:nlp-classical-char-subword}
+
+词级模型的词表是封闭的，新词只能映射为未登录词符号，词形变化丰富的语言词表还会非常大。字符级语言模型直接逐字符预测，没有未登录词，词表只有几百项；代价是序列变长数倍，同样的语义依赖相隔更多步，训练和推断都更慢，长距离依赖也更难学。折中的做法有两种。一种保留词级的预测，但用字符构造输入表示：Kim等用卷积网络扫描一个词的字符向量序列，对每个卷积核做最大池化，再经过高速网络层得到词向量，新词也能获得表示\scite{nlp-classical-kim2016}。另一种是使用子词单位，把高频词保留为整体，低频词切成若干片段，词表规模与序列长度都可控制；BPE、Unigram等子词切分算法在第~\ref{chap:nlp-large-language-models}章讲解。
+
+\section{从静态表示到上下文预训练}
+\label{sec:nlp-classical-contextual-pretraining}
+
+第~\ref{sec:nlp-classical-analogy}节留下的问题是：同一个词在不同上下文中只有一个表示。与此同时，下游任务的标注往往只有几千到几万条，不足以从头学习一个能理解上下文的网络。上下文预训练的思路是，先在大规模无标注文本上训练一个语言模型类的网络，让它为每个位置输出依赖整句的表示，再把这个网络迁移到标注稀少的任务上。这里有四项挑战：怎样得到随上下文变化的表示；预训练目标允许看见哪个方向的上下文；预训练结果以什么方式迁移，是作为固定特征还是整体微调；以及在固定计算下怎样让预训练更充分。
+
+方法谱系如下。ELMo用双向LSTM语言模型得到可组合的上下文特征；GPT用Transformer解码器做自回归预训练，再整体微调；BERT用遮蔽预测实现深度双向的编码器，并配以任务头；RoBERTa、SpanBERT与ELECTRA保持编码器结构，分别从训练配置、遮蔽方式和样本效率改进预训练。GPT与BERT都建立在Transformer之上，这里只需要它的三条性质：每层由多头自注意力和逐位置前馈网络组成，配有残差连接与层归一化；自注意力让每个位置按内容加权读取其他位置的表示；在注意力分数上加因果掩码，就能禁止读取右侧位置。结构细节可参考\BookChapterRef{chap:transformer}{卷五Transformer章}，本节写预训练目标、输入格式、任务头和微调流程。节末的表~\ref{tab:nlp-classical-pretraining-models}对照各模型。
+
+\subsection{基于双向语言模型的上下文表示：ELMo}
+\label{sec:nlp-classical-elmo}
+
+ELMo（embeddings from language models）的出发点是：语言模型的隐藏状态本身就是依赖上下文的词表示\scite{nlp-classical-peters2018}。它的输入层不使用词表，而是用字符卷积网络从每个词的字符构造词向量$\bm x_k$，所以没有未登录词。在此之上，分别训练一个前向和一个后向的$L$层LSTM语言模型：前向模型用$t_1,\ldots,t_{k-1}$预测$t_k$，后向模型用$t_{k+1},\ldots,t_N$预测$t_k$。两个方向共享字符输入层参数$\bm\Theta_x$与softmax层参数$\bm\Theta_s$，各自拥有LSTM参数，联合最大化两个方向的对数似然：
+\[
+  \sum_{k=1}^{N}\Bigl[\log p\bigl(t_k\mid t_{1:k-1};\bm\Theta_x,\overrightarrow{\bm\Theta}_{\mathrm{LSTM}},\bm\Theta_s\bigr)
+  +\log p\bigl(t_k\mid t_{k+1:N};\bm\Theta_x,\overleftarrow{\bm\Theta}_{\mathrm{LSTM}},\bm\Theta_s\bigr)\Bigr].
+\]
+原文的配置是两层LSTM，每层4096个单元并投影到512维，层间有残差连接。
+
+训练完成后，第$k$个词在第$j$层得到表示$\bm h_{k,j}=[\overrightarrow{\bm h}_{k,j};\overleftarrow{\bm h}_{k,j}]$，第0层取字符输入层$\bm x_k$（复制成与上层相同的维数）。用于任务时，ELMo不只取顶层，而是让任务学习一组层权重：
+\begin{equation}
+  \mathrm{ELMo}_k=\gamma\sum_{j=0}^{L}s_j\,\bm h_{k,j},\qquad \bm s=\operatorname{softmax}(\bm a),
+  \label{eq:nlp-classical-elmo}
+\end{equation}
+$\bm a\in\mathbb R^{L+1}$是任务可训练的参数，softmax保证权重非负且和为1，标量$\gamma$调节整体尺度。双向语言模型的参数冻结，$\mathrm{ELMo}_k$与原有词向量拼接成$[\bm x_k;\mathrm{ELMo}_k]$，送入任务模型的输入层，有些任务还在任务模型的输出层再拼接一次。之所以学习层权重，是因为不同层编码的信息不同：原文的分析发现，第一层表示在词性标注上更好，顶层表示在词义消歧上更好，即低层偏重句法、高层偏重语义。
+
+ELMo回答了“表示随上下文变化”的问题，但留下两点。其一，前向与后向模型各自独立，只在输出处拼接；每个方向的每一层内部都只看到一侧的上下文，左右信息没有在深层交互。其二，它只提供特征，每个任务仍需要设计自己的网络结构。BERT回答第一点，GPT回答第二点。
+
+\subsection{基于自回归预训练的迁移：GPT}
+\label{sec:nlp-classical-gpt}
+
+GPT的做法是在任务上微调整个预训练网络，只新增一个线性输出层\scite{radford2018gpt}。预训练阶段，它用12层Transformer解码器（隐藏宽度768，12个注意力头，前馈层宽度3072，上下文长度512个BPE词元）在约七千本未出版书籍构成的语料上做下一词元预测：对词元序列$\mathcal U=(u_1,\ldots,u_n)$，最大化
+\[
+  L_1(\mathcal U)=\sum_i\log p_{\bm\theta}(u_i\mid u_{i-k},\ldots,u_{i-1}),
+\]
+每一层的自注意力加因果掩码，位置$i$只能读取$i$及左侧位置，输入为词元嵌入加可学习的位置嵌入。
+
+微调阶段，给定一个有标注样本$(x^1,\ldots,x^m;y)$，把序列送入预训练网络，取最后一个位置的顶层表示$\bm h^{m}_{L}$，接一个新的线性层：$p(y\mid x^{1:m})=\operatorname{softmax}(\bm h^{m}_{L}\bm W_y)_y$。任务损失为$L_2=\sum\log p(y\mid x^{1:m})$。GPT在微调时还保留语言模型损失作为辅助目标：
+\begin{equation}
+  L_3=L_2+\lambda L_1,
+  \label{eq:nlp-classical-gpt-finetune}
+\end{equation}
+原文取$\lambda=0.5$，报告这一辅助项有助于泛化并加快收敛；消融实验中，较大的数据集从中受益，较小的数据集则没有。微调只需几轮，学习率比预训练小得多。
+
+关键的设计是任务输入变换：不为每个任务设计结构，而是把结构化的输入改写成一条带特殊标记的序列，让同一个网络处理。分类任务写成“开始标记、文本、抽取标记”；文本蕴含把前提和假设用分隔符连接成一条序列；语义相似度没有固有的先后，就把两种顺序分别编码，把两个抽取位置的表示逐元素相加后再接线性层；多项选择题把上下文与每个候选答案分别拼成一条序列，各得一个分数，再在候选之间做softmax。抽取标记所在的最后位置因为因果掩码可以读到全部输入，所以用它的表示做预测。
+
+与ELMo相比，GPT从“提供特征”转为“迁移整个网络”，任务专用的参数只有$\bm W_y$和分隔符嵌入。它的限制来自因果掩码：每个位置只能看到左侧，序列前部的词元表示无法利用后文。对于需要双侧信息的理解任务，例如判断“周五”是日期还是片名、抽取答案的起止位置，这不够直接。仅解码器的自回归结构是第~\ref{chap:nlp-large-language-models}章大语言模型的起点。
+
+\subsection{基于掩码预测的双向编码器：BERT}
+\label{sec:nlp-classical-bert}
+
+要让每一层的表示同时看见左右两侧，就不能继续用下一词元预测作为目标。在没有因果掩码的多层自注意力中，位置$i$在第一层就能读到$x_{i+1}$，若目标仍是“预测下一个词”，答案已经在输入中，模型可以直接抄写，什么也学不到；即使改为预测当前词，第二层起每个位置也能通过其他位置间接读回自身。BERT（bidirectional encoder representations from Transformers）的办法是遮住部分输入，在编码器输出处预测原词，从而训练深度双向的Transformer编码器\scite{devlin2019}。原文给出两种规模：BERT-Base为12层、宽度768、12个头，约1.1亿参数；BERT-Large为24层、宽度1024、16个头，约3.4亿参数。预训练目标、输入格式、任务头和微调流程四项共同构成第~\ref{chap:nlp-text-analysis}章至第~\ref{chap:nlp-classification-matching-organization}章反复使用的“预训练编码器加任务头”基准。
+
+\subsubsection{遮蔽语言模型与句对目标}
+\label{sec:nlp-classical-bert-objectives}
+
+\term{遮蔽语言模型}（masked language model, MLM，也常称掩码语言模型）随机选择输入中15\%的词元位置作为预测对象，记选中集合为$M$。被选中的位置并不全部替换为[MASK]：其中80\%替换为[MASK]，10\%替换为词表中的随机词元，10\%保持原词不变，得到扰动后的输入$\tilde x$。损失只在选中位置计算：
+\begin{equation}
+  L_{\mathrm{MLM}}=-\sum_{i\in M}\log p_{\bm\theta}(x_i\mid\tilde x),\qquad
+  p_{\bm\theta}(\cdot\mid\tilde x)=\operatorname{softmax}\bigl(\bm E\,g(\bm h_i)+\bm b\bigr),
+  \label{eq:nlp-classical-mlm}
+\end{equation}
+其中$\bm h_i$是位置$i$的顶层表示，$g$是一个带GELU与层归一化的变换，$\bm E$是与输入共享的词元嵌入矩阵。混合替换的理由是：微调和使用时输入中不会出现[MASK]，若预训练只在[MASK]处计分，模型只需在看到[MASK]时努力表示，对其他位置可以敷衍；加入随机替换和保留原词后，模型无法知道哪些位置会被考核、哪个词是被换掉的，只能为每个位置都保持良好的上下文表示。随机替换只占全部词元的$15\%\times10\%=1.5\%$，对语言理解的干扰很小。代价是每条序列只有15\%的位置产生训练信号，第~\ref{sec:nlp-classical-electra}节的ELECTRA正是针对这一点。
+
+许多任务需要理解两个句子之间的关系，如问答和自然语言推断。BERT因此加入\term{下一句预测}（next sentence prediction, NSP）：构造句对$(A,B)$时，50\%的$B$是语料中紧随$A$的真实下一句，标为IsNext；50\%是从语料中随机抽取的句子，标为NotNext。用[CLS]位置的顶层表示做二分类。预训练的总损失是$L_{\mathrm{MLM}}$与NSP交叉熵之和。原文在BooksCorpus（约8亿词）与英文维基百科（约25亿词）上训练，批次为256条序列，共100万步，学习率$10^{-4}$，前1万步线性预热后线性衰减；为节省计算，90\%的步数使用长度128的序列，其余使用长度512。
+
+\subsubsection{输入表示与特殊标记}
+\label{sec:nlp-classical-bert-input}
+
+BERT的输入是一条或两条文本。英文模型用WordPiece切成子词，词表约3万项；中文模型基本按字切分。序列以特殊标记[CLS]开头，两段文本之间和末尾各放一个[SEP]。每个位置的输入向量是三种嵌入之和：
+\[
+  \bm e_i=\bm E^{\mathrm{tok}}_{x_i}+\bm E^{\mathrm{seg}}_{s_i}+\bm E^{\mathrm{pos}}_{i},
+\]
+词元嵌入表示是哪个词元，段嵌入$s_i\in\{A,B\}$表示属于第一段还是第二段，位置嵌入是可学习的，最长512个位置。以问答式的句对“改到哪天”与“会议改至周五”为例，表~\ref{tab:nlp-classical-bert-input}列出各位置的三种编号，图~\ref{fig:nlp-classical-bert}画出了它们怎样进入编码器。
+
+\begin{table}[htbp]
+  \centering
+  \setlength{\tabcolsep}{2.4pt}
+  \begin{tabular}{@{}lccccccccccccc@{}}
+    \toprule
+    词元 & [CLS] & 改 & 到 & 哪 & 天 & [SEP] & 会 & 议 & 改 & 至 & 周 & 五 & [SEP]\\
+    段 & A & A & A & A & A & A & B & B & B & B & B & B & B\\
+    位置 & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 & 9 & 10 & 11 & 12\\
+    \bottomrule
+  \end{tabular}
+  \caption{BERT输入的三种编号。第一个[SEP]归入段A；两个“改”使用同一个词元嵌入，但位置和段不同，经过编码器后得到不同的表示。}
+  \label{tab:nlp-classical-bert-input}
+\end{table}
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/01-language-models/tikz/classical-bert-input-heads.tex}
+  \caption{BERT的输入表示与三种任务头。每个位置的词元、段与位置嵌入相加后进入多层双向编码器，各位置得到末层表示$\bm h_i$（$\bm h_{\mathrm C}$为[CLS]位置）。分类头读取$\bm h_{\mathrm C}$；序列标注头为每个字输出标签，这里把“周五”标为时间实体的B、I；跨度头对每个位置分别计算起点和终点得分，选出答案“周五”。三种头是针对不同任务的替代选择，为便于比较画在同一输入上。}
+  \label{fig:nlp-classical-bert}
+\end{figure*}
+
+\subsubsection{分类头、序列标注头与跨度头}
+\label{sec:nlp-classical-bert-heads}
+
+微调时，在编码器顶层表示$\bm h_i\in\mathbb R^{H}$之上接一个很小的任务头，新增参数只有一两个矩阵。三种任务头覆盖了大多数理解任务。
+
+分类头用于整段或句对的分类，如情感分析、自然语言推断。取[CLS]位置的表示$\bm h_{\mathrm C}$，接一个线性层与softmax：$p(c\mid x)=\operatorname{softmax}(\bm W\bm h_{\mathrm C})_c$，$\bm W\in\mathbb R^{C\times H}$，$C$为类别数。[CLS]本身没有词义，它在多层自注意力中读取全句，微调的分类损失推动整个编码器把与标签有关的信息汇集到这个位置。
+
+序列标注头用于命名实体识别等逐词任务，对每个位置独立地接线性层与softmax，输出BIO等标签。英文中一个词可能被切成多个子词，BERT原文只用每个词的第一个子词的表示来预测该词的标签，其余子词不计分；预测时也只读首子词。若需要标签之间的合法转移约束，可以把这些逐位置得分作为发射得分，在其上再接一层第~\ref{sec:nlp-classical-crf}节的线性链CRF。
+
+跨度头用于抽取式问答：问题作为段A，材料作为段B，答案是材料中的一个连续片段。模型学习一个起点向量$\bm S\in\mathbb R^{H}$和一个终点向量$\bm E^{\mathrm{end}}\in\mathbb R^{H}$，每个位置作为起点和终点的概率为
+\begin{equation}
+  p_{\mathrm{start}}(i)=\frac{\exp(\bm S^{\top}\bm h_i)}{\sum_{j}\exp(\bm S^{\top}\bm h_j)},\qquad
+  p_{\mathrm{end}}(i)=\frac{\exp(\bm E^{\mathrm{end}\top}\bm h_i)}{\sum_{j}\exp(\bm E^{\mathrm{end}\top}\bm h_j)}.
+  \label{eq:nlp-classical-span-head}
+\end{equation}
+训练目标是正确起点与正确终点的对数似然之和。预测时，在$i\leq j$且跨度长度不超过上限的约束下，选择$\bm S^{\top}\bm h_i+\bm E^{\mathrm{end}\top}\bm h_j$最大的$(i,j)$。若允许“材料中没有答案”，就把[CLS]位置的跨度得分$\bm S^{\top}\bm h_{\mathrm C}+\bm E^{\mathrm{end}\top}\bm h_{\mathrm C}$当作无答案得分，只有最佳跨度的得分超过它加上一个在开发集上选定的阈值时才输出跨度。
+
+\subsubsection{微调流程}
+\label{sec:nlp-classical-bert-finetuning}
+
+微调的步骤是固定的：加载预训练参数；按任务格式构造输入（单句或句对，见表~\ref{tab:nlp-classical-bert-input}）；随机初始化任务头；然后用任务损失更新全部参数。因为预训练参数已经接近一个好的解，学习率要比预训练小得多，通常先线性预热再线性衰减，训练两到四轮。原文推荐在批次$\{16,32\}$、学习率$\{5,3,2\}\times10^{-5}$、轮数$\{2,3,4\}$中按开发集选择。小数据集上不同随机种子的结果波动较大，常需多次运行。
+
+另一种用法是像ELMo那样，冻结BERT，只把若干层的表示作为特征交给任务模型。这样每个任务不必保存一份完整的模型副本，同一次编码的结果还可以被多个任务复用；代价是编码器不能针对任务调整。原文在CoNLL-2003命名实体识别上比较了两种方式：冻结BERT-Base，把最后四层表示拼接后输入一个随机初始化的两层BiLSTM，开发集F1为96.1；整体微调BERT-Base为96.4\scite{devlin2019}。在这项任务上，冻结表示加任务模型与整体微调只差0.3，特征式用法是可行的替代，不过这一对照只涉及一项任务。
+
+\subsection{编码器预训练的改进}
+\label{sec:nlp-classical-encoder-improvements}
+
+BERT之后的改进分别针对三个问题：训练是否充分；以单个子词为单位的遮蔽是否适合跨度类任务；以及只有15\%的位置计分造成的样本效率低。下面三项工作都基本保持编码器结构不变，分别修改训练配置、遮蔽与辅助目标、预训练任务本身，便于把收益归到所改变的环节。
+
+\begin{table*}[htbp]
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{16mm}>{\raggedright\arraybackslash}p{24mm}>{\raggedright\arraybackslash}p{33mm}>{\raggedright\arraybackslash}p{20mm}>{\raggedright\arraybackslash}p{20mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    模型 & 结构 & 预训练目标 & 上下文方向 & 迁移方式 & 解决的问题与新代价\\
+    \midrule
+    ELMo & 字符CNN＋双向LSTM & 前向与后向语言模型 & 两个单向，顶部拼接 & 冻结，层加权特征 & 表示随上下文变化；方向不交互，仍需任务结构\\
+    GPT & Transformer解码器 & 下一词元预测 & 仅左侧 & 整体微调，输入变换 & 统一迁移整个网络；看不到右侧\\
+    BERT & Transformer编码器 & MLM＋NSP & 深度双向 & 整体微调，任务头 & 每层左右交互；仅15\%位置计分，[MASK]造成输入不一致\\
+    RoBERTa & 同BERT & MLM，动态掩码，无NSP & 深度双向 & 同BERT & 训练充分；更多数据与计算\\
+    SpanBERT & 同BERT & 跨度MLM＋SBO & 深度双向 & 同BERT & 面向跨度任务；单句任务收益有限\\
+    ELECTRA & 生成器＋判别器编码器 & 替换词检测 & 深度双向 & 只微调判别器 & 全部位置计分，样本效率高；需额外训练生成器\\
+    \bottomrule
+  \end{tabularx}
+  \caption{上下文预训练模型的对照。上下文方向指预训练时每个位置的表示能读取哪一侧的输入；迁移方式指下游任务怎样使用预训练参数。}
+  \label{tab:nlp-classical-pretraining-models}
+\end{table*}
+
+\subsubsection{RoBERTa的训练配置}
+\label{sec:nlp-classical-roberta}
+
+RoBERTa（robustly optimized BERT approach）不改结构，而是系统检查BERT的训练选择\scite{liu2019roberta}。改变有四项。第一，动态掩码：原BERT在数据预处理时一次性生成遮蔽位置，每条序列在多轮训练中总是以同样的方式被遮蔽；RoBERTa在每次送入模型时重新采样遮蔽位置，模型接触到更多不同的预测问题。第二，去掉NSP：输入改为从连续的句子中取满512个词元，允许跨越文档边界；原文的对照实验中，去掉NSP后下游结果持平或略有提高。第三，更大的批次、更多数据和更长的训练：批次增加到8000条序列，训练语料从约16GB扩大到约160GB。第四，改用5万项的字节级BPE词表，任何输入都能编码，不再需要未知词符号。在相同结构下，这些改变让模型在多项理解基准上明显超过原BERT，表明原BERT的训练并不充分，提升主要来自训练配置而不是结构。
+
+\subsubsection{SpanBERT跨度遮蔽}
+\label{sec:nlp-classical-spanbert}
+
+抽取式问答和共指消解的输出是跨度，模型需要从跨度的边界推断其整体内容。BERT逐个子词随机遮蔽，一个词被切成几个子词时，遮住一个、留下其余，预测往往很容易；它也不要求模型表示一整段缺失的内容。SpanBERT改为遮蔽连续的跨度\scite{nlp-classical-joshi2020}。跨度长度从几何分布$\ell\sim\mathrm{Geo}(p=0.2)$中抽取并截断到10，平均约3.8个词；起点随机，跨度总是覆盖完整的词，反复抽取直到遮蔽量达到15\%，80/10/10的替换规则在跨度层面执行。
+
+在此之上加\term{跨度边界目标}（span boundary objective, SBO）：对被遮蔽的跨度$(x_s,\ldots,x_e)$，只用它两端外侧的表示$\bm h_{s-1},\bm h_{e+1}$以及目标词的相对位置嵌入$\bm p_{i-s+1}$预测跨度内的每个词：
+\begin{equation}
+  \begin{aligned}
+    \bm y_i&=f\bigl(\bm h_{s-1},\bm h_{e+1},\bm p_{i-s+1}\bigr),\\
+    L(x_i)&=L_{\mathrm{MLM}}(x_i)+L_{\mathrm{SBO}}(x_i)=-\log p(x_i\mid\bm h_i)-\log p(x_i\mid\bm y_i),
+  \end{aligned}
+  \label{eq:nlp-classical-sbo}
+\end{equation}
+$f$是带GELU与层归一化的两层前馈网络。SBO迫使边界位置的表示汇总整个跨度的信息，这正是跨度任务在预测时依赖的东西。SpanBERT同样去掉了NSP，改用单段长文本。它在抽取式问答和共指消解上的收益最明显，在GLUE这类句子级任务上收益较小。
+
+\subsubsection{ELECTRA替换词检测}
+\label{sec:nlp-classical-electra}
+
+MLM每条序列只在15\%的位置计算损失，其余85\%的位置虽然参与前向计算，却不产生训练信号。ELECTRA把预训练任务改为\term{替换词检测}（replaced token detection）：让每个位置都参与判别\scite{nlp-classical-clark2020}。它使用两个编码器。生成器$G$是一个小型MLM，在随机遮蔽的位置上预测词元，并从预测分布中采样一个词填回；判别器$D$读取被填补后的序列$x^{\mathrm{corrupt}}$，对每个位置$t$判断这个词元是原词还是被替换过：$D(x^{\mathrm{corrupt}},t)=\sigma(\bm w^{\top}\bm h^{D}_t)$。若生成器恰好采样到原词，该位置标为“原词”。训练目标为
+\begin{equation}
+  \min_{\bm\theta_G,\bm\theta_D}\ \sum_{x}\Bigl[L_{\mathrm{MLM}}(x;\bm\theta_G)+\lambda\,L_{\mathrm{Disc}}(x;\bm\theta_D)\Bigr],
+  \label{eq:nlp-classical-electra}
+\end{equation}
+$L_{\mathrm{Disc}}$是全部位置上的二分类交叉熵，原文取$\lambda=50$。
+
+这个结构容易被误读为生成对抗网络，但训练方式不同：生成器按最大似然训练，目标是猜对原词，而不是骗过判别器；采样操作不可导，判别器的梯度也不回传给生成器。原文的实验中，生成器取判别器规模的四分之一到二分之一时效果最好；作者推测，过强的生成器会使替换难以识别，判别任务变得过难。两者共享词元嵌入。预训练结束后丢弃生成器，只用判别器微调。由于每个位置都提供训练信号，ELECTRA在同等计算下得到更好的编码器；原文报告，单块GPU训练4天的小模型在GLUE基准上已超过计算量约为它30倍的GPT。表~\ref{tab:nlp-classical-pretraining-models}汇总了本节的模型。
 
 \section{本章小结}
 \label{sec:nlp-classical-summary}
 
-统计语言建模把有限语料转成可用于新输入的规律，依靠的是明确的约束与共享。概率对象
-决定要解释什么，依赖结构决定保留什么信息，参数化决定哪些事件互相借用证据，估计准则
-再决定如何从观测得到参数。局部链、递归树与交换性混合并不构成通用能力的排名，表格、
-特征和连续表示也不是与这些结构平行的任务分类。
+回到开篇的问题：为什么一个从未出现过的句子仍应得到合理的概率，怎样从有限语料中得到它？本章的各种方法从不同方向回答了这个问题。链式分解把整句概率写成逐位置条件概率，困惑度给出比较模型的共同尺度。平滑在事件之间重新分配概率质量，Kneser--Ney进一步要求低阶分布衡量一个词能接在多少种历史之后；词类和连续表示则通过共享参数，让相似的词互相借用证据。隐结构模型用动态规划在指数级多的结构上求和或求最大：HMM与CRF在链上，PCFG在树上，二者的前向后向与inside--outside一一对应；EM在只有观测时估计这些模型的参数。判别式序列模型用全局归一化在使用丰富特征的同时保持整条序列的一致，消除了局部归一化的标注偏置。神经语言模型的代价集中在大词表的输出层，层次softmax、NCE与负采样分别改变分解方式、训练问题和目标本身；词向量以低秩分解的方式压缩共现统计，却无法区分一词多义。上下文预训练让每个位置的表示随整句变化，并把无标注文本中学到的规律迁移到标注稀少的任务：ELMo提供特征，GPT迁移整个自回归网络，BERT以遮蔽预测训练双向编码器并配以任务头。
 
-我们已经能够解释为什么未见句子仍可能获得非零概率，也能指出有限历史、隐变量解释与
-稀疏估计留下的局限。下一章保持概率与学习目标的明确含义，把历史交互改为可学习的
-上下文计算，并在更广泛语料上训练共享参数。预训练改变规模与信息组织，仍须回答本章
-建立的建模问题。
+这些方法并不分成“统计”与“神经”两个互斥的类别。它们都在四项决定上作出选择：概率描述什么对象，依赖怎样分解，局部规律用表格、特征还是连续函数参数化，以及用什么准则从数据估计参数。仍未解决的问题也很清楚：BERT式编码器适合理解与抽取，却不能直接生成文本；GPT式解码器能生成，但第一代模型的规模、数据和上下文长度都很有限。第~\ref{chap:nlp-large-language-models}章沿仅解码器自回归预训练这条线继续：以GPT为起点，讨论当语料、模型与计算同时扩大时，怎样准备和配比语料、怎样逐层核算解码器的计算与参数、怎样处理长上下文和稀疏专家、怎样构造预训练目标并选择规模与优化日程。本章的遮蔽语言模型在那里作为去噪目标之一出现，与自回归、跨度损坏和掩码扩散等目标放在统一的框架下比较。
 
 \paragraph{延展阅读}
-连续表示语言模型、条件随机场和潜在狄利克雷分配分别展开参数共享、条件结构预测与
-交换性混合。对照阅读时，可以固定随机对象、分解假设和估计准则，比较三类模型共享
-证据的方式及其不能表达的依赖，而不把“统计模型”和“神经模型”视为互斥任务类别
-\scite{nlp-classical-bengio2003,pgm-energy-models-sutton2012,blei2003}
+Chen与Goodman对平滑方法的实证研究给出了各方法在不同语料和阶数下的系统比较；Rabiner的教程完整推导了HMM的三个基本问题；Sutton与McCallum的条件随机场教程从图模型角度统一了HMM、MEMM与CRF。Bengio等的神经概率语言模型、Mikolov等的word2vec和Levy与Goldberg的分析可连起来读，比较预测式与计数式表示学习的关系；Peters等的ELMo与Devlin等的BERT则展示了上下文预训练的两种迁移方式。阅读时宜固定随机对象、分解假设与估计准则，比较各方法解决的稀疏问题及引入的新代价\scite{nlp-classical-chen1999,nlp-classical-rabiner1989,pgm-energy-models-sutton2012,nlp-classical-bengio2003,nlp-classical-mikolov2013distributed,nlp-classical-levy2014,nlp-classical-peters2018,devlin2019}

@@ -1,0 +1,98 @@
+% 第九卷 3.2.2 节：前置 RMSNorm 的仅解码器 Transformer 层（GQA 注意力 + SwiGLU 前馈）。
+% 主链路自上而下；右侧灰线为两条残差旁路；左侧灰字为单条序列（省略批维）上的张量形状。
+% 蓝色：注意力子层；黄色：前馈子层；白底灰框：归一化与逐元素运算。
+\begin{tikzpicture}[
+  x=1mm,y=1mm,
+  every node/.style={font=\figurefont\footnotesize,text=FigureInk},
+  op/.style={rectangle,rounded corners=1.8pt,draw=FigureStroke,line width=0.6pt,fill=white,
+    minimum height=6.5mm,inner sep=1.2mm,align=center},
+  attnop/.style={op,draw=FigureBlue,fill=FigureBlueFill},
+  ffnop/.style={op,draw=FigureYellow,fill=FigureYellowFill},
+  dot/.style={circle,draw=FigureStroke,line width=0.6pt,fill=white,inner sep=0pt,minimum size=4.6mm},
+  flow/.style={-{Stealth[length=1.8mm,width=1.3mm]},draw=FigureStroke,line width=0.7pt},
+  skip/.style={-{Stealth[length=1.8mm,width=1.3mm]},draw=FigureMuted,line width=0.7pt,rounded corners=1.8pt},
+  dim/.style={font=\figurefont\scriptsize,text=FigureMuted,inner sep=0.8pt},
+  panel/.style={rounded corners=2.5pt,line width=0.5pt},
+  ptitle/.style={font=\figurefont\scriptsize\bfseries,anchor=north west}
+]
+  % 子层分组背景。
+  \fill[panel,FigureBlueFill!45] (-6,-10) rectangle (76,-93);
+  \fill[panel,FigureYellowFill!55] (-6,-97) rectangle (76,-166);
+  \node[ptitle,text=FigureBlue] at (-5,-11) {注意力子层};
+  \node[ptitle,text=FigureYellow!80!black] at (-5,-98) {前馈子层};
+
+  % 输入与第一个归一化。
+  \node[op,draw=none,fill=none] (in) at (35,0) {层输入$\bm H^{(\ell)}$};
+  \node[op,minimum width=24mm] (n1) at (35,-18) {RMSNorm};
+  \draw[flow] (in) -- (n1);
+  \node[dim,anchor=east] at (33,-8) {$T\times d$};
+
+  % 三个投影。
+  \node[attnop,minimum width=13mm] (wq) at (15,-32) {$\bm W_Q$};
+  \node[attnop,minimum width=13mm] (wk) at (35,-32) {$\bm W_K$};
+  \node[attnop,minimum width=13mm] (wv) at (55,-32) {$\bm W_V$};
+  \coordinate (split) at (35,-25);
+  \draw[draw=FigureStroke,line width=0.7pt] (n1.south) -- (split);
+  \draw[flow] (split) -| (wq.north);
+  \draw[flow] (split) -- (wk.north);
+  \draw[flow] (split) -| (wv.north);
+
+  % RoPE 只作用于查询和键。
+  \node[op,minimum width=13mm] (rq) at (15,-46) {RoPE};
+  \node[op,minimum width=13mm] (rk) at (35,-46) {RoPE};
+  \draw[flow] (wq) -- (rq);
+  \draw[flow] (wk) -- (rk);
+  \node[dim,anchor=east] at (13.5,-39) {$T\times H\times d_h$};
+  \node[dim,anchor=west] at (36.5,-39) {$T\times H_{kv}\times d_h$};
+  \node[dim,anchor=west] at (56.5,-46) {$T\times H_{kv}\times d_h$};
+
+  % 因果注意力与输出投影。
+  \node[attnop,minimum width=62mm] (att) at (35,-62)
+    {每头因果注意力\quad$\operatorname{softmax}\bigl(\bm Q_a\bm K_{g(a)}^{\top}/\sqrt{d_h}+\bm M\bigr)\bm V_{g(a)}$};
+  \draw[flow] (rq) -- (rq |- att.north);
+  \draw[flow] (rk) -- (rk |- att.north);
+  \draw[flow] (wv) -- (wv |- att.north);
+  \node[dim,anchor=north east] at (att.south east) {得分：每头$T\times T$};
+  \node[attnop,minimum width=40mm] (wo) at (35,-77) {拼接各头，乘$\bm W_O$};
+  \draw[flow] (att) -- (wo);
+  \node[dim,anchor=east] at (33,-70.5) {$T\times Hd_h$};
+  \node[dot] (a1) at (35,-88) {$+$};
+  \draw[flow] (wo) -- (a1);
+
+  % 第一条残差旁路。
+  \coordinate (r1) at (35,-7);
+  \draw[skip] (r1) -- (72,-7) -- (72,-88) -- (a1.east);
+
+  % 前馈子层。
+  \node[op,minimum width=24mm] (n2) at (35,-105) {RMSNorm};
+  \draw[flow] (a1) -- (n2);
+  \node[dim,anchor=east] at (33,-94.5) {$T\times d$};
+  \node[ffnop,minimum width=13mm] (w1) at (22,-119) {$\bm W_1$};
+  \node[ffnop,minimum width=13mm] (w3) at (48,-119) {$\bm W_3$};
+  \coordinate (split2) at (35,-112);
+  \draw[draw=FigureStroke,line width=0.7pt] (n2.south) -- (split2);
+  \draw[flow] (split2) -| (w1.north);
+  \draw[flow] (split2) -| (w3.north);
+  \node[op,minimum width=13mm] (silu) at (22,-132) {SiLU};
+  \draw[flow] (w1) -- (silu);
+  \node[dim,anchor=east] at (20.5,-125.5) {$T\times d_{\mathrm{ff}}$};
+  \node[dot] (m) at (35,-142) {$\odot$};
+  \draw[flow] (silu) |- (m.west);
+  \draw[flow] (w3) |- (m.east);
+  \node[dim,anchor=west] at (49.5,-130) {$T\times d_{\mathrm{ff}}$};
+  \node[ffnop,minimum width=13mm] (w2) at (35,-153) {$\bm W_2$};
+  \draw[flow] (m) -- (w2);
+  \node[dot] (a2) at (35,-162) {$+$};
+  \draw[flow] (w2) -- (a2);
+
+  % 第二条残差旁路。
+  \coordinate (r2) at (35,-94.5);
+  \draw[skip] (r2) -- (72,-94.5) -- (72,-162) -- (a2.east);
+
+  % 输出。
+  \node[op,draw=none,fill=none] (out) at (35,-176) {层输出$\bm H^{(\ell+1)}$};
+  \draw[flow] (a2) -- (out);
+  \node[dim,anchor=east] at (33,-169.5) {$T\times d$};
+  \node[dim,anchor=west,text=FigureMuted] at (73,-50) {残差};
+  \node[dim,anchor=west,text=FigureMuted] at (73,-128) {残差};
+\end{tikzpicture}
