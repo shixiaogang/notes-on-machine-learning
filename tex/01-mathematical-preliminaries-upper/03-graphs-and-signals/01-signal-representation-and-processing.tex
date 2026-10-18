@@ -24,6 +24,12 @@
 状态更新和输出读取规则，才能确定输入输出映射。相关工具可参考
 \BookChapterRef{chap:dynamical-systems-and-state-estimation}{卷2《数学准备：概率、因果与决策》第4章“动力系统”}。
 
+规则位置还可以有两个空间方向或兼有时间方向。相应的频率是向量，
+而局部窗口、反射边界与分辨率改变会选择不同的坐标。
+我们从一维变换推广到网格，再用余弦、短时频谱和多尺度分解分别处理边界、定位与细节。
+运算部分同时说明网格差分、有限精度及局部集合的非线性变换，
+采样部分最后检验这些表示或运算能否消除观测歧义。
+
 \section{信号的对象与表示}
 \label{sec:signal-objects-structure}
 
@@ -265,6 +271,9 @@ $x_S[k]=x[k]\mathbb I_S(k)$，按第~\ref{chap:linear-algebra}章的欧氏范数
 频率$\omega$区分振荡快慢，系数的相角记录时间原点变化。
 这给出选择频率坐标的动机；具体用有限和、无穷级数还是积分，
 仍由时间索引及周期条件决定。以下离散公式以$n$记时间位置、$k$记频率格。
+四类一维表示建立后，我们再逐轴构造多维频率；
+反射边界导出实余弦坐标，滑动窗口则给每段记录保留局部频率。
+这三种扩展分别改变位置维数、边界和观察范围，仍沿用相同的正交与有限和推理。
 
 \subsubsection{有限离散信号的傅里叶表示}
 
@@ -409,7 +418,8 @@ $e^{-\mathrm i2\pi k\tau/T}c_k$，幅相的作用与有限情形相同。
 逐点重构需增加规则性。例如在一个周期内分段$C^1$、只有有限个跳跃点且单侧极限
 存在时，傅里叶级数在连续点趋于$f(t)$，在跳跃点趋于左右极限平均。
 这是带条件的结论；不能把均方收敛与逐点或一致收敛互换，
-这些收敛性质的成立条件可回查第~\ref{chap:mathematical-analysis}章。
+逐点收敛与一致收敛的区别见第~\ref{chap:continuous-functions}章；
+均方误差采用的积分尺度见第~\ref{chap:measurable-functions}章。
 
 取周期$2\pi$的方波：$0<t<\pi$时为$1$，$-\pi<t<0$时为$-1$。
 平均值$c_0=0$；对$k\neq0$直接积分，
@@ -528,13 +538,193 @@ $X(e^{\mathrm i\omega})=1+2e^{-\mathrm i\omega}+e^{-2\mathrm i\omega}$，
   \label{tab:reader-fourier-objects}
 \end{table*}
 
+\subsubsection{多维信号的傅里叶表示}
+\label{sec:signal-multidimensional-fourier}
+
+若把图像直接当成一条首尾相接的记录，就会混同两个平移：
+向右移动一格与向下移动一格是不同操作。我们要为这两种平移同时选择特征模式。方法是把一维复指数相乘，
+由两个频率分量共同记录振荡方向；逆变换与能量关系则分别使用两次单位根正交性。
+
+\paragraph{规则网格上的频率坐标}
+设$N_1,N_2$为正整数，$x[n_1,n_2]$定义在$0\leq n_1<N_1$、$0\leq n_2<N_2$。
+两个坐标分别循环延拓，记$P=N_1N_2$，定义
+\begin{equation}
+ \begin{aligned}
+ X[k_1,k_2]
+ &=\sum_{n_1=0}^{N_1-1}\sum_{n_2=0}^{N_2-1}
+ x[n_1,n_2]\\
+ &\qquad\cdot e^{-2\pi\mathrm i(k_1n_1/N_1+k_2n_2/N_2)},\\
+ x[n_1,n_2]
+ &=\frac1P\sum_{k_1=0}^{N_1-1}\sum_{k_2=0}^{N_2-1}
+ X[k_1,k_2]\\
+ &\qquad\cdot e^{2\pi\mathrm i(k_1n_1/N_1+k_2n_2/N_2)}.
+ \end{aligned}
+ \label{eq:signal-multidimensional-dft}
+\end{equation}
+把第一式代入第二式，每个坐标的单位根之和分别消去不相同的位置；
+只有两个坐标都相同时留下因子$N_1N_2$，因此恢复原值。
+同样的正交关系给出
+$\sum_{\bm n}|x[\bm n]|^2=P^{-1}\sum_{\bm k}|X[\bm k]|^2$。
+取$N_1=N_2=2$及
+$\bm x=\begin{bmatrix}1&2\\3&4\end{bmatrix}$，
+可算得$\bm X=\begin{bmatrix}10&-2\\-4&0\end{bmatrix}$；
+两侧能量分别为$30$与$(100+4+16)/4=30$。
+
+双重有限和可以先沿$n_2$求和，再沿$n_1$求和。
+所以逐行再逐列作一维DFT就是同一变换；使用FFT时，代价为
+$O(P(\log N_1+\log N_2))$，另需容纳中间数组。
+这也说明一般$d$维网格为何使用各轴复指数的乘积，而不是另造一套一维编号。
+
+\paragraph{方向、平移与实值对称}
+模式$e^{2\pi\mathrm i(un_1+vn_2)}$在与$(u,v)$垂直的方向上相位不变，
+故频率向量指向条纹的法向，模长表示沿法向的每单位位置振荡次数。
+这与条纹延伸的方向不同。整数网格上的频率按每个分量模$1$辨认，
+不能把任意大的频率模长都解释为更快的可分辨振荡。
+循环平移$\bm r=(r_1,r_2)$使频率系数乘上
+$e^{-2\pi\mathrm i(k_1r_1/N_1+k_2r_2/N_2)}$；
+实值输入满足
+$X[(-k_1)\bmod N_1,(-k_2)\bmod N_2]=\overline{X[k_1,k_2]}$。
+两式分别由位置换元与取共轭得到，幅度、相位和自共轭格点的含义沿用一维结论。
+乘$(-1)^{n_1+n_2}$在两个边长均为偶数时将频谱各平移半个周期；
+奇数边长时它不是整数频率格上的精确半周置换。
+
+\paragraph{连续坐标改变下的频谱}
+对$f\in L^1(\mathbb R^d)$，令
+$F(\bm\Omega)=\int_{\mathbb R^d}f(\bm t)e^{-\mathrm i\bm\Omega^\top\bm t}\,
+\mathrm d\bm t$。这是前述连续变换的多维版本，绝对可积保证积分存在。
+若$F$也绝对可积，系数为$(2\pi)^{-d}$的逆积分几乎处处恢复$f$，并给出连续代表元；
+$L^2$延拓下的能量关系使用同一系数。
+现在改变坐标而不改变函数的取值规则。对可逆实矩阵$\bm A$及向量$\bm b$，
+令$g(\bm t)=f(\bm A\bm t-\bm b)$。
+换元$\bm u=\bm A\bm t-\bm b$得到
+\begin{equation}
+ G(\bm\Omega)=|\det\bm A|^{-1}
+ e^{-\mathrm i\bm\Omega^\top\bm A^{-1}\bm b}
+ F(\bm A^{-\top}\bm\Omega).
+ \label{eq:signal-fourier-coordinate-change}
+\end{equation}
+行列式来自体积改变，逆转置来自相位的线性配对。平移、旋转和尺度变换由此统一：
+$g(\bm t)=f(\bm t/a)$、$a>0$使对象扩大$a$倍，
+其频谱为$a^dF(a\bm\Omega)$，频率范围缩小；
+$f(a\bm t)$则给出$a^{-d}F(\bm\Omega/a)$。
+连续旋转的公式是精确恒等式，有限像素网格上任意角度旋转还涉及插值与边界，
+不能把重采样误差藏入该恒等式。
+
+\subsubsection{反射边界下的余弦表示}
+\label{sec:signal-cosine-representation}
+
+有限记录首尾不接近时，周期延拓会在连接处引入额外跳变。
+若问题适合边界反射，可以先镜像记录，再用已有的复指数坐标。
+这里要弄清镜像位置怎样决定相位，怎样归一化才保持能量，
+以及整数近似的尺度为何必须与逆变换一起处理。
+
+\paragraph{镜像延拓与余弦系数}
+对实记录$x[0],\ldots,x[N-1]$，构造长度$2N$的序列
+$y[n]=x[n]$（$0\leq n<N$）、
+$y[2N-1-n]=x[n]$。
+这是绕半整数边界的镜像，端点重复；它与前述不重复端点的反射约定不同。
+把两份相同读数在$2N$点DFT中配对，有
+\[
+ Y[k]=2e^{\mathrm i\pi k/(2N)}
+ \sum_{n=0}^{N-1}x[n]\cos\frac{\pi k(n+1/2)}N .
+\]
+去掉已知相位后得到实系数。\term{第二类离散余弦变换}
+（type-II discrete cosine transform, DCT-II）采用正交归一形式
+\begin{equation}
+ \begin{aligned}
+ c_k&=\alpha_k\sum_{n=0}^{N-1}x[n]
+ \cos\frac{\pi k(n+1/2)}N,\\
+ \alpha_0&=N^{-1/2},\qquad \alpha_k=(2/N)^{1/2}\ (k>0).
+ \end{aligned}
+ \label{eq:signal-dct-two}
+\end{equation}
+设矩阵$\bm C$的第$(k,n)$项就是式中的余弦权重。
+积化和差及有限几何和给出：两条不同余弦行的内积为零，
+常数行的平方和为$N$，其余行的平方和为$N/2$。
+具体地，交叉项化成
+$\sum_{n=0}^{N-1}\cos(\pi r(n+1/2)/N)$；
+对$1\leq r<2N$该和为$\sin(\pi r)/(2\sin(\pi r/(2N)))=0$。
+因此$\bm C\bm C^\top=\bm I$，逆变换是$\bm x=\bm C^\top\bm c$，
+且$\|\bm x\|_2^2=\|\bm c\|_2^2$。
+$N=2$、$\bm x=(1,3)^\top$给出$\bm c=(2\sqrt2,-\sqrt2)^\top$；
+第一项读取平均水平，第二项读取差异，平方和仍为$10$。
+
+\paragraph{二维表示与整数近似}
+矩形数组的二维变换为$\bm Y=\bm C_{N_1}\bm X\bm C_{N_2}^\top$，
+逆变换为$\bm X=\bm C_{N_1}^\top\bm Y\bm C_{N_2}$，Frobenius范数保持不变。
+保留部分系数时，重建误差平方恰是舍弃系数的平方和。
+常数数组只留下常数系数；缓变数组常可把较多能量放在低阶系数，
+但任意输入都能取成某条高阶基向量，因而不存在无条件的低频能量集中保证。
+
+若用小整数矩阵$\bm T$近似这些余弦行，必须重新检查$\bm T\bm T^\top$。
+当它等于正对角矩阵$\bm D$时，
+$\bm D^{-1/2}\bm T$才正交，
+而未归一化读数$\bm y=\bm T\bm x$的精确逆为
+$\bm x=\bm T^\top\bm D^{-1}\bm y$。
+例如$\bm T=\begin{bmatrix}1&1\\1&-1\end{bmatrix}$满足$\bm D=2\bm I$，
+逆式含$1/2$。逐行缩放可并入后续量化步长，却不能在解码时丢掉。
+若行之间仍有非零内积，除以行长不能使它们正交；
+取整与溢出也会另添误差，整数运算本身不保证有损编码的逐位可逆。
+
+\subsubsection{局部片段的时频表示}
+\label{sec:signal-local-frequency}
+
+整段频谱说明有哪些振荡，却不能指出某个振荡在哪个时刻出现。
+要同时保留位置与频率，我们在滑动片段上使用同一DFT。
+困难是片段边界会改变频谱，缩短窗口又会改变频率格与主瓣宽度；
+下面先固定分帧公式，再从有限和看泄漏，最后说明频率读数怎样合并成新的坐标。
+
+\paragraph{窗口、帧移与频率泄漏}
+给定长度$N$的实窗口$w[n]$和正整数帧移$H$，
+\term{短时傅里叶变换}（short-time Fourier transform, STFT）为
+\begin{equation}
+ S[m,k]=\sum_{n=0}^{N-1}x[mH+n]w[n]e^{-2\pi\mathrm i kn/N}.
+ \label{eq:signal-stft}
+\end{equation}
+有限记录须另给补边或舍弃不完整帧的规则。
+帧$m$的位置由$mH$确定；若采样率为$f_s$，窗口时长为$N/f_s$，
+DFT格点间隔为$f_s/N$。这些格点间距不自动等于分辨两个邻近分量的能力，
+后者还取决于窗口主瓣宽度及分量幅度。
+
+设某帧未加窗的$N$点DFT为$X_m$、窗口DFT为$W$。
+代入逆变换并交换有限和可得
+$S[m,k]=N^{-1}\sum_\ell X_m[\ell]W[(k-\ell)\bmod N]$。
+时间相乘变成频率循环卷积，窗口会把一个频率的贡献铺到附近。
+即使矩形窗口在窗口内恒为一，截取的整轴复指数
+$e^{\mathrm i\omega_0 n}$若不落在DFT格点上，也给出
+\[
+ S[k]=e^{\mathrm i(N-1)\delta/2}
+ \frac{\sin(N\delta/2)}{\sin(\delta/2)},\qquad
+ \delta=\omega_0-2\pi k/N,
+\]
+分母为零时按连续极限取$N$。
+一个频率在多个格点出现非零读数，称为\term{频谱泄漏}
+（spectral leakage）。例如$N=4$、$\omega_0=\pi/4$时，
+$k=0,1$的模长都为$1/\sin(\pi/8)$，不能只把最大格点当作原始单频。
+渐消窗口可压低远处旁瓣，通常也会扩大主瓣；
+补零只把同一窗口的频率曲线采得更密，不能补回被截掉的时间信息。
+
+\paragraph{功率读数与频带汇总}
+谱图常显示$|S[m,k]|$或$|S[m,k]|^2$，必须说明使用哪一个及归一化。
+实信号每帧有共轭对称，保留$0\leq k\leq\lfloor N/2\rfloor$足以表达该帧；
+计算全谱能量时，非自共轭格点的贡献仍须成对计入。
+给定非负权重$B_{b,k}$，频带读数可写成
+$E[m,b]=\sum_k B_{b,k}|S[m,k]|^2$。
+对功率数组而言这是线性加权，对原信号则不是线性映射。
+例如\term{梅尔频率}（mel frequency）常用
+$\mu(f)=2595\log_{10}(1+f/700)$，在此坐标上等距放置三角形权重；
+它是一种频率刻度与权重设计，不改变DFT定理。
+再取$\log(E+\varepsilon)$需给出$\varepsilon>0$，
+并引入进一步的非线性。仅保存功率或频带和一般不能恢复每帧相位。
+
 \subsection{有限信号的多项式表示}
 \label{sec:signal-analysis-polynomial-arithmetic}
 
 对于有限序列，我们还可以用多项式的幂次记录位置，用系数记录各位置的读数。
 这种“把数组看成多项式”的做法初看只是记号游戏，但它提供了第三种坐标：
-一旦数组被写成多项式，第5章里关于多项式乘法、求值和取余的现成结论就可以直接套用，
-而“逐位置加权求和”恰好就是多项式乘法中合并同类项。
+把数组写成多项式，承接了第~\ref{chap:linear-algebra-and-matrix-analysis}章
+把多项式视为向量的做法；本节再建立求值、插值和取余的恢复关系，
+而“逐位置加权求和”对应多项式乘法中合并同类项。
 由此得到的多项式能够换成点值或余数坐标，不过恢复系数所需的信息量取决于次数界
 和选取的坐标。这里先证明什么时候可以恢复，卷积计算中再利用这些表示减少乘法。
 
@@ -806,6 +996,9 @@ $\sum_k\bm x[k]^*\bm W\bm z[k]$，其中$*$表示共轭转置。
 以及权重随输入或时刻改变、因而不满足这两条性质的映射。
 模板相关虽然形式上接近卷积，却是把一条信号与不同局部片段比较，
 因此单独讨论。每项运算都需要保留前一节约定的边界条件。
+局部差分把卷积权重与导数近似联系起来，多尺度映射把平均和细节分开保存；
+量化再限制可存储的幅度，集合形态映射则将加权求和改成邻域中的存在与全部判断。
+后面分别检查其可逆性、误差或序关系，避免把所有局部操作都当成线性滤波。
 
 \subsection{信号的平移与反转}
 
@@ -1211,6 +1404,23 @@ $\bm C_h=\bm F^{-1}\operatorname{diag}(\widehat{\bm h})\bm F$。
 因为所有非零输出索引此时都小于$N$，不会回绕。
 $N\geq\max(m,r)$只保证装下输入，不保证装下输出。
 
+二维循环卷积按两个坐标分别取模，使用
+式~\eqref{eq:signal-multidimensional-dft}，同样的有限换元给出
+$\mathcal F(x*_{\mathrm{circ}}h)=X\odot H$。
+输入支持为$W\times H_0$、核支持为$m\times r$且各从原点开始时，
+线性输出支持至多为$(W+m-1)\times(H_0+r-1)$。
+所以逐轴补零条件是$N_1\geq W+m-1$、$N_2\geq H_0+r-1$，
+不是只让总像素数大于两个输入的总大小。
+若$\bm F$为未归一化的网格DFT矩阵、$P=N_1N_2$，
+则$\bm Q=\bm F/\sqrt P$酉，循环卷积矩阵满足
+\begin{equation}
+ \bm C_h=\bm Q^*\operatorname{diag}(\bm F\bm h)\bm Q.
+ \label{eq:signal-multidimensional-circulant}
+\end{equation}
+因为每个网格复指数同时是各轴循环平移的特征向量，
+核的加权平移之和就在同一基下逐元素相乘。
+对角元是未归一化的$\bm F\bm h$，不能误换成$\bm Q\bm h$而漏掉$\sqrt P$。
+
 整轴频率响应改用DTFT。若$h\in\ell_1$或具有有限支撑，
 即使复指数$x[n]=e^{\mathrm i\omega n}$自身不在$\ell_1$中，仍有绝对收敛的和
 \[
@@ -1228,6 +1438,9 @@ $N\geq\max(m,r)$只保证装下输入，不保证装下输出。
 $Y(e^{\mathrm i\omega})=X(e^{\mathrm i\omega})H(e^{\mathrm i\omega})$。
 同理，连续$L^1$卷积的傅里叶变换为$F(\Omega)G(\Omega)$，
 其积分换序由前面的绝对积分界保证。
+多维$\ell_1(\mathbb Z^d)$与$L^1(\mathbb R^d)$仍使用相同换元：
+绝对和或积分界使各轴换序合法，所以也分别得到$Y=XH$。
+这里扩大的是位置维数，可积条件没有因此消失。
 
 贯穿核的响应为$H(e^{\mathrm i\omega})=1-e^{-\mathrm i\omega}$，
 模长为$2|\sin(\omega/2)|$。在主频率区间$|\omega|\leq\pi$内，
@@ -1293,6 +1506,25 @@ $y[n]=a[n](x[n]+\tfrac12x[n-1])$。
 相反，事先给定$h[0]=0$、$h[r]=2^{-(r-1)}$（$r\geq1$）及负索引为零，
 就定义了一个有衰减记忆的固定卷积核。对零延拓$x=(1,2,1)$，
 从时刻$0$起的前四项输出为$(0,1,5/2,9/4)$，每次使用相同的滞后权重。
+
+\paragraph{指数衰减的历史汇总}
+一个常用的因果汇总是$y[n]=\alpha x[n]+(1-\alpha)y[n-1]$，
+其中$0<\alpha\leq1$且初值$y[-1]$已经给定。
+逐次代入得到
+\[
+ y[n]=(1-\alpha)^{n+1}y[-1]
+ +\alpha\sum_{r=0}^n(1-\alpha)^r x[n-r].
+\]
+自由项和输入项因而分开；零初值对应固定卷积核
+$h[r]=\alpha(1-\alpha)^r$（$r\geq0$），其绝对和为$1$。
+频率响应是几何级数
+$H(e^{\mathrm i\omega})=\alpha/(1-(1-\alpha)e^{-\mathrm i\omega})$，
+恒定输入的零频增益为$1$。
+初值和输入都在同一区间时，递推是凸组合，输出不会越出该区间。
+从零初值接收单位阶跃时，输出为$1-(1-\alpha)^{n+1}$：
+较小$\alpha$给过去读数更长的记忆，也使阶跃响应更慢。
+这是确定性的\term{指数平滑}（exponential smoothing），
+不需要把读数先解释成随机噪声；非零初值下的整段映射仍含自由项。
 
 这些例子通过给定核计算输入输出。内部状态演化也能产生固定核与两时刻核，
 但构造时需要区分初始状态的自由响应、当前输入的直接项和输入驱动项。
@@ -1364,6 +1596,25 @@ $\sum_r\sum_c x_c[n+r]\overline{h_c[r]}$，
 许多神经网络库把不反转实核的相关称为“卷积”，训练参数可适应该约定；
 手算、复用核或推导伴随算子时，仍须明确反转、共轭、延拓及输出范围。
 
+\paragraph{循环相关的频域计算}
+若两条长度$N$的序列按周期延拓，
+令$g[n]=\sum_{r=0}^{N-1}x[(n+r)\bmod N]\overline{h[r]}$。
+在$g$的DFT中令$a=(n+r)\bmod N$，便有
+\[
+ G[k]=\sum_a x[a]e^{-2\pi\mathrm i ka/N}
+       \sum_r\overline{h[r]}e^{2\pi\mathrm i kr/N}
+     =X[k]\overline{H[k]} .
+\]
+这就是本章方向约定下的\term{相关定理}（correlation theorem）。
+相应地$g=\operatorname{IDFT}(X\odot\overline H)$，
+共轭在模板一侧。把相关次序颠倒会使相应的共轭与位移方向改变。
+二维情形在每个坐标重复同一换元；
+零延拓线性相关则先补足支持，再把负位移输出重新编号。
+例如$x=h=(1,0)$时循环相关为$(1,0)$，
+DFT模平方为$(1,1)$，逆变换确实恢复它。
+本段只用有限循环和，不把一般$\ell_2$相关的存在性
+误当成其普通DTFT级数逐点收敛的保证。
+
 图~\ref{fig:vol1-add-signal-correlation-direction}换用非对称实模板$(1,2)$，
 把同一片段中的两个读数固定下来，只改变模板的方向。
 相关使用原方向模板，卷积在对应位置使用反向权重，因此两次点积可以给出不同结果。
@@ -1377,12 +1628,338 @@ $\sum_r\sum_c x_c[n+r]\overline{h_c[r]}$，
   \label{fig:vol1-add-signal-correlation-direction}
 \end{figure}
 
+\subsection{网格变化的差分计算}
+\label{sec:signal-grid-differences}
+
+卷积既能平均邻域，也能比较邻域之间的差。我们现在关心离散读数怎样描述连续对象的
+局部变化。主要困难是网格步长、核方向与边界会改变差分值，而突出变化也会突出高频误差。
+下面先用Taylor展开确定差分的含义，再用频率响应解释它保留什么，最后把平滑与差分组合。
+
+\subsubsection{一阶变化与二阶变化的近似}
+令$x[\bm n]=f(h\bm n)$，$h>0$为各轴相同的网格步长，
+$\bm e_j$为第$j$个坐标方向。定义
+\begin{equation}
+ \begin{aligned}
+ D_j^+x[\bm n]&=\frac{x[\bm n+\bm e_j]-x[\bm n]}h,\\
+ D_j^cx[\bm n]&=\frac{x[\bm n+\bm e_j]-x[\bm n-\bm e_j]}{2h},\\
+ \Delta_hx[\bm n]&=\frac1{h^2}\sum_{j=1}^d
+ \bigl(x[\bm n+\bm e_j]-2x[\bm n]+x[\bm n-\bm e_j]\bigr).
+ \end{aligned}
+ \label{eq:signal-grid-differences}
+\end{equation}
+在所考察点的邻域内，$f$有有界二阶导数时，前向差分与$\partial_jf$相差$O(h)$；
+有有界三阶导数时，中心差分的两侧二阶项抵消，误差为$O(h^2)$。
+有有界四阶导数时，对称相加再减$2f$给出
+$\Delta_hx=\Delta f+O(h^2)$。这些界来自第~\ref{chap:continuous-functions}章的Taylor展开，
+要求邻域内的光滑性，不能直接解释跨跳跃处的“真实导数”。
+二维$\Delta_h$的五点核为
+$h^{-2}\begin{bmatrix}0&1&0\\1&-4&1\\0&1&0\end{bmatrix}$。
+常量给出零；对$f(t_1,t_2)=t_1^2+t_2^2$，每个内点给出$4$，
+这也核对了步长的平方与符号。
+
+采用整轴离散变换或循环边界时，三种乘子分别为
+$(e^{\mathrm i\omega_j}-1)/h$、
+$\mathrm i\sin\omega_j/h$和
+$-4h^{-2}\sum_j\sin^2(\omega_j/2)$。
+它们由把复指数代入差分公式得到。中心差分在Nyquist频率也为零，
+所以并非所有“快速交替”都能由它发现。
+$-\Delta_h$非负，与一般图上正半定Laplacian的常用符号相合；
+连续$\Delta$及此处$\Delta_h$自身的频率乘子则非正。
+有限数组的边界仍按先前延拓计算，不能把内部误差阶直接沿用到任意补边处。
+
+\subsubsection{平滑与差分的组合}
+中心差分容易响应细小抖动，可以先在垂直于求导方向的轴上平均。
+令$s[-1],s[0],s[1]=(1,2,1)/4$，
+先沿第二轴用$s$平滑，再沿第一轴作$D_1^c$，就是归一化的Sobel型算子。
+其权重为两个一维核的外积；若以“原方向读模板”的相关形式列出，
+第一轴差分权重为$(-1,0,1)/(2h)$。
+改用本章的卷积形式须反转该奇核，符号随之改变。
+例如$x[n_1,n_2]=2hn_1+3hn_2$在内部给出两方向读数$2$、$3$，
+梯度模长为$\sqrt{13}$。以此类斜坡检验实现，比仅看对称边缘更容易发现方向颠倒。
+外积核的计算节省由后文核分离推导，不在这里另作一套算法。
+
+若各个方向都先平滑，可使用归一化高斯核
+\[
+ G_\sigma(\bm t)=(2\pi\sigma^2)^{-d/2}
+ e^{-\|\bm t\|^2/(2\sigma^2)}.
+\]
+直接求导给出
+\[
+ \Delta G_\sigma=
+ \left(\frac{\|\bm t\|^2}{\sigma^4}-\frac d{\sigma^2}\right)G_\sigma,
+ \qquad \partial_\sigma G_\sigma=\sigma\Delta G_\sigma .
+\]
+对有界输入或绝对可积输入，高斯导数的衰减允许把空间微分放入卷积。
+因此$\Delta(G_\sigma*f)=(\Delta G_\sigma)*f$：
+\term{高斯拉普拉斯}（Laplacian of Gaussian, LoG）先压制细尺度变化，再读二阶变化。
+对固定$\sigma>0$且$k$接近$1$，按尺度变量Taylor展开又有
+$G_{k\sigma}-G_\sigma=(k-1)\sigma^2\Delta G_\sigma+
+O((k-1)^2)$，余项在固定紧集上一致。
+这解释\term{高斯差分}（difference of Gaussians, DoG）为何能近似尺度归一化LoG；
+相差很大的两个尺度不能忽略该余项。连续恒等式与截断、离散化后的核仍须分别检验。
+
+\subsection{分辨率改变下的多尺度映射}
+\label{sec:signal-multiscale-maps}
+
+降低分辨率会丢掉变化；如果还要恢复原记录，就必须说明丢失的变化保存在何处。
+我们先用成对平均与差构造一个完全可逆的最小例子，
+抽取可能把不同频率的贡献叠在一起，称为\term{混叠}（aliasing）；
+我们再研究一般两通道滤波如何消去这种贡献，
+最后用“粗层预测加残差”解释金字塔重建。这里的可逆性都指保留完整系数，
+不意味着只保留低分辨率图像也能恢复任意输入。
+
+\subsubsection{局部平均与细节的正交分解}
+\label{sec:signal-haar-decomposition}
+对偶数长度$2M$的记录，逐对定义
+\begin{equation}
+ a[k]=\frac{x[2k]+x[2k+1]}{\sqrt2},\qquad
+ d[k]=\frac{x[2k]-x[2k+1]}{\sqrt2}.
+ \label{eq:signal-haar-pair}
+\end{equation}
+逆式为$x[2k]=(a[k]+d[k])/\sqrt2$、
+$x[2k+1]=(a[k]-d[k])/\sqrt2$。
+两行权重正交且长度为一，故每对满足
+$|x[2k]|^2+|x[2k+1]|^2=|a[k]|^2+|d[k]|^2$。
+这就是有限记录上的\term{Haar变换}（Haar transform）。
+例如$(2,4,6,8)$变为$a=(3\sqrt2,7\sqrt2)$、
+$d=(-\sqrt2,-\sqrt2)$，总能量仍为$120$。
+若舍去全部细节，逆式把每一对替换为该对平均，
+误差平方就是$|d[0]|^2+|d[1]|^2=4$。
+
+长度为$2^J$时，可对平均分量重复同一分解。
+在原记录空间中，令$V_j$为在每个长度$2^j$的对齐块内恒定的数组，
+则$V_0\supset V_1\supset\cdots\supset V_J$。
+每对相邻粗块的相反符号读数张成细节空间$W_j$，有
+$V_{j-1}=V_j\oplus W_j$，直和按离散内积正交。
+逐层平均是投影到更小的空间，细节记录两级之间的正交差。
+这是有限维的\term{多分辨率分析}（multiresolution analysis）；
+不在这里把有限数组直接等同于整轴函数空间的完备小波系。
+
+二维时沿两轴分别作同一变换，得到平均--平均、差--平均、平均--差、差--差四个子带。
+对子块$\begin{bmatrix}1&2\\3&4\end{bmatrix}$，
+相应读数为$5,-2,-1,0$，平方和为$30$。
+差作用在哪个轴，就对哪个轴的变化敏感；边缘延伸方向与变化法向须分清。
+
+\subsubsection{双通道滤波下的完全重建}
+\label{sec:signal-perfect-reconstruction}
+成对公式能否推广为较长滤波器？关键是低、高两个分支共同保留信息，
+而不是要求每个抽取分支独自可逆。
+设有限分析核$h_0,h_1$先卷积再保留偶数项，得到
+$a_j[k]=(h_j*x)[2k]$；合成时在奇数位置插零，再分别用有限核$g_j$卷积相加。
+本段在整轴有限支撑输入上推导，故所有变换与换序都是有限运算。
+记$H_j(z)=\sum_nh_j[n]z^{-n}$、$G_j(z)=\sum_ng_j[n]z^{-n}$。
+这里用$z^{-1}$表示一个单位延迟，与前面只记录数组位置的正幂多项式区别开来。
+取偶数项再插零，会把某序列的变换$U(z)$改成
+$(U(z)+U(-z))/2$。因为两项相加恰好消去所有奇数幂，合成输出满足
+\begin{equation}
+ \begin{aligned}
+ \widehat X(z)&=\frac12\sum_{j=0}^1G_j(z)H_j(z)X(z)\\
+ &\quad+\frac12\sum_{j=0}^1G_j(z)H_j(-z)X(-z).
+ \end{aligned}
+ \label{eq:signal-two-channel-transfer}
+\end{equation}
+第二项是抽取引入的另一个频谱副本。要对每个输入精确恢复一个延迟$\ell$后的记录，
+必须并且只需满足
+\begin{equation}
+ \sum_jG_j(z)H_j(-z)=0,\qquad
+ \sum_jG_j(z)H_j(z)=2z^{-\ell}.
+ \label{eq:signal-perfect-reconstruction-conditions}
+\end{equation}
+充分性由代入得到。必要性分别取只在位置$0$为一和只在位置$1$为一的输入；
+前者使$X(z)=X(-z)=1$，后者使$X(-z)=-X(z)$。
+比较这两个输入的重建恒等式，再相加、相减，就分别确定两项系数。
+因此只检查低通分支平滑得好，不足以保证\term{完全重建}（perfect reconstruction）。
+
+例如取$H_0=(1+z^{-1})/\sqrt2$、
+$H_1=(1-z^{-1})/\sqrt2$，
+$G_0=(1+z^{-1})/\sqrt2$、
+$G_1=(-1+z^{-1})/\sqrt2$。
+第一组和为零，第二组和为$2z^{-1}$，所以重建结果是$x[n-1]$。
+这里分析核把$x[2k]$与$x[2k-1]$配对，与式~\eqref{eq:signal-haar-pair}的分块原点不同，
+已知延迟补偿后是同一种平均与差分解。
+有限数组还必须选定兼容的延拓与抽取相位；任意裁去边缘会破坏上述整轴恒等式。
+
+\subsubsection{粗细层之间的递归重建}
+\label{sec:signal-pyramid-reconstruction}
+另一种保存细节的方法不要求粗层是正交投影。
+设$D$是“低通后每轴抽取二倍”的固定算子，
+$U$是约定的插零与插值算子。令
+\begin{equation}
+ G_{j+1}=DG_j,\qquad L_j=G_j-UG_{j+1}.
+ \label{eq:signal-laplacian-pyramid}
+\end{equation}
+粗层$G_{j+1}$给出低分辨率描述，残差$L_j$给出由该粗层预测原层时漏掉的部分。
+保留最粗层$G_J$及全部$L_j$后，用$G_j=L_j+UG_{j+1}$从粗到细恢复。
+这由定义逐层恒等成立，不要求$UD=\bm I$；也不能据此宣称只保留$G_J$即可无损重建。
+当平滑采用高斯核或其离散近似时，粗层组成高斯金字塔，
+相应残差层组成拉普拉斯金字塔。
+实际低通核不必是无限高斯；有限核、边界和$U$必须在分析与合成时一致。
+
+二维每层像素数约减为四分之一，忽略取整边界后，
+所有粗层的总像素数小于原图的$4/3$倍。金字塔残差仍按各自层的尺寸存放，
+不能把这一计数误当作任意编码后的压缩率。
+若每轴插值核的离散和为$2$，二维可分离插值核的和为$4$；
+这一尺度用来补偿插零后的常量平均下降。保常量还要求各相位的核权重和都为$1$，
+只检查总和并不足够。例如一维线性插值核
+$(1/2,1,1/2)$的偶、奇两组权重和都为$1$，因此能恢复插零前的常量序列。
+
+\subsection{离散幅度下的信号表示}
+\label{sec:signal-quantized-representation}
+
+前面的可逆表示使用精确数值。本小节以实数读数及实正交变换为对象。实际存储只能保留有限读数时，
+需要把“坐标变换可逆”和“坐标取整无误差”分开。
+我们先给确定性的幅度误差界，再说明预测编码为何要让两端使用同一份已重建历史。
+概率噪声模型与平均码长属于另一类问题，这里只研究单条记录。
+
+\subsubsection{均匀量化的幅度误差}
+给定步长$\Delta>0$，最近点量化为
+$Q_\Delta(t)=\Delta\operatorname{round}(t/\Delta)$，中点采用任一固定规则。
+若量化格无限，或输入不超过有限量化器的可表示范围，就有
+$|Q_\Delta(t)-t|\leq\Delta/2$。
+饱和裁切后的超范围输入不受这个界保证。
+对$n$个读数，逐点误差平方至多$n\Delta^2/4$；
+若正交变换的第$i$个系数采用步长$\Delta_i$，
+则原空间重建误差满足
+\begin{equation}
+ \|\widehat{\bm x}-\bm x\|_2^2
+ =\sum_i|\widehat c_i-c_i|^2
+ \leq\frac14\sum_i\Delta_i^2 .
+ \label{eq:signal-quantization-bound}
+\end{equation}
+等号来自正交性，最后一步来自每个量化格的半宽。
+例如两个系数步长分别为$1$、$2$时，误差范数至多$\sqrt5/2$。
+这里没有假设误差均匀分布、互相独立或均值为零，
+不能把$\Delta^2/12$当作所有输入共有的误差。
+
+\subsubsection{闭环预测下的差值编码}
+相邻读数接近时，可以传送当前值与预测值之差。
+令预测器按已经重建的历史产生$p[n]$，编码端量化
+$r[n]=x[n]-p[n]$，发送$\widehat r[n]=r[n]+e[n]$。
+解码端采用相同初始历史、同一预测规则和收到的量化差值，重建
+$\widehat x[n]=p[n]+\widehat r[n]$。
+按时间归纳，两端始终持有相同重建历史，故预测$p[n]$相同，
+并且$\widehat x[n]-x[n]=e[n]$。
+这种\term{差分脉冲编码调制}（differential pulse-code modulation, DPCM）的闭环
+把预测误差抵消，留下当前差值的量化误差；
+只要差值量化器不饱和，仍有半步长界。
+
+若编码端改用原始过去值而解码端只能用重建值，
+以$p[n]=a x[n-1]$为例，就得到
+$E[n]=aE[n-1]+e[n]$，其中$E[n]=\widehat x[n]-x[n]$。
+初始误差为零且$|a|<1$时，
+$|E[n]|\leq(\Delta/2)\sum_{j=0}^n|a|^j
+\leq\Delta/(2(1-|a|))$。
+这比闭环的当前半步长界弱；$|a|\geq1$时还可能持续累积。
+降低差值的动态范围有利于选择量化步长，但若固定同样的量化步长，
+不能仅凭预测器存在就宣称误差或所需比特数必然下降。
+
+\subsection{局部集合与灰度的形态映射}
+\label{sec:signal-morphological-maps}
+
+二值信号只记录位置是否属于目标集合。对这样的对象，“附近存在一个目标点”和
+“整个邻域都在目标内”比加权平均更直接。
+困难是结构元方向、补集范围与有限裁切会改变结果。
+我们在整格点$\mathbb Z^d$上先建立两种集合映射的关系，
+由此推导开闭运算，再用局部最大、最小推广到灰度信号。
+
+\subsubsection{结构元下的扩张与收缩}
+设$A\subseteq\mathbb Z^d$，$B\subseteq\mathbb Z^d$为非空有限集合，
+称为\term{结构元}（structuring element）。
+平移为$A+\bm t=\{\bm a+\bm t:\bm a\in A\}$，反射为
+$\check B=\{-\bm b:\bm b\in B\}$。
+定义\term{膨胀}（dilation）与\term{腐蚀}（erosion）为
+\begin{equation}
+ \begin{aligned}
+ \delta_B A=A\oplus B
+ &=\{\bm a+\bm b:\bm a\in A,\bm b\in B\}
+   =\bigcup_{\bm b\in B}(A+\bm b),\\
+ \varepsilon_B A=A\ominus B
+ &=\{\bm z:\bm z+B\subseteq A\}
+   =\bigcap_{\bm b\in B}(A-\bm b).
+ \end{aligned}
+ \label{eq:signal-minkowski-morphology}
+\end{equation}
+膨胀就是\term{Minkowski和}（Minkowski sum）。
+此处$A-\bm b$表示按向量$-\bm b$平移，不是集合差；
+腐蚀有时称几何差，通常也不等于所有向量差$\{\bm a-\bm b\}$。
+取$A=\{0,1,2\}$、$B=\{0,1\}$，膨胀为$\{0,1,2,3\}$，
+腐蚀为$\{0,1\}$，逐点可以核对“至少一个”与“全部”的差别。
+
+把包含关系展开，有一个同时控制两种运算的事实：
+\begin{equation}
+ \delta_B A\subseteq C
+ \quad\Longleftrightarrow\quad A\subseteq\varepsilon_B C.
+ \label{eq:signal-morphology-adjunction}
+\end{equation}
+左侧表示每个$\bm a+\bm b$都在$C$，等价于每个$\bm a$的结构元副本
+$\bm a+B$都在$C$，这正是右侧。
+固定$B$时，两种运算对$A$都单调，也都与平移交换。
+膨胀的交换、结合来自向量加法，连续腐蚀满足
+$(A\ominus B)\ominus C=A\ominus(B\oplus C)$。
+若$\bm0\in B$，才进一步有$\varepsilon_B A\subseteq A\subseteq\delta_B A$。
+所有补集相对整格点取时，
+$(\varepsilon_B A)^c=\delta_{\check B}(A^c)$：
+某个$\bm z+B$未完全落入$A$，
+等价于存在$\bm b\in B$使$\bm z+\bm b\in A^c$，
+也即$\bm z\in A^c-\bm b$。
+
+\subsubsection{开闭运算的包含与幂等}
+单独的膨胀或腐蚀会改变目标边界。要保留能容纳结构元的部分，
+可以先腐蚀再膨胀，称为\term{开运算}（opening）；
+相反次序称为\term{闭运算}（closing）：
+\begin{equation}
+ \gamma_B A=\delta_B\varepsilon_B A,\qquad
+ \varphi_B A=\varepsilon_B\delta_B A.
+ \label{eq:signal-morphology-opening-closing}
+\end{equation}
+由式~\eqref{eq:signal-morphology-adjunction}，
+分别取$A=\varepsilon_B C$和$C=\delta_B A$，
+得到$\gamma_B C\subseteq C$、$A\subseteq\varphi_B A$。
+这两项不需要$\bm0\in B$。
+开运算也是所有满足$\bm z+B\subseteq A$的副本$\bm z+B$之并，
+因此它保留的是能被这种副本覆盖的位置；
+“小于结构元的成分消失”只在相应几何容纳意义下成立，不能只按面积比较。
+
+单调性给出$\gamma_B(\gamma_B A)\subseteq\gamma_B A$；
+再把$C=\varepsilon_B A$代入$C\subseteq\varepsilon_B\delta_B C$，
+并在两侧作用$\delta_B$，得到反向包含。
+故$\gamma_B^2=\gamma_B$。同理，由两组包含及单调性得到
+$\varphi_B^2=\varphi_B$。
+这说明在相同整格点边界与结构元下重复一次不会继续改变结果。
+例如前一小例的开运算恢复$\{0,1,2\}$，
+而$A=\{0,2\}$在$B=\{0,1\}$下开运算为空、闭运算为$\{0,1,2\}$。
+若每一步在有限画布上先裁切，运算已发生改变，不能直接引用上述幂等与对偶公式。
+
+\subsubsection{灰度序关系下的局部极值}
+对实信号$f$，采用平坦结构元，定义
+\begin{equation}
+ (\delta_Bf)[\bm n]=\max_{\bm b\in B}f[\bm n-\bm b],\qquad
+ (\varepsilon_Bf)[\bm n]=\min_{\bm b\in B}f[\bm n+\bm b].
+ \label{eq:signal-grayscale-morphology}
+\end{equation}
+有限$B$保证极值存在。把集合换成指标函数时，
+$\delta_B\mathbb I_A=\mathbb I_{\delta_B A}$、
+$\varepsilon_B\mathbb I_A=\mathbb I_{\varepsilon_B A}$，与前面方向一致。
+把集合包含换成逐点大小，仍有
+$\delta_Bf\leq g\Longleftrightarrow f\leq\varepsilon_Bg$，
+因为每一项$f[\bm n-\bm b]\leq g[\bm n]$可令
+$\bm m=\bm n-\bm b$重新编号。
+因此灰度开闭也具有单调、反扩张或扩张及幂等性质。
+
+局部最大与最小通常不满足叠加；把局部最大再按固定步长读出，
+就得到最大池化。
+保留全部位置时该局部映射平移等变，随后隔点取样则只与相容步长的平移交换。
+结构元也可带高度权重，但那是另一个需要明确定义的映射，
+不能直接把平坦结构元公式用于所有灰度形态学。
+
+\Needspace{6\baselineskip}
 \section{卷积映射的快速计算}
 \label{sec:signal-analysis-fast-transforms}
 
 \subsection{局部汇总的代价与五条计算路线}
 
-上一节说明，线性且平移不变的映射由一条脉冲响应$h$完全决定，输出是输入与$h$的卷积。
+前面的卷积映射在既定边界与存在条件下，由核$h$和输入决定，
+输出是输入与$h$的卷积。
 这个结论把“设计一个系统”化简成“设计一个核”，但它同时留下一个计算问题：
 给定输入和核，怎样求出输出。
 这里的规模压力来自真实数据而不是抽象练习：
@@ -1974,6 +2551,8 @@ Toom--Cook和Winograd的变换矩阵可能有较大尺度差异，相近量相�
 有反例以后，再问需要补充什么条件才能排除它，这个条件就是后文的带限假设。
 限制频率能保证恢复，但设备往往在采样前就已经先把高频压低，
 这又改变了需要恢复的对象，于是还要单独讨论这一步预滤波做了什么。
+这些一维关系建立后，再检查多维与时空格的频率歧义，
+最后把插零和插值分开，说明增加数组位置为何不等于增加观测。
 
 \subsection{采样后的频率混叠}
 \label{sec:signal-sampling-ambiguity}
@@ -2338,6 +2917,131 @@ $-\sin(0.8\pi)/2\approx-0.293893$，相加得到$q[0]\approx0.610616$，
 “线性空间”中的零空间与小奇异值分析在这里仍然适用：
 前者说明哪些输入区别完全不可见，后者说明哪些区别虽可见却难以稳定恢复。
 
+除了截止位置，核的形状也决定它怎样改变空间读数。
+归一化高斯核的连续频率响应为
+$e^{-\sigma^2\|\bm\Omega\|^2/2}$。
+在一维，高斯积分由二维极坐标给出归一化常数；
+对频率求导并对空间分部积分，有
+$F'(\Omega)=-\sigma^2\Omega F(\Omega)$、$F(0)=1$，
+解此一阶方程得到该响应，多维再逐轴相乘。
+因此空间越宽，频率响应越窄；这是同一参数在两个坐标中的反向尺度关系。
+高斯核非负且积分为$1$，对有界实输入的输出是其值的加权平均，
+必在输入的上下界之间。
+
+硬截止的频率权重即使都为零或一，其空间核也可能变号。
+有限循环例子能直接显示后果：$N=4$时保留频率$0,1,3$、去掉频率$2$，
+逆DFT核为$h=(3/4,1/4,-1/4,1/4)$。
+输入$(1,0,0,0)$产生负读数$-1/4$；
+输入$(0,1,1,1)$则在相应位置产生$5/4$。
+超出原值范围的振荡来自变号权重，不能只看“低通”名称就断言不会超调。
+平缓截止、非负平均、频率选择性和有限核长度是不同约束，
+设计滤波器时要说明当前要控制哪一种误差。
+
+\subsection{多维与时空网格上的采样}
+\label{sec:signal-multidimensional-sampling}
+
+一维采样按时间区分频率，图像与视频还要同时区分多个空间方向和时间。
+新增的困难是不同方向的高频可以在同一采样格上变成低频，
+面积或曝光平均又会在采样之前削弱某些频率。
+我们先确定哪些频率在网格上无法区分，再把已有恢复结论逐轴使用，
+最后把像素面积与运动放回同一相位计算。
+
+\subsubsection{采样格与逐轴带限}
+规则采样点为$\bm t=\bm A\bm n$，其中$\bm A$可逆、$\bm n\in\mathbb Z^d$。
+复指数$e^{\mathrm i\bm\Omega^\top\bm t}$与频率
+$\bm\Omega+2\pi\bm A^{-\top}\bm k$在这些点的值完全相同，
+因为新增相位为$2\pi\bm k^\top\bm n$。
+这个关系描述一般\term{采样格}（sampling lattice）的频率歧义。
+对$\bm A=\operatorname{diag}(T_1,\ldots,T_d)$，
+每个频率分量分别按$2\pi/T_j$混同，中央矩形区域为
+$|\Omega_j|<\pi/T_j$。
+二维以每像素周期数记频率时，
+$\cos(2\pi(un_1+vn_2))$与$(u+k,v+\ell)$产生相同样本。
+例如$(u,v)=(0.6,0.1)$与$(-0.4,0.1)$无法区分，
+变化的表观方向也可能不同；这就是规则纹理出现摩尔纹的一个确定性来源。
+
+对傅里叶支撑位于该矩形内的$L^2(\mathbb R^d)$函数，
+支撑有限保证其频谱也在$L^1$，从而选定连续代表元$f_{\mathrm c}$。
+把一维傅里叶级数与sinc正交展开在每个坐标各用一次，得到
+\begin{equation}
+ f_{\mathrm c}(\bm t)=
+ \sum_{\bm n\in\mathbb Z^d}
+ f_{\mathrm c}(T_1n_1,\ldots,T_dn_d)
+ \prod_{j=1}^d\operatorname{sinc}(t_j/T_j-n_j).
+ \label{eq:signal-multidimensional-sinc}
+\end{equation}
+矩形部分和先在$L^2$中收敛；带限空间上点值由频谱的$L^2$范数控制，
+所以也恢复所选连续代表元的各点。
+这只是已有一维证明的张量积：频谱矩形上的正交基是各轴基函数的乘积，
+其系数就是带尺度因子的网格样本。
+它要求整格无限样本与指定带限类，不把有限图像自动变为无限分辨率对象。
+矩形限制是方便的充分条件；其他频谱支撑须检查其按对偶采样格平移后是否重叠，
+不能只用一个“最高频率的模长”代替全部方向。
+
+每轴抽取$M_j$倍时，也可对原一维DTFT混叠式逐轴换元，
+得到$\prod_jM_j$个频谱副本的平均。
+因此各轴截止应匹配各自抽取率。
+把宽、高压缩到不同倍数时，只按一个轴设计低通会遗漏另一个轴的混叠。
+
+\subsubsection{面积平均与运动相位}
+像素若记录中心附近宽$a_j$的长方体平均，
+采样前先与归一化盒形核卷积。
+把复指数放入这一平均，每轴直接积分给出
+\begin{equation}
+ B(\bm\Omega)=
+ \prod_{j=1}^d\frac{\sin(\Omega_ja_j/2)}{\Omega_ja_j/2}.
+ \label{eq:signal-box-aperture-response}
+\end{equation}
+零分量处取极限$1$。每个方向的零点与旁瓣说明面积平均并非理想砖墙低通，
+在采样界之外仍可能留下贡献；它也已经改变待恢复的对象。
+这与前述有限移动平均的频率响应是连续、离散两种版本。
+时长$\tau$的对称曝光平均，在时间角频率$\omega$处再乘
+$\sin(\omega\tau/2)/(\omega\tau/2)$，不是在每个频率上都同样衰减。
+
+对以速度$\bm v$移动的空间平面波
+$f(\bm x,t)=\cos(2\pi\bm u^\top(\bm x-\bm v t))$，
+固定位置的时间频率为$-\bm u^\top\bm v$。
+空间采样与帧率$f_s$分别限制$\bm u$的各分量和
+$|\bm u^\top\bm v|<f_s/2$。
+例如条纹频率$0.4$周期/像素、沿法向速度$2$像素/帧时，
+每帧变化$0.8$周，与$-0.2$周有同一样本，表观运动可能反向。
+这些余弦是用来展示歧义的功率信号，不属于前述整轴$L^2$恢复定理的对象。
+运动、空间尺度、曝光及采样的条件须共同给定。
+
+\subsection{插零后的频谱与插值}
+\label{sec:signal-upsampling-interpolation}
+
+增加数组位置并不会增加新的观测。要说明上采样实际生成了什么，
+应把“在新位置放零”和“用核填入新读数”分开。
+先用整轴离散变换确定插零产生的频谱副本，
+再检查插值核消去哪些副本、是否保留原读数与常量。
+
+对正整数$L$，令$u[Ln]=x[n]$，其余位置为零。
+对$x\in\ell_1$直接改变求和索引，得到
+\begin{equation}
+ U(e^{\mathrm i\omega})=X(e^{\mathrm iL\omega}),\qquad
+ Y(e^{\mathrm i\omega})=H(e^{\mathrm i\omega})X(e^{\mathrm iL\omega}),
+ \label{eq:signal-upsampling-spectrum}
+\end{equation}
+第二式是$y=h*u$的频域表达。
+原谱按频率压缩$L$倍，并在一个$2\pi$周期内出现$L$份。
+若希望选择中央一份，理想插值响应在$|\omega|<\pi/L$取$L$、其余取零；
+该响应的增益补偿插零后的密度降低。
+其核为$\operatorname{sinc}(n/L)$，通常不绝对可和，
+所以理想情形须按带限$L^2$展开或有限能量离散变换理解，
+不能直接套用上面$\ell_1$核的充分条件。
+实际有限插值核只近似这个选频过程，会留下相应的过渡与镜像误差。
+
+保留旧格点的插值条件是$h[Ln]=\mathbb I_{\{0\}}[n]$。
+保常量的条件则是对每个相位$r=0,\ldots,L-1$，
+$\sum_qh[r-Lq]=1$。
+二者回答不同问题。例如$L=2$的核$h[-1]=h[1]=1/2$、$h[0]=1$，
+在旧格点复制原值，在两点之间取平均，同时保常量。
+把$x=(2,4)$放到零延拓的整轴上，在内部新位置得到$3$；
+边缘新位置是否仍为端值，还取决于零延拓或复制延拓。
+二维插零与插值逐轴进行，频谱复制数和增益分别相乘；
+这些新读数由假设的核决定，不能当成新增的独立观测。
+
 \section{本章小结}
 \label{sec:signal-analysis-summary}
 
@@ -2350,6 +3054,9 @@ $-\sin(0.8\pi)/2\approx-0.293893$，相加得到$q[0]\approx0.610616$，
 完整有限DFT及满足次数条件的插值可以无损恢复坐标，无穷傅里叶展开则需要说明
 积分、均方或逐点意义。幅度不包含全部位置信息，Parseval中的尺度因子来自归一化，
 截断系数才引入相应的表示误差。
+多维变换逐轴继承这些坐标关系；反射余弦表示改变边界，
+短时频谱增加局部位置，却也引入窗口泄漏和分辨能力的限制。
+只保存幅度、频带和或部分系数时，原来的全坐标可逆性不再自动保留。
 
 平移、反转、幅值及时间缩放改变的是不同属性。
 线性与平移不变使有限支撑输入的输出可写成与脉冲响应的卷积，
@@ -2360,11 +3067,17 @@ $-\sin(0.8\pi)/2\approx-0.293893$，相加得到$q[0]\approx0.610616$，
 矩阵化集中局部点积，FFT、Toom--Cook和Winograd用不同表示减少同一目标的计算，
 空间可分离核则依赖低秩结构；
 核方向、边界、输出范围及数值条件仍由目标决定。
+网格差分以步长和光滑性联系导数，Haar分解用正交细节保留变化，
+滤波器组靠混叠消去重建，金字塔则靠保存残差逐层重建。
+量化改变可存储的幅度，闭环差值编码需要两端共享重建历史；
+集合开闭依据包含与伴随关系，其局部极值实现不能当成线性卷积。
 
 采样最后改变了可用信息。不同信号可能具有同一样本，坐标可逆和计算快速都不能补回
 已经消失的区别。带限有限能量类、规范连续代表元及足够密的无限样本共同给出sinc恢复；
 有限记录和功率信号需要各自核对边界。抗混叠预滤波可以控制即将重叠的频率，
 却也改变待恢复的目标。下一章把规则索引推广为一般图：连接关系决定哪些位置可以
 比较与传播，图上的谱则提供相应的变化坐标。
+多维网格要逐方向检查混叠，视频还需把运动引起的时间相位与空间频率一起检查。
+插零后滤波只按已有样本和插值规则生成新读数，不能增加独立观测。
 随机模型描述观测中的不确定性，内部状态演化则可以进一步构造响应核；
 本章的输入输出视角继续用于判断这些响应怎样作用于信号。

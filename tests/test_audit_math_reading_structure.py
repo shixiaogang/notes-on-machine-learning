@@ -28,8 +28,8 @@ class CurrentChapterStructureTests(unittest.TestCase):
             paths, text = AUDIT.reading_structure(root)
             self.assertEqual(len(paths), 6)
             headings = AUDIT.outline_headings(text)
-            self.assertEqual(list(headings), [1, 2, 3, 10, 11, 12])
-            self.assertEqual(headings[10][1]["number"], "1.1")
+            self.assertEqual(list(headings), [1, 2, 3, 11, 12, 13])
+            self.assertEqual(headings[11][1]["number"], "1.1")
             (root / paths[-1]).unlink()
             with self.assertRaisesRegex(ValueError, "Expected 3 part outlines"):
                 AUDIT.reading_structure(root)
@@ -70,14 +70,128 @@ class CurrentChapterStructureTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "current numbers"):
                 AUDIT.assignments(root)
 
+    def current_assignment_rows(self):
+        rows = []
+        for local, identity in enumerate([1, 2, 3, 18, 4, 5, 6, 7, 8, 9], 1):
+            rows.append(f"| {identity} | 1 | {local} | 章节{identity} | tex/upper/chapter{local}.tex |")
+        for local, identity in enumerate([10, 11, 19, 20, 12, 13, 14, 15, 16, 17], 1):
+            source = (
+                "tex/lower/01-mathematics-and-future-research.tex"
+                if identity == 17 else f"tex/lower/chapter{local}.tex"
+            )
+            rows.append(f"| {identity} | 2 | {local} | 章节{identity} | {source} |")
+        return rows
+
+    def test_split_chapter_keeps_historical_identities_and_current_positions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / AUDIT.CONTRACT
+            path.parent.mkdir(parents=True)
+            path.write_text("\n".join(self.current_assignment_rows()))
+            rows = AUDIT.assignments(root)
+            by_identity = {row["chapter"]: row for row in rows}
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[3]), 3)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[18]), 4)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[4]), 5)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 13)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 14)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 15)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[17]), 20)
+            self.assertEqual(by_identity[17]["local_chapter"], 10)
+            self.assertEqual(by_identity[17]["volume"], 2)
+            self.assertEqual(AUDIT.chapter17_retirement_source(rows), by_identity[17]["path"])
+
+    def test_current_chapter_map_rejects_missing_duplicate_and_reordered_chapters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / AUDIT.CONTRACT
+            path.parent.mkdir(parents=True)
+            rows = self.current_assignment_rows()
+            path.write_text("\n".join(rows[:-1]))
+            with self.assertRaisesRegex(ValueError, "Expected 20 assignments"):
+                AUDIT.assignments(root)
+            rows[-1] = rows[-1].replace("| 17 |", "| 16 |", 1)
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "exactly once"):
+                AUDIT.assignments(root)
+            rows = self.current_assignment_rows()
+            rows[3] = rows[3].replace("| 1 | 4 |", "| 1 | 3 |", 1)
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "Volume 1 assignments"):
+                AUDIT.assignments(root)
+            rows = self.current_assignment_rows()
+            rows[3], rows[4] = rows[4], rows[3]
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "reading order"):
+                AUDIT.assignments(root)
+
+    def test_current_chapter_map_rejects_duplicate_sources_and_mixed_formats(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / AUDIT.CONTRACT
+            path.parent.mkdir(parents=True)
+            rows = self.current_assignment_rows()
+            rows[-2] = rows[-2].replace("chapter9.tex", "chapter8.tex")
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "unique source paths"):
+                AUDIT.assignments(root)
+            rows = self.current_assignment_rows()
+            rows.append("| 21 | 历史格式 | part/legacy.tex |")
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "must not mix"):
+                AUDIT.assignments(root)
+
+    def test_current_chapter_map_rejects_duplicate_and_reordered_lower_chapters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / AUDIT.CONTRACT
+            path.parent.mkdir(parents=True)
+            rows = self.current_assignment_rows()
+            rows[12] = rows[12].replace("| 2 | 3 |", "| 2 | 2 |")
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "Volume 2 assignments"):
+                AUDIT.assignments(root)
+            rows = self.current_assignment_rows()
+            rows[12], rows[13] = rows[13], rows[12]
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "Volume 2 assignments"):
+                AUDIT.assignments(root)
+
+    def test_retirement_source_rejects_reassigned_historical_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / AUDIT.CONTRACT
+            path.parent.mkdir(parents=True)
+            rows = self.current_assignment_rows()
+            rows[-1] = rows[-1].replace("| 17 |", "| 15 |", 1)
+            rows[-3] = rows[-3].replace("| 15 |", "| 17 |", 1)
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "Historical chapter 17"):
+                AUDIT.chapter17_retirement_source(AUDIT.assignments(root))
 
     def test_chapter_map_accepts_new_chapters_without_renumbering_retirement_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / AUDIT.CONTRACT).parent.mkdir(parents=True)
-            rows = [f"| {n} | 章节{n} | part/chapter{n}.tex |" for n in range(1, 20)]
+            rows = self.current_assignment_rows()
             (root / AUDIT.CONTRACT).write_text("\n".join(rows))
-            self.assertEqual([row["chapter"] for row in AUDIT.assignments(root)], list(range(1, 20)))
+            assignments = AUDIT.assignments(root)
+            self.assertEqual(len(assignments), 20)
+            self.assertEqual(sorted(row["chapter"] for row in assignments), list(range(1, 21)))
+            self.assertEqual(
+                AUDIT.chapter17_retirement_source(assignments),
+                "tex/lower/01-mathematics-and-future-research.tex",
+            )
+
+    def test_legacy_format_still_requires_seventeen_historical_chapters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / AUDIT.CONTRACT
+            path.parent.mkdir(parents=True)
+            rows = [f"| {n} | 章节{n} | part/chapter{n}.tex |" for n in range(1, 20)]
+            path.write_text("\n".join(rows))
+            with self.assertRaisesRegex(ValueError, "Expected 17 assignments"):
+                AUDIT.assignments(root)
 
 
 class Chapter17RetirementTests(unittest.TestCase):
