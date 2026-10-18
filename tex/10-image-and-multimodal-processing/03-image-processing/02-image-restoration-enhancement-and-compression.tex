@@ -1,0 +1,1216 @@
+\chapter{图像复原、增强与压缩}
+\label{chap:vision-image-restoration}
+
+夜间拍到的招牌偏暗，字画周围有噪点，放大后又出现模糊和方块。我们希望读出招牌上的字，也希望把照片保存成较小的文件发给别人。把照片处理得明亮、锐利，并不能单凭外观判断字已经恢复正确；文件变小了，也不能只看重建图像就知道实际节省了多少存储。本章要回答三个相互关联的问题：受损的观测能恢复到什么程度，依据是什么；不改变内容时，怎样调整亮度和颜色使图像适合观看；怎样用尽量少的比特保存图像，同时说清丢掉了什么。
+
+设希望恢复的图像为$\bm{X}\in\mathbb{R}^{h\times w\times c}$，实际观测为$\bm{Y}$，其中$h,w$是高和宽，$c$是通道数。一个便于分析的成像模型是
+\begin{equation}
+ \bm{Y}=\mathcal{Q}\bigl(\mathcal{S}(\bm{K}*\bm{X})+\bm{N}\bigr)\text{，}
+ \label{eq:vision-image-degradation}
+\end{equation}
+其中$\bm{K}$描述模糊，$*$表示卷积，$\mathcal{S}$表示采样，$\bm{N}$表示噪声，$\mathcal{Q}$概括量化等后处理。它是一个简化模型：传感器噪声可能发生在颜色形成之前，图像也可能经历多次缩放和压缩，不能把这些操作一律交换顺序。RGB图像通常已经经过颜色插值、白平衡和色调映射；RAW保留更接近传感器读出的数据，两者可供反演的信息不同，成像管线的各个步骤见\ref{sec:vision-formation-isp}节。
+
+式\eqref{eq:vision-image-degradation}把三个目的区分开来。\term{图像复原}（image restoration）依据受损观测估计$\bm{X}$，即尽量撤销$\bm{K}$、$\mathcal{S}$、$\bm{N}$造成的损失；\term{图像增强}（image enhancement）不追求某个“原图”，而是调整亮度、对比或颜色，使呈现适合指定用途；\term{图像压缩}（image compression）主动引入新的$\mathcal{Q}$，用更少比特表达图像，再控制它造成的失真。本章用到的滤波、频域运算、离散余弦变换与小波都已在\ref{chap:vision-image-transforms}章建立，这里只回顾所需的结论；\ref{chap:vision-image-video-models}章的卷积网络和Transformer在复原中充当映射，\ref{chap:vision-multimodal-models}章的潜空间扩散模型为严重退化提供生成先验，这些模型基础也不在本章重讲。下文的像素、信号和码流数字，凡未注明来源者均为教学构造。
+
+\section{图像复原、增强与压缩的问题与挑战}
+\label{sec:vision-restoration-challenges}
+
+三类处理的输入和输出各不相同。复原的输入是受损图像$\bm{Y}$，有时附带掩码或已知的模糊核，输出是同尺寸或更高分辨率的估计$\widehat{\bm{X}}$。增强的输入是一幅RGB图像或一份RAW数据，输出是适合观看或测量的图像，通常没有唯一正确的参考。压缩的输入是图像$\bm{X}$，编码端输出一段比特流，解码端再由比特流得到重建$\widehat{\bm{X}}$。评价随之分成三类：重建与参考有多接近，看起来是否自然，用了多少比特。
+
+最直接的接近程度是逐元素误差。对含$n$个有效标量元素的对齐图像，均方误差和\term{峰值信噪比}（peak signal-to-noise ratio, PSNR）为
+\begin{equation}
+ \operatorname{MSE}=\frac1n\sum_{i=1}^{n}(x_i-\hat x_i)^2,
+ \qquad
+ \operatorname{PSNR}
+ =10\log_{10}\frac{v_{\max}^2}{\operatorname{MSE}}\text{，}
+ \label{eq:vision-psnr}
+\end{equation}
+$v_{\max}$是约定的峰值，归一化图像通常取1，8位整数通常取255；单位为分贝（dB），越大越接近。逐元素误差对所有位置一视同仁，不区分误差落在平坦区还是边缘上。\term{结构相似性}（structural similarity, SSIM）改为在对应的局部窗口中比较亮度、对比和结构，单个窗口的值为
+\begin{equation}
+ \operatorname{SSIM}(\bm{x},\hat{\bm{x}})
+ =
+ \frac{(2\mu_x\mu_{\hat x}+c_1)(2\sigma_{x,\hat x}+c_2)}
+ {(\mu_x^2+\mu_{\hat x}^2+c_1)
+  (\sigma_x^2+\sigma_{\hat x}^2+c_2)}\text{，}
+ \label{eq:vision-ssim}
+\end{equation}
+其中$\mu$是窗口内的加权均值，$\sigma^2$是相应方差，$\sigma_{x,\hat x}$是协方差，$c_1,c_2>0$稳定近常量窗口的计算；整图值由各窗口平均得到，越接近1越相似\scite{vision-ssim2004}这两项只衡量与参考的数值或结构差别。\term{学习感知图像块相似度}（learned perceptual image patch similarity, LPIPS）把两幅图送入预训练网络，比较多层归一化特征的加权距离，权重用人的相似性判断校准，越小越接近；它的定义与训练在\ref{sec:vision-restoration-lpips}节展开。
+
+压缩还要计量比特。设一幅$h\times w$图像的完整码流有$B$比特，\term{每像素比特数}（bits per pixel, bpp）为
+\begin{equation}
+ \operatorname{bpp}=\frac{B}{hw}\text{，}
+ \label{eq:vision-bpp}
+\end{equation}
+分母按像素位置计，不乘通道数。一个编解码器在不同压缩强度下得到一串（码率，PSNR）点，连成率失真曲线；比较两个编解码器，要比较整条曲线，而不是某一个点。常用的汇总量是\term{BD码率}（Bjøntegaard delta rate, BD-rate），由Bjøntegaard提出\scite{vision-bjontegaard2001}它的计算分三步：对编解码器A和B，分别用三次多项式把对数码率$r=\ln R$拟合成PSNR值$q$的函数$r_{\mathrm{A}}(q)$、$r_{\mathrm{B}}(q)$，在两条曲线共同覆盖的质量区间$[q_{\mathrm{L}},q_{\mathrm{H}}]$上求平均差，再换回比例：
+\begin{equation}
+ \Delta r=\frac{1}{q_{\mathrm{H}}-q_{\mathrm{L}}}
+ \int_{q_{\mathrm{L}}}^{q_{\mathrm{H}}}
+ \bigl(r_{\mathrm{B}}(q)-r_{\mathrm{A}}(q)\bigr)\,\mathrm{d}q,
+ \qquad
+ \text{BD-rate}=e^{\Delta r}-1\text{。}
+ \label{eq:vision-bd-rate}
+\end{equation}
+它回答的问题是：在相同质量下，B平均比A多用或少用多少比特。若B在每个质量点都只需A的0.8倍码率，则$r_{\mathrm{B}}-r_{\mathrm{A}}=\ln0.8$恒定，$\Delta r=\ln0.8$，BD-rate为$-20\%$，负值表示节省。在对数码率上取平均，是为了让低码率和高码率区段按比例而不是按绝对比特数计入；两条曲线的质量区间若重叠很少，这个平均就缺少依据。
+
+有了这些量，我们来看三类处理面对的主要困难。下面五个挑战按“复原—增强—复原与压缩共有的取舍—压缩”的顺序排列，每个都用夜间招牌说明，并交代经典方法和学习方法分别怎样处理。
+
+\subsection{观测信息丢失带来的解不唯一}
+\label{sec:vision-restoration-challenge-illposed}
+
+把两个相邻像素平均成一个时，$(0,1)$和$(0.5,0.5)$都得到0.5；模糊核在某些频率上的响应为零时，原图在这些频率上的成分无论取什么值，模糊后都一样。复原因此常是\term{病态问题}（ill-posed problem）：解可能不存在、不唯一，或者对观测的微小扰动极为敏感。招牌上一个笔画被模糊成一团时，“8”和“3”都可能与观测相符。
+
+经典方法用显式的先验在多个候选中选一个。正则化反卷积惩罚相邻像素的剧烈变化，维纳滤波按信号与噪声的功率谱分配各频率的增益，二者都在\ref{chap:vision-image-transforms}章的频域运算上进行。学习方法把先验交给训练数据：网络在大量“受损—清晰”配对上学到哪些图像更常见，但以平方误差训练时，它给出的是多个候选的平均（式\eqref{eq:vision-conditional-mean}），细节会被抹平。\ref{sec:vision-restoration-restoration}节按噪声、模糊、分辨率不足和缺失四种退化回答这个挑战：每种退化丢失信息的方式不同，补回信息的依据也不同。
+
+\subsection{退化未知且混合带来的模型失配}
+\label{sec:vision-restoration-challenge-mismatch}
+
+网上转发的招牌照片可能先被手抖模糊，再被缩小、保存成JPEG，又被手机自动锐化。式\eqref{eq:vision-image-degradation}中的每个算子都不知道，而且按未知的顺序叠加。按单一高斯噪声或单一已知模糊核设计的方法，遇到这种输入时，假设的退化与实际退化不符，这称为模型失配：方法会把压缩方块当作纹理保留，或把锐化白边当作字画加强。
+
+经典方法先估计退化参数，再套用对应的复原公式：例如从平坦区域估计噪声方差，或在盲反卷积中交替估计模糊核和图像。估计一旦出错，后续步骤全部建立在错误的模型上。学习方法改为扩大训练时的退化分布，让一个网络见过多种强度和组合：DnCNN-B在一个范围内随机取噪声强度，Real-ESRGAN把“模糊—缩放—加噪—压缩”重复两轮。合成退化覆盖得越广，模型失配越少，但它仍然不能穷尽真实相机和传播链路。\ref{sec:vision-restoration-denoising}节、\ref{sec:vision-restoration-restormer}节和\ref{sec:vision-restoration-real-esrgan}节分别在噪声、模糊和复合退化下讨论这个问题。
+
+\subsection{低照度与目标不唯一带来的增强取舍}
+\label{sec:vision-restoration-challenge-enhancement}
+
+夜景中墙面很暗，招牌很亮。把墙面提亮到能看清时，暗处的噪声也被一起放大，因为线性提亮同时放大信号和噪声；而一条全局曲线拉开了墙面的层次，又会压缩招牌的层次。增强没有唯一正确的目标，每次调整都要说明希望看清什么、哪些数值关系必须保留。
+
+经典方法用点运算和直方图方法重新分配灰度：伽马曲线、直方图均衡和受限局部直方图均衡化（\ref{sec:vision-transforms-intensity}节）都只改变数值映射，不能补回被噪声淹没的信号。学习方法在低照度下回到更早的成像阶段，直接读取RAW数据，联合完成去噪和颜色形成。\ref{sec:vision-restoration-enhancement}节先讨论暗光下的提亮，再讨论内容充足时全局映射和局部映射的取舍。
+
+\subsection{细节补全带来的保真与感知冲突}
+\label{sec:vision-restoration-challenge-perception}
+
+把低清招牌放大四倍时，平方误差最优的输出是所有可能高清图像的平均，笔画边缘模糊；若让模型输出锐利自然的笔画，它就必须在多个候选中选定一个，选中的可能是“3”而不是原来的“8”。前者PSNR较高却看着模糊，后者看着清楚却可能与原图不符。这种冲突不是某个模型的缺陷：可以证明，在一定失真预算下，输出分布与真实图像分布的接近程度存在下限（\ref{sec:vision-restoration-lpips}节）。
+
+经典方法大多以平方误差为准则，维纳滤波正是最小均方误差意义下的最优线性滤波器，因此结果偏平滑。学习方法加入感知损失、对抗损失或预训练扩散先验，让输出落在真实图像的分布上，代价是补出的细节缺少观测依据。\ref{sec:vision-restoration-super-resolution}节的三个超分辨率模型给出逐步加强的回答，\ref{sec:vision-restoration-evaluation}节说明怎样同时报告保真、感知与下游用途的结果。
+
+\subsection{比特预算带来的码率与失真权衡}
+\label{sec:vision-restoration-challenge-rate}
+
+假设招牌照片必须压到0.5 bpp。比特花在平滑的天空上，字画边缘就会出现方块和振铃；花在字画上，天空可能出现色带。码率越低失真越大，问题是在给定码率下把失真放在用途最不敏感的地方，并让解码端只凭比特流复现结果。
+
+经典编码器用固定的离散余弦变换或小波集中能量，用人工设计的量化表把更多误差放到人眼不敏感的高频，再用Huffman编码或算术编码去掉符号的统计冗余。各个模块分别设计，码率由质量因子间接控制。学习方法把变换、量化和概率模型放进同一个目标“码率$+\lambda\times$失真”联合训练，概率模型还可以随图像内容逐位置调整。\ref{sec:vision-restoration-compression}节先讲JPEG与JPEG 2000，再讲学习式压缩改变了哪些环节。
+
+这五个挑战决定了本章的推进顺序。复原一节先处理第一个挑战，并在噪声和模糊两种退化下讨论第二个挑战：每种退化先给出经典方法依据的成像模型，再看学习方法放宽了哪些假设；分辨率不足时第四个挑战变得突出，三个模型依次改变补出细节的来源。增强一节回答第三个挑战，暗光下的提亮需要复原的手段，内容充足时只需选择映射。压缩一节回答第五个挑战，经典编码的各个环节正好为学习式压缩提供了逐项对照的框架。最后一节回到第四个挑战，说明保真、感知、用途和成本为什么要分开核验。
+
+\section{图像复原}
+\label{sec:vision-restoration-restoration}
+
+复原的输入是一幅受损图像，输出是同尺寸或更高分辨率的估计图像。难点在于观测丢失了什么：噪声扰动每个像素，模糊把邻域混在一起，下采样把多个位置合并成一个，缺口则完全没有相应观测。这四种退化丢失信息的方式不同，所以本节按退化条件组织，而不是按网络结构组织。
+
+面对同一个困难，即“观测不足以唯一确定原图”，各条路线回答的方式不同。若退化过程已知且可写成公式，可以显式比较候选图像经过退化后是否接近输入，再用一个正则项或信号统计在多个候选中挑选，这是噪声模型下的空域滤波和已知模糊核下的逆滤波、维纳滤波与约束最小二乘的做法。若退化参数未知，经典方法先估计参数再套用公式，学习方法则从大量“退化—清晰”配对中学习一个映射，让网络从图像本身判断该怎样修正；DnCNN、Restormer和部分卷积网络都属于后一类，它们的差别在于网络能看到多大范围、怎样处理无效像素。\term{盲复原}（blind restoration）指使用时不知道全部退化参数，需要从图像及训练先验中共同估计；这里的“盲”描述可用信息，不表示已经覆盖所有真实相机和损坏形式。当缺失信息太多时，平均意义下最优的估计会变得平滑，Real-ESRGAN和DiffBIR进一步借助对抗训练或预训练生成模型补出合理细节，这时就需要区分“观测支持的内容”和“先验补出的内容”。
+
+\subsection{噪声干扰下的复原}
+\label{sec:vision-restoration-denoising}
+\label{sec:vision-restoration-dncnn}
+
+细小字画与噪声都表现为局部亮暗变化。要保留前者、去掉后者，先要说明噪声怎样产生。这一小节的输入是带噪图像，输出是同尺寸的估计图像；难点是噪声的类型和强度可能未知，而且噪声与纹理在局部统计上相似。路线由“对噪声知道多少”决定：知道噪声的分布形式时，可以为它选一个对应的滤波器，或先把它变换成更易处理的形式；只知道噪声来自某个范围时，就从合成的带噪配对中学习一个去噪网络。下面先写出常见的噪声模型，再回顾与之对应的经典滤波，最后讲DnCNN。
+
+最简单的模型是加性噪声$\bm{Y}=\bm{X}+\bm{N}$，噪声与图像内容无关，各位置独立同分布。不同物理来源给出不同的分布，表\ref{tab:vision-noise-models}列出常用的五种。\term{高斯噪声}（Gaussian noise）来自读出电路和热扰动，$n_{i,j}\sim\mathcal{N}(0,\sigma^2)$。椒盐噪声是一种脉冲噪声（\ref{sec:vision-transforms-nonlinear-denoising}节）：像素以概率$P_a$被置为最小值$a$（“椒”），以概率$P_b$被置为最大值$b$（“盐”），否则保持原值，常见于坏点和传输错误；它不是加性的，被污染的像素完全失去原值。均匀噪声$n\sim\mathcal{U}(a,b)$的方差为$\int_a^b(t-\tfrac{a+b}{2})^2\,\mathrm{d}t/(b-a)=(b-a)^2/12$，后文压缩一节用它近似量化误差。\term{周期噪声}（periodic noise）来自电源或机械干扰，形如$A\sin\bigl(2\pi(u_0i/h+v_0j/w)+\phi\bigr)$，它在空间上铺满全图，在二维傅里叶频谱上却只是一对位于$\pm(u_0,v_0)$的尖峰。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{16mm}p{40mm}p{28mm}XX@{}}
+  \toprule
+  噪声 & 模型 & 均值与方差 & 典型来源 & 经典处理\\
+  \midrule
+  高斯 & $y=x+n$，$n\sim\mathcal{N}(0,\sigma^2)$ & $0$；$\sigma^2$ & 读出电路、热噪声 & 均值或高斯平滑、维纳滤波\\
+  泊松 & $y\sim\operatorname{Poisson}(x)$，$x$为期望光子数 & $x$；$x$ & 光子到达的随机性 & 方差稳定化后按高斯处理\\
+  椒盐 & 以概率$P_a,P_b$取$a,b$，否则$y=x$ & 依赖$x$ & 坏点、传输错误 & 中值、自适应中值滤波\\
+  均匀 & $y=x+n$，$n\sim\mathcal{U}(a,b)$ & $\frac{a+b}{2}$；$\frac{(b-a)^2}{12}$ & 量化误差的近似 & 均值平滑\\
+  周期 & $y=x+A\sin(2\pi(u_0i/h+v_0j/w)+\phi)$ & 全图均值为零 & 电源、机械干扰 & 频域陷波滤波\\
+  \bottomrule
+ \end{tabularx}
+ \caption{常用噪声模型。前四种按像素独立定义，周期噪声在空间上相关、在频域上集中；均值与方差一栏对泊松噪声指$y$本身，对加性噪声指$n$。}
+ \label{tab:vision-noise-models}
+\end{table*}
+
+真实传感器的噪声介于高斯与泊松之间：\ref{sec:vision-formation-sensor}节已说明，光子到达的随机性产生散粒噪声，读出电路再叠加与信号无关的读出噪声。这里把它写成读数层面的模型。传感器把$x/\alpha$个期望光子转换成读数，光子数服从泊松分布，读出电路再叠加方差为$\sigma^2$的高斯噪声，于是读数可写成
+\begin{equation}
+ y=\alpha p+n,\qquad
+ p\sim\operatorname{Poisson}(x/\alpha),\quad
+ n\sim\mathcal{N}(0,\sigma^2)\text{，}
+ \label{eq:vision-poisson-gaussian}
+\end{equation}
+其中$\alpha>0$是每个光子对应的读数增益，$p$与$n$独立。泊松分布的均值和方差都等于参数（可参考\BookChapterRef{chap:random-variables}{卷二“随机变量”章}），所以$\mathbb{E}[y]=\alpha\cdot x/\alpha=x$，$\operatorname{Var}[y]=\alpha^2\cdot x/\alpha+\sigma^2=\alpha x+\sigma^2$。方差随亮度线性增长，这就是\term{泊松—高斯噪声}（Poisson-Gaussian noise）模型\scite{vision-foi2008}暗处的信噪比因此特别低：取$\alpha=1$、$\sigma=2$，亮度4处的标准差为$\sqrt{8}\approx2.83$，信噪比约1.4；亮度100处的标准差约10.2，信噪比约9.8。
+
+方差随均值变化，会使只为固定$\sigma$设计的去噪器在亮处去噪过度、在暗处去噪不足。\term{方差稳定化变换}（variance-stabilizing transform, VST）寻找一个单调函数$f$，使$f(y)$的方差近似为常数。依据是Delta方法：若$y$集中在均值$\mu$附近，一阶展开$f(y)\approx f(\mu)+f'(\mu)(y-\mu)$给出$\operatorname{Var}[f(y)]\approx f'(\mu)^2\operatorname{Var}[y]$（可参考前文已引的卷二“随机变量”章）。要让它等于1，就要$f'(\mu)=1/\sqrt{\alpha\mu+\sigma^2}$，积分得
+\begin{equation}
+ f(y)=\frac{2}{\alpha}\sqrt{\alpha y+\sigma^2}\text{。}
+ \label{eq:vision-vst}
+\end{equation}
+纯泊松情形$\alpha=1,\sigma=0$时，它就是$2\sqrt{y}$；Anscombe把它修正为$2\sqrt{y+3/8}$，使小计数时的方差更接近1\scite{vision-anscombe1948}以纯泊松为例：均值4时$\operatorname{Var}[y]=4$，$f'(4)=1/2$，变换后方差约$4\times\frac14=1$；均值100时$\operatorname{Var}[y]=100$，$f'(100)=1/10$，变换后方差仍约1。使用流程是先做变换，用任意针对单位方差高斯噪声的去噪器处理，再做逆变换。一阶近似在计数很小时偏差较大，而且$f$是非线性的，直接代数求逆会带来系统偏差，需要专门设计的无偏逆变换。
+
+已知噪声类型后，可以选择对应的滤波器。\ref{sec:vision-transforms-nonlinear-denoising}节已经讲过：均值和高斯滤波对独立的高斯噪声有效，平均$k$个独立样本使方差降为$1/k$，代价是边缘一起被平滑；中值滤波输出窗口内的中位数，一个窗口中只要被污染的像素少于一半，中位数就仍来自未被污染的像素，因此适合椒盐噪声；双边滤波和非局部均值按像素值或图块的相似程度加权，能在平滑噪声时保留边缘。周期噪声在频域上集中成尖峰，可以用陷波滤波器只去掉那几个频率（\ref{sec:vision-transforms-selective-filtering}节）。
+
+固定窗口的中值滤波有两个限制。椒盐噪声的密度较高时，窗口中被污染的像素可能超过一半，中位数本身就是噪声值；而在噪声密度较低时，它仍会替换每个像素，包括没有被污染的像素，细小笔画因此变细或断开。\term{自适应中值滤波}（adaptive median filter）让窗口大小随局部情况变化，并且只替换被判为脉冲的像素\scite{vision-hwang-haddad1995,vision-gonzalez-woods2018}记窗口$W$内的最小值、中位数和最大值为$z_{\min},z_{\mathrm{med}},z_{\max}$，当前像素值为$z$，算法\ref{alg:vision-adaptive-median}分两个阶段。
+
+\begin{algorithm}[自适应中值滤波（单个像素）]
+ \label{alg:vision-adaptive-median}
+ \begin{algorithmic}[1]
+  \Require 带噪图像，当前位置的像素值$z$，初始窗口边长$s_0$，最大边长$s_{\max}$
+  \Ensure 当前位置的输出值
+  \State $s\gets s_0$
+  \Loop
+   \State 计算边长为$s$的窗口内的$z_{\min},z_{\mathrm{med}},z_{\max}$
+   \If{$z_{\min}<z_{\mathrm{med}}<z_{\max}$}
+    \Comment{阶段一：中位数不是脉冲}
+    \If{$z_{\min}<z<z_{\max}$}
+     \State \Return $z$ \Comment{阶段二：当前像素不是脉冲，保留}
+    \Else
+     \State \Return $z_{\mathrm{med}}$
+    \EndIf
+   \EndIf
+   \State $s\gets s+2$
+   \If{$s>s_{\max}$}
+    \State \Return $z_{\mathrm{med}}$ \Comment{窗口已达上限}
+   \EndIf
+  \EndLoop
+ \end{algorithmic}
+\end{algorithm}
+
+阶段一检查中位数是否落在最小值与最大值之间。若中位数等于最小值或最大值，说明窗口里的脉冲太多，中位数不可靠，就扩大窗口重算。阶段二检查当前像素本身：它若严格介于最小值与最大值之间，就被判为未受污染而原样保留，否则用中位数替换。以$3\times3$窗口为例，窗口值为$\{0,255,120,118,z,122,119,0,121\}$。若中心$z=255$，排序后$z_{\min}=0$、$z_{\mathrm{med}}=120$、$z_{\max}=255$，阶段一通过；阶段二中$z=z_{\max}$，判为“盐”，输出120。若中心$z=121$，排序后$z_{\min}=0$、$z_{\mathrm{med}}=119$、$z_{\max}=255$，阶段一通过；阶段二中$0<121<255$，输出121，而普通中值滤波会把它改成119。若窗口里有五个0，中位数等于$z_{\min}$，阶段一不通过，窗口扩到$5\times5$再判断。这个规则假设脉冲取极值，高斯噪声下没有这种可分离的结构，阶段二几乎总会保留原值。
+
+这些经典滤波器的共同特点是：滤波规则由噪声模型推出，参数只有窗口大小、$\sigma$等几个；它们对指定的噪声有效，却不知道图像中哪些结构是字画、哪些是纹理，噪声与细节频带重叠时只能二者一起处理。学习方法要改变的正是这一点。
+
+在深度网络之前，判别式去噪器通常为每个噪声强度单独训练一个模型；遇到强度未知的图像，要先估计$\sigma$，再选用对应模型，估计误差会直接传到结果中。另一方面，让很深的卷积网络直接输出清晰图像，网络既要复制大部分图像内容，又要改掉噪声，训练时容易收敛缓慢。DnCNN针对这两点提出：让网络只预测观测与参考之差，即噪声残差，并用批归一化稳定深层网络的训练\scite{vision-dncnn2017}
+
+残差预测的直觉是这样的：带噪图像与清晰图像的大部分内容相同，二者之差是一张接近零均值、结构简单的噪声图。网络若只需输出这张差图，就不必在每一层保存并复制整幅图像。这一想法与ResNet的残差连接相关，但位置不同：ResNet在网络内部逐块学习残差（见\ref{sec:vision-ivm-resnet}节），DnCNN则把整个网络的输出定义为残差，再在网络外做一次减法。
+
+DnCNN的结构是一串同尺寸卷积，表\ref{tab:vision-dncnn-layers}逐层列出。输入为$h\times w\times c$的带噪图像（灰度$c=1$，彩色$c=3$）。第一层用64个$3\times3\times c$卷积加ReLU，得到$h\times w\times64$的特征；第2层到第$D-1$层都按“64个$3\times3\times64$卷积 \ensuremath{\to} 批归一化 \ensuremath{\to} ReLU”的顺序计算，特征形状保持$h\times w\times64$；第$D$层用$c$个$3\times3\times64$卷积回到$h\times w\times c$，不加激活函数，因此输出可正可负。每层卷积前都做零填充，使空间尺寸不变，相减能逐位置执行。每经过一层$3\times3$卷积，一个输出像素所依赖的输入范围向四周各扩大一个像素，深度为$D$的网络的感受野因此为$(2D+1)\times(2D+1)$。作者参照当时主流去噪方法实际使用的图块大小来定深度：已知噪声强度的DnCNN-S取$D=17$，感受野为$35\times35$；盲去噪的DnCNN-B和多任务的DnCNN-3取$D=20$，感受野为$41\times41$。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{14mm}Xp{14mm}p{10mm}p{16mm}p{18mm}@{}}
+  \toprule
+  层组 & 层类型 & 卷积核与步长 & 输出通道 & 重复次数 & 输出尺寸\\
+  \midrule
+  第1层 & 卷积，ReLU & $3\times3$，1 & 64 & 1 & $h\times w\times64$\\
+  中间层 & 卷积，批归一化，ReLU & $3\times3$，1 & 64 & $D-2$（15或18） & $h\times w\times64$\\
+  第$D$层 & 卷积 & $3\times3$，1 & $c$ & 1 & $h\times w\times c$\\
+  网络外 & 观测减去残差 & — & $c$ & 1 & $h\times w\times c$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{DnCNN的逐层结构。DnCNN-S取$D=17$，DnCNN-B与DnCNN-3取$D=20$；所有卷积均零填充以保持空间尺寸，输入可为任意$h\times w$。论文未给出参数总量。}
+ \label{tab:vision-dncnn-layers}
+\end{table}
+
+记这一残差网络为$r_{\bm{\theta}}$，由$n$对带噪图像与清晰参考训练：
+\begin{equation}
+ L(\bm{\theta})=\frac{1}{2n}\sum_{i=1}^{n}
+ \bigl\lVert r_{\bm{\theta}}(\bm{Y}_i)
+             -(\bm{Y}_i-\bm{X}_i)\bigr\rVert_{\mathrm{F}}^2,
+ \qquad
+ \widehat{\bm{X}}=\bm{Y}-r_{\bm{\theta}}(\bm{Y})\text{。}
+ \label{eq:vision-dncnn}
+\end{equation}
+这里的Frobenius范数表示所有像素与通道的平方和。训练配对由清晰图像加合成高斯噪声得到，灰度模型用伯克利分割数据集中400幅$180\times180$的图像。DnCNN-S分别在$\sigma=15,25,50$下各训一个模型，裁取$128\times1600$个$40\times40$的图块；DnCNN-B在$\sigma\in[0,55]$内随机取噪声强度，裁取$128\times3000$个$50\times50$的图块，只训一个模型。优化采用带动量0.9、权重衰减$10^{-4}$的随机梯度下降，批量128，训练50轮，学习率从$10^{-1}$按指数衰减到$10^{-4}$。训练更新卷积参数和批归一化参数；使用时固定这些参数，输入一幅带噪图像，一次前向得到残差，再按式\eqref{eq:vision-dncnn}相减，不再需要清晰参考，DnCNN-B也不需要事先估计$\sigma$。
+
+以招牌一行的四个灰度值为例，参考为$(0.2,0.2,0.8,0.8)$，加噪后得到$(0.25,0.17,0.84,0.74)$，残差标签就是$(0.05,-0.03,0.04,-0.06)$。若网络预测$(0.04,-0.02,0.03,-0.05)$，相减得到$(0.21,0.19,0.81,0.79)$。若网络把明暗跳变也解释成噪声，输出会抹掉字画；残差形式本身没有提供“噪声”和“真实细节”的语义区分，这一区分来自训练数据及损失。
+
+平方误差还决定了输出的倾向。对固定观测$\bm{Y}=\bm{y}$和任意候选$\bm{a}$，有
+\begin{equation}
+ \mathbb{E}\!\left[\lVert\bm{X}-\bm{a}\rVert_{\mathrm{F}}^2
+                  \mid\bm{Y}=\bm{y}\right]
+ =
+ \mathbb{E}\!\left[\lVert\bm{X}-\bm{\mu}\rVert_{\mathrm{F}}^2
+                  \mid\bm{Y}=\bm{y}\right]
+ +\lVert\bm{a}-\bm{\mu}\rVert_{\mathrm{F}}^2\text{，}
+ \label{eq:vision-conditional-mean}
+\end{equation}
+其中$\bm{\mu}=\mathbb{E}[\bm{X}\mid\bm{Y}=\bm{y}]$，并假设二阶矩有限。把$\bm{X}-\bm{a}$写成$(\bm{X}-\bm{\mu})+(\bm{\mu}-\bm{a})$后展开平方，交叉项$2\langle\bm{X}-\bm{\mu},\bm{\mu}-\bm{a}\rangle$在给定$\bm{Y}=\bm{y}$时的期望为零，因为$\bm{\mu}-\bm{a}$是常量，而$\bm{X}-\bm{\mu}$的条件均值为零。所以理想的平方误差预测就是条件均值。若一个细节存在多个可能位置，平均结果会较平滑；这一点在噪声较轻时影响不大，在后文超分辨率中会变成主要问题。
+
+DnCNN-S与DnCNN-B的对照说明了“已知条件”的作用。前者为每个噪声强度单独训练，在该强度下得到最好的结果，但使用前必须知道$\sigma$；后者用一个模型覆盖$[0,55]$，省去了噪声估计，代价是要在一个参数集合里兼顾多种强度。与经典滤波相比，DnCNN同样依赖噪声模型，只是这个模型体现在训练数据中而不是滤波公式中：两个版本都只见过加性高斯噪声。真实相机的噪声服从式\eqref{eq:vision-poisson-gaussian}一类与亮度相关的分布，经过去马赛克和压缩后又有空间相关性，超出训练分布时，网络可能把噪声当成纹理保留，也可能把细纹理当成噪声抹去。一个折中的做法是先用式\eqref{eq:vision-vst}把泊松—高斯噪声稳定成近似单位方差，再交给按高斯噪声训练的网络，但相关性问题仍然存在。把多种退化统一写成$\bm{Y}-\bm{X}$只统一了输出接口，不能推得它们具有同一分布。
+
+\subsection{模糊观测下的复原}
+\label{sec:vision-restoration-deblurring}
+
+模糊不是逐像素独立的扰动。相机运动或失焦使一个场景点的光落到多个像素上，观测中每个像素都是邻域的加权和。描述这种扩散的核称为点扩散函数，即一个理想亮点在图像上留下的光斑。这一小节的输入是模糊图像，输出是清晰估计；难点是要把混在一起的贡献拆开，而某些频率成分在模糊后几乎为零，直接反演会把噪声成倍放大。
+
+能否知道模糊核，决定了路线。若模糊核已知且空间不变，例如由陀螺仪记录的相机运动或标定过的镜头，恢复问题可以写成线性方程，在傅里叶域逐频率求解，不需要训练数据；逆滤波、维纳滤波和约束最小二乘滤波的差别只在于怎样处理弱频率。若模糊核未知，经典的盲反卷积先从图像中估计核，再回到已知核的情形；学习方法则从大量“模糊—清晰”配对中直接学习映射，让网络从图像本身的边缘和纹理判断该怎样修正。前一条路线的知识全在成像公式里，后一条路线的知识越来越多地来自训练数据，下面两部分分别展开。
+
+\subsubsection{已知模糊核下的复原}
+\label{sec:vision-restoration-deconvolution}
+
+先考虑一维信号，假设模糊空间不变，并采用周期边界。卷积可写为$\bm{y}=\bm{H}\bm{x}+\bm{n}$，其中$\bm{x},\bm{y}\in\mathbb{R}^{m}$，$\bm{H}\in\mathbb{R}^{m\times m}$是由模糊核生成的循环矩阵。离散傅里叶变换将循环矩阵对角化，即卷积定理：周期卷积在频域中变成逐频率相乘（可参考\BookChapterRef{chap:signal-analysis}{卷一“信号”章}，二维情形见\ref{sec:vision-transforms-dft2d}节）。于是每个频率$\omega$满足
+\begin{equation}
+ Y_\omega=H_\omega X_\omega+N_\omega\text{，}
+ \label{eq:vision-blur-frequency}
+\end{equation}
+大写字母表示相应向量的离散傅里叶系数。二维图像的推导完全相同，只是频率换成二维下标$(u,v)$。
+
+最直接的做法是\term{逆滤波}（inverse filtering），逐频率除以$H_\omega$：
+\[
+ \widehat X_\omega=\frac{Y_\omega}{H_\omega}=X_\omega+\frac{N_\omega}{H_\omega}\text{。}
+\]
+第二个等号说明，逆滤波在无噪声时精确恢复原信号，在有噪声时把噪声分量除以$H_\omega$。模糊核是低通的，高频处$|H_\omega|$很小，噪声在这些频率被大幅放大；$H_\omega=0$处则根本没有唯一的反演。逆滤波失败的原因不是计算不准，而是它把“观测一致”当作唯一要求，没有告诉算法在弱频率上该相信什么。
+
+\term{维纳滤波}（Wiener filtering）补上的是信号和噪声的统计。设$\bm{x}$和$\bm{n}$是零均值、互不相关的随机信号，并且在周期边界下是平稳的，即协方差只依赖位置差。这时它们的协方差矩阵也是循环矩阵，同样被离散傅里叶变换对角化，于是不同频率的系数互不相关，各频率的方差
+\[
+ S_x(\omega)=\mathbb{E}\bigl[|X_\omega|^2\bigr],\qquad
+ S_n(\omega)=\mathbb{E}\bigl[|N_\omega|^2\bigr]
+\]
+称为信号与噪声的\term{功率谱}（power spectrum），描述能量在各频率上的分布。白噪声的功率谱是常数$S_n(\omega)=m\sigma^2$；自然图像的功率谱通常随频率升高而下降。
+
+维纳滤波在线性估计$\widehat X_\omega=W_\omega Y_\omega$中选择$W_\omega$，使均方误差$\mathbb{E}|X_\omega-W_\omega Y_\omega|^2$最小；不同频率互不相关，所以总误差可以逐频率分别最小化。由式\eqref{eq:vision-blur-frequency}和不相关假设，
+\[
+ \mathbb{E}\bigl[X_\omega\overline{Y_\omega}\bigr]=\overline{H_\omega}S_x,
+ \qquad
+ \mathbb{E}\bigl[|Y_\omega|^2\bigr]=|H_\omega|^2S_x+S_n=:P_\omega\text{，}
+\]
+这里省略了$S_x,S_n$的自变量$\omega$，第一个式子用到$\mathbb{E}[X_\omega\overline{N_\omega}]=0$。展开平方并配方：
+\[
+ \begin{aligned}
+ \mathbb{E}|X_\omega-W_\omega Y_\omega|^2
+ &=S_x-W_\omega H_\omega S_x-\overline{W_\omega}\,\overline{H_\omega}S_x+|W_\omega|^2P_\omega\\
+ &=P_\omega\Bigl|W_\omega-\frac{\overline{H_\omega}S_x}{P_\omega}\Bigr|^2
+  +\frac{S_xS_n}{P_\omega}\text{。}
+ \end{aligned}
+\]
+最后一步把含$W_\omega$的项写成一个非负的平方，可以展开右边逐项核对。第二项与$W_\omega$无关，所以误差在平方项为零时最小：
+\begin{equation}
+ W_\omega=\frac{\overline{H_\omega}S_x}{|H_\omega|^2S_x+S_n}
+ =\frac{\overline{H_\omega}}{|H_\omega|^2+S_n/S_x}\text{，}
+ \qquad
+ \text{最小误差}=\frac{S_xS_n}{|H_\omega|^2S_x+S_n}\text{。}
+ \label{eq:vision-wiener}
+\end{equation}
+
+式\eqref{eq:vision-wiener}的分母比逆滤波多了噪声与信号的功率比$S_n/S_x$。信噪比高的频率上，$S_n/S_x\ll|H_\omega|^2$，维纳滤波接近逆滤波；信噪比低的频率上，分母由$S_n/S_x$主导，增益趋于零，滤波器宁可输出零（即该频率的先验均值），也不放大噪声。没有噪声时$S_n=0$，它退化为逆滤波；$H_\omega=0$时增益为零，不再出现除以零。若$\bm{x}$和$\bm{n}$进一步服从高斯分布，线性估计就是条件均值，维纳滤波也就是式\eqref{eq:vision-conditional-mean}意义下所有估计中的最优者；没有高斯假设时，它只在线性估计中最优。
+
+实际使用时，$S_x$未知，因为要恢复的正是$\bm{x}$。常见的近似是把比值换成一个常数$K$，得到$W_\omega=\overline{H_\omega}/(|H_\omega|^2+K)$，再在带参考的样本上挑选$K$。这个近似忽略了自然图像功率谱随频率下降的事实：真实的$S_n/S_x$在高频更大，常数$K$在高频抑制不足、在低频又抑制过度。
+
+\term{约束最小二乘滤波}（constrained least squares filtering）换一种方式提供先验：不需要信号的功率谱，只要求结果平滑，并要求残差与噪声水平相符\scite{vision-gonzalez-woods2018}设$\bm{C}$是一个衡量粗糙程度的差分算子，二维时常取离散拉普拉斯核$\bigl(\begin{smallmatrix}0&-1&0\\-1&4&-1\\0&-1&0\end{smallmatrix}\bigr)$，一维时取周期一阶差分$\bm{D}$。问题写成
+\begin{equation}
+ \min_{\bm{x}}\ \lVert\bm{C}\bm{x}\rVert_2^2
+ \quad\text{满足}\quad
+ \lVert\bm{y}-\bm{H}\bm{x}\rVert_2^2=\lVert\bm{n}\rVert_2^2\text{，}
+ \label{eq:vision-cls}
+\end{equation}
+即在所有“残差大小恰好等于噪声大小”的候选中，选最平滑的一个。约束的意思是：残差比噪声还小，说明结果把噪声也拟合进去了；残差比噪声大，说明信号没有被充分利用。引入拉格朗日乘子，问题的驻点满足
+\[
+ \widehat{\bm{x}}=\argmin_{\bm{x}}\
+ \lVert\bm{H}\bm{x}-\bm{y}\rVert_2^2+\gamma\lVert\bm{C}\bm{x}\rVert_2^2\text{，}
+\]
+$\gamma>0$由约束确定。这个目标是二次函数，令梯度为零得到法方程$(\bm{H}^{\top}\bm{H}+\gamma\bm{C}^{\top}\bm{C})\widehat{\bm{x}}=\bm{H}^{\top}\bm{y}$。$\bm{H}$和$\bm{C}$都是循环矩阵，可由同一傅里叶基对角化，$\bm{H}^{\top}$对应复共轭$\overline{H_\omega}$；在分母非零时，每个频率独立求解为
+\begin{equation}
+ \widehat X_\omega=
+ \frac{\overline{H_\omega}}
+ {|H_\omega|^2+\gamma|C_\omega|^2}\,Y_\omega\text{。}
+ \label{eq:vision-regularized-inverse}
+\end{equation}
+与式\eqref{eq:vision-wiener}对照，约束最小二乘就是把$S_n/S_x$换成$\gamma|C_\omega|^2$的维纳滤波。差分算子在高频处$|C_\omega|$大，相当于假设信号功率谱随频率升高而下降，这正好弥补了常数$K$的缺陷。在$H_\omega$较大的频率，分母由$|H_\omega|^2$主导，式子接近逆滤波；在$H_\omega$很小的频率，分母由$\gamma|C_\omega|^2$主导，增益被压低。若$H_\omega=C_\omega=0$，该频率仍没有唯一解，需要另外规定约束。这一形式也就是反卷积中常用的二次正则化；\term{反卷积}（deconvolution）泛指撤销卷积模糊的计算，正则项的强度在这里由噪声水平确定，而不是人为指定。
+
+剩下的问题是怎样找到满足约束的$\gamma$。记残差$\bm{r}(\gamma)=\bm{y}-\bm{H}\widehat{\bm{x}}(\gamma)$，由式\eqref{eq:vision-regularized-inverse}，
+\[
+ R_\omega(\gamma)=Y_\omega-H_\omega\widehat X_\omega
+ =\frac{\gamma|C_\omega|^2}{|H_\omega|^2+\gamma|C_\omega|^2}\,Y_\omega\text{。}
+\]
+系数$\gamma|C_\omega|^2/(|H_\omega|^2+\gamma|C_\omega|^2)$在$H_\omega,C_\omega\neq0$时随$\gamma$单调增加，所以残差平方和$\phi(\gamma)=\lVert\bm{r}(\gamma)\rVert_2^2$随$\gamma$单调不减（由Parseval关系，空间与频域的平方和只差常数因子）。单调性保证可以用调整$\gamma$的方式逼近目标。噪声能量$\lVert\bm{n}\rVert_2^2$本身未知，用它的期望$m(\sigma^2+\mu_n^2)$代替，其中$\mu_n,\sigma^2$是噪声的均值和方差，可以从平坦区域估计。算法\ref{alg:vision-cls-gamma}给出一种简单的调整方式。
+
+\begin{algorithm}[约束最小二乘滤波的参数选择]
+ \label{alg:vision-cls-gamma}
+ \begin{algorithmic}[1]
+  \Require 观测$\bm{y}$，模糊核，差分算子$\bm{C}$，噪声能量估计$\eta=m(\sigma^2+\mu_n^2)$，容差$a>0$，初值$\gamma^{(0)}$
+  \Ensure 满足$|\phi(\gamma)-\eta|\leq a$的$\gamma$及复原结果
+  \State $t\gets0$
+  \Loop
+   \State 按式\eqref{eq:vision-regularized-inverse}计算$\widehat{\bm{x}}(\gamma^{(t)})$与$\phi(\gamma^{(t)})$
+   \If{$|\phi(\gamma^{(t)})-\eta|\leq a$}
+    \State \Return $\gamma^{(t)}$与$\widehat{\bm{x}}(\gamma^{(t)})$
+   \ElsIf{$\phi(\gamma^{(t)})>\eta+a$}
+    \State 减小$\gamma$，例如取已知可行区间的中点 \Comment{残差太大，平滑过度}
+   \Else
+    \State 增大$\gamma$ \Comment{残差太小，拟合了噪声}
+   \EndIf
+   \State $t\gets t+1$
+  \EndLoop
+ \end{algorithmic}
+\end{algorithm}
+
+用一个八点例子把三种滤波器放在一起。取边缘$\bm{x}=(0,0,0,0,1,1,1,1)$，模糊核在中心和左右邻点的权重为$(0.6,0.2,0.2)$，再加入交替的$\pm0.04$噪声，得到观测
+\[
+ \bm{y}=(0.24,-0.04,0.04,0.16,0.84,0.96,1.04,0.76)\text{。}
+\]
+这个核的频率响应为$H_\omega=0.6+0.4\cos\omega$，最高频$\omega=\pi$处$H_\omega=0.2$，逆滤波的增益为5，把幅值0.04的交替噪声放大到0.2，输出为$(0.2,-0.2,0.2,-0.2,1.2,0.8,1.2,0.8)$。取常数比$K=0.05$的维纳滤波，$\omega=\pi$处增益为$0.2/(0.04+0.05)\approx2.22$，噪声仍被放大一倍多。约束最小二乘取$\bm{C}=\bm{D}$，周期差分在该处$|D_\omega|^2=2-2\cos\pi=4$；取$\gamma=0.05$时，增益为$0.2/(0.04+0.05\times4)\approx0.833$，噪声分量幅值降为约0.033。图\ref{fig:vision-filter-gains}画出三种增益在各频率上的变化：常数比维纳滤波只在高频把逆滤波的增益削去一半左右，差分约束则把高频增益压到1以下。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/restoration-filter-gains}
+ \caption{八点例中三种滤波器在各频率上的增益。横轴为频率$\omega\in[0,\pi]$，模糊核的频率响应$H_\omega=0.6+0.4\cos\omega$在高频降到0.2。虚线为逆滤波$1/H_\omega$；蓝实线为常数比维纳滤波，$K=0.05$；带点的实线为一阶差分约束，$\gamma=0.05$。增益大于1的频率被放大，三者的差别集中在高频。}
+ \label{fig:vision-filter-gains}
+\end{figure}
+
+再用算法\ref{alg:vision-cls-gamma}选$\gamma$。噪声能量为$8\times0.04^2=0.0128$，取容差$a=0.001$。从$\gamma^{(0)}=0.05$开始，残差平方和为0.0223，超过$0.0138$，说明平滑过度；减半到$\gamma^{(1)}=0.025$，残差平方和为0.0132，落入$[0.0118,0.0138]$，停止。此时输出为$(0.177,-0.094,0.021,0.062,0.938,0.979,1.094,0.823)$，与原信号的均方误差约为0.0111；$\gamma=0.05$时为0.0159，逆滤波为0.04。在这个例子中，按噪声水平选出的$\gamma$接近使误差最小的取值（逐点搜索得到约0.018，误差约0.0104），但这依赖噪声能量估计准确，以及差分算子与信号结构相符。
+
+图\ref{fig:vision-deconvolution}显示$\gamma=0.05$时的全部八点结果。正则化后的过冲变小，但跃迁也变缓，且仍有轻微振铃。这里保留了负值与大于1的值以展示反演行为，没有在绘图前裁剪。计算上，对$h\times w$的图像，二维版本对每个通道做一次快速傅里叶变换，逐频率相乘，再做逆变换，复杂度为$O(hw\log(hw))$。真实图像若采用反射边界，不能继续照搬循环卷积公式；若模糊核错误或随位置变化，正则化只能缓解数值不稳定，不能修正错误的成像模型。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/deconvolution}
+ \caption{八点周期边缘的教学反卷积。实线为清晰参考，带方块的虚线为逆滤波，带圆点的实线为一阶差分约束（$\gamma=0.05$）的结果。两端因周期边界相接；纵轴未裁剪，便于观察过冲与平滑的取舍。}
+ \label{fig:vision-deconvolution}
+\end{figure}
+\FloatBarrier
+
+三种滤波器回答同一个问题：弱频率上该相信什么。逆滤波只相信观测，维纳滤波相信信号与噪声的功率谱，约束最小二乘相信“结果应当平滑且残差与噪声相当”。后两者在数学上是同一形式，只是先验的来源不同。这一思想在学习方法中继续存在：学习式复原网络的训练数据隐含地给出了比任何人工功率谱都细致的图像先验，而后文DiffBIR的复原引导，仍是在“与观测一致”和“符合先验”之间作加权。
+
+\subsubsection{未知模糊核下的复原}
+\label{sec:vision-restoration-restormer}
+
+手持拍摄的招牌，模糊方向和长度事先不知道，画面中前景与背景的模糊程度还可能不同，式\eqref{eq:vision-regularized-inverse}中的$H_\omega$无从写出。经典的回答是\term{盲反卷积}（blind deconvolution）：同时估计模糊核$\bm{k}$和清晰图像$\bm{x}$。最自然的写法是联合最大后验估计
+\begin{equation}
+ (\widehat{\bm{x}},\widehat{\bm{k}})=\argmin_{\bm{x},\bm{k}}\
+ \lVert\bm{k}*\bm{x}-\bm{y}\rVert_2^2
+ +\lambda\sum_{i}\rho\bigl((\nabla\bm{x})_i\bigr)
+ \quad\text{满足}\quad k_j\geq0,\ \sum_jk_j=1\text{，}
+ \label{eq:vision-blind-map}
+\end{equation}
+其中$\rho$惩罚图像梯度，非负与归一化约束排除了核的负值和整体缩放。这个问题的困难在于解的多义性：取$\bm{k}$为只在中心取1的单位冲激、$\bm{x}=\bm{y}$，数据项同样为零，这是“没有模糊”的解释。
+
+先验能否排除这个解释，取决于$\rho$。仍用八点边缘，无噪声时模糊结果为$(0.2,0,0,0.2,0.8,1,1,0.8)$，其周期差分为$(-0.2,0,0.2,0.6,0.2,0,-0.2,-0.6)$；清晰边缘的周期差分只有一个$+1$和一个$-1$。若$\rho(g)=g^2$，清晰解的先验代价为2，模糊解只有$4\times0.04+2\times0.36=0.88$，联合估计会偏向“没有模糊”。若改用重尾的$\rho(g)=|g|^{1/2}$，清晰解为2，模糊解为$4\sqrt{0.2}+2\sqrt{0.6}\approx3.34$，清晰解胜出。这说明盲反卷积需要能区分清晰边缘与模糊过渡的稀疏梯度先验\scite{vision-fergus2006}但Levin等人分析指出，在含大量细小纹理的真实图像上，联合估计仍大多偏向无模糊的解释；由于模糊核的未知数远少于像素数，先把图像积分掉、只对核做最大后验估计，问题受到的约束要强得多，能较准确地恢复核\scite{vision-levin2009}实际系统因此常先在由粗到细的图像金字塔上估计核，再固定核，用上一小节的非盲方法恢复图像。它的局限也随之而来：核估计依赖足够的强边缘，且大多假设整幅图共用一个空间不变的核，而Levin等人收集的真实模糊数据显示，这个假设经常不成立。
+
+学习式去模糊绕开显式核，直接学习从模糊图像到清晰图像的映射。卷积网络是自然的起点，但它有两个限制：感受野有限，一个像素只能读取固定大小的邻域，而运动模糊的拖影可能横跨几十个像素；卷积权重在推理时固定，不随当前图像内容调整。自注意力能让每个位置读取全图并按内容加权，但逐像素注意力的计算量随像素数平方增长，一幅$256\times256$图像就有约$6.6\times10^4$个位置；把注意力限制在$8\times8$等小窗口内又回到了局部范围。
+
+Restormer的主要想法是把注意力从空间维换到通道维：不再计算“哪些像素与哪些像素相关”，而是计算“哪些通道在整幅特征图上的响应彼此相关”，用这种通道间的关系矩阵混合特征\scite{vision-restormer2022}关系矩阵的大小只取决于通道数，计算量对位置数近似线性，因而能直接处理高分辨率图像；全图统计又使通道组合随输入变化。空间上的局部信息由注意力前的深度卷积和多尺度结构补充。
+
+整体结构是一个四级对称编码器—解码器，表\ref{tab:vision-restormer-layers}列出各级配置。输入$\bm{Y}\in\mathbb{R}^{h\times w\times3}$先经一层卷积得到$h\times w\times C$的浅层特征，$C=48$。编码器从第一级到第四级依次用像素反重排把空间尺寸减半、通道加倍，特征形状依次为$h\times w\times48$、$\frac{h}{2}\times\frac{w}{2}\times96$、$\frac{h}{4}\times\frac{w}{4}\times192$和$\frac{h}{8}\times\frac{w}{8}\times384$；四级分别含4、6、6、8个Transformer块，注意力头数分别为1、2、4、8。解码器用像素重排逐级上采样，与同级编码特征沿通道拼接，再用$1\times1$卷积把通道减半；第一级例外，保留拼接后的$h\times w\times96$。随后在全分辨率上用4个块细化，最后一层卷积输出残差图$\bm{R}\in\mathbb{R}^{h\times w\times3}$，复原结果为$\widehat{\bm{X}}=\bm{Y}+\bm{R}$。注意这个符号约定与式\eqref{eq:vision-dncnn}相反：DnCNN预测噪声后相减，Restormer预测修正量后相加。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{22mm}Xp{24mm}p{12mm}p{12mm}p{28mm}@{}}
+  \toprule
+  阶段 & 层类型 & 卷积核与步长 & 输出通道 & 重复次数 & 输出尺寸\\
+  \midrule
+  浅层嵌入 & 卷积 & 论文未给出 & 48 & 1 & $h\times w\times48$\\
+  编码第1级 & Transformer块（1头） & — & 48 & 4 & $h\times w\times48$\\
+  下采样 & 像素反重排 & 空间减半 & 96 & 1 & $\frac h2\times\frac w2\times96$\\
+  编码第2级 & Transformer块（2头） & — & 96 & 6 & $\frac h2\times\frac w2\times96$\\
+  编码第3级 & 下采样后Transformer块（4头） & 空间减半 & 192 & 6 & $\frac h4\times\frac w4\times192$\\
+  第4级 & 下采样后Transformer块（8头） & 空间减半 & 384 & 8 & $\frac h8\times\frac w8\times384$\\
+  解码第3级 & 像素重排，拼接，$1\times1$卷积，Transformer块（4头） & $1\times1$，1 & 192 & 6 & $\frac h4\times\frac w4\times192$\\
+  解码第2级 & 同上（2头） & $1\times1$，1 & 96 & 6 & $\frac h2\times\frac w2\times96$\\
+  解码第1级 & 像素重排，拼接，不降通道，Transformer块（1头） & — & 96 & 4 & $h\times w\times96$\\
+  细化 & Transformer块 & — & 96 & 4 & $h\times w\times96$\\
+  输出 & 卷积，与输入相加 & 论文未给出 & 3 & 1 & $h\times w\times3$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{Restormer的逐级结构。块数、头数与通道数取自原文；论文只说明首尾各为“一层卷积”，未给出其卷积核大小，也未在正文中给出完整模型的参数总量。每个Transformer块由通道注意力和门控前馈两部分组成，门控前馈的扩展倍率$\gamma=2.66$。}
+ \label{tab:vision-restormer-layers}
+\end{table*}
+
+每个Transformer块内的计算顺序为：层归一化 \ensuremath{\to} 通道注意力 \ensuremath{\to} 残差相加 \ensuremath{\to} 层归一化 \ensuremath{\to} 门控前馈 \ensuremath{\to} 残差相加。在一个注意力头内，设位置数$n=hw$，该头通道数$d$。归一化特征先经$1\times1$卷积混合通道，再经$3\times3$深度卷积混合邻域，得到按“通道$\times$位置”排列的$\bm{Q},\bm{K},\bm{V}\in\mathbb{R}^{d\times n}$。沿位置维对每行做$L_2$归一化得到$\bar{\bm{Q}},\bar{\bm{K}}$后，
+\begin{equation}
+ \bm{A}=\operatorname{softmax}_{\mathrm{row}}
+       (\beta\,\bar{\bm{Q}}\bar{\bm{K}}^\top),
+ \qquad
+ \bm{O}=\bm{A}\bm{V}\text{，}
+ \label{eq:vision-restormer-attention}
+\end{equation}
+其中$\beta$是每头学习的缩放量。$\bm{A}\in\mathbb{R}^{d\times d}$的第$(i,j)$项比较第$i$个通道的查询与第$j$个通道的键在整幅图上的响应模式；$\bm{O}$的每一行是若干通道的加权组合，在每个位置上用同一组权重混合。它不是每个像素直接对所有其他像素加权求和。
+
+计算量可以具体比较。取$n=256\times256$、第一级$d=48$：逐位置注意力需为一个头建立$n^2\approx4.3\times10^9$个关系，通道注意力矩阵只有$48^2=2304$项。仅考虑注意力中的矩阵乘法，通道注意力的时间量级为$O(nd^2)$，关系矩阵存储为$O(d^2)$；特征本身仍需$O(nd)$存储，卷积和其余部分另有计算。说它对位置数近似线性，前提是固定通道数和其他结构。
+
+门控前馈模块把归一化特征送入两个并行支路，每支都是$1\times1$卷积把通道扩大到$\gamma$倍（$\gamma=2.66$）再接$3\times3$深度卷积；一支经GELU后与另一支逐元素相乘，再用$1\times1$卷积投影回原通道数。乘法让一个支路调制另一个支路的响应，决定哪些特征继续向后传递；门值不限于$[0,1]$，不应理解成概率。
+
+训练使用模糊—清晰配对，损失为逐像素$L_1$距离$\lVert\widehat{\bm{X}}-\bm{X}\rVert_1$，更新全部参数。优化器为AdamW（$\beta_1=0.9,\beta_2=0.999$，权重衰减$10^{-4}$），学习率从$3\times10^{-4}$按余弦退火降到$10^{-6}$，共30万次迭代。作者还采用渐进式训练：开始时裁取$128\times128$的图块、批量64，在第9.2万、15.6万、20.4万、24万和27.6万次迭代时依次改为$160^2$、$192^2$、$256^2$、$320^2$、$384^2$的图块，批量相应降为40、32、16、8、8。小块训练快，大块让网络在后期看到更大范围的上下文，接近推理时的整图输入。运动去模糊模型只在GoPro数据集上训练，再直接用于HIDE和RealBlur测试；论文报告它在GoPro上的PSNR为32.92 dB，高于此前的MPRNet的32.66 dB。推理时输入整幅模糊图像，一次前向得到结果，不需要模糊核。去噪、去雨、运动模糊和失焦各自使用不同的训练数据和检查点，同一个架构名不能代替检查点的适用范围。
+
+三条路线可以放在同一张模糊招牌上对照，表\ref{tab:vision-deblur-compare}列出主要差别。非盲反卷积的全部假设写在公式里，结果可以逐频率解释，但核一旦错误或随位置变化，公式本身就错了；盲反卷积把核的估计交给图像先验，仍受空间不变假设的限制；Restormer不需要核，能处理非均匀模糊，代价是训练数据决定了它认识哪些模糊，超出GoPro一类运动模糊时没有保证，并且网络可能补出看似合理但观测并不支持的笔画。三种结果都应做同一项检查：把估计图像按已知或估计的退化重新模糊，看是否与观测一致。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{16mm}XXX@{}}
+  \toprule
+  比较维度 & 已知核下的约束最小二乘 & 盲反卷积 & Restormer\\
+  \midrule
+  所需信息 & 准确的模糊核、边界条件与噪声水平 & 足够的强边缘与梯度先验 & 与目标退化相近的模糊—清晰配对\\
+  可处理的模糊 & 空间不变、核已知 & 空间不变、核未知 & 训练分布内的非均匀模糊\\
+  参数与训练 & 只需选择$\gamma$ & 先验权重与金字塔层数 & 全部网络参数，30万次迭代\\
+  推理计算 & 每通道一次FFT与逆FFT & 迭代估计核，再非盲复原 & 一次深层网络前向\\
+  主要失效 & 核错误、零响应频率、振铃 & 偏向无模糊解、核随位置变化 & 分布外模糊、补出无观测支持的细节\\
+  \bottomrule
+ \end{tabularx}
+ \caption{模糊观测下三条复原路线的比较。三列面对同一个难点，即弱频率成分无法稳定反演，区别在于约束来自显式成像公式、手工图像先验，还是训练配对。}
+ \label{tab:vision-deblur-compare}
+\end{table*}
+
+\subsection{分辨率不足下的复原}
+\label{sec:vision-restoration-super-resolution}
+
+\term{超分辨率}（super-resolution）根据较低分辨率的输入估计更高分辨率的图像。输入是$h\times w\times3$的图像，输出是$sh\times sw\times3$的图像，$s$为放大倍数。放大网格增加了输出位置，却没有自动增加独立观测。例如把两个像素平均成一个时，$(0,1)$与$(0.5,0.5)$都会得到0.5。输出中的细线和文字怎样出现，取决于参考监督、退化假设与图像先验，而非输出像素数本身。最简单的经典做法是双三次插值（\ref{sec:vision-formation-interpolation}节），它只用相邻采样的加权和填补新网格，不补任何新信息。
+
+这里的难点比去噪更尖锐：一个低清观测对应大量可能的高清图像，按式\eqref{eq:vision-conditional-mean}，像素平方误差最优的估计是它们的平均，细节会被抹平。三个模型对这一难点给出了逐步加强的回答。DnCNN的超分辨率变体沿用像素损失，在简单的双三次退化下回归条件均值，回答是“接受平滑，只求平均误差小”。Real-ESRGAN扩大合成退化的范围，并加入感知损失和对抗损失，让网络输出真实图像中常见的纹理，回答是“用判别器约束输出像真实图像”。DiffBIR先用复原模块去掉退化，再借助在大规模图像上预训练的扩散模型生成细节，回答是“从一个强大的图像先验中采样”。三者补出的细节越来越多，与观测的关系也越来越需要单独核验。
+
+\subsubsection{DnCNN超分辨率变体}
+\label{sec:vision-restoration-dncnn-sr}
+
+复用DnCNN的残差网络前，需要先让输入与目标处在同一网格。由高分辨率参考$\bm{X}$合成低分辨率图像$\bm{Y}=\mathcal{S}(\bm{X})$，再用双三次插值$\mathcal{U}$放大为$\bm{B}=\mathcal{U}(\bm{Y})$，$\bm{B}$与$\bm{X}$尺寸相同。网络结构与表\ref{tab:vision-dncnn-layers}相同，取$D=20$：第一层卷积加ReLU，18层“卷积—批归一化—ReLU”，最后一层卷积输出$c$通道残差，感受野$41\times41$。网络学习$\bm{B}-\bm{X}$，使用时得到$\widehat{\bm{X}}=\bm{B}-r_{\bm{\theta}}(\bm{B})$。残差现在含插值和平滑带来的结构差异，主要集中在边缘和纹理处，不再是独立高斯噪声。所有计算都在高分辨率网格上进行，放大$s$倍时计算量也随之增大约$s^2$倍，这是先插值再处理的代价。
+
+作者把这一变体与盲去噪、JPEG去块效应合在一起训练成DnCNN-3。训练图像为91幅常用超分辨率图像加上伯克利分割数据集的200幅训练图像；超分辨率输入由双三次下采样再双三次上采样得到，倍数取2、3、4；JPEG输入的质量因子取5到99；噪声输入的$\sigma\in[0,55]$。三类输入共裁取$128\times8000$个$50\times50$的图块对，参数从DnCNN-B初始化，损失仍为式\eqref{eq:vision-dncnn}。使用时不需要告诉网络当前属于哪类退化或哪个倍数，但必须先做与训练相同的双三次放大。
+
+为了看清监督的含义，暂用两点平均和常数插值作教学简化。原细线为$(0,1)$，观测为0.5，插值得到$(0.5,0.5)$，残差标签为$(0.5,-0.5)$。若训练数据中细线多在右侧，网络学到的预测残差能恢复这一排列；若真实原图为$(1,0)$，相同观测需要相反残差。唯一低分辨率观测无法区分两者，平方误差下网络会输出两种残差的加权平均，也就是保留部分平滑。
+
+像素监督衡量输出与训练参考的差。若应用还要求输出服从特定退化过程，应计算$\mathcal{S}(\widehat{\bm{X}})$并与$\bm{Y}$比较，这称为对观测的回投影核验。上述两个排列都能通过平均采样的回投影，所以观测一致性是必要依据，却不足以确认缺失细节。这一变体还有一个更直接的局限：训练只用了干净的双三次下采样，而网上的照片往往先模糊、再缩小、又多次JPEG压缩，输入偏离训练分布时，网络学到的残差不再适用。
+
+\subsubsection{Real-ESRGAN}
+\label{sec:vision-restoration-real-esrgan}
+
+网上流传的招牌照片可能先被缩小、保存成JPEG，再截取、放大和重新压缩，还可能被手机自动锐化，在字边出现白边和振铃。只用一次双三次下采样训练的网络遇到这种输入，要么保留这些伪影，要么把它们放大。Real-ESRGAN要解决两件事：让训练退化尽量覆盖真实照片的退化，并在细节无法唯一确定时输出清晰而非平滑的纹理\scite{vision-real-esrgan2021}
+
+第一件事靠\term{高阶退化模型}（high-order degradation model），即把“模糊—缩放—加噪—JPEG压缩”这一经典退化过程重复执行，每轮参数随机抽取。原方法用两轮，一对训练样本写成$\bm{Y}=\mathcal{D}_2(\mathcal{D}_1(\bm{X}))$与$\bm{X}$。每轮的模糊核以0.7、0.15、0.15的概率取自各向同性或各向异性高斯核、广义高斯核和平台形核，核尺寸在7到21之间，标准差在$[0.2,3]$内（第二轮为$[0.2,1.5]$），另以0.1的概率改用sinc核，第二轮还以0.2的概率跳过模糊。缩放可以向上或向下，插值方式随机。噪声以各半的概率取高斯噪声或泊松噪声，以0.4的概率加成灰度噪声。JPEG质量因子取自$[30,95]$。sinc滤波器是截断高频的理想低通滤波器，在锐利边缘附近产生振铃和过冲，用来模拟锐化及压缩带来的白边；最后一步以0.8的概率施加sinc滤波，它与最后一次JPEG压缩的先后顺序随机交换。这里的“高阶”指重复退化过程，不表示对图像求高阶导数。
+
+第二件事靠感知损失与对抗损失。\term{感知损失}（perceptual loss）不逐像素比较，而是把两幅图都送入一个固定的预训练分类网络，比较中间层特征的差别，从而对纹理和结构敏感、对轻微位移不那么敏感。对抗损失来自生成对抗网络：判别器学习区分真实高清图与生成结果，生成器则学习让判别器分辨不出；生成对抗网络的训练原理可参考\BookChapterRef{chap:neural-generative-models}{卷五“基于神经网络的生成模型”章}。这两项让网络不再满足于条件均值，而是输出真实图像中常见的锐利纹理。
+
+生成器沿用ESRGAN的结构\scite{vision-esrgan2018}表\ref{tab:vision-esrgan-generator}列出各段。它保留SRResNet的总体布局：浅层卷积之后堆叠基本块，整个主干在低分辨率上计算，末端上采样后用两层卷积重建。ESRGAN把基本块换成残差中的残差密集块（residual-in-residual dense block, RRDB），并去掉全部批归一化层，因为批归一化在训练与测试统计不同时会引入伪影。一个RRDB由3个密集块串联而成，每个密集块含5层卷积，前4层后接LeakyReLU，每层的输入是块内所有前面层输出的拼接；密集块的输出乘以残差缩放系数0.2后加回块的输入，3个密集块之外再套一层同样缩放的残差连接，“残差中的残差”即指这两级残差。较深的模型用23个RRDB。论文没有给出各卷积的通道数、增长通道数、卷积核大小和上采样的具体实现。对$\times4$放大，输入$h\times w\times3$直接进入主干，输出$4h\times4w\times3$。为了用同一主干做$\times2$和$\times1$，Real-ESRGAN先用像素反重排把输入变成$\frac{h}{2}\times\frac{w}{2}\times12$（$\times2$）或$\frac{h}{4}\times\frac{w}{4}\times48$（$\times1$），使大部分计算发生在较小的空间尺寸上。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{14mm}Xp{12mm}p{10mm}p{18mm}@{}}
+  \toprule
+  阶段 & 层类型 & 卷积核与步长 & 重复次数 & 输出尺寸（$\times4$）\\
+  \midrule
+  输入整理 & 像素反重排（仅$\times2$、$\times1$） & — & 1 & 见正文\\
+  浅层 & 卷积 & 未给出 & 1 & $h\times w$\\
+  主干 & RRDB：3个密集块，每块5层卷积与4个LeakyReLU，残差缩放0.2 & 未给出 & 23 & $h\times w$\\
+  主干末 & 卷积 & 未给出 & 1 & $h\times w$\\
+  上采样 & 上采样$\times4$ & 未给出 & 1 & $4h\times4w$\\
+  重建 & 卷积 & 未给出 & 2 & $4h\times4w\times3$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{ESRGAN与Real-ESRGAN生成器的结构。块数和块内组成取自ESRGAN原文的较深配置；“未给出”指原文未写明卷积核与通道数。}
+ \label{tab:vision-esrgan-generator}
+\end{table}
+
+判别器由ESRGAN的VGG式结构改为U形网络：先逐级下采样提取特征，再逐级上采样并通过跳跃连接引入同级特征，输出与输入同尺寸的单通道真实度图，对每个像素给出反馈，而不是只给整幅图一个分数。复杂退化和U形结构都会使训练不稳，因此判别器的卷积层加了谱归一化，限制每层权重的谱范数。论文只用示意图给出这一结构，没有列出下采样级数和各层通道数。
+
+训练分两个阶段。第一阶段只用$L_1$像素损失训练生成器，得到的模型称为Real-ESRNet，它从ESRGAN的参数微调而来，训练100万次迭代，学习率$2\times10^{-4}$。第二阶段以Real-ESRNet初始化生成器，联合训练生成器与判别器40万次迭代，学习率$10^{-4}$，生成器的目标为
+\begin{equation}
+ L_G=\bigl\lVert G(\bm{Y})-\bm{X}\bigr\rVert_1
+ +\sum_{\ell=1}^{5}\eta_\ell
+  \bigl\lVert\phi_\ell(G(\bm{Y}))-\phi_\ell(\bm{X})\bigr\rVert_1
+ +0.1\,L_{\mathrm{adv}}\text{，}
+ \label{eq:vision-real-esrgan-loss}
+\end{equation}
+其中$G$是生成器，$\phi_\ell$是预训练VGG19第$\ell$段卷积（conv1至conv5）在激活前的特征，权重$(\eta_1,\dots,\eta_5)=(0.1,0.1,1,1,1)$，$L_{\mathrm{adv}}$是生成器的对抗损失，由U形判别器给出的逐像素真实度计算，促使生成图在各位置都被判为真实；三项的总权重为1、1、0.1。像素项把输出拉向参考，感知项约束纹理结构，对抗项推动输出落在真实图像分布上。训练数据为DIV2K、Flickr2K和OutdoorSceneTraining，高清图块256，总批量48，用Adam优化，退化在训练时即时合成，参数更新采用指数滑动平均。作者还发现，训练时先锐化参考图能让输出更清晰而不明显增加伪影，这个版本称为Real-ESRGAN+。推理时只保留生成器，输入一幅低清图，一次前向得到放大结果，不需要知道退化参数。
+
+用多次JPEG保存的招牌检查结果时，应分别看方块是否减弱、笔画是否连贯、文字是否改变。重复退化扩大了合成覆盖，感知和对抗目标又鼓励自然细节；这些条件也允许模型补出看似合理的纹理，例如把模糊的“8”画成笔画清楚的“3”。它们既没有穷尽所有相机退化，也没有为补出的字画提供新的观测。
+
+\subsubsection{DiffBIR}
+\label{sec:vision-restoration-diffbir}
+
+严重退化下，Real-ESRGAN这类一次前向的生成器能补出的细节有限，人脸、文字等结构复杂的内容容易出现不自然的纹理。预训练的文生图扩散模型见过大量清晰图像，掌握了丰富的图像先验，自然的想法是用它来生成细节。但作者观察到，若直接把退化图像作为条件交给扩散模型，不同类型的退化会在结果中引出不同的伪影：生成过程无法区分哪些是图像内容、哪些是退化。DiffBIR因此把处理拆成两个阶段：第一阶段的复原模块只负责去掉退化，不生成新内容；第二阶段的生成模块以复原结果为条件，只负责补充细节。两阶段分开优化，于是第一阶段可以换用各任务现成的复原模型，第二阶段对所有任务共用\scite{vision-diffbir2024}本节依据2024年3月的第二版预印本。
+
+DiffBIR使用的生成先验是Stable Diffusion 2.1-base，一种在自编码器潜空间中去噪的扩散模型。它的编码器$\mathcal{E}$把图像压缩为潜变量，解码器$\mathcal{D}$还原图像，U-Net去噪网络$\bm{\epsilon}_{\bm{\theta}}$在潜空间中预测所加噪声。这类潜空间扩散模型的结构与训练见\ref{sec:vision-models-ldm}节；扩散模型前向加噪和反向去噪的一般原理，可参考\BookChapterRef{chap:pgm-generative}{卷六“概率生成模型”章}。本节只用到两点：去噪网络在每一步给出噪声预测，由此可以算出当前对清晰潜变量的估计；去噪网络可以通过额外的条件支路接受控制。表\ref{tab:vision-diffbir-modules}按数据流顺序列出各模块的组成和训练状态。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{24mm}Xp{34mm}p{18mm}@{}}
+  \toprule
+  模块 & 组成 & 输入与输出（$512\times512$） & 训练状态\\
+  \midrule
+  训练用复原模块 & 改造的SwinIR：像素反重排下采样8倍后进入SwinIR主体，再做3次“最近邻插值—卷积—LeakyReLU”上采样 & $512^2\times3\to512^2\times3$ & 单独训练后丢弃\\
+  推理用复原模块 & 盲超分辨率BSRNet，人脸复原SwinIR，盲去噪SCUNet-PSNR & 同上 & 现成模型，固定\\
+  条件编码器 & Stable Diffusion的VAE编码器$\mathcal{E}$ & $512^2\times3\to64^2\times4$ & 固定\\
+  条件网络 & 复制去噪U-Net的编码器与中间块；首层为拼接多出的4个通道新增零初始化参数 & $64^2\times8\to$多尺度特征 & 训练\\
+  特征调制 & 零初始化卷积，加到中间块特征与跳跃连接特征 & 与U-Net各级特征同形 & 训练\\
+  去噪网络 & Stable Diffusion 2.1-base的U-Net & $64^2\times4\to64^2\times4$ & 固定\\
+  解码器 & VAE解码器$\mathcal{D}$ & $64^2\times4\to512^2\times3$ & 固定\\
+  \bottomrule
+ \end{tabularx}
+ \caption{DiffBIR的模块组成。组成与训练状态取自原文正文及附录；Stable Diffusion内部U-Net的层数与通道沿用原模型，DiffBIR论文未重新列出，也未给出条件网络的参数量。}
+ \label{tab:vision-diffbir-modules}
+\end{table*}
+
+第一阶段在训练和使用时扮演不同角色。训练生成模块时，作者另训练一个以像素平方误差为目标的复原模块$\mathrm{RM}$。它在一阶经典退化模型下合成训练输入：高斯模糊、下采样、加高斯噪声、JPEG压缩，再缩放回原尺寸；模糊和下采样造成的信息损失最大，所以这两项的范围取得很宽，模糊标准差取自$[0.1,12]$，下采样倍数取自$[1,12]$。这样得到的条件图像$\bm{X}_{\mathrm{c}}=\mathrm{RM}(\bm{Y})$多样且退化较少，复原模块训练15万次迭代、批量96。这个模块只为生成模块准备训练条件，处理不了复杂的真实退化，推理时被丢弃；推理时改接各任务现成的复原模型。把两者统称为“第一阶段”会掩盖这个差别。
+
+第二阶段的条件网络称为IRControlNet。条件图像$\bm{X}_{\mathrm{c}}$先经固定的编码器$\mathcal{E}$得到条件潜变量$\bm{c}=\mathcal{E}(\bm{X}_{\mathrm{c}})$，它与当前带噪潜变量$\bm{z}^{(t)}$的形状相同，对$512\times512$的图像都是$64\times64\times4$。二者沿通道拼接成$64\times64\times8$，送入一个复制自去噪U-Net编码器和中间块的可训练支路；因拼接多出的输入通道，其权重初始化为零。支路输出的多尺度特征经零初始化卷积，加到固定U-Net的中间块特征和跳跃连接特征上。零初始化保证训练开始时支路的输出为零，整个模型与原扩散模型完全一致，随机初始化的条件支路不会一开始就破坏预训练的去噪能力。作者的消融实验说明了各设计的作用：若改用一个从头训练的小编码器处理条件图像，输出难以保持输入的颜色，PSNR平均下降约3 dB；若条件支路不读取$\bm{z}^{(t)}$，训练损失始终更高，保真指标虽略好，输出却偏平滑、缺少纹理；若支路不从去噪网络复制初始化，训练难以收敛。
+
+训练只更新条件支路和连接参数，去噪U-Net、编码器和解码器保持预训练参数不变。对清晰参考$\bm{X}$取潜变量$\bm{z}=\mathcal{E}(\bm{X})$，随机选取步$t$和标准高斯噪声$\bm{\epsilon}$，得到$\bm{z}^{(t)}=\sqrt{\bar\alpha_t}\bm{z}+\sqrt{1-\bar\alpha_t}\bm{\epsilon}$，目标为
+\begin{equation}
+ L_{\mathrm{GM}}=
+ \mathbb{E}_{\bm{z},t,\bm{\epsilon},\bm{c}}
+ \Bigl[\bigl\lVert\bm{\epsilon}-
+ \bm{\epsilon}_{\bm{\theta}}(\bm{z}^{(t)},t,\bm{c})\bigr\rVert_2^2\Bigr]\text{，}
+ \label{eq:vision-diffbir-loss}
+\end{equation}
+其中$\bar\alpha_t$由噪声日程给定。它与原扩散模型的训练目标形式相同，只是去噪多了条件$\bm{c}$；学到的是“在给定复原结果的前提下，清晰图像的潜变量应该怎样”。训练数据是从LAION-2B英文子集中筛选出的约1500万幅高质量图像，在$512\times512$分辨率上用Adam训练8万次迭代、批量256，学习率前3万次为$10^{-4}$，之后为$10^{-5}$。
+
+推理从随机潜变量开始，采用50步的间隔采样日程，正向文字提示置空，负向提示取“low quality”“blurry”一类描述。每步由条件支路与固定去噪网络预测噪声$\hat{\bm{\epsilon}}$，再按$\tilde{\bm{z}}^{(t)}=(\bm{z}^{(t)}-\sqrt{1-\bar\alpha_t}\,\hat{\bm{\epsilon}})/\sqrt{\bar\alpha_t}$得到对清晰潜变量的当前估计，最后解码成图像。生成先验倾向于在纹理、边缘处补出细节，在天空、墙面等平坦区域也可能补出原图没有的内容。为此DiffBIR提供一个无需训练的复原引导：每步得到$\tilde{\bm{z}}^{(t)}$后，减少解码图像与第一阶段结果的加权距离，
+\begin{equation}
+ \begin{aligned}
+ L_{\mathrm{g}}(\tilde{\bm{z}})
+ &=\frac{1}{hwc}
+   \left\lVert\bm{W}\odot
+    \bigl(\mathcal{D}(\tilde{\bm{z}})-\bm{X}_{\mathrm{c}}\bigr)
+   \right\rVert_{\mathrm{F}}^2,\\
+ \tilde{\bm{z}}_{\mathrm{g}}^{(t)}
+ &=\tilde{\bm{z}}^{(t)}
+   -s\nabla_{\tilde{\bm{z}}}L_{\mathrm{g}}
+       (\tilde{\bm{z}}^{(t)})\text{。}
+ \end{aligned}
+ \label{eq:vision-diffbir-guidance}
+\end{equation}
+这里$s$控制引导强度，权重图$\bm{W}=\bm{1}-\bm{G}$，$\bm{G}$是把$\bm{X}_{\mathrm{c}}$分成不重叠图块后，用Sobel算子（\ref{sec:vision-transforms-sharpening}节）计算的块级梯度幅值（归一化到$[0,1]$）。平坦区域梯度小、权重大，被拉向第一阶段的平滑结果；纹理区域权重小，保留更多生成细节。更新后的清晰估计参与下一采样步。损失中的权重在平方之内，实际像素平方误差的系数是$w_{i,j,k}^2$。论文在合成数据上比较了$s=0,0.5,1$，在真实照片上取$s=0$以求更好的观感。每一步引导都要经过解码器求梯度，推理成本因此高于不引导的采样。这一步与约束最小二乘的思路相通：都在“符合先验”的候选中拉近与一个观测依据的距离，只是这里的先验来自扩散模型，观测依据换成了第一阶段的复原结果。
+
+在固定低清人像和随机种子下，增加$s$会加强对第一阶段轮廓及平坦区域的约束，同时可能压低生成细节。被追随的仍是一个复原估计，它若已把眼睛或文字恢复错，引导也可能保留错误。皮肤纹理、身份细节与招牌字形应分别核验，不能把新的高频外观当作相机曾经记录到的事实。
+
+三种超分辨率模型可以在同一张多次压缩的低清招牌上对照，表\ref{tab:vision-sr-compare}归纳它们改变了什么。Real-ESRGAN相对DnCNN变体改变了训练退化和目标函数，换来对真实照片的适用性和更锐利的纹理，代价是输出不再是条件均值，PSNR通常不再是它追求的指标，补出的笔画也可能与原文不符。DiffBIR相对Real-ESRGAN又改变了先验的来源和推理方式，换来更丰富的细节和可调的保真程度，代价是50步采样和一个大规模预训练扩散模型的计算，并且同一输入在不同随机种子下会给出不同细节。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{18mm}XXX@{}}
+  \toprule
+  比较维度 & DnCNN超分辨率变体 & Real-ESRGAN & DiffBIR\\
+  \midrule
+  网络规模 & 20层同尺寸卷积，在高分辨率网格上计算 & 23个RRDB，在低分辨率上计算后上采样 & 固定扩散U-Net加复制的编码器支路\\
+  训练退化 & 双三次下采样，倍数2、3、4 & 两轮随机模糊、缩放、噪声、JPEG及sinc滤波 & 经典退化合成条件图；推理接各任务复原模块\\
+  学习目标 & 残差的平方误差 & $L_1$、感知与对抗损失 & 条件扩散的噪声预测误差\\
+  细节来源 & 训练配对的条件均值 & 生成器与判别器学到的纹理分布 & 预训练文生图扩散模型\\
+  更新参数 & 全部网络 & 生成器与判别器 & 仅条件支路，主干固定\\
+  推理代价 & 插值加一次前向 & 一次前向 & 复原模块加50步采样，可选逐步引导\\
+  主要风险 & 输出平滑、只适用干净退化 & 补出与原文不符的纹理 & 随机种子间细节不同，可能保留第一阶段错误\\
+  \bottomrule
+ \end{tabularx}
+ \caption{分辨率不足下三种复原模型的比较。三者面对同一个难点，即一个低清观测对应多个可能的高清图像，区别在于用什么补出平均估计中缺失的细节。}
+ \label{tab:vision-sr-compare}
+\end{table*}
+
+\subsection{区域缺失下的复原}
+\label{sec:vision-restoration-inpainting}
+\label{sec:vision-restoration-partial-convolution}
+
+坏点、划痕或遮挡与加性噪声不同：对应位置根本没有可信观测。以二值掩码$\bm{M}$标明有效像素，$m_{i,j}=1$表示可用，0表示缺失，并在通道维广播。\term{图像修补}（image inpainting）依据周围内容估计缺口原有内容，输入是受损图像和掩码，输出是完整图像。难点有两个：缺口形状不规则、大小不定；缺口中的占位数值没有意义，却会被普通卷积当作真实输入读取。若要求删除杯子并创造一只花瓶，则还包含新的语义目标，交由\ref{chap:vision-image-generation}章讨论，那里也介绍基于样例图块复制的经典修补方法。
+
+普通卷积网络处理缺口时，先在缺口中填入零或图像均值，再与有效像素一起卷积；输出因占位数值而变化，常在缺口内出现颜色偏差、模糊，在缺口边缘出现人为的边缘响应，需要额外后处理。此前的学习式方法又多在图像中央的方形缺口上训练，遇到不规则缺口时表现下降。\term{部分卷积}（partial convolution）的想法是让卷积只读取有效位置，并按有效位置的数量调整响应；每算一层就更新掩码，让有效区域逐层向缺口内部推进\scite{vision-partial-convolution2018}
+
+把一个窗口的输入、掩码和权重分别展平为$\bm{x},\bm{m},\bm{w}\in\mathbb{R}^q$，部分卷积的输出及新掩码为
+\begin{equation}
+ x'=
+ \begin{cases}
+ \dfrac{q}{\sum_i m_i}\bm{w}^{\top}(\bm{x}\odot\bm{m})+b,
+   &\sum_i m_i>0,\\
+ 0,&\sum_i m_i=0,
+ \end{cases}
+ \qquad
+ m'=\mathbb{I}\!\left[\sum_i m_i>0\right]\text{，}
+ \label{eq:vision-partial-convolution}
+\end{equation}
+其中$b$是偏置。乘以$\bm{m}$屏蔽了缺口中的数值；因子$q/\sum_i m_i$把只覆盖部分有效位置的加权和放大到与完整窗口可比的尺度，它只乘加权和，不乘偏置。完全无有效输入时输出零，新掩码也为零。只要窗口内有一个有效输入，输出位置就标为有效，因此掩码中的有效区域每层向外扩展，经过足够多层后，只要原图有有效像素，掩码最终全为1。
+
+取窗口$\bm{x}=(0.2,0,0.8)$、$\bm{m}=(1,0,1)$、$\bm{w}=(1/3,1/3,1/3)$且$b=0$，屏蔽后的加权和为$1/3$，再乘$3/2$得到0.5，$m'=1$。若把缺口占位改成100，结果仍为0.5，这正是部分卷积要保证的性质。窗口内全缺失时不能计算这种归一化，必须走零输出分支。图\ref{fig:vision-partial-mask}说明，堆叠窗口使可计算范围逐层进入缺口。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/partial-mask}
+ \caption{宽度为3、步幅为1的掩码更新教学例。带点填充的格子表示已有有效输入，白格表示缺失；每层只要窗口内有一个有效位置，该层输出就标为有效。图中省略边界外输入。中间格在第二层获得可计算支持，不代表新取得了原像素观测。}
+ \label{fig:vision-partial-mask}
+\end{figure}
+
+修补网络是一个U形编码器—解码器，所有卷积层都换成部分卷积层，表\ref{tab:vision-pconv-layers}按原文附录列出逐层配置。输入为$512\times512\times3$的受损图像与同尺寸掩码。编码器有8层步幅为2的部分卷积，卷积核依次为$7\times7$、两层$5\times5$和五层$3\times3$，通道数从64、128、256升到512后保持不变，空间尺寸从512逐层减半到2；除第一层外都接批归一化，激活函数为ReLU。解码器有8级，每级先用最近邻插值把特征和掩码放大2倍，再分别与同级编码器的特征和掩码沿通道拼接，然后做一层$3\times3$、步幅1的部分卷积，接批归一化和斜率0.2的LeakyReLU。最后一级拼接的是原始受损图像和原始掩码，使网络能直接复制有效像素；这一级的卷积输出3个通道，不接批归一化和激活函数。图像边界外也视为缺口，用部分卷积代替普通的零填充，避免边界处的结果受图像外数值影响。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{26mm}Xp{20mm}p{12mm}p{12mm}p{26mm}@{}}
+  \toprule
+  层组 & 层类型 & 卷积核与步长 & 输出通道 & 重复次数 & 输出尺寸\\
+  \midrule
+  编码1 & 部分卷积，ReLU & $7\times7$，2 & 64 & 1 & $256\times256\times64$\\
+  编码2 & 部分卷积，批归一化，ReLU & $5\times5$，2 & 128 & 1 & $128\times128\times128$\\
+  编码3 & 同上 & $5\times5$，2 & 256 & 1 & $64\times64\times256$\\
+  编码4至8 & 同上 & $3\times3$，2 & 512 & 5 & $32^2$逐层减半至$2^2$，512通道\\
+  解码9至12 & 最近邻上采样$\times2$，拼接编码7至4，部分卷积，批归一化，LeakyReLU & $3\times3$，1 & 512 & 4 & $4^2$逐层加倍至$32^2$，512通道\\
+  解码13 & 同上，拼接编码3 & $3\times3$，1 & 256 & 1 & $64\times64\times256$\\
+  解码14 & 同上，拼接编码2 & $3\times3$，1 & 128 & 1 & $128\times128\times128$\\
+  解码15 & 同上，拼接编码1 & $3\times3$，1 & 64 & 1 & $256\times256\times64$\\
+  解码16 & 上采样，拼接受损图像，部分卷积 & $3\times3$，1 & 3 & 1 & $512\times512\times3$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{部分卷积修补网络的逐层结构（输入$512\times512$）。每层同时输出特征和更新后的掩码，拼接时特征与掩码各自拼接。输出尺寸按步幅推算；层配置取自原文附录。}
+ \label{tab:vision-pconv-layers}
+\end{table*}
+
+训练从清晰图像$\bm{X}$出发，随机施加不规则掩码，得到网络输出$\widehat{\bm{X}}_{\mathrm{net}}$和合成图$\widehat{\bm{X}}_{\mathrm{comp}}=\bm{M}\odot\bm{X}+(\bm{1}-\bm{M})\odot\widehat{\bm{X}}_{\mathrm{net}}$。总损失为
+\begin{equation}
+ L=L_{\mathrm{valid}}+6L_{\mathrm{hole}}+0.05L_{\mathrm{perc}}
+   +120\bigl(L_{\mathrm{style}}^{\mathrm{out}}+L_{\mathrm{style}}^{\mathrm{comp}}\bigr)
+   +0.1L_{\mathrm{tv}}\text{。}
+ \label{eq:vision-pconv-loss}
+\end{equation}
+$L_{\mathrm{valid}}$和$L_{\mathrm{hole}}$分别是有效区与缺口区的$L_1$像素误差，缺口区权重更大；$L_{\mathrm{perc}}$用预训练VGG-16前三个池化层的特征比较$\widehat{\bm{X}}_{\mathrm{net}}$、$\widehat{\bm{X}}_{\mathrm{comp}}$与参考；风格项先对各层特征计算通道间的Gram矩阵，再比较其差别，约束纹理统计；$L_{\mathrm{tv}}$在缺口外扩一个像素的区域内惩罚相邻像素差，使填补内容与周围平滑衔接。这些权重由在100幅验证图上的超参数搜索确定。作者的消融显示，去掉风格项或风格权重过小，输出会出现鱼鳞状伪影；去掉感知项，网格状伪影更明显。
+
+训练掩码来自视频相邻帧之间的遮挡估计，共55116个，训练时再随机膨胀、旋转和裁剪；图像取自ImageNet、Places2和CelebA-HQ。批归一化在缺口处会把无效像素计入均值和方差，因此训练分两步：先开启批归一化，以学习率$2\times10^{-4}$用Adam训练，批量6；再以学习率$5\times10^{-5}$微调，同时冻结编码器中批归一化的统计和参数，解码器中的批归一化保持更新，因为到解码器时缺口已基本被填满。
+
+使用时输入受损图像和原始掩码，网络预测$\widehat{\bm{X}}_{\mathrm{net}}$，再形成
+$\widehat{\bm{X}}=\bm{M}\odot\bm{Y}+(\bm{1}-\bm{M})\odot\widehat{\bm{X}}_{\mathrm{net}}$，使已知像素按要求保留。与填入占位值后直接卷积的做法相比，部分卷积消除了结果对占位值的依赖，并能处理任意形状的缺口；但它没有改变一个事实：缺口内的内容全部来自周围像素和训练先验。宽度很小的划痕常有两侧结构可参考，大缺口则允许多种内容，感知项和风格项都不能唯一确定遮挡背后的实际对象。中间掩码变为1只说明特征已有计算来源，原始观测掩码仍须保留，用来区分记录与估计。
+
+\section{图像增强}
+\label{sec:vision-restoration-enhancement}
+
+有些图像已经保留了需要的结构，只是亮度或对比不适合观看；另一些暗图则同时缺少可靠观测。两种情况外观相似，处理方法和可以期待的结果却不同。增强的输入是一幅图像（或RAW数据），输出是适合指定用途的图像；它没有唯一正确的目标，因此每次增强都要说明希望看清什么，以及哪些颜色、测量量或局部关系必须保留。
+
+本节按增强的对象分为两部分。曝光与亮度不足时，难点在于暗处信号本身被噪声淹没，单纯放大会同时放大噪声，所以需要回到更早的成像阶段，联合完成去噪和颜色形成。色彩与对比不当时，内容已经足够，只需重新分配数值，这时不必训练网络，可以直接选用\ref{chap:vision-image-transforms}章的点运算或直方图方法；全局曲线和局部直方图的差别在于映射是否随位置变化。
+
+\subsection{曝光与亮度的增强}
+\label{sec:vision-restoration-low-light}
+\label{sec:vision-restoration-sid}
+
+低照度时，传感器收到的光子较少，信号相对噪声较弱。按式\eqref{eq:vision-poisson-gaussian}，光子散粒噪声的标准差随信号的平方根增长，信号越弱，信噪比越低。若将像素与加性噪声一起乘上$a$，信号幅值变为$a$倍，噪声标准差也变为$a$倍，这种线性提亮没有改善二者的比例。延长真实曝光能收集更多光子，却可能引入运动模糊；对已经拍下的短曝光照片，事后乘增益不能替代重新曝光。传统相机处理管线在提亮前已依次做了白平衡、去马赛克、去噪、色彩转换和伽马校正，在极低信噪比下这些模块各自出错，结果中常见强噪声和偏色；若在管线输出上再做去噪，噪声已经被非线性处理改变了分布，一般的去噪方法难以对付，色偏也无法消除。多帧对齐融合能提高信噪比，但需要稠密对应估计，对运动场景和视频不易推广。
+
+Learning to See in the Dark的想法是绕开传统管线，用一个全卷积网络直接把短曝光的RAW数据映射成正常亮度的RGB图像\scite{vision-sid2018}网络读取的是颜色插值和非线性处理之前的数据，可以同时完成去噪、去马赛克和颜色形成，并在训练中学习适应数据的局部降噪。为此作者构建了SID数据集：用Sony $\alpha$7S~II（Bayer阵列）和富士X-T2（X-Trans阵列）在室内外暗光场景下各拍短曝光图像和曝光时间长100到300倍的参考图像，共5094幅短曝光RAW，对应424幅参考；相机固定在三脚架上，以保证配对对齐。
+
+以Bayer传感器为例，每个$2\times2$位置采样一红、两绿和一蓝（Bayer阵列见\ref{sec:vision-formation-acquisition}节），原始阵列为$h\times w\times1$。按位置打包后得到$\frac{h}{2}\times\frac{w}{2}\times4$数组，两个绿色位置保留为不同通道；X-Trans阵列的原始数据按$6\times6$的块排列，作者通过交换相邻元素把它打包成9个通道，而不是36个。打包只是重新排列观测，没有提前补齐每个像素的三种颜色。打包后的数据减去传感器黑电平，按有效范围归一化，再乘外部给定的放大比例。表\ref{tab:vision-sid-network}列出整个管线的形状变化。核心网络默认采用U-Net编码器—解码器（U-Net结构见\BookChapterRef{chap:convolutional-networks}{卷五“卷积神经网络”章}），作者也试过多尺度上下文聚合网络，U-Net的PSNR更高；论文没有给出U-Net的级数、各级通道数和卷积配置，只说明选择网络时要求能在显存中处理$4240\times2832$或$6000\times4000$的整幅图像，因此避开了需要切块再拼接的全连接层。网络输出$\frac{h}{2}\times\frac{w}{2}\times12$的特征，再经子像素重排，把每4个通道组成一个$2\times2$空间块，恢复成$h\times w\times3$的RGB图像。作者试过残差连接，没有观察到收益，推测原因是输入和输出处在不同的颜色空间。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{16mm}Xp{28mm}@{}}
+  \toprule
+  阶段 & 操作 & 输出尺寸（Bayer）\\
+  \midrule
+  打包 & 每个$2\times2$拜耳单元拆成4个通道 & $\frac h2\times\frac w2\times4$\\
+  归一化 & 减黑电平，除以有效范围，乘放大比例 & $\frac h2\times\frac w2\times4$\\
+  核心网络 & U-Net编码器—解码器（层配置论文未给出） & $\frac h2\times\frac w2\times12$\\
+  子像素重排 & 每4个通道排成一个$2\times2$空间块 & $h\times w\times3$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{Learning to See in the Dark的处理管线。X-Trans阵列打包为9个通道，其余步骤相同；输出直接位于sRGB空间。}
+ \label{tab:vision-sid-network}
+\end{table}
+
+假设某个RAW读数为530，黑电平为512，可用上界为16383，则归一化信号为$(530-512)/(16383-512)\approx0.00113$。乘100后约为0.113。若忽略黑电平，直接用$530/16383$再乘100会超过3，数值主要来自偏置并很快被裁剪；这不是同一种输入。相机的黑电平、颜色阵列和增益约定必须与训练一致，作者也为每台相机单独训练一个网络。
+
+训练从头开始，以输出与参考RGB之间的$L_1$距离为损失，参考图像由RAW处理库libraw从长曝光数据生成。训练时放大比例取为两次曝光时间之比，例如100、250或300倍；每次迭代随机裁取$512\times512$的图块，并做随机翻转和旋转。优化器为Adam，学习率$10^{-4}$，2000轮后降为$10^{-5}$，共训练4000轮。推理时输入完整分辨率的RAW数据，放大比例由用户给定，作用类似相机的ISO设置：比例越大，输出越亮。网络并不自动推断最佳曝光。长曝光参考仍可能有噪声，移动人物和树叶也会破坏配对；若参考错位，逐像素监督就会把位置差异也当作待修正误差。
+
+固定同一夜景，可以比较三种做法：传统管线输出后乘增益、传统管线输出后用BM3D去噪、以及RAW到RGB的网络。前两者都在已经非线性化的RGB数据上工作，第一种保留全部噪声，第二种需要人为指定噪声水平，设小了残留噪声、设大了过度平滑，而且两种情形可能出现在同一幅图的不同区域；网络在RAW数据上工作，能按局部数据调整降噪，同时修正偏色。作者用感知实验比较了这几种做法，并说明为公平起见对基线使用了参考图像的白平衡和逐通道均值，这相当于给基线提供了额外信息。比较的结论仍有范围：网络的收益部分来自更早阶段的传感器数据，不能全部归结为更强的后处理；它只在两台相机和静态场景上训练，更换相机和处理动态场景都需要单独验证。
+
+\subsection{色彩与对比的增强}
+\label{sec:vision-restoration-tone}
+
+当图像已有可用内容时，增强只需重新分配数值，不必训练网络。输入是一幅RGB图像，输出是同尺寸的图像，难点在于同一幅图中阴影、中间调和高光对调整的需求不同，而且任何调整都会改变一些原有的数值关系。
+
+两条路线的区别在于映射是否随位置变化。全局曲线对整幅图使用同一个映射，相同输入值得到相同输出，结果可预测，像素之间的明暗次序不会颠倒，但难以同时照顾暗部和亮部。局部直方图方法依据每个位置周围的亮度分布改变映射，能分别拉开阴影和高光中的层次，代价是相同亮度在不同位置得到不同输出，区域之间的相对关系也随之改变。两类映射的定义与推导都在\ref{sec:vision-transforms-intensity}节，本小节只讨论在夜间招牌这类应用中怎样选用、按什么顺序使用，以及各自会带来什么副作用。
+
+\subsubsection{基于全局曲线的增强}
+\label{sec:vision-restoration-white-balance}
+
+全局调整通常分两步：先校正颜色，再调整亮度层次。白平衡按颜色通道调整增益，使选定照明条件下的中性物体呈现为中性色，它在成像管线中的位置见\ref{sec:vision-formation-isp}节。在简化的线性RGB模型中，$\bm{c}'=\operatorname{diag}(g_r,g_g,g_b)\bm{c}$，$\bm{c}$是一个像素的颜色向量。若招牌旁的灰色墙砖被拍成$(0.20,0.16,0.10)$，取增益$(0.8,1,1.6)$会得到$(0.16,0.16,0.16)$。这依赖参考本来应是中性；夜间街景常有多种光源，钠灯下的墙面本身偏黄，误把它当灰卡会使整图颜色偏移。
+
+亮度层次用\term{色调曲线}（tone curve）调整，即把亮度$I\in[0,1]$映射成单调递增的$T(I)$。\ref{sec:vision-transforms-intensity}节已说明，曲线斜率大于1的亮度段被拉开，小于1的被压缩；幂函数$T(I)=I^\gamma$在$\gamma<1$时拉开暗部，$\gamma>1$时压暗中间值。对夜间招牌，取$\gamma=1/2$会把0.04、0.25和0.81依次变为0.2、0.5和0.9，墙面细节变得可见，代价是亮部层次被压缩。与之对照，两倍线性提亮再裁剪会把0.6和0.9都变为1，招牌高光之间的差异完全丢失；单调曲线只是压缩，不会把不同值合并为同一值，除非量化精度不足。
+
+使用中有两个容易出错的地方。第一，逐通道应用非线性曲线通常会改变通道比例，从而改变颜色，例如让红色招牌偏橙。若希望尽量保持线性RGB比例，可先计算亮度$I$，再在$I>0$处用$\bm{c}'=\bm{c}\,T(I)/I$统一缩放，随后处理超出色域的数值；接近零时需稳定分母并规定黑色输出。保持比例不等于所有显示条件下的感知色相严格不变，颜色空间和裁剪仍有作用。第二，曲线应作用在明确的编码上：同一个$\gamma$作用在线性光数据和已经伽马编码的sRGB数据上，效果不同，需要记录是在哪一种数值上调整的。
+
+全局曲线只重新分配现有层次。招牌暗部可能更容易辨认，平坦暗区的噪声也可能一起显露；已经被传感器饱和或量化合并的字画，不能仅靠单调曲线恢复。它的参数只有几个，可以记录下来并在需要时近似撤销，这是它在档案和测量用途中的优点。
+
+\subsubsection{基于局部直方图的增强}
+\label{sec:vision-restoration-clahe}
+
+一幅夜景中，招牌亮、墙面暗，同一条全局曲线拉开了墙面的层次，就会压缩招牌的层次。直方图均衡化按累计分布确定曲线，像素多的亮度段被拉开（推导见\ref{sec:vision-transforms-histogram}节）；对整幅图求一条曲线时，它仍然无法兼顾招牌和墙面。受限局部直方图均衡化（CLAHE）把图像分成若干块，每块用截断后的直方图求映射，截断限制了映射的最大斜率，相邻块的映射再经双线性插值平滑过渡（算法与数值例见\ref{sec:vision-transforms-clahe}节）。
+
+用在招牌照片上，需要决定三件事。其一是作用在哪个通道上：若对R、G、B三个通道分别均衡，各通道的映射不同，颜色会被改变；常见做法是先转换到亮度与色度分离的空间（\ref{sec:vision-formation-color-spaces}节），只对亮度通道做CLAHE，再转回RGB。其二是块的大小和截断上限：块较小时更关注局部，但噪声及小结构更容易主导直方图；上限放宽则增加局部对比，平坦墙面上的噪声也被拉开。上限通常以相对于平均计数的倍数给出，各实现对余数的分配规则也不同，这些都须记录。其三是与去噪的先后：CLAHE会放大平坦区的微小起伏，暗光照片应先去噪再做局部均衡，否则噪声会被当作“层次”拉开。
+
+CLAHE的副作用在招牌边缘最明显。块内有明亮招牌时，直方图的大部分计数落在暗部，暗部被拉开，招牌周围的墙面却可能因所在块的映射不同而变亮或变暗，形成环绕亮边的光晕。同一亮度在不同位置输出不同，所以不能在增强后的图像上比较两处的亮度，也不能把增强后的灰度用于测量。
+
+两种增强在同一张夜间招牌上的差别见表\ref{tab:vision-tone-compare}。全局曲线保持了像素间的明暗次序，参数少，易于记录和复现，但无法同时照顾招牌和墙面；CLAHE能分别拉开两处的层次，代价是区域间的明暗关系可能被改变，平坦区噪声和亮边周围的光晕也会被增强。医学、档案和测量图像应先规定哪些灰度关系允许变化，再决定能否使用局部方法。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{16mm}XX@{}}
+  \toprule
+  比较维度 & 全局曲线 & 受限局部直方图均衡化\\
+  \midrule
+  映射依据 & 人为设定或由全图统计确定 & 每块直方图，截断后求累计分布\\
+  空间一致性 & 相同输入值得到相同输出 & 随位置变化，相邻块间插值\\
+  参数 & 通道增益、$\gamma$等少数几个 & 块大小、截断上限、分配规则、作用通道\\
+  使用顺序 & 白平衡在前，曲线在后 & 去噪在前，只作用于亮度通道\\
+  主要风险 & 暗部与亮部难以兼顾 & 平坦区噪声放大、光晕、改变区域间关系\\
+  \bottomrule
+ \end{tabularx}
+ \caption{色彩与对比增强两条路线的比较。两者都只重新分配已有层次，不能恢复已饱和或已被量化合并的细节。}
+ \label{tab:vision-tone-compare}
+\end{table}
+
+\section{图像压缩}
+\label{sec:vision-restoration-compression}
+
+压缩的输出是可传输、可独立解码的比特流。一个网络即使能把图像映射到很小的浮点数组，也不等于已经压缩：浮点数需要多少位、哪些辅助信息要传、解码器如何复现概率和符号，都必须明确。压缩要同时控制两个量：码率$R$，即平均每幅图像（或每个像素）用多少比特，常用式\eqref{eq:vision-bpp}的每像素比特数计；失真$D$，即重建图像与原图的差别。二者此消彼长，比特越少，失真越大；在给定码率下使失真最小，或在给定失真下使码率最小，称为\term{率失真权衡}（rate-distortion trade-off）。
+
+图像之所以能被压缩，是因为它含有冗余。第一种是编码冗余：若每个像素都用8位定长码，而某些灰度值出现得远比其他值频繁，定长码就浪费了比特。第二种是空间冗余：相邻像素的值高度相关，知道左边的像素，就能大致猜出右边的像素。第三种是与用途无关的信息：人眼对高频细节和色度的变化不如对低频亮度敏感，这部分信息去掉后观看者不易察觉。前两种冗余可以无损地去除，第三种的去除必然有损。
+
+编码冗余的下限由熵给出。若符号$s$以概率$p(s)$独立出现，其熵为
+\begin{equation}
+ H=-\sum_{s}p(s)\log_2p(s)\quad\text{比特/符号}\text{，}
+ \label{eq:vision-entropy}
+\end{equation}
+任何可唯一解码的编码，平均码长都不低于$H$；而存在前缀码使平均码长小于$H+1$（可参考\BookChapterRef{chap:information-theory-and-statistical-geometry}{卷二“概率分布”章}）。前缀码是指任何一个码字都不是另一个码字开头的编码，读到一个完整码字就能立刻确定符号。熵只针对已经给定的符号及其概率；空间冗余要先通过变换或预测转化为“符号分布更集中”，才能被熵编码利用。
+
+一个有损编码器因此由三个环节组成：先用变换或预测去掉空间冗余，再用量化去掉与用途无关的信息，最后用熵编码去掉编码冗余。两条路线在这三个环节上的差别，在于它们是由人设计，还是由数据和率失真目标共同学习。人工设计的路线以JPEG为代表，每个环节都有明确的数学依据，便于标准化；学习的路线以尺度超先验为代表，三个环节在同一个目标下联合训练。下面先讲前者，它的每一步都为理解后者提供了对照。
+
+\subsection{基于人工设计编码流程的压缩}
+\label{sec:vision-restoration-classic-codec}
+
+JPEG是1992年前后定型的静止图像压缩标准，至今仍是照片最常用的格式\scite{vision-wallace1992jpeg}它的基线编码流程如图\ref{fig:vision-jpeg-pipeline}：先把RGB图像转换为一个亮度和两个色度分量并对色度下采样，再把每个分量切成$8\times8$的块，每块做二维离散余弦变换，按量化表除并取整，把量化后的系数按之字形顺序排成序列，最后对序列做游程编码与Huffman编码。三个环节分别对应上文的三种冗余：离散余弦变换去掉块内的空间相关，量化表和色度下采样丢掉人眼不敏感的信息，Huffman编码去掉符号的编码冗余。只有色度下采样和量化是有损的。JPEG 2000把块变换换成小波，把Huffman编码换成上下文自适应的算术编码，解决了JPEG在低码率下的块效应。下面按“变换与量化—符号化—变长编码”的顺序展开，每一步都先讲JPEG，再说明JPEG 2000改变了什么。
+
+\begin{figure*}[tbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/jpeg-pipeline}
+ \caption{基线JPEG的编码流程。上行把图像变成量化后的系数块，下行把系数块变成比特；解码按相反顺序执行。红框标出两个有损步骤，色度下采样丢掉色度分辨率，量化丢掉系数精度；其余步骤都可以精确逆转。}
+ \label{fig:vision-jpeg-pipeline}
+\end{figure*}
+
+\subsubsection{像素块的变换与量化}
+\label{sec:vision-restoration-jpeg-transform}
+
+第一步要把像素变成大多数取零的整数。JPEG先把RGB转换为YCbCr，其中亮度$Y=0.299R+0.587G+0.114B$，Cb、Cr分别是蓝色与红色相对亮度的差（\ref{sec:vision-formation-color-spaces}节）。人眼对色度的空间变化不如对亮度敏感，常用的4:2:0采样把两个色度分量在水平和垂直方向各降一半，每个像素平均的样本数从3降到$1+2\times\frac14=1.5$，在进入任何变换之前就省下一半数据。招牌的红色字画在色度上分辨率降低，边缘可能出现轻微色晕，但亮度边缘不受影响。
+
+各分量减去128，使8位样本以零为中心，再切成$8\times8$的块。每块$f_{i,j}$（$i,j=0,\dots,7$，$i$为行，$j$为列）做二维离散余弦变换：
+\begin{equation}
+ F_{k,l}=\frac14C(k)C(l)\sum_{i=0}^{7}\sum_{j=0}^{7}f_{i,j}
+ \cos\frac{(2i+1)k\pi}{16}\cos\frac{(2j+1)l\pi}{16}\text{，}
+ \label{eq:vision-jpeg-dct}
+\end{equation}
+其中$C(0)=1/\sqrt2$，$k>0$时$C(k)=1$。$F_{k,l}$是垂直频率$k$、水平频率$l$的系数，$F_{0,0}$与块均值成正比，称为直流（DC）系数，其余63个称为交流（AC）系数。\ref{sec:vision-transforms-dct}节已说明，离散余弦变换是正交变换，不损失信息；对相邻像素高度相关的平滑块，能量集中在少数低频系数上，这就是它去掉空间冗余的方式。选择$8\times8$是一个折中：块太小，能量集中不充分；块太大，块内更可能同时含平坦区和边缘，计算量也更大。
+
+\term{量化表}（quantization table）为64个系数各规定一个步长$Q_{k,l}$，量化把系数变成整数$\hat F_{k,l}=\operatorname{round}(F_{k,l}/Q_{k,l})$，解码端用$\hat F_{k,l}Q_{k,l}$近似原系数。步长越大，丢掉的精度越多；量化误差在$[-Q_{k,l}/2,Q_{k,l}/2]$内，若近似为均匀分布，方差为$Q_{k,l}^2/12$（表\ref{tab:vision-noise-models}）。标准附录给出的亮度示例表的第一行是$(16,11,10,16,24,40,51,61)$，第一列是$(16,12,14,14,18,24,49,72)$，右下角高频处的步长接近100。高频步长大，是因为人眼对高频误差不敏感，这正是在量化环节去掉与用途无关的信息。常用实现用一个质量因子整体缩放这张表，质量因子越低，步长越大，码率越低。
+
+用招牌上一个竖直笔画边缘的块作可复算的例子。设块内每一行都是$(60,60,60,60,200,200,200,200)$，左半是暗背景、右半是亮笔画。减去128后每行为$(-68,-68,-68,-68,72,72,72,72)$。因为各行相同，式\eqref{eq:vision-jpeg-dct}对$i$的求和在$k>0$时为零（余弦在一个周期内的等距采样和为零），只剩第一行系数$F_{0,l}=\sqrt2\,C(l)\sum_jf_{0,j}\cos\frac{(2j+1)l\pi}{16}$。计算得
+\[
+ (F_{0,0},\dots,F_{0,7})\approx(16,\,-507.4,\,0,\,178.2,\,0,\,-119.1,\,0,\,100.9)\text{，}
+\]
+偶数频率为零，是因为去掉均值后这一行关于中心反对称。除以量化表第一行并取整，得到$(1,-46,0,11,0,-3,0,2)$，整个块64个系数中只剩5个非零。解码时乘回步长再做逆变换，每行重建为
+\[
+ (60.6,\,58.4,\,63.6,\,56.5,\,203.5,\,196.4,\,201.6,\,199.4)\text{，}
+\]
+最大误差约3.6。误差并不均匀：原本平坦的暗区出现了$58.4,63.6,56.5$这样的起伏，这是截断和粗量化高频系数后，在边缘附近出现的振铃。
+
+块变换在低码率下还有一个更显眼的问题。每块独立量化，相邻两块的直流系数各自取整，平坦区跨块边界的亮度会出现台阶；交流系数被大量置零后，块内只剩平滑的低频形状，块与块之间无法平滑衔接。这种沿$8\times8$网格出现的方形边界称为块效应，就是开篇招牌放大后看到的“方块”。
+
+JPEG 2000改变的正是变换环节\scite{vision-skodras2001}它对整幅图（或较大的图块）做多级二维离散小波变换（\ref{sec:vision-transforms-wavelet}节），每级把图像分成一个低频子带和三个方向的高频子带，再对低频子带继续分解。小波基在空间上局部、在尺度上多级，平坦区域由少数粗尺度系数表示，边缘只影响其附近的细尺度系数，既不需要人为分块，也就不会产生沿固定网格的块效应；低码率下的主要失真变为边缘附近的模糊和振铃。标准提供两种小波：可逆的整数5/3小波用于无损压缩，9/7小波用于有损压缩。量化是带死区的标量量化，每个子带一个步长。
+
+\subsubsection{量化系数的符号化}
+\label{sec:vision-restoration-symbolization}
+
+第二步要把一块整数排成适合熵编码的符号序列。量化后的非零系数集中在左上角的低频区域，右下角大多为零。\term{之字形扫描}（zigzag scan）按频率从低到高的顺序沿反对角线来回读取64个系数，使非零值集中在序列前端、零值连成长串，扫描次序见图\ref{fig:vision-zigzag}。上例中五个非零系数在扫描序列中的位置是0、1、6、15和28。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/zigzag-scan}
+ \caption{$8\times8$系数块的之字形扫描。格内数字是扫描序号，左上角为直流系数；带色的五格是正文例中量化后的非零系数，依次为$1,-46,11,-3,2$，它们都在第一行，扫描序号为0、1、6、15、28。}
+ \label{fig:vision-zigzag}
+\end{figure}
+
+直流系数和交流系数用不同的方法符号化，分别利用两种不同的冗余。
+
+相邻块的直流系数都反映局部平均亮度，彼此接近，JPEG只编码它与前一块直流系数之差。这是\term{预测编码}（predictive coding）的特例：用已经编码的值预测当前值，只传预测误差。一般形式称为差分脉冲编码调制（differential pulse-code modulation, DPCM），设预测为前一个值，误差为$e_i=x_i-x_{i-1}$。招牌一行像素$(100,101,101,102,103,103,105,104)$的误差序列是$(100,1,0,1,1,0,2,-1)$，除第一个值外都集中在0附近，熵比原始灰度低得多。若预测误差还要量化，预测必须基于解码端也能得到的重建值，否则误差会逐步累积。闭环形式为
+\begin{equation}
+ \hat e_i=Q\bigl(x_i-\tilde x_{i-1}\bigr),\qquad
+ \tilde x_i=\tilde x_{i-1}+\hat e_i\text{，}
+ \label{eq:vision-dpcm}
+\end{equation}
+其中$\tilde x_i$是重建值。两式相减得$x_i-\tilde x_i=(x_i-\tilde x_{i-1})-\hat e_i$，即每个位置的重建误差恰好等于该位置的量化误差，不随$i$累积；步长为$\Delta$的取整量化下，误差不超过$\Delta/2$。若改用原值$x_{i-1}$预测，编码端和解码端的预测值不同，量化误差会一路叠加。上例的直流系数若前一块是纯暗背景，即每个样本为$-68$，其直流系数为$8\times(-68)=-544$，量化为$-34$；当前块为1，于是只编码差值$1-(-34)=35$。
+
+交流系数中大段的零用\term{游程编码}（run-length coding）表示：不逐个写出零，而是记录“连续几个零之后出现一个什么非零值”。JPEG把每个非零交流系数写成一个符号对（游程，位数）加上若干附加位：游程是它前面的零的个数（0至15），位数$s$是表示其幅值所需的比特数，满足$2^{s-1}\leq|v|\leq2^s-1$；附加位对正数是$v$的二进制，对负数是$v+2^s-1$的二进制。超过15个零用一个专门的符号表示16个零，块末尾剩下的零全部用块结束符号表示。上例的交流部分：$-46$前无零，幅值在32到63之间，符号为$(0,6)$，附加位为$-46+63=17$即$010001$；$11$前有4个零（序号2至5），符号为$(4,4)$，附加位$1011$；$-3$前有8个零，符号为$(8,2)$，附加位$00$；$2$前有12个零，符号为$(12,2)$，附加位$10$；之后是块结束符号。原来的63个交流系数变成5个符号和14个附加位。直流差值35的位数为6，附加位$100011$。
+
+\subsubsection{符号的变长编码}
+\label{sec:vision-restoration-huffman}
+
+第三步要为每个符号分配码字，让常见的符号短、罕见的符号长。\term{Huffman编码}（Huffman coding）给出平均码长最短的前缀码\scite{vision-huffman1952}它从概率最小的符号开始，自底向上构造一棵二叉树，如算法\ref{alg:vision-huffman}所示。
+
+\begin{algorithm}[Huffman编码的构造]
+ \label{alg:vision-huffman}
+ \begin{algorithmic}[1]
+  \Require 符号集合及其概率$p(s)$，并列时的合并约定
+  \Ensure 每个符号的二进制码字
+  \State 为每个符号建立一个叶结点，权重为其概率，全部放入待合并集合
+  \While{待合并集合中多于一个结点}
+   \State 取出权重最小的两个结点$a,b$
+   \State 新建父结点，权重为二者之和，两条边分别标0和1
+   \State 把父结点放回待合并集合
+  \EndWhile
+  \State 每个符号的码字为从根到该叶结点路径上的比特串
+ \end{algorithmic}
+\end{algorithm}
+
+用DPCM误差作例子。设五个误差符号$0,+1,-1,+2,-2$的概率为$0.4,0.2,0.2,0.1,0.1$（教学构造）。第一步合并$+2$与$-2$，得到权重0.2的结点；此时有$0$（0.4）、$+1$（0.2）、$-1$（0.2）和新结点（0.2）。第二步在三个0.2中合并$+1$与$-1$，得到0.4；第三步合并剩下的0.2结点与一个0.4结点，这里选$\{+1,-1\}$那一个，得到0.6；最后合并0.4与0.6。码字如图\ref{fig:vision-huffman-tree}：$0\mapsto0$，$+1\mapsto100$，$-1\mapsto101$，$+2\mapsto110$，$-2\mapsto111$。平均码长为$0.4\times1+0.6\times3=2.2$比特，而熵为$-(0.4\log_20.4+2\times0.2\log_20.2+2\times0.1\log_20.1)\approx2.12$比特，满足$H\leq L<H+1$；若用3位定长码则需3比特。并列时若改变合并选择，码长可能变为$(2,2,2,3,3)$，平均码长同样是2.2，可见Huffman码不唯一，但最优平均码长唯一。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/huffman-tree}
+ \caption{五个预测误差符号的Huffman树。方框为叶结点，标出符号及概率；圆形为合并后的内部结点，标出权重；边上的0和1连成码字。概率为教学构造，并列时按正文的约定合并。}
+ \label{fig:vision-huffman-tree}
+\end{figure}
+
+Huffman码为什么最优，可以用交换论证说明思路。在最优前缀码中，概率越小的符号码字不会越短，否则交换两者的码字就能缩短平均码长；概率最小的两个符号可以取为同一父结点下码长最长的一对兄弟。把这对兄弟合并为一个概率为二者之和的符号后，原问题的平均码长等于新问题的平均码长加上这两个概率之和，后者是常数，所以原问题的最优码由新问题的最优码展开得到，这正是算法每一步所做的事。解码时从根出发，按读到的比特向下走，到达叶结点就输出一个符号并回到根；前缀性质保证这一过程不需要分隔符。
+
+JPEG把Huffman编码用在上一步得到的符号上：直流差值的位数和交流的（游程，位数）对各用一张码表编码，附加位原样写出。码表写在文件头中，可以使用标准附录给出的示例表，也可以先统计当前图像的符号频率再生成专用表，后者需要两遍扫描，但码率更低。解码端读入码表，按前缀码解出符号，再读入相应数目的附加位，就恢复了量化系数。
+
+Huffman编码有两个限制。码字长度必须是整数比特，每个符号至少1比特，当某个符号的概率很大时，例如块中大量出现的零游程，理想码长$-\log_2p$远小于1，整数码长造成的浪费就很明显。码表又是静态的，不能随图像局部统计的变化而调整。JPEG 2000因此在熵编码环节采用EBCOT方案\scite{vision-taubman2000}它把每个子带划分成独立编码的码块（常用$64\times64$），在每个码块内按位平面从最高位到最低位扫描，每个位平面分三遍处理，按邻近系数是否已经显著来选择上下文，再用自适应的二值算术编码器（MQ编码器）编码；算术编码不受整数码长的限制，上下文又让概率随局部内容变化（原理见\ref{sec:vision-restoration-entropy-coding}节）。按位平面编码使每个码块的比特流可以在任意位置截断，编码器在所有码块编完之后，再按率失真斜率决定各码块保留多少比特，以精确达到目标码率；同一个码流因此可以按质量或分辨率逐级解码。
+
+两种经典编码器的差别归纳在表\ref{tab:vision-classic-codec-compare}中。JPEG 2000在低码率下避免了块效应，码率控制也更精确，代价是小波变换与位平面算术编码的计算量明显更大，而在中高码率的普通照片上，两者的观感差距并不大，这也是JPEG至今仍被广泛使用的原因之一。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{14mm}XX@{}}
+  \toprule
+  环节 & JPEG基线 & JPEG 2000\\
+  \midrule
+  颜色 & YCbCr，色度4:2:0 & 不可逆或可逆的分量变换\\
+  变换 & $8\times8$块离散余弦变换 & 整图或大图块的多级小波，9/7或5/3\\
+  量化 & 每个系数一个量化表步长 & 每个子带一个步长，带死区\\
+  符号化 & 之字形扫描，直流差分，交流游程 & 码块内按位平面三遍扫描\\
+  熵编码 & 静态Huffman码表 & 上下文自适应的二值算术编码\\
+  码率控制 & 质量因子间接控制 & 码块截断，按率失真斜率分配\\
+  典型失真 & 块效应、振铃 & 模糊、边缘振铃\\
+  \bottomrule
+ \end{tabularx}
+ \caption{两种经典图像编码器的比较。两者都把变换、量化、熵编码分开设计；JPEG 2000还支持无损模式和按质量或分辨率逐级解码。}
+ \label{tab:vision-classic-codec-compare}
+\end{table}
+
+\subsection{基于端到端学习的压缩}
+\label{sec:vision-restoration-learned-codec}
+
+经典编码器的每个环节都由人分别设计：离散余弦变换或小波是固定的线性变换，量化表凭视觉实验确定，Huffman码表或算术编码的上下文靠人工规则。各环节单独看都有依据，合在一起却不一定最优，例如固定线性变换无法适应图像中的非线性统计结构，静态码表也不知道当前位置是平坦区还是纹理区。学习式压缩保留“变换—量化—熵编码”的框架，但把变换换成神经网络，把概率模型换成可以随内容变化的学习模型，并让它们在同一个率失真目标下联合训练。
+
+以下以尺度超先验方法为主线\scite{vision-hyperprior2018}该方法建立在更早的端到端优化压缩框架之上\scite{vision-balle2017}一次压缩分四步：分析变换$g_{\mathrm{a}}$把图像$\bm{X}$变为潜变量$\bm{y}$，取整得到整数符号$\hat{\bm{y}}$；概率模型为每个符号给出概率$P(\hat{\bm{y}})$；熵编码器按这些概率把符号写成比特；解码端按相同概率读回符号，再由合成变换$g_{\mathrm{s}}$得到重建$\widehat{\bm{X}}=g_{\mathrm{s}}(\hat{\bm{y}})$。若熵编码接近理想，码长约为$-\log_2P(\hat{\bm{y}})$比特，这是式\eqref{eq:vision-entropy}所述下界在单个序列上的形式。于是率失真权衡可以直接写成训练目标
+\begin{equation}
+ L=\underbrace{\mathbb{E}_{\bm{X}}\bigl[-\log_2P(\hat{\bm{y}})\bigr]}_{R}
+  +\lambda\,\underbrace{\mathbb{E}_{\bm{X}}\bigl[d(\bm{X},\widehat{\bm{X}})\bigr]}_{D}\text{，}
+ \qquad \hat{\bm{y}}=\operatorname{round}\bigl(g_{\mathrm{a}}(\bm{X})\bigr)\text{，}
+ \label{eq:vision-rate-distortion}
+\end{equation}
+其中$d$是失真度量，例如均方误差，$\lambda>0$决定权衡点，作用相当于JPEG的质量因子。码率项依赖概率模型，失真项依赖两个变换，取整同时影响两项。四个步骤因此不是各自独立设计，而是由同一个目标联合训练：变换决定符号的分布，概率模型决定码长，熵编码只负责把理想码长兑现成实际比特，解码重建则要求两端算出完全相同的概率。
+
+这个训练目标还可以从变分自编码器的角度理解。把$g_{\mathrm{s}}$看成生成模型，把“$g_{\mathrm{a}}$加均匀噪声”看成近似后验$q(\tilde{\bm{y}}\mid\bm{X})=\prod_i\mathcal{U}(\tilde y_i\mid y_i-\tfrac12,y_i+\tfrac12)$（加噪的理由在下一小节说明），变分推断要最小化$q$与真实后验之间的KL散度的期望：
+\begin{equation}
+ \mathbb{E}_{\bm{X}}\,\mathbb{E}_{q}\Bigl[
+ \log q(\tilde{\bm{y}}\mid\bm{X})
+ -\log p(\bm{X}\mid\tilde{\bm{y}})
+ -\log p(\tilde{\bm{y}})\Bigr]+\text{常数}\text{。}
+ \label{eq:vision-compression-vae}
+\end{equation}
+第一项为零，因为单位宽均匀密度在支撑集内恒为1。若取$p(\bm{X}\mid\tilde{\bm{y}})$为均值$g_{\mathrm{s}}(\tilde{\bm{y}})$、协方差$(2\lambda)^{-1}\bm{I}$的高斯分布，第二项等于$\lambda\lVert\bm{X}-g_{\mathrm{s}}(\tilde{\bm{y}})\rVert_2^2$加常数，即加权的平方误差失真；第三项是用先验$p(\tilde{\bm{y}})$编码潜变量的交叉熵，即码率（以自然对数计，除以$\ln2$换成比特）。这说明式\eqref{eq:vision-rate-distortion}在加噪近似下就是一种变分自编码器的训练目标，区别在于$\lambda$由应用选择，而不是由数据的真实噪声决定；变分自编码器的一般原理见前文已引的卷六“概率生成模型”章。下面按编码流程依次展开这四个步骤，并在最后与经典路线逐环节对照。
+
+\subsubsection{图像的变换与量化}
+\label{sec:vision-restoration-quantization}
+
+第一步要把像素变成便于压缩的符号。JPEG用固定的离散余弦变换去掉相关性，学习式压缩则让变换由数据和率失真目标共同决定：
+\begin{equation}
+ \bm{y}=g_{\mathrm{a}}(\bm{X}),\qquad
+ \hat y_i=\operatorname{round}(y_i),\qquad
+ \widehat{\bm{X}}=g_{\mathrm{s}}(\hat{\bm{y}})\text{。}
+ \label{eq:vision-transform-coding}
+\end{equation}
+量化把连续数映射到有限精度的离散值，舍弃区间内的差别。此处以单位步长取整为例；步长的作用由分析与合成变换吸收，网络可以把某个分量放大，相当于对它用更细的量化，这对应JPEG量化表中逐系数不同的步长。
+
+用两个像素作可复算的变换例。对$\bm{x}=(0.2,0.8)$，令$y_1=2(x_1+x_2)=2$、$y_2=2(x_2-x_1)=1.2$。取整得到$(2,1)$，合成按$x_1=(y_1-y_2)/4$、$x_2=(y_1+y_2)/4$得到$(0.25,0.75)$。均方误差为0.0025。若把变换系数从2改成4，$y_2=2.4$取整为2，重建为$(0.1875,0.8125)$，误差降到约$1.6\times10^{-4}$，但符号的取值范围变大，编码需要更多比特。这里分析与合成是手工线性变换，学习式网络用数据寻找更适合图像的非线性变换；量化造成不可逆信息损失的原因相同。
+
+式\eqref{eq:vision-rate-distortion}不能直接用梯度训练，因为取整的导数几乎处处为零。原方法在训练时用加均匀噪声代替取整：$\tilde y_i=y_i+u_i$，$u_i\sim\mathcal{U}(-\tfrac12,\tfrac12)$相互独立。带波浪号的连续量用于训练，带帽号的整数用于实际编码。这个替代有一个精确的依据。设$y_i$的密度为$p_{y}$，取整后符号为$k$的概率是
+\[
+ P(\hat y_i=k)=\int_{k-1/2}^{k+1/2}p_{y}(v)\,\mathrm{d}v\text{；}
+\]
+而$\tilde y_i$的密度是$p_y$与单位宽均匀密度的卷积，$p_{\tilde y}(t)=\int_{-1/2}^{1/2}p_y(t-s)\,\mathrm{d}s=\int_{t-1/2}^{t+1/2}p_y(v)\,\mathrm{d}v$。两式在$t=k$处相同，即加噪变量的密度在整数点的值正好等于取整符号的概率。所以训练中用$-\log_2p_{\tilde y}(\tilde y_i)$估计码率，与实际编码的码长是同一个函数在相邻点上的取值。加噪后的失真$d(\bm{X},g_{\mathrm{s}}(\tilde{\bm{y}}))$也近似于取整后的失真，但二者不完全相同，交付前仍须用真正的取整、编码和解码检查。这里的均匀噪声与表\ref{tab:vision-noise-models}中的均匀噪声是同一个模型：单位步长量化误差在$[-\tfrac12,\tfrac12]$内，方差$1/12$。
+
+尺度超先验方法中，$g_{\mathrm{a}}$由四层步幅为2的$5\times5$卷积组成，前三层后各接一个广义除法归一化层（各层配置见表\ref{tab:vision-hyperprior-layers}）。输入$h\times w\times3$的图像，前三层输出$N$个通道，最后一层输出$M$个通道，得到$\bm{y}\in\mathbb{R}^{\frac{h}{16}\times\frac{w}{16}\times M}$。$N,M$随$\lambda$选取：码率较低的5个$\lambda$用$N=128,M=192$，较高的3个用$N=192,M=320$。$g_{\mathrm{s}}$结构对称，用步幅为2的转置卷积上采样，用近似逆运算替换归一化层，最后输出3个通道。\term{广义除法归一化}（generalized divisive normalization, GDN）把每个通道的响应除以同一位置各通道响应平方的加权和：
+\begin{equation}
+ v_i=\frac{u_i}{\bigl(\beta_i+\sum_j\gamma_{i,j}u_j^2\bigr)^{1/2}}\text{，}
+ \label{eq:vision-gdn}
+\end{equation}
+其中$u_i$是同一空间位置第$i$个通道的卷积输出，$\beta_i>0$与$\gamma_{i,j}\geq0$是学习参数。它与批归一化不同：批归一化训练后变成固定的仿射变换，GDN的除数随当前位置的响应而变，相当于局部增益控制。作者此前的工作表明，这种归一化能有效削弱自然图像局部统计中的相关性，使变换后的分量更接近独立\scite{vision-balle2017}与离散余弦变换相比，$g_{\mathrm{a}}$是非线性的，并且以16倍下采样覆盖比$8\times8$块大得多的范围，没有固定的块边界。
+
+设一幅$256\times256$的图像，$M=192$，则$\bm{y}$为$16\times16\times192$，共49152个符号，比原图的196608个像素值少四分之三。但符号数减少不等于压缩完成：每个符号要多少比特，取决于下一步的概率模型。
+
+\subsubsection{符号的概率估计}
+\label{sec:vision-restoration-bitstream}
+\label{sec:vision-restoration-hyperprior}
+
+第二步要为每个整数符号给出概率，编码器与解码器必须共享这组概率。概率越准，常见符号的码长越短，平均码率越低。端到端优化压缩的第一版用因子化先验：每个通道的所有位置共享一个学习得到的一维分布，各符号独立\scite{vision-balle2017}它的缺点在训练后的潜变量中能直接看到：非零符号集中在边缘和纹理区域，平坦区域几乎全为零；也就是说，符号的幅度尺度随位置变化，且在空间上成片相关。一个对所有位置相同的分布只能折中，平坦区域的零符号概率被估低，纹理区域的大幅值符号概率也被估低，两处都多花比特。这与JPEG静态码表的局限相同。
+
+传统编码器用辅助信息解决类似问题：例如先告诉解码器每个块用哪种划分或量化表，再按此解码。\term{辅助信息}（side information）是编码器额外发送、帮助解码器选择概率模型的信息。尺度超先验把辅助信息也交给网络学习：用一组更小的潜变量$\bm{z}$描述$\bm{y}$在各位置的尺度，先传$\bm{z}$，再以它为条件传$\bm{y}$。在给定$\bm{z}$时，$\bm{y}$的各分量被假设为相互独立，空间相关性全部由$\bm{z}$承担。
+
+\term{尺度超先验}（scale hyperprior）由两个小变换组成，它们与主变换的逐层配置一并列在表\ref{tab:vision-hyperprior-layers}中。超分析变换$h_{\mathrm{a}}$先对$\bm{y}$取绝对值，使输入只反映幅度，再经一层步幅为1的$3\times3$卷积和两层步幅为2的$5\times5$卷积，层间接ReLU，得到$\bm{z}\in\mathbb{R}^{\frac{h}{64}\times\frac{w}{64}\times N}$，取整为$\hat{\bm{z}}$。超合成变换$h_{\mathrm{s}}$结构对称：两层步幅为2的$5\times5$转置卷积上采样，再接一层步幅为1、输出$M$个通道的$3\times3$卷积，每层后都接ReLU，因此输出的尺度$\bm{\sigma}=h_{\mathrm{s}}(\hat{\bm{z}})$非负，与$\bm{y}$同形状，每个$\sigma_i$控制一个主符号的分布。对前面的$256\times256$例子，$\hat{\bm{z}}$为$4\times4\times128$，共2048个符号，不到主符号数的二十分之一。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{22mm}Xp{24mm}p{12mm}p{12mm}p{26mm}@{}}
+  \toprule
+  变换 & 层类型 & 卷积核与步长 & 输出通道 & 重复次数 & 输出尺寸\\
+  \midrule
+  分析$g_{\mathrm{a}}$ & 卷积下采样，GDN & $5\times5$，2 & $N$ & 3 & $\frac h8\times\frac w8\times N$\\
+   & 卷积下采样 & $5\times5$，2 & $M$ & 1 & $\frac h{16}\times\frac w{16}\times M$\\
+  超分析$h_{\mathrm{a}}$ & 取绝对值，卷积，ReLU & $3\times3$，1 & $N$ & 1 & $\frac h{16}\times\frac w{16}\times N$\\
+   & 卷积下采样，ReLU & $5\times5$，2 & $N$ & 1 & $\frac h{32}\times\frac w{32}\times N$\\
+   & 卷积下采样 & $5\times5$，2 & $N$ & 1 & $\frac h{64}\times\frac w{64}\times N$\\
+  超合成$h_{\mathrm{s}}$ & 转置卷积上采样，ReLU & $5\times5$，2 & $N$ & 2 & $\frac h{16}\times\frac w{16}\times N$\\
+   & 卷积，ReLU & $3\times3$，1 & $M$ & 1 & $\frac h{16}\times\frac w{16}\times M$\\
+  合成$g_{\mathrm{s}}$ & 转置卷积上采样，逆GDN & $5\times5$，2 & $N$ & 3 & $\frac h2\times\frac w2\times N$\\
+   & 转置卷积上采样 & $5\times5$，2 & 3 & 1 & $h\times w\times3$\\
+  \bottomrule
+ \end{tabularx}
+ \caption{尺度超先验模型的逐层结构，依据原文的网络结构图。码率较低的5个模型取$N=128,M=192$，较高的3个取$N=192,M=320$；因子化先验模型使用相同的$g_{\mathrm{a}}$与$g_{\mathrm{s}}$。}
+ \label{tab:vision-hyperprior-layers}
+\end{table*}
+
+原方法以零均值高斯描述$y_i$，并将密度在单位量化区间上积分；按上文的加噪论证，这正是高斯与均匀分布卷积后在整数点的值。对整数$k$，离散概率为
+\begin{equation}
+ P_i(k\mid\hat{\bm{z}})
+ =\int_{k-1/2}^{k+1/2}
+   \frac{1}{\sqrt{2\pi}\sigma_i}
+   \exp\!\left(-\frac{v^2}{2\sigma_i^2}\right)\,\mathrm{d}v
+ =\Phi\!\left(\frac{k+1/2}{\sigma_i}\right)
+  -\Phi\!\left(\frac{k-1/2}{\sigma_i}\right)\text{，}
+ \label{eq:vision-hyperprior-probability}
+\end{equation}
+其中$\Phi$是标准正态累计分布函数。不能把密度在整数处的值直接当作符号概率；密度有单位，且在整数点求和不保证等于1。
+
+算两个数可以看清尺度的作用。平坦区域$\sigma_i=0.5$时，$P_i(0)=\Phi(1)-\Phi(-1)\approx0.683$，零符号只需约0.55 bit；$P_i(1)=\Phi(3)-\Phi(1)\approx0.157$，约2.67 bit。纹理区域$\sigma_i=2$时，$P_i(0)=\Phi(0.25)-\Phi(-0.25)\approx0.197$，约2.34 bit；$P_i(1)\approx0.175$，约2.52 bit。若两处共用$\sigma=2$，平坦区每个零符号要多花约1.8 bit；共用$\sigma=0.5$，纹理区出现的大幅值又会很贵。按位置给出尺度，正是为了让每处的概率贴近该处的实际分布。平坦区零符号只需0.55 bit，低于Huffman码每个符号至少1比特的限制，这也是学习式压缩配合算术编码的原因。
+
+辅助潜变量$\hat{\bm{z}}$本身也要编码，它采用因子化分布：同一通道的所有位置共享一个学习得到的非参数一维密度，同样与单位宽均匀密度卷积后在整数点取值，记为$P_j^{z}$。共享分布使模型能用于任意尺寸的图像。一次图像的理想估计码长为
+\begin{equation}
+ R_{\mathrm{est}}=
+ -\sum_j\log_2 P_j^{z}(\hat z_j)
+ -\sum_i\log_2 P_i(\hat y_i\mid\hat{\bm{z}})\text{。}
+ \label{eq:vision-hyperprior-rate}
+\end{equation}
+训练时把两部分都换成加噪潜变量的连续密度，与失真共同构成目标，同时更新$g_{\mathrm{a}},g_{\mathrm{s}},h_{\mathrm{a}},h_{\mathrm{s}}$和$\bm{z}$的因子化分布参数。从变分角度看，这相当于在式\eqref{eq:vision-compression-vae}中把近似后验扩展为$\tilde{\bm{y}}$与$\tilde{\bm{z}}$的均匀分布之积，把先验写成$p(\tilde{\bm{y}}\mid\tilde{\bm{z}})p(\tilde{\bm{z}})$，KL中便多出一项编码$\tilde{\bm{z}}$的交叉熵。辅助流的项不可省略，否则网络可以把大量信息转移到$\bm{z}$而不付出代价，目标就不再衡量总压缩成本。
+
+训练图像是从网上收集的约100万幅彩色JPEG照片，先随机缩小以减弱原有的压缩伪影，再裁取$256\times256$的图块；批量为8，用Adam训练，学习率$10^{-4}$，作者发现批归一化和学习率衰减都没有带来收益。作者用8个$\lambda$值覆盖不同码率，并分别以均方误差和MS-SSIM为失真度量，与同架构的因子化先验模型对照。在Kodak数据集上，以均方误差训练、按PSNR评价时，因子化先验模型优于JPEG但不及基于HEVC的BPG，加入超先验后接近BPG，高码率处表现更好；以MS-SSIM训练、按MS-SSIM评价时，超先验在所有码率上都带来进一步提升。每个$\lambda$训练一个模型，换一个码率就要换一套参数。
+
+条件化是否划算，要把辅助流计入后再看。假设共享全局分布编码主符号需要100 bit，传入尺度辅助信息后主流降至72 bit。若辅助流为12 bit，总计84 bit，有16 bit收益；若辅助流需要35 bit，总计107 bit，反而增大。只有节省的主流成本超过辅助成本时，这种条件化才划算；训练目标同时含两项，网络会自己寻找这个平衡。表\ref{tab:vision-entropy-model-compare}对照了两种概率模型。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{16mm}XX@{}}
+  \toprule
+  比较维度 & 因子化先验 & 尺度超先验\\
+  \midrule
+  符号分布 & 每通道一个共享分布，与位置无关 & 每个符号一个高斯尺度，由$\hat{\bm{z}}$预测\\
+  空间相关 & 不建模 & 由辅助潜变量承担\\
+  额外比特 & 无 & 辅助流，约占主符号数的二十分之一\\
+  解码依赖 & 各符号可直接解码 & 先解$\hat{\bm{z}}$，再算尺度，再解$\hat{\bm{y}}$\\
+  原文结果 & 优于JPEG，不及BPG（PSNR） & 接近BPG，高码率更好（PSNR）\\
+  \bottomrule
+ \end{tabularx}
+ \caption{两种概率模型的比较。两者使用相同的分析与合成变换，差别只在符号概率怎样随位置变化；结果均指原论文在Kodak数据集上以均方误差训练的模型。}
+ \label{tab:vision-entropy-model-compare}
+\end{table}
+
+\subsubsection{符号的熵编码}
+\label{sec:vision-restoration-entropy-coding}
+
+第三步要把整数符号和它们的概率变成实际的比特串。\term{熵编码}（entropy coding）根据共享概率把离散符号无损地转成比特；这里“无损”指整数符号能够原样恢复，前面的量化仍然有损。概率模型给出的$-\log_2P$只是理想码长，熵编码器要做的是让实际码长尽量接近它，并且能被唯一解码。上一小节的平坦区零符号只需0.55 bit，Huffman编码做不到，因为它的码字必须是整数比特。
+
+\term{算术编码}（arithmetic coding）的一种解释是不断缩小$[0,1)$区间：每读入一个符号，就把当前区间按各符号的概率切分，保留该符号对应的一段；最后用落在最终区间内的一个二进制前缀标识整个序列。最终区间的宽度等于序列概率的乘积，所以需要的位数约为$-\log_2$（序列概率），与理想码长只差常数位。一个符号不再对应整数个比特，整个序列共享比特，因而能逼近任意小于1比特的理想码长。
+
+设三个教学符号$A,B,C$的概率依次为$1/2,1/4,1/4$，基础区间为$[0,1/2)$、$[1/2,3/4)$、$[3/4,1)$。编码序列$ABC$时，$A$把当前区间缩为$[0,1/2)$，$B$选择其中第二段得到$[1/4,3/8)$，$C$再选择最后四分之一得到$[11/32,12/32)$。其宽度为$1/32$，对应理想码长5 bit；二进制前缀$01011$恰好表示这个区间。
+
+若解码端已知长度为3，可用区间内代表值$11/32$恢复序列。它落在基础区间的$A$段，归一化到该段后得到$11/16$，落在$B$段；再次减去$1/2$并除以$1/4$，得到$3/4$，落在$C$段。区间统一左闭右开，因此边界也有确定归属。图\ref{fig:vision-arithmetic-coding}画出逐步缩小的区间；实际实现使用有限精度整数和归一化输出位，无需保存无限精度实数。
+
+\begin{figure}[htbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/arithmetic-coding}
+ \caption{固定概率下序列$ABC$的算术编码教学例。每行共享$[0,1)$坐标，实色区间为读入当前前缀后仍可能的范围。最终区间宽$1/32$，可由5位前缀$01011$表示；序列长度和概率表在本例中预先共享，不计入这5位。}
+ \label{fig:vision-arithmetic-coding}
+\end{figure}
+
+在尺度超先验模型中，每个符号的概率由式\eqref{eq:vision-hyperprior-probability}给出，不同位置的概率表不同。原文实现采用一种简单的非自适应二值算术编码器：把每个整数符号写成二进制，从最高位到最低位逐位编码，每位的概率由该符号的离散分布直接算出。因为解码$\hat{\bm{y}}$时尺度$\hat{\bm{\sigma}}$已经由$\hat{\bm{z}}$确定，编码器不需要处理符号之间的条件依赖，也不需要像JPEG 2000的MQ编码器那样在线调整概率。更一般的实现会把式\eqref{eq:vision-hyperprior-probability}离散化成整数累计概率表，规定精度、尾部截断与逃逸机制，并使两端采用一致的符号顺序。零概率不能分配给实际出现的符号，否则无法编码。有限精度概率、流终止、填充以及尺寸和版本元数据，都会使实际字节数偏离式\eqref{eq:vision-hyperprior-rate}的估计。
+
+真实文件应先提供足以解析的尺寸和模型约定，再存辅助流与主流，或用等价可解析的组织方式记录偏移。若一张$256\times256$图像的全部文件为4096 byte，则按式\eqref{eq:vision-bpp}，实际每像素比特数为$8\times4096/(256\times256)=0.5$，分母不再乘RGB的通道数。模型权重若由收发双方预先共享，常规每图码率不含权重；若每张图传一个专用模型，则这项成本也必须纳入所声明的传输预算。JPEG文件头中的量化表和Huffman码表也属于每图都要付出的成本。
+
+\subsubsection{码流的解码重建}
+\label{sec:vision-restoration-decoding}
+
+第四步由解码端完成，它只拿到比特流和事先共享的模型。解码按依赖顺序执行：用共享的因子化分布从辅助流$S_z$恢复$\hat{\bm{z}}$，由$h_{\mathrm{s}}$算出尺度$\hat{\bm{\sigma}}$，据此构造每个主符号的概率表，从主流$S_y$恢复$\hat{\bm{y}}$，最后由$g_{\mathrm{s}}$得到$\widehat{\bm{X}}$。图\ref{fig:vision-hyperprior-codec}画出了两端的依赖。主流解码必须等待辅助流，因为没有尺度就没有概率表。
+
+\begin{figure*}[tbp]
+ \centering
+ \input{figures/10-image-and-multimodal-processing/03-image-processing/tikz/hyperprior-codec}
+ \caption{尺度超先验的实际编解码依赖。$Q$为取整，E与D分别为熵编码和熵解码，$S_y,S_z$为两条比特流。两端都从同一组整数$\hat{\bm{z}}$经$h_{\mathrm{s}}$产生尺度，主流解码因此必须等待辅助流。图中省略参数与尺寸元数据，未画入不可传输的训练噪声或清晰参考。}
+ \label{fig:vision-hyperprior-codec}
+\end{figure*}
+\FloatBarrier
+
+编码端也必须用量化后的$\hat{\bm{z}}$计算尺度，不能用未经传输的连续$\bm{z}$，否则两侧的概率表不同，算术解码会从出错的符号起全部失效。同样的道理，$h_{\mathrm{s}}$在两端的计算结果必须逐位一致：若编码端和解码端在不同硬件上做浮点运算，$\hat{\bm{\sigma}}$的末位差异可能使离散化后的概率表不同。JPEG的解码只用整数查表和逆离散余弦变换，不同实现的重建可以有微小差别，却不会因此无法解析码流；这一逐位一致的要求是学习式编解码比传统编解码多出的工程约束。
+
+可以用一次独立解码检查上述要求：只给解码程序文件、声明的模型参数和必要配置，确认它能复现输出。原图、训练参考和编码中间浮点值都不在它的可用输入中。一个只展示分析网络和合成网络前向结果的实验，用的是加噪或连续的潜变量，尚未完成这个检查。
+
+重建质量还要回到用途。同样的0.5 bit/像素可以优先保留平滑颜色，也可以保留文本边缘，不同失真度量会形成不同取舍：原文以MS-SSIM训练的模型按PSNR评价时表现明显较差。应把解码图像送入固定的文字读取、识别或测量流程，检查招牌字符串、车牌边界及尺寸。感知上自然的纹理不一定有助于这些用途，较小的平均像素误差也可能掩盖一个关键数字的错误。视频还会利用帧间相关，运动流、残差流和参考帧依赖在\ref{chap:vision-video-restoration}章接续。
+
+两条路线现在可以逐环节对照，表\ref{tab:vision-codec-compare}列出学习式压缩改变了什么。变换从固定的线性块变换变成可学习的非线性变换，消除了固定的块边界；量化步长从人工量化表变成由变换吸收的缩放；概率模型从静态码表变成随位置变化、由辅助信息驱动的分布，配合算术编码可以给出低于1比特的码长；各环节由同一个率失真目标联合训练，失真度量也可以按用途更换。换来的是更低的码率，付出的是解码端必须运行神经网络、两端浮点计算须逐位一致，以及每个码率点一套参数的存储代价。
+
+\begin{table*}[tbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{18mm}XXX@{}}
+  \toprule
+  环节 & JPEG基线 & JPEG 2000 & 尺度超先验\\
+  \midrule
+  变换 & $8\times8$离散余弦变换，固定线性 & 多级小波，固定线性 & 四层卷积与GDN，学习的非线性变换\\
+  量化 & 人工量化表，质量因子缩放 & 每个子带一个步长 & 单位取整，步长由变换吸收\\
+  概率模型 & 静态Huffman码表 & 按位平面上下文自适应 & 由辅助潜变量逐位置预测高斯尺度\\
+  熵编码 & Huffman，每符号至少1比特 & MQ算术编码 & 二值算术编码\\
+  设计方式 & 各环节分别设计 & 各环节分别设计 & 率失真目标联合训练\\
+  码率调节 & 一套参数，改质量因子 & 一套参数，截断码块 & 每个$\lambda$一套参数\\
+  解码要求 & 整数查表与逆变换 & 小波逆变换与算术解码 & 神经网络前向，浮点须逐位一致\\
+  \bottomrule
+ \end{tabularx}
+ \caption{经典编码与学习式压缩的逐环节比较。三者共享“变换—量化—熵编码”的框架，差别在于每个环节由人设计还是由数据学习。}
+ \label{tab:vision-codec-compare}
+\end{table*}
+
+\section{处理效果的核验}
+\label{sec:vision-restoration-evaluation}
+
+前三节的每种处理都要回答：结果是否值得采用。这个问题有三个方面，本节按维度分开讨论：结果与参考相比有多接近、看起来是否自然；结果能否支持读字、识别和测量等后续用途；为此付出了多少计算、时间和比特。三个方面不能互相替代，同一个处理在一个维度上的改进常伴随另一个维度上的代价。
+
+比较前要先固定条件：输入退化、参考对齐、像素范围和颜色约定。对没有可信参考的真实图像，应明确哪些结论只能来自任务结果或人工观察，不能给不存在的原图计算“恢复正确率”。
+
+\subsection{保真与感知质量的核验}
+\label{sec:vision-restoration-quality}
+
+这一维度的输入是一对对齐的图像：处理结果和参考。难点在于“接近”有不同含义：逐像素的数值差、局部结构的相似、人眼感觉到的差别，三者可以给出不同排序，尤其在一幅低清观测对应多个可能细节时。PSNR和SSIM用固定公式衡量前两种接近，LPIPS用学习得到的特征距离逼近人的判断；后者改变的是比较空间，从像素换成深层特征，并用人类判断校准权重。
+
+\subsubsection{PSNR与SSIM}
+\label{sec:vision-restoration-psnr-ssim}
+
+PSNR与SSIM的定义已在式\eqref{eq:vision-psnr}和式\eqref{eq:vision-ssim}给出，这里讨论它们各自衡量了什么、怎样计算才可比较。PSNR是均方误差的对数变换，二者排序相同；误差为零时PSNR为正无穷。对数尺度只是让大范围的误差便于比较，MSE减半对应PSNR提高约3 dB。前述两像素压缩例的MSE为0.0025，取$v_{\max}=1$得到约26.02 dB。对一组图像平均各图PSNR，与先合并所有像素误差再计算PSNR不是同一聚合方式，报告时要写明。
+
+SSIM的第一个因子比较窗口均值，第二个因子同时比较方差和协方差：两窗口的变化幅度相同且同步起伏时接近1。它因此对整体亮度偏移不如PSNR敏感，对结构被破坏更敏感。窗口大小、权重、边界和颜色处理都会改变数值，应固定后再比较。
+
+取参考$(0,0,1,1)$，平滑结果$(0,0.25,0.75,1)$的MSE为0.03125；只把第三个位置改成0的结果$(0,0,0,1)$，MSE为0.25，按固定长度比较时也可视为边缘平移一格。再取$(0,0,0.8,1)$，MSE只有0.01，但若第三位置恰是识别一笔关键字画的依据，任务错误仍可能很大。像素分数描述这些改变的平均幅度，SSIM还考察局部共同变化，二者都不知道这笔画的业务含义。
+
+配准误差会使正确内容与错误位置比较。评价应先确认对应关系，再统一是否裁剪边缘、只评亮度还是评RGB，以及线性值或显示编码值。例如Restormer报告去雨结果时在YCbCr的亮度通道上计算PSNR和SSIM；不同论文的数字只有在同一口径下才能比较。不能为每个方法单独选择最有利的对齐和颜色口径。压缩比较还要把PSNR与实际码率配对，按式\eqref{eq:vision-bd-rate}汇总整条曲线，单个码率点上的PSNR高低不足以说明哪个编解码器更好。
+
+\subsubsection{LPIPS}
+\label{sec:vision-restoration-lpips}
+
+PSNR和SSIM都由人设计，它们与人眼判断的一致程度有限：轻微模糊和轻微平移可能得到相近的PSNR，人却觉得前者明显更差。深度网络的中间特征对纹理和结构敏感，作者据此提出问题：能否直接用网络特征的距离衡量感知差别，并用人的判断来校准。LPIPS就是这样一种度量\scite{vision-lpips2018}
+
+设第$\ell$层在位置$p$的特征向量经通道归一化后为$\bar{\bm{f}}_{\ell,p}(\bm{X})$，该层共有$n_\ell$个位置，学习到的通道权重为$\bm{w}_\ell$。其距离写成
+\begin{equation}
+ d_{\mathrm{LPIPS}}(\bm{X},\widehat{\bm{X}})
+ =
+ \sum_\ell\frac1{n_\ell}\sum_p
+ \left\lVert
+ \bm{w}_\ell\odot
+ \bigl(\bar{\bm{f}}_{\ell,p}(\bm{X})
+      -\bar{\bm{f}}_{\ell,p}(\widehat{\bm{X}})\bigr)
+ \right\rVert_2^2\text{。}
+ \label{eq:vision-lpips}
+\end{equation}
+两幅图像都经过同一网络与预处理。先按位置比较归一化特征，再平均空间差异并累加层，不能将整图分类向量的余弦距离直接叫作LPIPS。若某位置的两通道差为$(0.2,0.1)$，权重为$(1,2)$，该位置贡献为$0.2^2+(2\times0.1)^2=0.08$。权重全取1时，归一化特征的平方距离等价于余弦距离，学习的作用是给不同通道不同的重要性；作者把权重限制为非负，因为两幅图之间的距离不应为负。
+
+论文比较了三种骨干网络，各自取用的层见表\ref{tab:vision-lpips-layers}。三者都只取卷积层的输出，空间尺寸随层加深逐级减小，所以式\eqref{eq:vision-lpips}的求和同时覆盖了从边缘纹理到较大结构的多个尺度。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{16mm}Xp{30mm}@{}}
+  \toprule
+  骨干网络 & 取用的层 & 各层通道数\\
+  \midrule
+  AlexNet & conv1至conv5 & 64，192，384，256，256\\
+  VGG & conv1\_2，conv2\_2，conv3\_3，conv4\_3，conv5\_3 & 64，128，256，512，512\\
+  SqueezeNet & conv1，fire3，fire5至fire9 & 64，128，256，384，384，512，512\\
+  \bottomrule
+ \end{tabularx}
+ \caption{LPIPS三种骨干网络的取用层。层名与通道数依据原文附录中各层学习权重的展示；每层一个与通道数等长的非负权重向量$\bm{w}_\ell$。}
+ \label{tab:vision-lpips-layers}
+\end{table}
+
+权重$\bm{w}_\ell$来自人的判断。作者构建了BAPPS数据集：从图像中取$64\times64$的参考块，施加两种不同的失真，请人判断哪一个更接近参考，即两选一强制选择；失真既包括噪声、模糊、压缩等传统操作，也包括各种网络输出，数据集共有超过16.1万个图块。训练时，对每个三元组分别算出两个失真块到参考的距离$d_0,d_1$，再用一个小网络$G$把这两个距离映射为“人选择第一个”的概率$\hat h$；$G$由两层32通道的全连接层加ReLU、一层单通道全连接层和sigmoid组成。损失为交叉熵$-h\log\hat h-(1-h)\log(1-\hat h)$，$h$是人群中实际选择第一个的比例。常用的版本固定预训练骨干的参数，只学习各层的线性权重$\bm{w}_\ell$；作者也比较了微调骨干和从头训练的版本。$G$只在训练中使用，使用时只需两幅对齐的图像，一次前向即可按式\eqref{eq:vision-lpips}算出距离。
+
+平滑砖墙可能产生较小像素误差，却改变深层纹理特征；把招牌“8”改成“3”又可能只影响很小区域，整体感知距离仍然较小。LPIPS衡量对应图像的特征差异，不能独立核验文字、身份或事实，也不能把一项分数直接解释成“恢复了多少真实内容”。
+
+像素保真与感知质量之间存在理论上的取舍，这要用比较分布的另一个定义来说明。设$p_{\bm{X}}$为真实图像分布，复原规则$p(\widehat{\bm{X}}\mid\bm{Y})$诱导输出分布$p_{\widehat{\bm{X}}}$，以$\Delta$度量逐对失真，以$d$度量两种分布的差异。给定失真预算$D$，定义
+\begin{equation}
+ P(D)=
+ \inf_{\substack{p(\widehat{\bm{X}}\mid\bm{Y})\\
+  \mathbb{E}[\Delta(\bm{X},\widehat{\bm{X}})]\leq D}}
+ d(p_{\bm{X}},p_{\widehat{\bm{X}}})\text{。}
+ \label{eq:vision-perception-distortion}
+\end{equation}
+放宽$D$扩大可选复原规则集合，因此$P(D)$不增；若$d$对第二个分布具有适当凸性，还可得到凸的最优边界。这个框架中的感知差异比较的是分布，不能直接替换成任意一个单图美观分数\scite{vision-perception-distortion2018}
+
+一个完全没有信息的观测可以说明这种取舍。假设原像素以相同概率为0或1，平方误差最优输出为0.5，平均失真0.25，但输出分布只有一个中间值，与真实分布完全不同。若独立地以相同概率输出0或1，边缘分布与真实像素相同，平均平方误差却为0.5。后一规则没有因此猜对每个原像素。这正对应前文的模型差别：维纳滤波和DnCNN变体靠近前一种规则，Real-ESRGAN和DiffBIR向后一种规则移动。实际方法远离最优边界时，改进模型仍可能同时降低多项误差；上述取舍不表示所有评价指标必然互相恶化。
+
+三种指标的差别归纳在表\ref{tab:vision-quality-metric-compare}中。报告复原结果时，至少应同时给出一项像素或结构指标和一项感知指标，并说明各自的计算口径。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{14mm}XXX@{}}
+  \toprule
+  比较维度 & PSNR & SSIM & LPIPS\\
+  \midrule
+  比较对象 & 逐元素差 & 局部均值、方差与协方差 & 多层归一化深度特征\\
+  参数来源 & 只有峰值约定 & 窗口与常数$c_1,c_2$ & 骨干网络与人类判断校准的权重\\
+  方向 & 越大越接近 & 越接近1越接近 & 越小越接近\\
+  敏感于 & 平移、整体亮度偏移 & 结构破坏、对比变化 & 纹理与结构的感知差别\\
+  不能判断 & 误差落在哪里、是否重要 & 内容语义 & 文字、身份等事实是否正确\\
+  \bottomrule
+ \end{tabularx}
+ \caption{三种参考指标的比较。三者都需要对齐的参考图像，都不能回答处理结果是否保留了用途所需的具体内容。}
+ \label{tab:vision-quality-metric-compare}
+\end{table}
+
+\subsection{下游用途的核验}
+\label{sec:vision-restoration-downstream}
+
+参考指标衡量与参考图的接近程度，下游核验则直接问处理结果能否完成任务。招牌任务可以固定一套文字读取器，分别输入原照片、处理结果和可信参考，再与人工核实的字符串比较。若原图识别成“18路”、处理后成“13路”、参考为“18路”，锐化后的感知改善没有帮助这次读取。还应检查处理图像本身是否改出了“3”，或字符仍为“8”但读取器产生误判，以区分图像处理与下游系统的误差。
+
+对于测量，可固定边缘定位与标定步骤，比较长度、角点和深度；对于识别，可比较相同对象的类别及拒识结果。阈值需要在验证集上确定，不能反复查看测试标签后为某个处理器调优。若联合训练了处理器与下游模型，还应把这看作一个新系统，与使用固定下游模型的对照分别报告。压缩也一样：同样的码率下，JPEG的块效应和学习式压缩的平滑可能对文字读取造成不同的影响，应以读取正确率对码率作曲线，而不只看PSNR对码率的曲线。
+
+当真实参考不可得时，可以保留原始RAW、多次曝光或其他视角作为额外证据，并记录生成补全区域，例如部分卷积的原始掩码或DiffBIR的引导强度与随机种子。补出的皮肤、纹理和字符是否可接受，由用途决定；需要记录保真的任务应能追溯处理前后对应关系，不能以模型确信度替代丢失观测。
+
+\subsection{资源成本的核验}
+\label{sec:vision-restoration-resources}
+
+质量相同的两种处理，成本可能相差几个数量级。复原比较应固定输入分辨率、退化、硬件、采样步数和候选数量。经典滤波器的成本最低：中值滤波逐像素排序，维纳滤波和约束最小二乘只需每通道一次快速傅里叶变换，后者选参数时再重复几次。前馈网络与扩散流程的成本不只相差参数量：DnCNN、Restormer和Real-ESRGAN一次前向即得结果，DiffBIR需要先运行第一阶段复原模块，再进行50步采样，每步都运行一次去噪网络和条件支路，启用复原引导时每步还要经过解码器求梯度。即使同为一次前向，注意力的形式也决定了分辨率增大时成本怎样增长，这正是Restormer改用通道注意力的原因；论文报告它的计算量比此前的MPRNet少81\%。DnCNN超分辨率变体先插值再在高分辨率网格上计算，Real-ESRGAN则在低分辨率上计算，放大倍数越大，二者的差距越明显。
+
+图像压缩则要同时统计实际文件码率、编码时间、解码时间与内存，不能只比较训练时的估计码率。JPEG的编解码只需块变换、查表和整数运算，几乎所有设备都有硬件支持；JPEG 2000的小波与位平面算术编码明显更慢。尺度超先验的解码必须先解辅助流再解主流，两段不能并行，每次解码都要运行合成网络；每个$\lambda$对应一个模型，覆盖多个码率意味着收发双方都要保存多套参数。传统编解码器常用一套参数加不同量化表覆盖全部码率，这一点上更省存储。
+
+表\ref{tab:vision-restoration-choice}把三类目的与所需证据对应起来。一个应用可以同时占据多行，例如先从RAW复原，再调整显示并压缩发送。最终判断仍需回到整个流程的输出，前段留下的错误可能被后段放大。
+
+\begin{table}[htbp]
+ \centering
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{18mm}XX@{}}
+  \toprule
+  主要目的 & 需要保留的证据 & 共同记录的成本与条件\\
+  \midrule
+  内容复原 & 对齐参考、退化回投影、文字或测量结果 & 输入范围、模型版本、采样步数与候选预算\\
+  呈现增强 & 原始图像、亮部裁剪、颜色与局部层次变化 & 颜色空间、曲线、增益和局部参数\\
+  存储传输 & 独立解码结果、实际文件、用途误差、BD-rate & 辅助比特、元数据、编码及解码资源\\
+  \bottomrule
+ \end{tabularx}
+ \caption{按处理目的选择证据。表中各行可以组合；每项判断都同时保留输入条件、处理结果与成本，避免只用一个质量分数作选择。}
+ \label{tab:vision-restoration-choice}
+\end{table}
+
+\section{本章小结}
+\label{sec:vision-restoration-summary}
+
+回到开篇的夜间招牌。让它变得可用，需要区分三件事：看清、看着自然和记录正确。本章开头把这件事拆成五个挑战，各节依次给出了回答。
+
+对于观测信息丢失带来的解不唯一，复原一节按退化条件说明了缺失信息从哪里补回。噪声下，经典方法由噪声模型推出滤波规则：均值滤波对高斯噪声，中值与自适应中值滤波对椒盐噪声，方差稳定化变换把泊松—高斯噪声化为近似单位方差；DnCNN把同样的噪声模型放进训练数据，用残差学习一次处理一个强度范围。已知模糊核时，逆滤波、维纳滤波和约束最小二乘的差别只在弱频率上相信什么，后两者在数学上是同一形式，先验分别来自功率谱和平滑约束。分辨率不足时，同一观测对应多个高清图像，平方误差训练只能给出平滑的条件均值。区域缺失时，部分卷积保证结果不依赖占位数值，但缺口内容仍全部来自周围像素和先验。
+
+对于退化未知且混合带来的模型失配，盲反卷积先估计核再复原，受限于先验偏向无模糊解和空间不变假设；Restormer、DnCNN-B与Real-ESRGAN改为扩大训练中的退化分布，覆盖得越广，失配越少，但合成退化仍无法穷尽真实相机和传播链路。对于低照度与目标不唯一带来的增强取舍，暗光下的提亮要回到RAW数据才能同时处理噪声和颜色；内容充足时，全局曲线保持明暗次序，CLAHE换来局部层次却改变区域间关系，选用时要规定作用通道和处理顺序。对于细节补全带来的保真与感知冲突，Real-ESRGAN和DiffBIR借助对抗训练和预训练扩散模型补出细节，补出的越多，越需要区分观测支持的内容与先验生成的内容；感知—失真边界说明这种取舍有理论依据，不是某个模型的缺陷。对于比特预算带来的码率与失真权衡，JPEG与JPEG 2000把变换、量化、熵编码分开设计，学习式压缩保留同一框架，把三个环节放进同一个率失真目标联合训练：加均匀噪声的训练近似之所以成立，是因为加噪密度在整数点正好等于取整概率；尺度超先验用少量辅助比特换取更准的概率，前提是辅助流计入总码率，且两端算出完全相同的概率表。
+
+本章没有解决的问题仍然明显。合成退化无法穷尽真实相机和传播链路，生成先验补出的细节缺少可核验的依据，低码率下关键文字可能在平均失真很小的情况下丢失。它们分别指向退化建模、观测约束和面向用途的编码。核验部分给出的做法是同时报告参考指标、感知指标、下游任务结果和资源成本，并说明结论依赖哪类输入。平均感知质量上升若伴随关键字段错误增加，就需要改变目标或应用范围。下一章允许根据用户要求创建和修改内容，届时仍需明确哪些变化是目标、哪些内容必须保持。
+
+\paragraph{扩展阅读}
+复原方向，BM3D把图中相似的图像块堆叠成三维组，在变换域中联合收缩后再加权放回原位；它与本章的经典滤波一样需要给定噪声水平，但利用的是图像内部重复出现的结构，长期作为DnCNN等学习方法的对照基线\scite{vision-dabov2007bm3d}FFDNet把噪声水平图与下采样得到的子图像一起送入网络，一个模型即可处理不同强度乃至空间上变化的噪声，可与本章DnCNN-S和DnCNN-B之间“专用模型更准、通用模型不必知道强度”的取舍对照阅读\scite{vision-ffdnet2018}SwinIR走的是本章讨论Restormer时提到的另一条路：在局部窗口内计算空间注意力，逐层平移窗口以在相邻窗口之间传递信息，并用同一结构处理超分辨率、去噪和JPEG去块\scite{vision-swinir2021}超分辨率方面，SRCNN是较早用卷积网络学习低分辨率到高分辨率映射的工作，它的三层卷积分别对应稀疏编码方法中的块提取、非线性映射和重建，有助于理解学习式复原怎样从经典流程演变而来\scite{vision-srcnn2016}SR3为超分辨率单独训练一个条件扩散模型，以低分辨率图像为条件从噪声逐步去噪，不需要ESRGAN式的对抗训练；它与DiffBIR借用预训练文生图扩散模型的做法不同，适合比较生成先验来自何处\scite{vision-sr3-2023}
+
+增强方向，EnlightenGAN只用互不配对的低光图像和正常光照图像训练，以全局与局部判别器约束结果的曝光外观，再用自特征保持损失约束内容不变；SID需要成对的短、长曝光RAW数据，二者对照可以看出监督来源怎样决定增强目标\scite{vision-enlightengan2021}Eilertsen等人从单张曝光的低动态范围图像预测饱和高光区内的亮度，生成高动态范围图像；它处理的是本章亮度增强之外的另一类信息丢失，即被传感器截断的高光无法靠曲线拉伸找回，只能由学到的先验补出\scite{vision-hdrcnn2017}
+
+压缩方向，Minnen等人在尺度超先验之外加入自回归上下文模型，用已解码的相邻潜变量和辅助信息共同预测每个位置的均值与尺度，进一步降低码率，代价是解码必须逐位置串行进行\scite{vision-minnen2018}ELIC把潜变量按通道不均匀地分组，在空间上采用棋盘式的两遍上下文，在保留大部分上下文收益的同时恢复了并行解码，可用来比较概率模型精度与解码速度之间的取舍\scite{vision-elic2022}JPEG XL是JPEG委员会制定的新一代静止图像编码，在人工设计的框架中采用可变大小的块变换和模块化的无损编码，并能把已有JPEG文件无损地重新压缩，可以看作本章经典编码流程的现代延续\scite{vision-jpegxl2019}理论方面，Blau与Michaeli把感知—失真边界推广到有码率约束的情形，提出率—失真—感知函数，说明提高解码结果的感知质量要以更高码率或更大失真为代价，这为低码率下的生成式压缩提供了分析框架\scite{vision-rdp-tradeoff2019}

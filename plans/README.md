@@ -15,11 +15,11 @@
 | 7 | 学习范式：强化学习 | 8 | [基本问题与求解](07-reinforcement-learning/01-problems-and-solving.md)；[信息与奖励受限的学习](07-reinforcement-learning/02-information-and-reward.md)；[任务扩展与可信决策](07-reinforcement-learning/03-task-expansion-and-trustworthiness.md) |
 | 8 | 学习范式：知识的获取、演进与迁移 | 14 | [知识的获取](08-knowledge-learning/01-knowledge-acquisition.md)；[知识的演进](08-knowledge-learning/02-knowledge-evolution.md)；[知识的迁移](08-knowledge-learning/03-knowledge-transfer.md) |
 | 9 | 应用：自然语言处理 | 0（仅部分入口） | [文本分析与信息组织](09-natural-language-processing/01-text-analysis-and-organization.md)；[文本生成与交互](09-natural-language-processing/02-text-generation-and-interaction.md)；[语音处理](09-natural-language-processing/03-speech-processing.md) |
-| 10 | 应用：图像和多模态处理 | 9 | [图像和多模态模型（2章）](10-image-and-multimodal-processing/01-image-and-multimodal-models.md)；[图像处理（3章）](10-image-and-multimodal-processing/02-image-processing.md)；[视频处理（2章）](10-image-and-multimodal-processing/03-video-processing.md)；[多模态处理（2章）](10-image-and-multimodal-processing/04-multimodal-processing.md) |
+| 10 | 应用：图像和多模态处理 | 15 | [图像和多模态基础（6章）](10-image-and-multimodal-processing/01-image-and-multimodal-foundations.md)；[图像和多模态模型（2章）](10-image-and-multimodal-processing/02-image-and-multimodal-models.md)；[图像处理（3章）](10-image-and-multimodal-processing/03-image-processing.md)；[视频处理（2章）](10-image-and-multimodal-processing/04-video-processing.md)；[多模态处理（2章）](10-image-and-multimodal-processing/05-multimodal-processing.md) |
 | 11 | 应用：推荐、搜索与广告 | 0（仅部分入口） | [理解、选择与展示](11-recommendation-search-advertising/01-understanding-selection-and-display.md)；[决策与评价](11-recommendation-search-advertising/02-decision-and-evaluation.md)；[搜索与广告](11-recommendation-search-advertising/03-search-and-advertising.md) |
 | 12 | 系统 | 0（仅部分入口） | [机器学习系统](12-systems/01-machine-learning-systems.md) |
 
-卷十共9章、3部分。共同基础与图像处理依次接入概述、视觉与多模态模型、图像识别与检索、图像复原增强压缩及图像生成编辑五章；视频处理接入视频感知跟踪检索及视频复原增强压缩两章；多模态处理接入多模态理解及多模态生成两章。各部分的不编号阅读指引不计入章数。
+卷十共15章、5部分。图像和多模态基础部分接入概述、图像的形成与表示、图像的变换与滤波、图像的特征与分割、视频的表示与运动、多模态数据的对齐与融合六章；图像和多模态模型部分接入图像与视频模型、多模态模型两章；图像处理部分接入图像识别与检索、图像复原增强压缩及图像生成编辑三章；视频处理接入视频感知跟踪检索及视频复原增强压缩两章；多模态处理接入多模态理解及多模态生成两章。各部分的不编号阅读指引不计入章数。
 
 正文位置均通过相对链接给出。旧卷级规划、选材资料、研究课题、过程记录及重复映射已从本目录移除，历史可由 Git 查阅。仍被数学审计使用的历史章目映射和标签退役契约迁至 `tests/fixtures/math-reading-structure/`；它们用于校验，不承担正文规划职责。
 

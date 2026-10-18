@@ -1,0 +1,829 @@
+\chapter{图像的形成与表示}
+\label{chap:vision-image-formation}
+
+傍晚，两部手机在同一位置拍摄同一块红色路牌和它身后的砖墙。把两幅照片放在一起比较，会发现几件事：同一块路牌的像素值并不相同，一部手机拍出的红色偏橙；把照片缩小一半后，砖墙上出现了原本没有的弯曲条纹；暗处的墙角布满颗粒，天空则出现一圈圈色带。要是再问“路牌离相机有多远”，单凭一幅照片里的像素尺寸又无法回答。这些现象都发生在任何识别、复原或生成模型读取图像之前，它们决定了数组中的数值是怎样来的、可以怎样解释。
+
+\ref{chap:vision-overview}章把图像写成数组$\bm{X}\in\mathbb{R}^{h\times w\times c}$，并提醒分辨率、坐标和输入范围都属于接口约定。本章追问这个数组背后的物理和几何过程，回答四个问题：像素值和场景中的光有什么关系；连续的光分布变成离散数组时丢失了什么；数组中的位置和颜色应当怎样度量和变换；二维像素和三维空间点之间满足什么关系。读完本章，读者应能解释上面每一种现象的来源，能写出常用插值、色彩空间转换和相机投影的公式并手算小例子，也能说明这些模型在什么条件下失效。
+
+阅读本章需要线性代数中的矩阵运算、最小二乘和奇异值分解，概率中的泊松分布与方差，以及一维信号的采样定理；用到时会先写出所需结论。射影几何、相机模型和色度学在前面的数学卷中没有展开，本章会讲到够用的程度。
+
+路线沿着一幅图像的产生过程展开。光从光源到达表面再反射进镜头，传感器把光转成电荷和数字，相机内部的处理把原始读数变成可显示的照片，这是第一节；同一过程中的空间采样和数值量化决定了数组能保留哪些细节，这是第二节。得到数组之后，区域、距离和几何变换都要依赖像素之间的关系，这是第三节。颜色把三个通道的数值和人的感知联系起来，需要单独讨论，这是第四节。最后一节回到镜头，建立从三维点到像素的投影模型，并由一幅、两幅推进到多幅图像，回答路牌有多远的问题。后续各章遇到的去噪、超分辨率、配准、深度估计和新视角合成，都以这里的观测模型为出发点。
+
+\section{图像的成像与采集}
+\label{sec:vision-formation-acquisition}
+
+照片中路牌的像素值是一个数字，场景中的路牌却是一块在某种光照下反射光线的表面。两者之间经过三步：光照射到表面并被反射，镜头把反射光汇聚到传感器上，传感器把收到的光变成数字后，相机内部再加工成照片。每一步都会引入一种不确定：反射这一步把光照和表面性质混在一起，传感器这一步加入噪声并只记录一种颜色，加工这一步再施加因设备而异的非线性变换。本节按光传播的顺序讨论这三步。光照与反射说明像素值在理想情况下与什么物理量成比例；传感器与彩色滤波阵列说明数字是怎样读出的、为什么每个位置起初只有一种颜色；成像管线说明相机怎样把原始读数加工成常见的照片，以及这种加工对后续处理意味着什么。
+
+\subsection{光照与反射}
+\label{sec:vision-formation-radiometry}
+
+要解释“为什么同一块路牌在阴影里更暗”，先要有度量光的量。\term{辐射通量}（radiant flux）$\Phi$是单位时间内传输的光能，单位为瓦。它描述总量，却不能区分光落在多大的面积上、朝哪个方向传播。为此引入两个导出量。\term{辐照度}（irradiance）$E=\mathrm{d}\Phi/\mathrm{d}A$是单位面积接收到的通量，单位为瓦每平方米，回答“一块表面被照得多亮”。\term{辐亮度}（radiance）$L$是沿某一方向、单位投影面积、单位立体角内的通量，
+\[
+  L=\frac{\mathrm{d}^2\Phi}{\mathrm{d}A\cos\theta\,\mathrm{d}\omega}\text{，}
+\]
+单位为瓦每平方米每球面度，其中$\theta$是传播方向与表面法向的夹角，$\mathrm{d}\omega$是立体角元。辐亮度回答“从这个方向看过去，表面有多亮”。它在无吸收的空气中沿光线保持不变，这正是相机能够测量它的原因：镜头接收的是沿各条光线到达的辐亮度。
+
+先看表面接收多少光。一个各向同性的点光源向单位立体角发出的通量为$I$（单位为瓦每球面度），距离表面$d$，入射方向与表面法向夹角为$\theta$。距离为$d$的球面上，面积$\mathrm{d}A$对光源张开的立体角是$\mathrm{d}A\cos\theta/d^2$，因此表面得到的辐照度为
+\begin{equation}
+  E=\frac{I\cos\theta}{d^2}\text{。}
+  \label{eq:vision-formation-point-irradiance}
+\end{equation}
+例如，$I=100$瓦每球面度、$d=2$米、$\theta=60^\circ$时，$E=100\times0.5/4=12.5$瓦每平方米。距离加倍，辐照度降为四分之一；表面转向侧面，辐照度按余弦减小。路牌在路灯下比在远处更亮，侧向光照下比正面光照更暗，都可由这个式子解释。
+
+再看表面把接收的光向各方向反射多少。一般情形用\term{双向反射分布函数}（bidirectional reflectance distribution function, BRDF）$f_r$描述，它是出射辐亮度与入射辐照度之比，随入射和出射方向而变。最简单也最常用的特例是\term{朗伯反射}（Lambertian reflectance）：表面向各个方向反射的辐亮度相同，看起来亮度与观察方向无关，粗糙的墙面、纸张近似如此。设表面把入射能量中的比例$\rho\in[0,1]$反射出去，$\rho$称为\term{反照率}（albedo）。朗伯表面的出射辐亮度为常数$L$，其向整个半球发出的单位面积通量为
+\[
+  M=\int_{0}^{2\pi}\!\!\int_{0}^{\pi/2}L\cos\theta\sin\theta\,\mathrm{d}\theta\,\mathrm{d}\phi
+   =2\pi L\cdot\frac{1}{2}=\pi L\text{，}
+\]
+其中$\sin\theta\,\mathrm{d}\theta\,\mathrm{d}\phi$是球坐标下的立体角元，$\cos\theta$来自辐亮度定义中的投影面积。能量守恒要求$M=\rho E$，于是
+\begin{equation}
+  L=\frac{\rho}{\pi}E\text{。}
+  \label{eq:vision-formation-lambert}
+\end{equation}
+式中的$1/\pi$不是经验常数，而是把半球上的余弦加权积分归一化的结果。沿用上面的数值，反照率$\rho=0.6$的墙面在$E=12.5$时的辐亮度约为$0.6\times12.5/\pi\approx2.39$瓦每平方米每球面度。
+
+最后看镜头把这个辐亮度变成传感器上的多少光。对理想薄透镜，像面上某点的辐照度满足
+\begin{equation}
+  E_{\mathrm{img}}=L\,\frac{\pi}{4}\left(\frac{D}{f}\right)^2\cos^4\alpha\text{，}
+  \label{eq:vision-formation-camera-equation}
+\end{equation}
+其中$D$是光圈直径，$f$是焦距，$\alpha$是该像点对应光线与光轴的夹角\scite{szeliski2022computer}这个式子有三层含义。第一，在固定相机设置下，像面辐照度与场景辐亮度成正比，这是“像素值反映场景亮度”的物理依据。第二，$f/D$即光圈数，光圈数增大一档（乘以$\sqrt2$），进光量减半。第三，$\cos^4\alpha$使画面边缘比中心暗，$\alpha=30^\circ$时因子为$0.5625$，这种现象称为暗角，相机处理时需要按位置补偿。
+
+把式\eqref{eq:vision-formation-point-irradiance}至\eqref{eq:vision-formation-camera-equation}连起来，像面辐照度正比于$\rho I\cos\theta/d^2$：它是光照强度、几何角度和表面反照率的乘积。由此可以看到图像理解的一个基本歧义。一块反照率为$0.3$、受光为$2E$的表面，与一块反照率为$0.6$、受光为$E$的表面，记录到相同的像素值；只看像素，无法区分“暗色表面”与“亮色表面在阴影中”。人能把阴影里的白纸认作白色，依赖的是对光照分布的推断，即颜色恒常性。经典方法用灰度世界等假设估计光照，学习方法则从大量图像中学到光照与材质的统计规律，但这种先验在训练分布之外仍可能出错。
+
+朗伯模型也有清楚的适用边界。光滑的金属、汽车漆面和湿路面有\term{镜面反射}（specular reflection），亮度集中在反射方向附近，高光会随观察位置移动；透明和半透明物体让光穿过或在内部散射；相互反射使阴影区域并不全黑。这些情形下，同一表面在两幅照片中的亮度可以相差很大，基于亮度恒常的匹配和光流（见\ref{sec:vision-videofound-lucas-kanade}节）会受到干扰。
+
+\subsection{传感器与彩色滤波阵列}
+\label{sec:vision-formation-sensor}
+
+像面上的辐照度仍是连续的光。数码相机的传感器由许多感光单元组成，每个单元在曝光时间$t$内收集光子，并把光子转成电子。设到达单元的平均光子数为$\bar n_{\mathrm p}$，被转换的比例为\term{量子效率}（quantum efficiency）$\eta$，则收集的平均电子数为$\bar N=\eta\bar n_{\mathrm p}$。单元能容纳的电子数有上限，称为\term{满阱容量}（full-well capacity）；超过上限后读数不再增加，图像出现过曝的平顶区域。曝光结束后，电荷被转成电压，经放大后由模数转换器变成数字读数$z=gN+b$，其中$g$是转换增益，$b$是为保留负噪声而加的偏置，即黑电平。
+
+读出方式有两种主流结构。\term{电荷耦合器件}（charge-coupled device, CCD）把各单元的电荷依次转移到共同的输出放大器读出，各像素经过同一条读出链，一致性好，但功耗较高、读出较慢。\term{互补金属氧化物半导体图像传感器}（complementary metal-oxide-semiconductor image sensor, CMOS image sensor）在每个单元或每列配有放大电路，可以按行快速读出，功耗低，因而成为手机和多数相机的选择。按行读出带来一个副作用：不同行的曝光时刻不同，快速运动的物体会变斜，这种卷帘快门效应在\ref{sec:vision-videofound-shutter}节讨论。
+
+读数中含有噪声，而且噪声大小随信号变化。光子到达是随机的：在平均到达率恒定、各次到达相互独立时，一段时间内的到达个数服从泊松分布，其方差等于均值。转换为电子后，收集电子数$N$的方差也约为$\bar N$，这部分称为\term{散粒噪声}（shot noise）。读出电路还加入与信号无关的\term{读出噪声}（read noise），常建模为方差$\sigma_{\mathrm r}^2$的高斯噪声。两者独立时方差相加，于是信噪比为
+\begin{equation}
+  \mathrm{SNR}=\frac{\bar N}{\sqrt{\bar N+\sigma_{\mathrm r}^2}}\text{。}
+  \label{eq:vision-formation-sensor-snr}
+\end{equation}
+泊松分布方差等于均值、独立随机变量的方差可加这两个结论可参考\BookChapterRef{chap:random-variables}{卷二的“随机变量”章}。教学中取$\sigma_{\mathrm r}=5$个电子。明亮的墙面收集$\bar N=10000$个电子，信噪比约为$10000/\sqrt{10025}\approx99.9$，接近$\sqrt{\bar N}=100$，散粒噪声占主导；暗处墙角只收集$\bar N=25$个电子，信噪比为$25/\sqrt{50}\approx3.5$，读出噪声已不可忽略。这解释了开篇照片中暗处颗粒明显的原因，也说明一个常见假设的局限：把噪声当作与图像无关、方差处处相同的高斯噪声，会低估亮处噪声、高估暗处的可分辨程度。学习式去噪若用这种假设合成训练数据，模型遇到真实暗光照片时可能失效；更可靠的做法是在线性原始读数上按式\eqref{eq:vision-formation-sensor-snr}的结构合成泊松与高斯混合噪声\scite{vision-brooks2018unprocessing}
+
+到这里传感器只测量了光的总量，不区分颜色。要得到彩色图像，最直接的办法是用分光棱镜把光分到三块传感器上，但成本和体积都高。几乎所有消费相机采用另一种办法：在每个感光单元上方放一片只透过红、绿或蓝光的滤色片，形成\term{彩色滤波阵列}（color filter array, CFA）。最常见的排列是\term{拜耳阵列}（Bayer pattern）：以$2\times2$为周期，包含一个红、一个蓝和两个绿滤色片，如图\ref{fig:vision-formation-bayer}左侧所示\scite{vision-bayer1976}绿色占一半，是因为人眼对亮度细节最敏感的波段集中在绿色附近，多采绿色可以保留更多亮度细节。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/bayer-cfa}
+  \caption{拜耳阵列及其中一个位置的颜色插值。左侧为RGGB排列的$4\times4$局部，粗框标出一个$2\times2$周期，每个位置只记录一种颜色。右侧在一个红色位置估计缺失的绿色，取上下左右四个绿色读数的平均；数值为教学构造。}
+  \label{fig:vision-formation-bayer}
+\end{figure}
+
+于是原始读数是一幅“马赛克”：每个位置只有一个通道。从它恢复每个位置的三个通道称为\term{去马赛克}（demosaicing）。最简单的方法是双线性插值：在红色位置，绿色取上下左右四个绿色邻居的平均，蓝色取四个对角邻居的平均；在绿色位置，红色和蓝色分别取两个相邻同色位置的平均。图\ref{fig:vision-formation-bayer}右侧的红色位置周围绿色读数为$60,50,70,40$，估计值为$55$。
+
+这种平均在平坦区域效果很好，在边缘处却会出错。设一条竖直边缘恰好位于某红色位置的左侧：左邻绿色为$20$，右、上、下三个绿色都在亮的一侧，为$200$。四邻平均给出$155$，而该位置实际属于亮侧，绿色应接近$200$。三个通道各自在边缘两侧混合时，混合比例不同，便在边缘处产生原本没有的彩色镶边，称为伪彩色；沿边缘交替出现的亮暗也称拉链效应。改进思路是沿边缘方向插值，而不是跨越边缘平均，算法\ref{alg:vision-formation-demosaic}给出绿色通道的方向自适应插值。
+
+\begin{algorithm}[方向自适应的绿色插值]
+  \label{alg:vision-formation-demosaic}
+  \begin{algorithmic}[1]
+    \Require 拜耳原始读数$z$，红色或蓝色位置$p$，其上下左右四个绿色读数$G_{\mathrm u},G_{\mathrm d},G_{\mathrm l},G_{\mathrm r}$
+    \Ensure 位置$p$的绿色估计$\hat G_p$
+    \State 计算水平差异$\Delta_{\mathrm h}=\lvert G_{\mathrm l}-G_{\mathrm r}\rvert$与竖直差异$\Delta_{\mathrm v}=\lvert G_{\mathrm u}-G_{\mathrm d}\rvert$
+    \If{$\Delta_{\mathrm h}<\Delta_{\mathrm v}$}
+      \State $\hat G_p\gets(G_{\mathrm l}+G_{\mathrm r})/2$\Comment{水平方向变化小，沿水平方向插值}
+    \ElsIf{$\Delta_{\mathrm v}<\Delta_{\mathrm h}$}
+      \State $\hat G_p\gets(G_{\mathrm u}+G_{\mathrm d})/2$
+    \Else
+      \State $\hat G_p\gets(G_{\mathrm u}+G_{\mathrm d}+G_{\mathrm l}+G_{\mathrm r})/4$
+    \EndIf
+    \State 绿色补全后，在各位置用色差$R-\hat G$、$B-\hat G$的邻域平均补出红色和蓝色
+  \end{algorithmic}
+\end{algorithm}
+
+用刚才的竖直边缘复核：$\Delta_{\mathrm h}=\lvert20-200\rvert=180$，$\Delta_{\mathrm v}=\lvert200-200\rvert=0$，算法选择竖直方向，得到$\hat G_p=200$，避免了跨边缘的混合。最后一步插值色差而不是颜色本身，依据的是另一个经验观察：在同一物体内部，红绿之差、蓝绿之差比各通道本身变化更平缓，插值平缓的量误差更小。这个算法仍有边界：边缘方向是斜的，或纹理周期接近两个像素时，水平和竖直差异都不能可靠指示方向，伪彩色仍会出现。后来的学习式方法把去马赛克与去噪联合起来，用网络从原始马赛克直接预测全彩图像；\ref{sec:vision-restoration-sid}节介绍的暗光成像网络更进一步，把去马赛克、去噪和颜色形成一起交给一个网络。方向自适应的思想并没有消失，而是以“从数据中学到的局部滤波器”的形式保留在网络的卷积核中。
+
+\subsection{成像管线与原始数据}
+\label{sec:vision-formation-isp}
+
+去马赛克之后的数据仍不是我们在手机上看到的照片。它的数值与光量成线性关系，颜色由相机自己的滤色片决定，亮暗范围也超出显示器能呈现的范围。相机中的\term{图像信号处理器}（image signal processor, ISP）用一串步骤把它加工成可显示的图像，这串步骤称为成像管线\scite{vision-ramanath2005pipeline}各厂商的步骤顺序和具体算法不同，也常常不公开；图\ref{fig:vision-formation-isp}给出一个常见的简化顺序，下面逐步说明每一步做什么、为什么需要。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/isp-pipeline}
+  \caption{简化的相机成像管线。蓝色各步在线性光域中进行，数值与进光量成比例；黄色一步施加非线性的色调与伽马编码；红色为最终输出。实际相机的步骤顺序、降噪位置和算法因厂商而异。}
+  \label{fig:vision-formation-isp}
+\end{figure}
+
+第一步扣除黑电平并归一化。设原始读数为$z$，黑电平为$b$，饱和读数为$w$，则$x=(z-b)/(w-b)$，再截断到$[0,1]$。例如14位传感器中$b=512$、$w=16383$，读数$z=4000$对应$x=3488/15871\approx0.220$。这一步之后，$x$与像面辐照度近似成正比。同时修正坏点，并乘以随位置变化的增益补偿暗角，即抵消式\eqref{eq:vision-formation-camera-equation}中的$\cos^4\alpha$。
+
+第二步是\term{白平衡}（white balance）。同一块白纸在暖色路灯下偏橙，在阴天偏蓝；人眼会自动适应，相机则需要显式校正。常用做法是给三个通道乘以不同增益，即对角变换$\operatorname{diag}(g_{\mathrm R},1,g_{\mathrm B})$，使中性灰表面的三个通道相等。若画面中一块灰卡的读数为$(0.20,0.40,0.25)$，取$g_{\mathrm R}=0.40/0.20=2$、$g_{\mathrm B}=0.40/0.25=1.6$，校正后灰卡变为$(0.40,0.40,0.40)$。实际拍摄中没有灰卡，需要估计光照颜色；灰度世界假设认为整幅画面的平均颜色是灰色，但大片草地或晚霞会让这个假设失效，导致整幅图偏色。开篇两部手机拍出的红色不同，白平衡估计不同是常见原因之一。
+
+第三步去马赛克，已在上一小节讨论。第四步是颜色校正：相机滤色片的光谱响应与人眼和标准色彩空间不同，需要用一个$3\times3$的\term{颜色校正矩阵}（color correction matrix, CCM）把相机的RGB变换到与设备无关的空间，再变换到标准RGB。矩阵通常由拍摄标准色卡标定，每行之和为1，以保证白色不变。这个线性变换只是近似，原因在\ref{sec:vision-formation-color-perception}节解释。之后进行降噪和锐化。
+
+第五步做\term{色调映射}（tone mapping）与伽马编码。场景亮度范围常常远大于显示器能呈现的范围，色调映射用一条压缩曲线把高光和暗部都放进可显示范围；随后按sRGB标准的传递函数做非线性编码（见式\eqref{eq:vision-formation-srgb}），使有限的整数编码更多地分配给人眼敏感的暗部。最后量化为8位整数，并通常用JPEG压缩保存。
+
+经过管线前后的数据性质很不相同。表\ref{tab:vision-formation-raw-srgb}比较了相机保存的\term{原始图像}（raw image）与常见的sRGB照片。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{22mm}XX@{}}
+    \toprule
+    比较项 & 原始图像 & sRGB照片\\
+    \midrule
+    每位置通道 & 一个（马赛克） & 三个\\
+    位深 & 通常12至14位 & 通常8位\\
+    与进光量的关系 & 近似线性 & 经色调映射与伽马编码，非线性\\
+    颜色含义 & 由该相机滤色片决定 & 按sRGB标准定义\\
+    噪声特性 & 近似泊松与高斯混合，各位置独立 & 经去马赛克、降噪、压缩后空间相关\\
+    可调整范围 & 可重新做白平衡和曝光调整 & 高光截断和量化后难以恢复\\
+    \bottomrule
+  \end{tabularx}
+  \caption{原始图像与sRGB照片的比较。具体位深和处理步骤因设备而异，表中为常见情形。}
+  \label{tab:vision-formation-raw-srgb}
+\end{table}
+
+这些差别对后续处理有三点直接影响。第一，sRGB数值不与光量成比例，在它上面做平均不等于物理上的混合。把线性光为$0$和$1$的两个像素平均，物理上得到线性值$0.5$，sRGB编码约为$0.735$；直接平均两个sRGB编码得到$0.5$，它对应的线性光只有约$0.214$。因此模糊、缩放和合成在原理上应在线性光域进行，在sRGB上操作会让亮暗边界偏暗。第二，不同设备的管线不同，同一场景的训练图像会带有设备特有的颜色和噪声特征，模型换到新设备时面临分布变化。第三，噪声经过去马赛克、降噪和压缩后已不再逐像素独立。学习式去噪和暗光增强因此越来越多地直接处理原始数据，或先把sRGB图像按估计的管线逆向变换回线性原始域，再合成噪声训练\scite{vision-brooks2018unprocessing}后者依赖对管线各步的近似逆，管线估计不准时，合成数据与真实数据仍有差距。
+
+\section{图像的采样与量化}
+\label{sec:vision-formation-sampling}
+
+上一节把像面辐照度看作连续函数$f(x,y)$。数组只能在有限个位置、以有限个数值记录它，于是有两次离散化：在空间上只取网格点的值，称为采样；在数值上只取有限个等级，称为量化。两次离散化都会丢失信息，丢失的方式却不同。采样丢失的是比网格更细的变化，而且这些细节不会简单消失，会伪装成较粗的图案，即开篇砖墙上的弯曲条纹；量化丢失的是相邻等级之间的差别，平缓渐变处会出现台阶，即天空中的色带，同时有限的数值范围装不下过亮和过暗的部分。数组形成以后，缩放、旋转等操作又需要在网格之外的位置取值，这是一次重新采样，需要插值。本节依次讨论这三个问题，并说明每一步的误差怎样估计、怎样控制。
+
+\subsection{空间采样与混叠}
+\label{sec:vision-formation-aliasing}
+
+一维情形的结论可以直接借用。以间隔$T$对连续信号采样，频率相差$1/T$整数倍的余弦振荡在样本上完全相同，因而无法区分，这就是\term{混叠}（aliasing）；若信号只含低于$1/(2T)$的频率，即满足奈奎斯特条件，就可以由样本经sinc插值精确恢复。采样前先压低高频的低通滤波称为抗混叠。这些结论及其证明可参考\BookChapterRef{chap:signal-analysis}{卷一的“信号”章}。图像是二维的，需要把这些结论推广到平面上，推广后会出现一维没有的现象：混叠不仅改变条纹的粗细，还会改变条纹的方向。
+
+二维中最简单的“频率成分”是一组平行条纹。设
+\[
+  f(x,y)=\cos\bigl(2\pi(ux+vy)\bigr)\text{，}
+\]
+其中$(u,v)$称为空间频率，单位为周期每像素。函数在沿向量$(u,v)$的方向上变化最快，条纹与这个方向垂直，相邻两条亮纹的间距为$1/\sqrt{u^2+v^2}$。以像素间距为单位，在整数网格$(m,n)\in\mathbb{Z}^2$上采样。对任意整数$k,l$，
+\[
+  \begin{aligned}
+    \cos\bigl(2\pi((u+k)m+(v+l)n)\bigr)
+    &=\cos\bigl(2\pi(um+vn)+2\pi(km+ln)\bigr)\\
+    &=\cos\bigl(2\pi(um+vn)\bigr)\text{，}
+  \end{aligned}
+\]
+因为$km+ln$是整数，余弦以$2\pi$为周期。可见频率$(u,v)$与所有$(u+k,v+l)$在网格上给出相同的样本。每一组这样的频率中，恰有一个落在正方形$[-\tfrac12,\tfrac12)\times[-\tfrac12,\tfrac12)$内，采样后我们看到的就是这一个。二维奈奎斯特条件因此是逐轴的：只有$\lvert u\rvert<\tfrac12$且$\lvert v\rvert<\tfrac12$的成分能被正确表示。
+
+两个例子说明混叠的具体效果。第一，砖墙的砂浆缝每隔$1.1$个像素重复一次，竖直条纹的频率为$u=1/1.1\approx0.909$、$v=0$，超出了$\tfrac12$。减去1得到$u-1\approx-0.091$，对应的间距为$11$个像素：原本细密到无法分辨的砖缝，在图像中变成宽约$11$个像素的明暗带。这就是\term{摩尔纹}（moiré pattern）。第二，设斜向织物纹理的频率为$(0.9,0.3)$，其条纹法向与水平方向成约$18.4^\circ$，间距约$1.05$个像素；它的混叠成分为$(-0.1,0.3)$，法向约为$108.4^\circ$，间距约$3.16$个像素。混叠把条纹方向转了约$90^\circ$。开篇砖墙上出现弯曲的条纹，正是因为不同位置的纹理频率略有差别，混叠后的方向和间距随之变化。
+
+真实传感器并不是在一个点上取值，而是在感光面积上积分。若感光面积是边长为$a$的正方形，采样相当于先与宽度为$a$的方盒函数卷积，再取网格点。方盒函数的频率响应为$\operatorname{sinc}(ua)\operatorname{sinc}(va)$，其中$\operatorname{sinc}(s)=\sin(\pi s)/(\pi s)$。取$a=1$（感光面积占满像素），频率$u=0.909$处的响应约为$\sin(0.909\pi)/(0.909\pi)\approx0.099$：条纹对比度被压到约十分之一，却没有变为零。这说明像素积分只是一个很弱的抗混叠滤波器。许多相机在传感器前加一片光学低通滤镜，让每条光线轻微分散到相邻像素上，进一步压低高频；也有相机为了锐度去掉它，代价是更容易出现摩尔纹。拜耳阵列使问题更严重：红色和蓝色每隔两个像素才采一次，它们的奈奎斯特频率只有$\tfrac14$周期每像素，细纹理上因此容易出现彩色摩尔纹。
+
+图像在计算机中被缩小时，同样的问题再出现一次。把图像每隔$s$个像素取一个，等价于以间隔$s$重新采样，新网格只能表示低于$1/(2s)$周期每原像素的频率。频率为$0.3$的纹理在原图中表示正确；直接每隔一个像素取样后，它在新网格上的频率为$0.6$，混叠为$-0.4$，间距$2.5$个新像素的条纹凭空出现。正确的做法是先低通再抽取。以标准差为$\sigma$的高斯滤波为例，它在频率$u$处的响应为$\exp(-2\pi^2\sigma^2u^2)$；取$\sigma=1$像素，频率$0.3$处的响应约为$\exp(-1.78)\approx0.17$，混叠成分随之削弱到原来的约六分之一。高斯滤波和由此构造的图像金字塔分别在\ref{sec:vision-transforms-smoothing}节和\ref{sec:vision-transforms-pyramid}节展开。
+
+这一经典结论在深度网络中有直接的延续。卷积网络中的步长卷积和池化都是降采样，若之前没有足够的低通，输入平移一个像素就可能显著改变输出，网络对平移的稳定性因此变差。在降采样前插入固定的模糊核是一个简单的改进，实验中提高了输出对小平移的一致性\scite{vision-zhang2019antialias}\ref{sec:vision-ivm-pipeline}节中把图像切成块并缩放到固定尺寸，也要考虑缩放前是否做了抗混叠。
+
+\subsection{灰度量化与动态范围}
+\label{sec:vision-formation-quantization}
+
+采样后的每个值仍是实数，存储时要变成整数。\term{量化}（quantization）把连续取值映射到有限个等级。最常用的是均匀量化：设取值范围为$[0,A]$，用$b$位整数表示，共有$L=2^b$个等级，步长为$\Delta=A/L$，每个值被映射到最近的等级中心。$b$称为\term{位深}（bit depth），8位图像有256个等级。
+
+量化误差$e=q(x)-x$落在$[-\Delta/2,\Delta/2]$内。要估计它的大小，需要一个假设：信号在每个量化区间内的变化远大于$\Delta$，使得落入区间的位置近似均匀。此时$e$可视为在$[-\Delta/2,\Delta/2]$上均匀分布，均值为$0$，方差为
+\begin{equation}
+  \operatorname{Var}(e)=\frac{1}{\Delta}\int_{-\Delta/2}^{\Delta/2}e^2\,\mathrm{d}e
+  =\frac{1}{\Delta}\cdot\frac{2}{3}\left(\frac{\Delta}{2}\right)^3
+  =\frac{\Delta^2}{12}\text{。}
+  \label{eq:vision-formation-quantization-noise}
+\end{equation}
+若信号本身在$[0,A]$上均匀分布，其方差为$A^2/12=L^2\Delta^2/12$，信号与量化噪声的功率比为$L^2$，用分贝表示为$20\log_{10}L=20b\log_{10}2\approx6.02b$分贝。8位对应约$48.2$分贝。每多一位，信噪比提高约6分贝。
+
+均匀假设在平缓渐变处失效，误差变成有规律的台阶。设天空的数值从$0.40$平缓变到$0.45$，跨越500个像素。用8位量化，这段范围约含$0.05\times256\approx12.8$个等级，每级约宽39个像素，相邻台阶只差一级，通常不易察觉；若压缩到6位，只剩约$3.2$个等级，每级约宽156个像素，一圈圈色带清晰可见。这种现象称为\term{伪轮廓}（false contouring）：图中出现了场景中没有的边界。
+
+一种对策是在量化前加入小幅随机扰动，称为\term{抖动}（dithering）。设扰动$d$在$[-\Delta/2,\Delta/2)$上均匀分布，量化器把输入取到最近的$\Delta$整数倍。写$x=k\Delta+r$，$0\le r<\Delta$，则当$d\ge\Delta/2-r$时$x+d$被量化为$(k+1)\Delta$，概率为$r/\Delta$，否则为$k\Delta$。量化结果的期望为
+\[
+  k\Delta\Bigl(1-\frac{r}{\Delta}\Bigr)+(k+1)\Delta\cdot\frac{r}{\Delta}=k\Delta+r=x\text{，}
+\]
+即抖动后量化在平均意义上无偏。代价是每个像素多了一点噪声，但规则的台阶变成了细碎的颗粒，人眼在空间上平均后感觉更平滑。
+
+等级应当怎样分配，还要考虑人眼。人对亮度的感受近似取决于相对变化：在暗处，同样的绝对差别看起来更明显。若在线性光域均匀量化为8位，线性值$0$至$0.01$的暗部只有约$2.6$个编码，暗部台阶会很显眼。sRGB的伽马编码把线性值$0.01$映射到约$0.100$，同一段暗部分到约$25.5$个编码，多了约十倍。这就是管线最后要做伽马编码再量化的原因；编码公式在\ref{sec:vision-formation-color-spaces}节给出。
+
+量化还有一个上限问题：数值范围有限。场景的\term{动态范围}（dynamic range）指其中最亮与最暗可分辨亮度之比。晴天的天空与树荫下的墙角可以相差上万倍。传感器的动态范围受满阱容量和读出噪声限制：教学中设满阱容量为$30000$个电子、读出噪声为$3$个电子，比值为$10^4$，约合80分贝或$\log_2 10^4\approx13.3$档。超出范围的部分，亮处被截断为饱和值，暗处淹没在噪声中，单次曝光无法同时保留。
+
+\term{高动态范围成像}（high dynamic range imaging, HDR imaging）用多次不同曝光合成。设第$k$次曝光时间为$t_k$，某像素的线性读数为$z_k\approx Et_k$，则每次曝光都给出一个辐照度估计$z_k/t_k$。合成时取加权平均
+\begin{equation}
+  \hat E=\frac{\sum_k w(z_k)\,z_k/t_k}{\sum_k w(z_k)}\text{，}
+  \label{eq:vision-formation-hdr-merge}
+\end{equation}
+权重$w$在读数接近饱和或接近零时取零，在中间取较大值，因为中间读数的相对误差最小。教学中取两次曝光$t_1=1$、$t_2=1/16$。暗处像素读数为$(0.30,0.019)$，两次估计为$0.30$和$0.304$，第二次读数太小、权重低，合成约为$0.30$；亮处像素读数为$(1.0,0.5)$，第一次已饱和、权重为零，合成为$0.5\times16=8$。两个像素真实亮度相差约27倍，单次曝光无法同时记录。照片只有sRGB编码时，读数与$E t_k$不再成正比，需要先估计相机的非线性响应曲线，再按上式合成\scite{vision-debevec1997hdr}合成后的高动态范围数据仍需色调映射才能显示，例如用全局曲线$L_{\mathrm d}=L/(1+L)$把$8$压到约$0.89$、把$0.3$压到约$0.23$。这类曲线和局部色调调整在\ref{sec:vision-restoration-tone}节讨论。多帧合成要求场景和相机静止，运动物体会产生重影，这也是后来学习方法从单幅或多幅图像预测高动态范围结果时需要处理的问题。
+
+\subsection{重采样与插值}
+\label{sec:vision-formation-interpolation}
+
+把路牌照片放大两倍、旋转$5^\circ$或校正透视时，新图像的每个像素都对应原图中的某个位置，而这个位置通常不是整数。要给出那里的值，需要先由样本重建一个连续函数，再在新位置取值，这就是重新采样。一维情形中，常用的重建形式是样本与插值核的卷积：
+\begin{equation}
+  \hat f(x)=\sum_{k\in\mathbb{Z}}f[k]\,h(x-k)\text{。}
+  \label{eq:vision-formation-interpolation-kernel}
+\end{equation}
+为使$\hat f$在整数点上等于样本，核需满足$h(0)=1$且$h(k)=0$（$k\neq0$为整数）；为使常数信号保持不变，还要求$\sum_k h(x-k)=1$对一切$x$成立。不同的插值方法就是不同的核$h$。二维情形最常用可分离的核$h(s)h(t)$，即先沿一个方向插值，再沿另一个方向插值。
+
+\term{最近邻插值}（nearest-neighbor interpolation）的核是宽度为1的方盒，$h(s)=1$当$\lvert s\rvert<\tfrac12$，取离目标最近的样本。它计算最快，不产生新的数值，适合插值类别标签图这类不能平均的数据；用于自然图像时，放大后出现明显的方块，斜边呈锯齿。线性插值的核是三角形$h(s)=\max(0,1-\lvert s\rvert)$，在相邻两个样本之间连直线。它的二维可分离形式称为\term{双线性插值}（bilinear interpolation）：设目标点落在四个样本$f_{0,0},f_{1,0},f_{0,1},f_{1,1}$围成的格子中，相对左上角的横、纵偏移为$\alpha,\beta\in[0,1)$，则
+\begin{equation}
+  \hat f=(1-\alpha)(1-\beta)f_{0,0}+\alpha(1-\beta)f_{1,0}
+        +(1-\alpha)\beta f_{0,1}+\alpha\beta f_{1,1}\text{。}
+  \label{eq:vision-formation-bilinear}
+\end{equation}
+四个权重之和为1，每个权重等于对角那个小矩形的面积。例如$f_{0,0}=10$、$f_{1,0}=30$、$f_{0,1}=20$、$f_{1,1}=60$，$\alpha=0.25$、$\beta=0.5$，四个权重为$0.375,0.125,0.375,0.125$，插值结果为$3.75+3.75+7.5+7.5=22.5$。名称中的“线性”指沿每个坐标轴分别线性；式中含$\alpha\beta$项，作为二元函数它并不是线性的。
+
+线性插值的一阶导数在样本点处不连续，放大后的图像显得发软，边缘附近有折痕。\term{双三次插值}（bicubic interpolation）用分段三次多项式核，在一维上使用目标点两侧各两个样本。常用的是Keys提出的核\scite{vision-keys1981cubic}
+\begin{equation}
+  h(s)=\begin{cases}
+    (a+2)r^3-(a+3)r^2+1, & r\le1,\\
+    ar^3-5ar^2+8ar-4a, & 1<r<2,\\
+    0, & r\ge2,
+  \end{cases}\qquad r=\lvert s\rvert
+  \label{eq:vision-formation-keys-kernel}
+\end{equation}
+其中$a$是参数。可以逐项验证$h(0)=1$、$h(\pm1)=h(\pm2)=0$，且$h$在$\lvert s\rvert=1$处一阶导数连续，因此插值结果处处一阶可导。Keys证明，取$a=-\tfrac12$时，对光滑函数的逼近误差随样本间距$\delta$按$\delta^3$减小，而线性插值只按$\delta^2$减小。
+
+用一维小例子比较。样本$f[-1],f[0],f[1],f[2]$分别为$10,20,40,80$，在$x=0.5$处插值。线性插值只看$f[0]$和$f[1]$，得$30$。双三次插值的四个权重依次为$h(1.5),h(0.5),h(0.5),h(1.5)$。取$a=-\tfrac12$，代入式\eqref{eq:vision-formation-keys-kernel}，$h(0.5)=1.5\times0.125-2.5\times0.25+1=0.5625$，$h(1.5)=-0.5\times3.375+2.5\times2.25-4\times1.5+2=-0.0625$，四个权重之和为1。结果为
+\[
+  -0.0625\times10+0.5625\times20+0.5625\times40-0.0625\times80=28.125\text{。}
+\]
+这组样本来自$f(x)=10\cdot2^{x+1}$，真实值为$20\sqrt2\approx28.28$；双三次插值利用了更远处样本反映的弯曲，比线性插值更接近。
+
+负权重也带来代价。样本为$0,0,0,100$时，同一位置的双三次结果为$-0.0625\times100=-6.25$，低于所有样本：在阶跃边缘附近，插值会过冲，形成一圈亮暗交替的振铃，结果还可能超出合法范围，需要截断。从频率角度看，最近邻核的频率响应是sinc函数，旁瓣大，高频复制品抑制不足；线性核的响应是sinc的平方，旁瓣小但通带衰减明显，图像变软；三次核介于两者之间，更接近理想低通。理想的sinc插值在带限条件下可以精确恢复，但核无限长且振铃最强，实际很少直接使用。
+
+插值只解决了取值位置的问题，并不自动处理混叠。放大时新网格比原网格密，不会混叠；缩小时新网格变稀，若只在新位置做双线性插值，相当于跳着取样，上一小节的混叠照样发生。缩小时应把插值核按缩小倍数展宽，使它同时承担低通滤波，或者先模糊再插值。
+
+这些经典方法在学习模型中处处可见。双线性插值是可微的，对位置和样本值都可求导，因此被用作网络中的上采样层、按光流对图像变形（见\ref{chap:vision-video-restoration}章）、在特征图上按小数坐标取值以及调整视觉Transformer的位置编码。双三次插值是超分辨率的标准基线（见\ref{sec:vision-restoration-super-resolution}节），也常被用来由高分辨率图像合成低分辨率训练输入；但真实相机的退化包含模糊、噪声和压缩，与双三次缩小并不相同，只用这种合成数据训练的模型在真实照片上会表现变差，这正是\ref{sec:vision-restoration-real-esrgan}节要处理的问题。
+
+\section{像素之间的关系}
+\label{sec:vision-formation-pixel-relations}
+
+数组建立之后，许多处理不再关心单个像素的值，而是关心像素之间的关系。要数出二值掩码中有几块路牌，需要规定哪些像素算“连在一起”；要知道某个像素离路牌边缘多远，需要规定网格上的距离；要把两幅照片中的路牌叠在一起比较，需要一个把一幅图的坐标映到另一幅图的变换。这三类关系分别回答“是否相连”“相隔多远”“如何对应”，前两类只涉及同一网格内部，第三类涉及两套坐标。它们看似简单，却都有网格特有的陷阱：连通性的定义会改变区域个数，网格距离与欧氏距离不一致，坐标变换若按错误方向计算会在结果中留下空洞。
+
+\subsection{邻域与连通}
+\label{sec:vision-formation-connectivity}
+
+设像素$p$位于第$i$行第$j$列，记为$p=(i,j)$。它上下左右四个像素构成\term{4邻域}（4-neighborhood）$N_4(p)=\{(i\pm1,j),(i,j\pm1)\}$；四个对角像素构成$N_{\mathrm D}(p)=\{(i\pm1,j\pm1)\}$；两者合起来是\term{8邻域}（8-neighborhood）$N_8(p)=N_4(p)\cup N_{\mathrm D}(p)$。在图像边界处，邻域中落在图外的位置不计入。
+
+邻接还要求两个像素的值都属于某个关心的集合$V$，例如二值图像中$V=\{1\}$，灰度图像中$V$可以是一段灰度范围。两个值都属于$V$的像素$p,q$，若$q\in N_4(p)$，称它们4邻接；若$q\in N_8(p)$，称它们8邻接。由一串依次邻接的像素组成的序列称为通路。集合$S$中两个像素若能由完全位于$S$内的通路连接，就称它们在$S$中连通；与某个像素连通的全部像素构成一个\term{连通分量}（connected component）。连通是等价关系：自反、对称、可传递，因此连通分量把$S$划分成互不相交的部分。
+
+选4邻接还是8邻接，会改变连通分量的个数。一条斜向一像素宽的线，在8邻接下是一个整体，在4邻接下却断成许多孤立点。8邻接也有自己的问题：同一对像素之间可能同时存在直接的对角连接和经过一个4邻居的折线连接，通路不唯一，会让边界跟踪等算法出现歧义。\term{m邻接}（m-adjacency）是两者的折中：$p,q$的值属于$V$，并且满足下面两条之一：$q\in N_4(p)$；或$q\in N_{\mathrm D}(p)$，且$N_4(p)\cap N_4(q)$中没有值属于$V$的像素。第二条的意思是，只有在不存在4邻接的“绕行”时，才承认对角连接。图\ref{fig:vision-formation-neighborhoods}右侧两图比较了同一组像素在8邻接和m邻接下的连接。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/pixel-neighborhoods}
+  \caption{像素的邻域与邻接。左起第一、二幅中，红色为中心像素$p$，浅蓝为$N_4(p)$和$N_8(p)$。第三、四幅中深蓝为值属于$V$的像素，红线表示邻接关系：8邻接下右上角像素与中心之间同时有对角连接和经由上方像素的折线连接；m邻接去掉了多余的对角连接，左下角的对角连接因没有4邻接绕行而保留。}
+  \label{fig:vision-formation-neighborhoods}
+\end{figure}
+
+前景和背景的连通性也不能随意组合。设一个$3\times3$区域中，上、下、左、右四个边中点为前景，中心和四角为背景。在8邻接下，四个前景像素经对角连接组成一个闭合环，看上去围住了中心。若背景也按8邻接判断，中心与四角对角相邻，四角又与环外相连，中心就不是一个孔，闭合的环没有把内外分开；若背景按4邻接判断，中心的四个4邻居都是前景，中心成为一个独立的孔。为了让闭合曲线确实分开内外，前景与背景应取一对互补的连通性，常用前景8邻接、背景4邻接，或者反过来。区域的孔数和由此定义的欧拉数等形状量，在\ref{sec:vision-features-shape}节使用。
+
+在二值掩码中找出全部连通分量并给每个分量一个编号，称为\term{连通分量标记}（connected-component labeling）。把每个前景像素看作图的顶点，邻接的像素之间连边，这就是图上的连通分量问题，可以从每个未访问像素出发做广度优先搜索，也可以用并查集维护等价类；图的连通分量和并查集可参考\BookChapterRef{chap:graph-theory}{卷一的“图的表示与计算”章}。图像按行存储，按行扫描的两遍算法访问内存最为连续\scite{vision-rosenfeld1966sequential}算法\ref{alg:vision-formation-ccl}给出4邻接下的版本。
+
+\begin{algorithm}[两遍扫描的连通分量标记（4邻接）]
+  \label{alg:vision-formation-ccl}
+  \begin{algorithmic}[1]
+    \Require $h\times w$二值图像$B$
+    \Ensure 标记图$\Lambda$，同一连通分量的前景像素编号相同，背景为$0$
+    \State 初始化$\Lambda\gets0$，新编号计数$c\gets0$，并查集为空
+    \For{$i=1,\ldots,h$}\Comment{第一遍：按行从左到右}
+      \For{$j=1,\ldots,w$}
+        \If{$B_{i,j}=1$}
+          \State 取已扫描的上邻$\Lambda_{i-1,j}$与左邻$\Lambda_{i,j-1}$中的非零编号
+          \If{两者都为零}
+            \State $c\gets c+1$，$\Lambda_{i,j}\gets c$，在并查集中新建$\{c\}$
+          \Else
+            \State $\Lambda_{i,j}\gets$非零编号中的最小者；若两者都非零且不同，在并查集中合并
+          \EndIf
+        \EndIf
+      \EndFor
+    \EndFor
+    \For{每个前景像素$(i,j)$}\Comment{第二遍：替换为等价类的代表编号}
+      \State $\Lambda_{i,j}\gets$并查集中$\Lambda_{i,j}$所在集合的代表
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+用一个$4\times5$的教学图像复核。按行写出：
+\[
+  B=\begin{pmatrix}
+    1&1&0&1&1\\
+    0&1&0&0&1\\
+    1&0&0&1&1\\
+    1&1&0&1&0
+  \end{pmatrix}\text{。}
+\]
+第一遍中，第1行得到编号$1,1,\cdot,2,2$；第2行的$(2,2)$继承上邻编号1，$(2,5)$继承2；第3行的$(3,1)$上邻和左邻都是背景，得到新编号3，$(3,4)$同样得到新编号4，$(3,5)$的上邻为2、左邻为4，取2并记录$2\equiv4$；第4行的$(4,1),(4,2)$得到3，$(4,4)$继承上邻4。第二遍把4替换为2，最终得到三个分量：编号1含3个像素，编号2含6个像素，编号3含3个像素。若改用8邻接，$(2,2)$与$(3,1)$对角相邻，分量1和3合并，只剩两个分量。同一幅掩码给出不同的个数，说明计数结果必须连同连通性一起报告。
+
+借助并查集的路径压缩，两遍算法的总时间与像素数近似成线性。它在学习方法中仍是常用的后处理：语义分割网络只输出每个像素的类别，把同类像素按连通分量拆开，就得到一个个区域；文字检测把连通的文字像素组成字符候选。它的局限也很明确：两辆紧贴的汽车在类别图中连成一片，连通分量只能给出一块。要分开它们，需要\ref{sec:vision-recognition-mask-sets}节中直接预测个体的方法，或者借助下一小节的距离变换先找到各自的中心。
+
+\subsection{距离与距离变换}
+\label{sec:vision-formation-distance}
+
+在网格上，两个像素$p=(i,j)$、$q=(k,l)$之间常用三种距离：
+\begin{equation}
+  \begin{aligned}
+    D_{\mathrm E}(p,q)&=\sqrt{(i-k)^2+(j-l)^2},\\
+    D_4(p,q)&=\lvert i-k\rvert+\lvert j-l\rvert,\\
+    D_8(p,q)&=\max(\lvert i-k\rvert,\lvert j-l\rvert)\text{。}
+  \end{aligned}
+  \label{eq:vision-formation-grid-distances}
+\end{equation}
+$D_{\mathrm E}$是欧氏距离。$D_4$称为\term{城区距离}（city-block distance），等于只走上下左右时最少的步数；$D_8$称为\term{棋盘距离}（chessboard distance），等于允许对角移动时最少的步数。三者都满足非负、对称和三角不等式，是度量。例如$p=(0,0)$、$q=(3,4)$时三者分别为$5,7,4$。到某点距离不超过$r$的像素，在$D_4$下组成菱形，在$D_8$下组成正方形，只有$D_{\mathrm E}$给出近似的圆。$D_4,D_8$与像素值无关；若通路必须经过值属于$V$的像素，最短通路长度还取决于图像内容，这就是前一小节连通性与距离的联系。
+
+很多任务需要知道每个像素离某个集合有多远，例如离最近的边缘多远、掩码中每个前景点离背景多远。给定特征像素集合$F$（例如所有背景像素），\term{距离变换}（distance transform）为每个像素$p$计算
+\[
+  \operatorname{DT}(p)=\min_{q\in F}D(p,q)\text{。}
+\]
+直接计算要对每个像素遍历整个$F$，代价与两者个数的乘积成正比。把网格看成图、相邻像素之间连权重为1的边，$\operatorname{DT}$就是从所有特征像素同时出发的最短路长度；最短路的动态规划递推同样见于前文所引的卷一的“图的表示与计算”章。对$D_4$，最短通路可以只由一种水平方向和一种竖直方向的步组成，于是两遍扫描就够了：第一遍从左上到右下，用上邻和左邻更新；第二遍从右下到左上，用下邻和右邻更新。
+
+\begin{algorithm}[两遍扫描的城区距离变换]
+  \label{alg:vision-formation-distance-transform}
+  \begin{algorithmic}[1]
+    \Require $h\times w$网格，特征像素集合$F$
+    \Ensure 每个像素到$F$的城区距离$d$
+    \State 对$p\in F$令$d(p)\gets0$，其余令$d(p)\gets\infty$
+    \For{$i=1,\ldots,h$；$j=1,\ldots,w$}\Comment{正向扫描}
+      \State $d(i,j)\gets\min\{d(i,j),\,d(i-1,j)+1,\,d(i,j-1)+1\}$
+    \EndFor
+    \For{$i=h,\ldots,1$；$j=w,\ldots,1$}\Comment{反向扫描}
+      \State $d(i,j)\gets\min\{d(i,j),\,d(i+1,j)+1,\,d(i,j+1)+1\}$
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+为什么两遍就足够？设$q\in F$位于$p$的右上方。从$q$到$p$的一条最短通路可以先一路向下、再一路向左。正向扫描逐行向下传播，沿“向下”的那一段把距离带到$p$所在行；反向扫描在同一行从右向左传播，沿“向左”的那一段把距离带到$p$。其他三种方位同理，所以每个最短距离都会在某一遍中被正确传到。
+
+用$3\times5$网格复核，特征像素为左上角$(1,1)$和右下角$(3,5)$。正向扫描后，只有左上角的距离传到各处，第3行为$2,3,4,5,0$，其中$(3,4)$的值为$5$，因为右下角的0还没有向左传。反向扫描先处理第3行：$(3,4)$取$\min(5,0+1)=1$，$(3,3)$取$\min(4,2)=2$，依此类推。最终结果为
+\[
+  \begin{pmatrix}0&1&2&3&2\\1&2&3&2&1\\2&3&2&1&0\end{pmatrix}\text{，}
+\]
+与逐点计算$\min\bigl((i-1)+(j-1),(3-i)+(5-j)\bigr)$一致。
+
+城区距离和棋盘距离都偏离欧氏距离。为此可在扫描中允许对角步，并为轴向步和对角步取不同权重，称为倒角距离变换。常用的“3-4”权重以3代表轴向一步、4代表对角一步，结果除以3近似欧氏距离：对$(3,4)$位移，走3步对角加1步轴向，总代价为$15$，除以3恰为$5$；对$(1,1)$位移得到约$1.33$，而真实值约为$1.41$\scite{vision-borgefors1986distance}也有算法在线性时间内计算精确的欧氏距离变换，代价是实现更复杂。
+
+距离变换把“形状”转成了数值场，用途很广。它的局部极大值沿区域中轴分布，可用于提取骨架；在两个紧贴物体的掩码上，距离变换在各自中心处取极大、在接触处取较小值，把它取负后作为地形，再用\ref{sec:vision-features-watershed}节的分水岭算法，就能把两个物体分开。在学习方法中，有符号距离场（signed distance field）在区域内取负、区域外取正，常被用作分割网络的边界敏感目标，或在三维重建中作为表示表面的隐式函数。
+
+\subsection{几何变换与图像配准}
+\label{sec:vision-formation-geometric-transforms}
+
+两次拍摄同一块路牌，相机位置稍有不同，路牌在图中的位置、大小、方向乃至形状都会改变。要比较两幅图，或者把它们拼成一幅，就要先找到一个坐标映射$T$，把一幅图中的点映到另一幅图中的对应点。这一小节回答两个问题：常用的映射有哪些、各保持什么性质；给定映射后怎样正确地生成变换后的图像，以及怎样从数据中估计映射，即\term{图像配准}（image registration）。
+
+平移不能写成$2\times2$矩阵乘法，这使旋转、缩放与平移的复合很不方便。\term{齐次坐标}（homogeneous coordinates）的做法是给平面上的点$(x,y)$添一个分量，写成$\tilde{\bm x}=(x,y,1)^\top$，并约定$(x,y,w)^\top$与$(\lambda x,\lambda y,\lambda w)^\top$（$\lambda\ne0$）表示同一个点；$w\ne0$时，对应的平面点是$(x/w,y/w)$。这样平移也成了矩阵乘法：
+\[
+  \begin{pmatrix}x+t_x\\y+t_y\\1\end{pmatrix}
+  =\begin{pmatrix}1&0&t_x\\0&1&t_y\\0&0&1\end{pmatrix}
+   \begin{pmatrix}x\\y\\1\end{pmatrix}\text{。}
+\]
+齐次坐标还带来两个便利。第一，直线$ax+by+c=0$可以写成$\bm l^\top\tilde{\bm x}=0$，其中$\bm l=(a,b,c)^\top$；过两点的直线是$\bm l=\tilde{\bm x}_1\times\tilde{\bm x}_2$，两直线的交点是$\tilde{\bm x}=\bm l_1\times\bm l_2$，因为叉积与两个因子都正交。第二，末分量为0的$(x,y,0)^\top$不对应平面上任何有限点，表示方向$(x,y)$上的\term{无穷远点}（point at infinity）。例如竖直线$x=0$与$x=1$分别为$(1,0,0)^\top$与$(1,0,-1)^\top$，叉积为$(0,1,0)^\top$：两条平行线交于竖直方向的无穷远点。加入无穷远点的平面称为射影平面，在它上面任意两条不同直线都恰好交于一点。
+
+在齐次坐标下，常用的平面变换都写成$3\times3$矩阵，按约束由强到弱构成一个层级，见表\ref{tab:vision-formation-transform-hierarchy}。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{16mm}p{40mm}p{10mm}X@{}}
+    \toprule
+    变换 & 矩阵形式 & 自由度 & 保持的性质\\
+    \midrule
+    平移 & $\begin{pmatrix}\bm I&\bm t\\\bm0^\top&1\end{pmatrix}$ & 2 & 方向及以下各项\\
+    刚体 & $\begin{pmatrix}\bm R&\bm t\\\bm0^\top&1\end{pmatrix}$，$\bm R$为旋转 & 3 & 长度及以下各项\\
+    相似 & $\begin{pmatrix}s\bm R&\bm t\\\bm0^\top&1\end{pmatrix}$ & 4 & 角度、长度之比及以下各项\\
+    仿射 & $\begin{pmatrix}\bm A&\bm t\\\bm0^\top&1\end{pmatrix}$，$\bm A$可逆 & 6 & 平行性、同一直线上的长度比、面积比及以下各项\\
+    射影 & $\bm H$，任意可逆$3\times3$，相差比例因子 & 8 & 共线性、交比\\
+    \bottomrule
+  \end{tabularx}
+  \caption{平面变换的层级。自上而下约束减弱、自由度增加；每一行保持的性质，下面各行不一定保持，上面各行都保持。}
+  \label{tab:vision-formation-transform-hierarchy}
+\end{table}
+
+\term{仿射变换}（affine transformation）可以把正方形变成任意平行四边形，但平行线仍平行。\term{射影变换}（projective transformation）又称单应变换，形式为
+\begin{equation}
+  x'=\frac{h_{1,1}x+h_{1,2}y+h_{1,3}}{h_{3,1}x+h_{3,2}y+h_{3,3}},\qquad
+  y'=\frac{h_{2,1}x+h_{2,2}y+h_{2,3}}{h_{3,1}x+h_{3,2}y+h_{3,3}}\text{，}
+  \label{eq:vision-formation-homography}
+\end{equation}
+即$\tilde{\bm x}'\sim\bm H\tilde{\bm x}$，“$\sim$”表示相差一个非零比例因子。分母使得平行线可以变得相交：斜着拍一张平放的文档，纸的两条平行边在照片中会汇聚。\ref{sec:vision-formation-two-view}节将说明，拍摄平面物体或相机只绕中心转动时，两幅图像之间恰好是射影变换，这是文档矫正和全景拼接的依据。
+
+有了变换$T$，怎样生成变换后的图像？直觉做法是正向映射：对原图每个像素$p$，计算$T(p)$并把值放到那里。问题是$T(p)$一般不是整数，取整后，放大时有些目标像素没有被任何原像素命中，形成空洞，缩小时又有多个原像素落到同一目标。正确做法是\term{反向映射}（inverse mapping）：遍历目标图像的每个像素$q$，计算它在原图中的位置$T^{-1}(q)$，再用上一节的插值在那里取值。这样每个目标像素恰好被赋值一次。
+
+\begin{algorithm}[基于反向映射的图像变换]
+  \label{alg:vision-formation-inverse-mapping}
+  \begin{algorithmic}[1]
+    \Require 原图$f$，可逆变换$T$，目标尺寸$h'\times w'$，插值核
+    \Ensure 目标图$g$
+    \For{目标图的每个像素中心$q$}
+      \State 计算$p\gets T^{-1}(q)$\Comment{射影变换时先乘$\bm H^{-1}$，再除以末分量}
+      \If{$p$落在原图范围内}
+        \State $g(q)\gets$按插值核在$p$处取$f$的值
+      \Else
+        \State $g(q)\gets$约定的填充值，并记录该位置无效
+      \EndIf
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+以一维放大复核。设$T(x)=2x+1$。正向映射把原像素$0,1,2$送到$1,3,5$，目标像素$2,4$没有值。反向映射对目标像素$4$计算$T^{-1}(4)=1.5$，取原像素1和2的线性插值；对目标像素$3$得$T^{-1}(3)=1$，恰好落在原像素上。实现时还要约定像素坐标指的是像素中心还是左上角。把宽度为$W$的图像缩放$s$倍时，按中心对齐的映射为$x_{\mathrm{src}}=(x_{\mathrm{dst}}+0.5)/s-0.5$，按角点对齐的映射为$x_{\mathrm{src}}=x_{\mathrm{dst}}/s$；$s=2$时，目标像素0在前者下对应$-0.25$，在后者下对应$0$。两种约定相差不到一个像素，但训练时用一种、部署时用另一种，检测框和分割边界就会系统性地偏移。这与\ref{sec:vision-overview-outputs}节强调的“结果须撤销输入组织造成的坐标变化”是同一要求。
+
+配准是反过来的问题：已知两幅图，求变换$T$。一类方法基于特征点：先在两图中找到若干对应点$(\bm x_i,\bm x_i')$，再求最符合这些对应的变换。仿射变换$\bm x'=\bm A\bm x+\bm t$有6个未知数，每对对应点给出2个线性方程，至少需要3对不共线的点。例如对应$(0,0)\to(1,2)$、$(1,0)\to(3,2)$、$(0,1)\to(1,3)$，由第一对得$\bm t=(1,2)^\top$，由后两对得$\bm A$的两列分别为$(2,0)^\top$和$(0,1)^\top$，即$x'=2x+1$、$y'=y+2$。点数多于3且含有测量误差时，把全部方程叠成$\bm M\bm\theta=\bm b$，求最小二乘解$\hat{\bm\theta}=(\bm M^\top\bm M)^{-1}\bm M^\top\bm b$，前提是$\bm M$列满秩；最小二乘与正规方程可参考\BookChapterRef{chap:linear-algebra-and-matrix-analysis}{卷一的“线性空间”章}。对应点中混有错误匹配时，最小二乘会被拉偏，需要\ref{sec:vision-recognition-ransac}节的随机采样一致性方法剔除外点。射影变换的估计放在\ref{sec:vision-formation-two-view}节，与相机几何一起讨论。
+
+另一类方法不找特征点，而是直接比较像素：求参数$\bm\theta$使$\sum_{\bm x}\bigl(f_1(T_{\bm\theta}(\bm x))-f_0(\bm x)\bigr)^2$最小。目标对$\bm\theta$非线性，通常在当前估计处把$f_1$线性展开，用高斯—牛顿迭代求解，这就是\ref{sec:vision-videofound-lucas-kanade}节的Lucas-Kanade方法。两幅图亮度不一致时，可把平方差换成归一化互相关；不同成像方式（如CT与MRI）之间亮度关系复杂，则常用互信息作为相似度。学习式配准网络把同样的问题交给网络，直接回归变换参数或逐像素位移场，训练目标仍是上述相似度加上对位移平滑性的约束；它们速度快，但在训练分布之外仍需用这里的几何和相似度检查结果。
+
+\section{颜色的表示}
+\label{sec:vision-formation-color}
+
+开篇两部手机给同一块红色路牌记录了不同的三元组。哪一个才是路牌的“颜色”？这个问题没有唯一答案，因为颜色不是光本身的物理量，而是观察者对光的响应：同一束光，换一个观察者或一种传感器，响应就不同。要让不同设备记录的颜色可以比较，需要先说明人眼怎样把光变成三个数，再在此基础上约定标准的坐标系。本节先讨论颜色的形成与感知，得到与设备无关的参照；再介绍以设备的三原色或油墨为坐标的色彩空间；最后介绍把亮度与色度分开的色彩空间，它们分别服务于颜色差异的度量和图像视频的压缩。三类空间之间的变换关系见图\ref{fig:vision-formation-color-spaces}。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/color-space-map}
+  \caption{常用色彩空间之间的变换。黄色为与设备无关的参照空间，蓝色为线性的设备空间，红色为面向显示、印刷或压缩的编码空间；实线表示线性（或仿射）变换，虚线表示非线性变换。sRGB与CMY之间的“$1-$”只是理想互补关系，实际印刷需要设备特性数据。}
+  \label{fig:vision-formation-color-spaces}
+\end{figure}
+
+\subsection{颜色的形成与感知}
+\label{sec:vision-formation-color-perception}
+
+到达眼睛的光由它在各波长上的功率描述，称为光谱功率分布$S(\lambda)$。对反射表面，$S(\lambda)$约等于光源的光谱乘以表面的光谱反射率，这又一次把光照和材质混在一起。人眼视网膜上有三种视锥细胞，对长、中、短波长分别较敏感，响应函数记为$s_1(\lambda),s_2(\lambda),s_3(\lambda)$。每种细胞的响应是光谱与敏感度的加权积分：
+\[
+  c_k=\int S(\lambda)\,s_k(\lambda)\,\mathrm{d}\lambda,\qquad k=1,2,3\text{。}
+\]
+一条连续的光谱就这样被压缩成三个数，这些数称为\term{三刺激值}（tristimulus values）。
+
+这个积分对$S$是线性的。把可见光波段离散成$n$个区间，光谱成为向量$\bm s\in\mathbb{R}^n$，响应可写成$\bm c=\bm A\bm s$，$\bm A\in\mathbb{R}^{3\times n}$的各行是三种敏感度的采样。$n$远大于3，$\bm A$有非平凡的零空间：若$\bm z\ne\bm0$满足$\bm A\bm z=\bm0$，且$\bm s+\bm z$各分量非负，那么光谱$\bm s$与$\bm s+\bm z$不同，却给出相同的响应。物理上不同、看起来却相同的光称为\term{同色异谱}（metamerism）。教学中取$n=4$、
+\[
+  \bm A=\begin{pmatrix}1&1&0&0\\0&1&1&0\\0&0&1&1\end{pmatrix},\quad
+  \bm s=(1,1,1,1)^\top,\quad \bm z=(1,-1,1,-1)^\top\text{，}
+\]
+则$\bm A\bm z=\bm0$，$\bm s+\bm z=(2,0,2,0)^\top$非负，两条光谱的响应都是$(2,2,2)^\top$。零空间的概念同样见于前文所引的卷一的“线性空间”章。同色异谱解释了为什么三个数就能复现颜色，也解释了为什么复现会出错：相机的三种滤色片敏感度与人眼不同，零空间也不同，人眼看来相同的两块布，相机可能拍成不同颜色，反之亦然。因此\ref{sec:vision-formation-isp}节中由相机RGB到标准空间的$3\times3$校正只能近似成立。
+
+为了让颜色可以交换，国际照明委员会（CIE）在1931年依据配色实验规定了一个标准观察者，即三条配色函数$\bar x(\lambda),\bar y(\lambda),\bar z(\lambda)$，由此定义与设备无关的三刺激值
+\[
+  X=\int S\bar x\,\mathrm{d}\lambda,\quad
+  Y=\int S\bar y\,\mathrm{d}\lambda,\quad
+  Z=\int S\bar z\,\mathrm{d}\lambda\text{。}
+\]
+这就是\term{CIE XYZ色彩空间}（CIE XYZ color space）。$\bar y$取为人眼的明视觉光效率函数，因此$Y$就是亮度；三条配色函数都非负，使任何真实光的$X,Y,Z$都非负，代价是$X$和$Z$对应的“原色”在物理上不可实现。配色实验支持的线性性是这里一切计算的基础：两束光叠加时，三刺激值相加。
+
+颜色的“色彩”部分与亮度无关：把一束光加倍，$X,Y,Z$都加倍，色彩不变。为此只保留比例，定义色度坐标
+\begin{equation}
+  x=\frac{X}{X+Y+Z},\qquad y=\frac{Y}{X+Y+Z}\text{。}
+  \label{eq:vision-formation-chromaticity}
+\end{equation}
+这和齐次坐标消去比例因子的做法相同：$(X,Y,Z)$与$(\lambda X,\lambda Y,\lambda Z)$对应同一个色度点。所有单色光的色度点连成一条马蹄形曲线，称为光谱轨迹，所有可见颜色都在它与两端连线围成的区域内，这幅图称为\term{色度图}（chromaticity diagram）。由线性性，两束光混合后的色度点落在它们色度点的连线上，三种原色能混出的颜色恰好是以三原色为顶点的三角形，称为\term{色域}（gamut）。光谱轨迹是弯曲的，任何三个真实原色围成的三角形都无法覆盖全部可见颜色。标准白点D65的色度为$(0.3127,0.3290)$，下文sRGB的白色即以它为准。
+
+\subsection{设备相关的色彩空间}
+\label{sec:vision-formation-color-spaces}
+
+显示器用三种实际的发光原色混合颜色，相机用三种滤色片记录颜色，它们自然以RGB为坐标。但“RGB”本身不是一个确定的色彩空间：同样的数值$(1,0,0)$在两台显示器上可能是两种红色。一个RGB空间要由三项约定确定：三原色的色度、白点，以及数值与光量之间的传递函数。
+
+最常用的是sRGB。它的三原色色度为红$(0.64,0.33)$、绿$(0.30,0.60)$、蓝$(0.15,0.06)$，白点为D65。线性sRGB值$(R,G,B)$与XYZ之间是线性变换：
+\begin{equation}
+  \begin{pmatrix}X\\Y\\Z\end{pmatrix}=
+  \begin{pmatrix}
+    0.4124&0.3576&0.1805\\
+    0.2126&0.7152&0.0722\\
+    0.0193&0.1192&0.9505
+  \end{pmatrix}
+  \begin{pmatrix}R\\G\\B\end{pmatrix}\text{。}
+  \label{eq:vision-formation-srgb-xyz}
+\end{equation}
+第二行给出亮度$Y=0.2126R+0.7152G+0.0722B$：同样数值的绿色比蓝色亮得多，这与\ref{sec:vision-formation-sensor}节拜耳阵列多采绿色的理由一致。线性值$(1,1,1)$得到的$(X,Y,Z)$其色度正是D65。超出$[0,1]$的线性值表示sRGB色域外的颜色。
+
+存储和显示时，sRGB还要经过一个非线性的传递函数。设线性分量$C\in\{R,G,B\}$取值于$[0,1]$，编码值为
+\begin{equation}
+  C'=\begin{cases}
+    12.92\,C, & C\le0.0031308,\\
+    1.055\,C^{1/2.4}-0.055, & C>0.0031308,
+  \end{cases}
+  \label{eq:vision-formation-srgb}
+\end{equation}
+逆变换为$C=C'/12.92$（当$C'\le0.04045$），否则$C=\bigl((C'+0.055)/1.055\bigr)^{2.4}$。在暗端用一段直线，是为了避免幂函数在零点附近斜率无限大。这一编码常被笼统地称为\term{伽马编码}（gamma encoding），整体效果接近指数为$1/2.2$的幂函数。例如反射率约18\%的中灰，线性值$0.18$编码为$1.055\times0.18^{1/2.4}-0.055\approx0.461$，8位编码约为118，而不是线性比例下的46。\ref{sec:vision-formation-quantization}节已经说明，这样把更多编码留给了暗部。也正因为如此，凡涉及光的叠加、平均和模糊，都应先用逆变换回到线性值。
+
+sRGB的色域不大。Adobe RGB、Display P3和面向超高清电视的BT.2020采用色度更饱和的原色，色域更大。同一组数值在这些空间中代表不同颜色，因此图像文件需要携带色彩空间说明，处理流程中混用而不转换，就会出现整体偏色。训练数据大多默认sRGB，模型读入广色域照片时，应先确认并转换色彩空间。
+
+印刷与显示相反。纸面反射光，油墨从白光中吸收一部分波长，属于减色混合。青、品红、黄三种油墨分别吸收红、绿、蓝，理想情况下与RGB互补：$(C,M,Y)=(1-R',1-G',1-B')$。三种油墨叠加理论上得到黑色，实际上得到深褐色且耗墨，因此另加黑墨K。一种简单的分离是取$K=\min(C,M,Y)$，其余三者改为$(C-K)/(1-K)$等（$K<1$时）。例如$(R',G',B')=(0.2,0.4,0.6)$，得$(C,M,Y)=(0.8,0.6,0.4)$，$K=0.4$，余下为$(0.667,0.333,0)$。真实印刷的颜色取决于油墨、纸张和网点方式，需要用设备特性文件做非线性转换，上面的公式只说明原理。
+
+RGB和CMYK都以设备的原料为坐标，不便于描述“偏橙的红”“更鲜艳”这样的直觉。HSV把颜色写成\term{色相}（hue）$H$、\term{饱和度}（saturation）$S$和明度值$V$。设$M=\max(R',G',B')$，$m=\min(R',G',B')$，$\Delta=M-m$，则$V=M$，$S=\Delta/M$（$M=0$时取0），
+\begin{equation}
+  H=\begin{cases}
+    60^\circ\times\bigl(\tfrac{G'-B'}{\Delta}\bmod 6\bigr), & M=R',\\
+    60^\circ\times\bigl(\tfrac{B'-R'}{\Delta}+2\bigr), & M=G',\\
+    60^\circ\times\bigl(\tfrac{R'-G'}{\Delta}+4\bigr), & M=B',
+  \end{cases}
+  \label{eq:vision-formation-hsv}
+\end{equation}
+$\Delta=0$时色相无定义。几何上，这是把RGB立方体沿灰色对角线看过去，用角度表示色相、用离对角线的远近表示饱和度。例如$(0.8,0.4,0.2)$：$M=0.8$，$m=0.2$，$\Delta=0.6$，$V=0.8$，$S=0.75$，最大分量是红色，$H=60^\circ\times(0.2/0.6)=20^\circ$，是一种偏橙的红。
+
+HSV便于按色彩挑选像素：要从路牌照片中找红色区域，可以限定色相在$0^\circ$附近、饱和度较高，而对明暗变化不太敏感。它在学习中常用于颜色增强，即随机扰动色相和饱和度，使模型不依赖特定的颜色偏差。使用时要注意三点。色相是角度，$350^\circ$与$10^\circ$相差$20^\circ$而不是$340^\circ$，直接对色相求平均会出错；灰色附近$\Delta$很小，噪声会让色相剧烈跳动；$V$只是最大分量，不是感知亮度，纯蓝$(0,0,1)$与白色的$V$都是1，看起来却亮暗悬殊。
+
+\subsection{亮度与色度分离的色彩空间}
+\label{sec:vision-formation-luma-chroma}
+
+RGB和HSV都没有回答一个常用的问题：两个颜色看起来差多少？在XYZ或RGB中，相同的欧氏距离在不同区域对应的感知差别相差很大。另一方面，压缩图像和视频时，希望把人眼敏感的亮度和不太敏感的色彩分开处理。这两个需求分别引出Lab和YCbCr。
+
+CIE Lab（又记作$L^*a^*b^*$）以白点$(X_n,Y_n,Z_n)$为参照，定义
+\begin{equation}
+  \begin{aligned}
+    L^*&=116\,\varphi\!\left(\tfrac{Y}{Y_n}\right)-16,\\
+    a^*&=500\left[\varphi\!\left(\tfrac{X}{X_n}\right)-\varphi\!\left(\tfrac{Y}{Y_n}\right)\right],\\
+    b^*&=200\left[\varphi\!\left(\tfrac{Y}{Y_n}\right)-\varphi\!\left(\tfrac{Z}{Z_n}\right)\right]\text{，}
+  \end{aligned}
+  \label{eq:vision-formation-lab}
+\end{equation}
+其中$\varphi(r)=r^{1/3}$（当$r>(6/29)^3$），否则$\varphi(r)=r/\bigl(3(6/29)^2\bigr)+4/29$，后一段同样是为避免零点附近的无限斜率。$L^*$是感知明度，从0（黑）到100（白）；$a^*$沿红—绿方向，$b^*$沿黄—蓝方向，两者为零时是中性灰。立方根模拟了人眼对亮度的压缩：$Y/Y_n=0.18$时$\varphi\approx0.565$，$L^*\approx49.5$，物理上只反射18\%光的中灰在感知上恰好居中。两个颜色的差别用欧氏距离$\Delta E^*_{ab}=\sqrt{(\Delta L^*)^2+(\Delta a^*)^2+(\Delta b^*)^2}$度量。Lab只是近似均匀，在饱和的蓝色区域偏差较大，后来的色差公式在此基础上加入了修正项。Lab在学习方法中的一个典型用法是黑白照片上色：网络读入明度$L^*$，预测色度$(a^*,b^*)$，并在色度空间中把预测当作分类问题处理，以避免平均出灰暗的颜色\scite{zhang2016colorization}
+
+YCbCr面向图像和视频编码。它从伽马编码后的$R',G',B'$出发，用加权和得到\term{亮度分量}（luma）$Y'$，再用蓝、红分量与$Y'$之差得到两个色差分量。JPEG常用的8位全范围形式基于BT.601的权重：
+\begin{equation}
+  \begin{aligned}
+    Y'&=0.299R'+0.587G'+0.114B',\\
+    C_b&=128-0.168736R'-0.331264G'+0.5B',\\
+    C_r&=128+0.5R'-0.418688G'-0.081312B'\text{，}
+  \end{aligned}
+  \label{eq:vision-formation-ycbcr}
+\end{equation}
+其中$R',G',B'\in[0,255]$。例如红色路牌上的一个像素$(200,50,50)$：$Y'=59.8+29.35+5.7=94.85$，$C_b\approx128-33.75-16.56+25=102.7$，$C_r\approx128+100-20.93-4.07=203$。$C_r$远大于128表示偏红，$C_b$小于128表示偏离蓝色。高清视频按BT.709使用另一组权重$0.2126,0.7152,0.0722$，与式\eqref{eq:vision-formation-srgb-xyz}第二行相同，但作用在编码值上。由于$Y'$由伽马编码后的值加权得到，它与由线性值计算的亮度$Y$并不相等，在饱和色处差别明显；两者的名称在文献中常被混用，计算时应分清。
+
+把亮度和色度分开后，就可以利用人眼对色彩细节分辨力较低的特点减少数据。\term{色度下采样}（chroma subsampling）只降低$C_b,C_r$的分辨率，用比例记号表示：4:4:4不下采样；4:2:2在水平方向减半；4:2:0在水平和竖直方向都减半。以$1920\times1080$的图像为例，$Y'$有$2\,073\,600$个样本，4:2:0下每个色度分量只有$960\times540=518\,400$个样本，总样本数为原来的一半，即每像素1.5个而不是3个。代价出现在颜色突变处：蓝底红字的边缘，色度分辨率不足使红色渗到相邻像素，形成色晕。JPEG和几乎所有视频编码都采用这种做法，其中视频的色彩采样格式在\ref{sec:vision-videofound-formats}节讨论。对学习方法而言，这意味着从压缩文件解码得到的RGB图像，其色彩细节已经在编码时丢失，模型无法从中恢复真实的颜色边界。
+
+\section{相机的几何模型}
+\label{sec:vision-formation-camera}
+
+前几节回答了像素值从何而来，没有回答像素的位置从何而来。要知道路牌离相机多远、两张照片中的路牌是否同一处，需要一个模型说明三维空间中的点落到图像的哪个位置。这个模型分几步建立。第一步只看一台相机，在相机自己的坐标系中把三维点投影到像素，涉及焦距、主点等内部参数。第二步把相机放到世界中，用旋转和平移描述它的位置与朝向，再加入镜头畸变，并说明怎样用已知图案测出这些参数，即标定。第三步看两台相机：同一点在两幅图中的位置受什么约束，已知两台相机时怎样由两个像点求出空间点。第四步推广到许多相机，同时估计全部相机和场景结构，并讨论双目相机中视差与深度的关系。每一步都在前一步的模型上增加未知量，射影几何与齐次坐标贯穿始终。这一节的内容在前面的数学卷中没有展开，下面讲到够用的程度；完整的理论可参考专著\scite{vision-hartley-zisserman2004}
+
+\subsection{针孔投影与内参}
+\label{sec:vision-formation-camera-intrinsics}
+
+最简单的成像装置是一个暗箱上的小孔：场景中每一点发出的光只有一条能穿过小孔，落在后壁上形成倒立的像。理想化后得到\term{针孔相机模型}（pinhole camera model）：所有成像光线都经过一点，即相机中心。为了避免倒像，通常把像平面画在中心前方距离$f$处，几何关系不变，如图\ref{fig:vision-formation-pinhole}所示。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/pinhole-projection}
+  \caption{针孔投影的侧视图。相机中心位于原点，光轴沿$z$方向，像平面画在中心前方$z=f$处。空间点$\bm P$与中心的连线交像平面于一点，两组相似三角形给出$y=fY/Z$。图不按物理比例绘制。}
+  \label{fig:vision-formation-pinhole}
+\end{figure}
+
+以相机中心为原点建立相机坐标系，$z$轴沿光轴指向前方，$x$轴向右，$y$轴向下，与图像坐标的方向一致。点$\bm P=(X,Y,Z)^\top$，$Z>0$，与中心的连线交像平面$z=f$于$(x,y,f)$。由相似三角形，
+\begin{equation}
+  x=f\frac{X}{Z},\qquad y=f\frac{Y}{Z}\text{。}
+  \label{eq:vision-formation-perspective}
+\end{equation}
+这就是透视投影。用齐次坐标写，$(fX,fY,Z)^\top\sim(fX/Z,fY/Z,1)^\top$，除以$Z$的非线性运算被吸收进“相差比例因子”的约定，投影成了线性映射。
+
+式\eqref{eq:vision-formation-perspective}有三个直接推论。第一，像的大小与深度成反比。焦距为1000像素时，高$1.5$米的汽车在$15$米处成像约$100$像素高，在$30$米处约$50$像素高；可是高$3$米的货车在$30$米处同样约$100$像素高。单凭像素尺寸无法区分“近处的小车”与“远处的大车”，这就是单幅图像的尺度歧义，也是开篇“路牌有多远”无法回答的原因。第二，沿同一条光线的所有点投到同一像素，深度信息在投影中丢失了。第三，平行线在图像中一般会相交。设一族直线$\bm P(\mu)=\bm P_0+\mu\bm d$，方向$\bm d=(d_x,d_y,d_z)^\top$且$d_z\ne0$，代入式\eqref{eq:vision-formation-perspective}并令$\mu\to\infty$，像点趋于$(fd_x/d_z,fd_y/d_z)$，与起点$\bm P_0$无关。同一方向的所有平行线在图像中汇聚到同一点，称为\term{消失点}（vanishing point）。笔直的道路两侧在远处汇成一点，就是这个原因。若$d_z=0$，即直线与像平面平行，像点趋于无穷远，图像中的线仍然平行。
+
+像平面上的坐标以毫米计，而像素坐标以像素计、原点在左上角。从前者到后者，要除以像素尺寸并平移原点。把这些合并，得到像素坐标$(u,v)$与相机坐标的关系：
+\begin{equation}
+  Z\begin{pmatrix}u\\v\\1\end{pmatrix}
+  =\underbrace{\begin{pmatrix}f_x&\gamma&c_x\\0&f_y&c_y\\0&0&1\end{pmatrix}}_{\bm K}
+  \begin{pmatrix}X\\Y\\Z\end{pmatrix}\text{。}
+  \label{eq:vision-formation-intrinsics}
+\end{equation}
+$\bm K$称为\term{内参矩阵}（intrinsic matrix）。$f_x,f_y$是以像素为单位的焦距，等于物理焦距除以像素在两个方向上的尺寸；$(c_x,c_y)$是\term{主点}（principal point），即光轴与像平面的交点在像素坐标中的位置，通常靠近图像中心；$\gamma$描述像素两轴不垂直的倾斜，现代传感器上几乎为0。例如镜头焦距4毫米、像素边长2微米，则$f_x=4/0.002=2000$像素。图像宽$W$像素时，水平视场角为$2\arctan\bigl(W/(2f_x)\bigr)$；$W=4000$时为$2\arctan1=90^\circ$。焦距越大，视场越窄。
+
+反过来，已知像素$(u,v)$和$\bm K$，可以求出它对应的光线方向$\bm K^{-1}(u,v,1)^\top$。令$(\hat x,\hat y,1)^\top=\bm K^{-1}(u,v,1)^\top$，称为归一化图像坐标，它相当于焦距为1、主点在原点的理想相机看到的位置。光线上的点为$Z(\hat x,\hat y,1)^\top$，$Z>0$待定。内参把“像素”翻译成“方向”，深度仍需其他信息。\ref{sec:vision-recognition-measurement}节在深度估计中沿用的正是这一投影关系。
+
+物体本身的深度变化远小于它到相机的距离时，各点的$Z$近似相同，投影近似于先按共同深度缩放、再正交投影，称为弱透视。远距离拍摄的人脸或航拍图像常用这种近似，它把非线性的投影变成仿射变换，代价是丢失近大远小的效应。
+
+\subsection{外参、畸变与标定}
+\label{sec:vision-formation-calibration}
+
+一台相机拍到的点通常用世界坐标描述，例如以路口某个角落为原点。从世界坐标$\bm P_{\mathrm w}$到相机坐标$\bm P_{\mathrm c}$，是一个旋转加一个平移：$\bm P_{\mathrm c}=\bm R\bm P_{\mathrm w}+\bm t$。旋转矩阵$\bm R$满足$\bm R^\top\bm R=\bm I$且$\det\bm R=1$，这类矩阵组成的集合记为$\mathrm{SO}(3)$。$\bm R$和$\bm t$称为\term{外参}（extrinsic parameters），它们描述相机在世界中的朝向和位置。注意$\bm t$不是相机中心的世界坐标：相机中心在相机坐标中为原点，代回得$\bm C_{\mathrm w}=-\bm R^\top\bm t$。例如相机位于世界坐标$(0,0,-5)^\top$、朝向与世界坐标轴一致（$\bm R=\bm I$），则$\bm t=-\bm R\bm C_{\mathrm w}=(0,0,5)^\top$，世界原点在相机前方5米处。把内外参合起来，得到
+\begin{equation}
+  \lambda\begin{pmatrix}u\\v\\1\end{pmatrix}
+  =\bm K\begin{pmatrix}\bm R&\bm t\end{pmatrix}
+  \begin{pmatrix}\bm P_{\mathrm w}\\1\end{pmatrix}
+  =\bm\Pi\begin{pmatrix}\bm P_{\mathrm w}\\1\end{pmatrix}\text{，}
+  \label{eq:vision-formation-projection}
+\end{equation}
+其中$\lambda$等于该点在相机坐标中的深度，$\bm\Pi=\bm K(\bm R\mid\bm t)\in\mathbb{R}^{3\times4}$称为\term{投影矩阵}（projection matrix）。它相差比例因子，有11个自由度：内参5个，旋转3个，平移3个。
+
+旋转矩阵有9个元素，却只有3个自由度，优化时需要合适的参数化。最直观的是欧拉角，即依次绕三个坐标轴旋转的角度。它的缺点是当中间一次旋转为$\pm90^\circ$时，第一次和第三次旋转的轴重合，两个角度只能确定它们的和，失去一个自由度，称为万向节锁；在这附近，角度的微小变化与旋转的变化不成比例，梯度优化会变得不稳定。
+
+另一种参数化用转轴和转角。任何旋转都可以看作绕某个单位轴$\bm k$转过角度$\theta$，合写为旋转向量$\bm\omega=\theta\bm k$。由它得到旋转矩阵的公式称为\term{罗德里格斯公式}（Rodrigues' formula）：
+\begin{equation}
+  \bm R=\bm I+\sin\theta\,[\bm k]_\times+(1-\cos\theta)[\bm k]_\times^2,\qquad
+  [\bm k]_\times=\begin{pmatrix}0&-k_3&k_2\\k_3&0&-k_1\\-k_2&k_1&0\end{pmatrix}\text{，}
+  \label{eq:vision-formation-rodrigues}
+\end{equation}
+其中$[\bm k]_\times$是叉乘矩阵，满足$[\bm k]_\times\bm v=\bm k\times\bm v$。推导如下：把任意向量$\bm v$分成沿轴的分量$\bm v_\parallel=\bm k\bm k^\top\bm v$和垂直分量$\bm v_\perp=\bm v-\bm v_\parallel$。旋转不改变$\bm v_\parallel$；$\bm v_\perp$在垂直于$\bm k$的平面内转过$\theta$，而$\bm k\times\bm v$正是该平面内与$\bm v_\perp$垂直、长度相同的向量，所以$\bm v_\perp$变为$\cos\theta\,\bm v_\perp+\sin\theta\,\bm k\times\bm v$。合起来，
+\[
+  \bm R\bm v=\bm k\bm k^\top\bm v+\cos\theta(\bm v-\bm k\bm k^\top\bm v)+\sin\theta\,[\bm k]_\times\bm v\text{。}
+\]
+利用单位向量的恒等式$[\bm k]_\times^2=\bm k\bm k^\top-\bm I$，把$\bm k\bm k^\top$换成$\bm I+[\bm k]_\times^2$，整理即得式\eqref{eq:vision-formation-rodrigues}。验算一个例子：绕$z$轴转$90^\circ$，$[\bm k]_\times^2=\operatorname{diag}(-1,-1,0)$，代入得$\bm R$的三列为$(0,1,0)^\top,(-1,0,0)^\top,(0,0,1)^\top$，把$x$轴转到$y$轴，正确。旋转向量没有冗余，适合作为优化变量；式\eqref{eq:vision-formation-rodrigues}也是斜对称矩阵$\theta[\bm k]_\times$的矩阵指数的闭式，矩阵指数与流形上的指数映射可参考\BookChapterRef{chap:differential-geometry-and-symmetry}{卷一的“非线性空间与流形”章}。
+
+第三种参数化是单位\term{四元数}（quaternion）$\bm q=(\cos\tfrac\theta2,\sin\tfrac\theta2\,\bm k)$，四个数满足单位长度约束。旋转的复合对应四元数的乘法，在两个旋转之间插值也很方便。它有一个特点：$\bm q$与$-\bm q$表示同一个旋转，因为$\theta$加上$2\pi$时半角的正余弦都变号。网络直接回归四元数时，要处理这种双重表示，例如约定第一个分量非负。\ref{sec:vision-generation-gaussians}节中每个三维高斯的朝向就用四元数表示。
+
+真实镜头并不是理想针孔。广角镜头常让图像边缘的直线向外弯曲，称为\term{镜头畸变}（lens distortion）。常用的模型在归一化坐标$(\hat x,\hat y)$上作用：令$r^2=\hat x^2+\hat y^2$，
+\begin{equation}
+  \begin{aligned}
+    \hat x_{\mathrm d}&=\hat x(1+\kappa_1r^2+\kappa_2r^4+\kappa_3r^6)+2p_1\hat x\hat y+p_2(r^2+2\hat x^2),\\
+    \hat y_{\mathrm d}&=\hat y(1+\kappa_1r^2+\kappa_2r^4+\kappa_3r^6)+p_1(r^2+2\hat y^2)+2p_2\hat x\hat y\text{，}
+  \end{aligned}
+  \label{eq:vision-formation-distortion}
+\end{equation}
+再用$\bm K$把$(\hat x_{\mathrm d},\hat y_{\mathrm d})$变成像素。$\kappa_1,\kappa_2,\kappa_3$描述径向畸变，即点沿径向的伸缩随离中心距离变化；$p_1,p_2$描述透镜与传感器不严格平行带来的切向畸变。$\kappa_1<0$时，离中心越远收缩越多，矩形网格变成桶状，称为桶形畸变；$\kappa_1>0$时为枕形畸变。教学中取$\kappa_1=-0.2$，其余为零：点$(0.5,0)$的$r^2=0.25$，缩放因子$0.95$，变为$(0.475,0)$；对角上$r^2=1$的点缩放因子为$0.8$。
+
+去畸变要反过来由$\hat x_{\mathrm d}$求$\hat x$，多项式没有闭式逆，常用不动点迭代$\hat x\gets\hat x_{\mathrm d}/(1+\kappa_1r(\hat x)^2)$。从$\hat x=0.475$出发，依次得到$0.4975$、$0.4997$、$0.49997$，三步后已接近真实值$0.5$。畸变很强时迭代可能不收敛，需要用牛顿法或预先计算查找表。
+
+内参和畸变系数通常需要实测，这一过程称为\term{相机标定}（camera calibration）。应用最广的是张正友提出的平面标定法：用相机从不同角度拍摄一块印有棋盘格的平板，棋盘角点在板上的坐标已知\scite{vision-zhang2000calibration}关键在于把世界坐标系建在板上，使板面为$Z_{\mathrm w}=0$。代入式\eqref{eq:vision-formation-projection}，旋转矩阵的第三列$\bm r_3$乘以0而消失：
+\[
+  \lambda\begin{pmatrix}u\\v\\1\end{pmatrix}
+  =\bm K\begin{pmatrix}\bm r_1&\bm r_2&\bm t\end{pmatrix}
+  \begin{pmatrix}X_{\mathrm w}\\Y_{\mathrm w}\\1\end{pmatrix}\text{。}
+\]
+板面坐标与像素之间因此是一个单应$\bm H=(\bm h_1,\bm h_2,\bm h_3)=s\bm K(\bm r_1,\bm r_2,\bm t)$，$s$为未知比例。每幅照片的$\bm H$可由角点对应估计（方法见\ref{sec:vision-formation-two-view}节）。由$\bm r_1=s^{-1}\bm K^{-1}\bm h_1$、$\bm r_2=s^{-1}\bm K^{-1}\bm h_2$，以及旋转矩阵的两列正交且等长，得到两个约束：
+\begin{equation}
+  \bm h_1^\top\bm B\bm h_2=0,\qquad
+  \bm h_1^\top\bm B\bm h_1=\bm h_2^\top\bm B\bm h_2,\qquad
+  \bm B=\bm K^{-\top}\bm K^{-1}\text{。}
+  \label{eq:vision-formation-zhang-constraints}
+\end{equation}
+$\bm B$对称，有6个不同元素，两个约束都是它们的线性方程。$n$幅照片给出$2n$个方程，写成$\bm V\bm b=\bm0$，$\bm b$为$\bm B$的6个元素。$\bm b$只能确定到比例因子，有5个自由度，所以一般至少需要3幅照片；若假定$\gamma=0$，2幅即可。板只是平移而不改变朝向时，新照片不提供新的约束，因此拍摄时要变换板的角度。
+
+用一个简单情形检查约束。设$\bm K=\operatorname{diag}(1000,1000,1)$（主点放在原点，教学设定），板正对相机放在5米处，$\bm R=\bm I$、$\bm t=(0,0,5)^\top$，则$\bm h_1=(1000,0,0)^\top$、$\bm h_2=(0,1000,0)^\top$、$\bm B=\operatorname{diag}(10^{-6},10^{-6},1)$。于是$\bm h_1^\top\bm B\bm h_2=0$，$\bm h_1^\top\bm B\bm h_1=\bm h_2^\top\bm B\bm h_2=1$，两个约束都成立。完整的标定步骤见算法\ref{alg:vision-formation-zhang}。
+
+\begin{algorithm}[平面棋盘格相机标定]
+  \label{alg:vision-formation-zhang}
+  \begin{algorithmic}[1]
+    \Require 从$n\ge3$个不同朝向拍摄的棋盘格照片，角点的板面坐标
+    \Ensure 内参$\bm K$、畸变系数、每幅照片的外参$(\bm R_i,\bm t_i)$
+    \State 检测每幅照片中的角点，与板面坐标配对
+    \State 对每幅照片估计板面到图像的单应$\bm H_i$
+    \State 按式\eqref{eq:vision-formation-zhang-constraints}为每幅照片写出两个关于$\bm b$的线性方程，叠成$\bm V\bm b=\bm0$
+    \State 在$\lVert\bm b\rVert_2=1$下最小化$\lVert\bm V\bm b\rVert_2$：取$\bm V$最小奇异值对应的右奇异向量
+    \State 由$\bm B$分解出$\bm K$\Comment{$\bm B$相差比例；调整符号使其正定后，可用Cholesky分解求$\bm K^{-1}$}
+    \For{每幅照片$i$}
+      \State $s\gets\lVert\bm K^{-1}\bm h_{i,1}\rVert_2$，$\bm r_1\gets\bm K^{-1}\bm h_{i,1}/s$，$\bm r_2\gets\bm K^{-1}\bm h_{i,2}/s$，$\bm r_3\gets\bm r_1\times\bm r_2$，$\bm t_i\gets\bm K^{-1}\bm h_{i,3}/s$
+      \State 把$(\bm r_1,\bm r_2,\bm r_3)$投影为最近的旋转矩阵：若$\bm U\bm\Sigma\bm V^\top$为其奇异值分解，取$\bm R_i=\bm U\bm V^\top$
+    \EndFor
+    \State 以上结果为初值，加入畸变系数，用非线性最小二乘最小化全部角点的重投影误差
+  \end{algorithmic}
+\end{algorithm}
+
+算法中有两处需要说明。第4步的问题形如“在单位球面上最小化$\lVert\bm V\bm b\rVert_2^2=\bm b^\top\bm V^\top\bm V\bm b$”，它是瑞利商的最小化，最小值等于$\bm V^\top\bm V$的最小特征值，取到最小值的$\bm b$是对应的特征向量，也就是$\bm V$最小奇异值的右奇异向量；瑞利商的极值性质和奇异值分解同样见于前文所引的卷一的“线性空间”章。这一形式在本节会反复出现。第7步中，含噪声时$(\bm r_1,\bm r_2,\bm r_3)$不再严格正交，取$\bm U\bm V^\top$得到的是在弗罗贝尼乌斯范数下最近的正交矩阵，即极分解的正交因子；若其行列式为$-1$，需把$\bm U$最后一列变号。最后一步的目标是全部观测角点与按当前参数投影位置之间的距离平方和，即\term{重投影误差}（reprojection error）。它对参数非线性，通常用高斯—牛顿法的阻尼形式，即列文伯格—马夸特方法迭代：每步求解$(\bm J^\top\bm J+\mu\bm I)\bm\delta=-\bm J^\top\bm r$，$\bm J$为残差$\bm r$对参数的雅可比矩阵，$\mu$在误差下降时减小、上升时增大，使迭代在高斯—牛顿步与梯度下降步之间切换。高斯—牛顿法可参考\BookChapterRef{chap:optimization}{卷一的“最优化”章}。标定的质量以像素为单位的重投影误差报告，但误差小只说明模型与这些角点吻合，角点没有覆盖到的图像边缘，畸变模型仍可能不准。
+
+\subsection{两视图几何}
+\label{sec:vision-formation-two-view}
+
+从两个位置拍摄同一块路牌，两幅图像中的对应点之间存在什么关系？答案取决于场景和相机运动。若被拍的是一个平面，或者相机只绕中心转动，对应点之间是点到点的映射，即单应；对一般的三维场景，一幅图中的点只能确定另一幅图中的一条线，即极线约束；若两台相机的投影矩阵已知，则由一对对应点可以求出空间点的位置，即三角化。这三种关系依次放宽对场景的假设，或依次利用更多的已知条件。
+
+先看单应。设平面在第一台相机坐标系中满足$\bm n^\top\bm P_1=d$，$\bm n$是单位法向，$d$是相机中心到平面的距离。第二台相机坐标为$\bm P_2=\bm R\bm P_1+\bm t$。平面上的点满足$\bm n^\top\bm P_1/d=1$，于是$\bm P_2=\bm R\bm P_1+\bm t\bm n^\top\bm P_1/d=(\bm R+\bm t\bm n^\top/d)\bm P_1$。两边分别左乘内参，像点之间满足
+\begin{equation}
+  \tilde{\bm x}_2\sim\bm K_2\Bigl(\bm R+\frac{\bm t\bm n^\top}{d}\Bigr)\bm K_1^{-1}\tilde{\bm x}_1\text{，}
+  \label{eq:vision-formation-plane-homography}
+\end{equation}
+这是一个$3\times3$的\term{单应变换}（homography）。若$\bm t=\bm0$，即相机只绕中心转动，单应退化为$\bm K_2\bm R\bm K_1^{-1}$，与场景深度无关，任意场景都适用。全景拼接要求拍摄时绕镜头中心转动相机，依据就在这里。
+
+单应可以由对应点估计。由$\tilde{\bm x}'\sim\bm H\tilde{\bm x}$，两边向量同向，叉积为零：$\tilde{\bm x}'\times\bm H\tilde{\bm x}=\bm0$。把$\bm H$的三行记为$\bm h^{1\top},\bm h^{2\top},\bm h^{3\top}$，排成9维向量$\bm h$，并写$\tilde{\bm x}'=(x',y',w')^\top$，叉积的三个分量中只有两个独立：
+\begin{equation}
+  \begin{pmatrix}
+    \bm0^\top & -w'\tilde{\bm x}^\top & y'\tilde{\bm x}^\top\\
+    w'\tilde{\bm x}^\top & \bm0^\top & -x'\tilde{\bm x}^\top
+  \end{pmatrix}\bm h=\bm0\text{。}
+  \label{eq:vision-formation-dlt}
+\end{equation}
+每对对应点给出2个方程，$\bm H$相差比例因子共8个自由度，4对点（其中任意3点不共线）即可确定。$n$对点叠成$2n\times9$的矩阵$\bm M$，在$\lVert\bm h\rVert_2=1$下最小化$\lVert\bm M\bm h\rVert_2$，解为$\bm M$最小奇异值的右奇异向量，与标定中的问题形式相同。这种把非线性约束改写为齐次线性方程再用奇异值分解求解的做法，称为\term{直接线性变换}（direct linear transformation, DLT）。
+
+直接用像素坐标求解时，$\bm M$中同时出现量级为1、$10^3$和$10^6$的元素（分别来自齐次分量、坐标和坐标乘积），矩阵条件数很大，噪声会被放大。改进办法是先对两组点分别做相似变换$\bm T,\bm T'$，把质心移到原点、平均距离缩放到$\sqrt2$，在归一化坐标中求$\tilde{\bm H}$，再还原$\bm H=\bm T'^{-1}\tilde{\bm H}\bm T$\scite{vision-hartley1997eightpoint}条件数与误差放大的关系同样见于前文所引的卷一的“线性空间”章。
+
+用一个可以手算的例子检查式\eqref{eq:vision-formation-dlt}。设单位正方形的四个角$(0,0)$、$(1,0)$、$(0,1)$、$(1,1)$分别对应$(1,1)$、$(3,1)$、$(1,3)$、$(3,3)$，真实变换为
+\[
+  \bm H=\begin{pmatrix}2&0&1\\0&2&1\\0&0&1\end{pmatrix},\qquad
+  \bm h=(2,0,1,0,2,1,0,0,1)^\top\text{。}
+\]
+取对应$(1,1)\to(3,3)$，$\tilde{\bm x}=(1,1,1)^\top$，$\tilde{\bm x}'=(3,3,1)^\top$，两行系数为
+\[
+  (0,0,0,-1,-1,-1,3,3,3)\quad\text{和}\quad(1,1,1,0,0,0,-3,-3,-3)\text{，}
+\]
+与$\bm h$的内积分别为$-3+3=0$和$3-3=0$。其余三对点同样满足，因此$\bm h$在$\bm M$的零空间中。
+
+再看一般场景。设两台相机内参已知，用归一化坐标$\hat{\bm x}_i=\bm K_i^{-1}\tilde{\bm x}_i$表示像点，第二台相机相对第一台的运动为$(\bm R,\bm t)$。空间点在两个相机坐标中分别为$Z_1\hat{\bm x}_1$和$Z_2\hat{\bm x}_2$，满足
+\[
+  Z_2\hat{\bm x}_2=Z_1\bm R\hat{\bm x}_1+\bm t\text{。}
+\]
+两边与$\bm t$作叉积，消去$\bm t$项：$Z_2[\bm t]_\times\hat{\bm x}_2=Z_1[\bm t]_\times\bm R\hat{\bm x}_1$。左边的向量与$\hat{\bm x}_2$垂直，两边再与$\hat{\bm x}_2$作内积，左边为零，于是$Z_1\hat{\bm x}_2^\top[\bm t]_\times\bm R\hat{\bm x}_1=0$。$Z_1>0$，得到
+\begin{equation}
+  \hat{\bm x}_2^\top\bm E\,\hat{\bm x}_1=0,\qquad \bm E=[\bm t]_\times\bm R\text{。}
+  \label{eq:vision-formation-essential}
+\end{equation}
+$\bm E$称为\term{本质矩阵}（essential matrix）\scite{vision-longuet-higgins1981}换回像素坐标，$\tilde{\bm x}_2^\top\bm F\tilde{\bm x}_1=0$，其中$\bm F=\bm K_2^{-\top}\bm E\bm K_1^{-1}$称为\term{基础矩阵}（fundamental matrix），它在内参未知时也成立。这就是\term{极线约束}（epipolar constraint）。
+
+这个约束的几何含义如图\ref{fig:vision-formation-epipolar}所示。两个相机中心和空间点$\bm X$确定一个平面，称为对极平面。第一幅图中的像点$\tilde{\bm x}_1$只确定了一条射线，射线上的点（如$\bm X$与$\bm X'$）都在对极平面内，它们在第二幅图中的像都落在对极平面与第二像平面的交线上，这条线称为\term{极线}（epipolar line），其方程为$\bm l_2=\bm F\tilde{\bm x}_1$。两个相机中心的连线称为基线，它与像平面的交点称为\term{极点}（epipole），所有极线都经过极点。于是，搜索对应点时不必在整幅第二图中寻找，只需沿一条极线搜索，二维搜索变成了一维。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/epipolar-geometry}
+  \caption{两视图的对极几何。$\bm C_1,\bm C_2$为相机中心，蓝色四边形为像平面。第一幅图像点$\tilde{\bm x}_1$对应的射线上，$\bm X$与$\bm X'$在第一幅图中重合，在第二幅图中落在同一条极线上的不同位置；$\bm C_1,\bm C_2$与射线共同张成对极平面。点与线的位置为示意。}
+  \label{fig:vision-formation-epipolar}
+\end{figure}
+
+本质矩阵有确定的代数结构。$[\bm t]_\times$的奇异值为$\lVert\bm t\rVert_2,\lVert\bm t\rVert_2,0$，右乘正交矩阵$\bm R$不改变奇异值，所以$\bm E$的秩为2，两个非零奇异值相等。$\bm t$的长度会被比例因子吸收，只有方向可以确定，因此$\bm E$有$3+2=5$个自由度。$\bm F$也是秩为2，但两个非零奇异值一般不等，相差比例因子并满足$\det\bm F=0$，有7个自由度。
+
+用双目相机的情形验算。第二台相机位于第一台右侧1个单位，朝向相同，则$\bm R=\bm I$，$\bm t=-\bm R\bm C_2=(-1,0,0)^\top$。对$\hat{\bm x}_1=(x_1,y_1,1)^\top$，$\bm E\hat{\bm x}_1=\bm t\times\hat{\bm x}_1=(0,1,-y_1)^\top$，代入约束得$y_2-y_1=0$：对应点总在同一行上，极线都是水平线，极点在水平方向的无穷远处。这个例子在后面的双目视差中还会用到。
+
+估计基础矩阵最经典的方法是八点法。把$\tilde{\bm x}_2^\top\bm F\tilde{\bm x}_1=0$展开，每对对应点给出$\bm F$的9个元素的一个线性方程，按$\bm F$逐行排列时系数为
+\[
+  (x_2x_1,\;x_2y_1,\;x_2,\;y_2x_1,\;y_2y_1,\;y_2,\;x_1,\;y_1,\;1)\text{。}
+\]
+8对点可以确定$\bm F$（相差比例），更多点时求最小二乘意义下的解。这样解出的矩阵一般不满足秩为2，需要再投影：设其奇异值分解为$\bm U\operatorname{diag}(\sigma_1,\sigma_2,\sigma_3)\bm V^\top$，把$\sigma_3$置零。由埃卡特—杨定理，这样得到的是弗罗贝尼乌斯范数下最近的秩2矩阵；该定理同样见于前文所引的卷一的“线性空间”章。与单应估计一样，坐标归一化对八点法的精度至关重要\scite{vision-hartley1997eightpoint}
+
+\begin{algorithm}[归一化八点法与本质矩阵分解]
+  \label{alg:vision-formation-eight-point}
+  \begin{algorithmic}[1]
+    \Require $n\ge8$对对应点$(\tilde{\bm x}_{1,i},\tilde{\bm x}_{2,i})$；求本质矩阵时还需内参$\bm K_1,\bm K_2$
+    \Ensure 基础矩阵$\bm F$；以及相对运动$(\bm R,\bm t)$，$\bm t$只确定方向
+    \State 对两组点分别求归一化变换$\bm T_1,\bm T_2$
+    \State 用归一化坐标为每对点写出一行系数，叠成$n\times9$矩阵$\bm M$
+    \State 取$\bm M$最小奇异值的右奇异向量，排成$3\times3$矩阵$\tilde{\bm F}$
+    \State 对$\tilde{\bm F}$做奇异值分解并把最小奇异值置零，得到秩2矩阵；还原$\bm F=\bm T_2^\top\tilde{\bm F}\bm T_1$
+    \State $\bm E\gets\bm K_2^\top\bm F\bm K_1$；做奇异值分解$\bm E=\bm U\bm\Sigma\bm V^\top$，并把$\bm\Sigma$改为$\operatorname{diag}(1,1,0)$\Comment{调整$\bm U,\bm V$的符号使行列式为$+1$}
+    \State 令$\bm W=\begin{pmatrix}0&-1&0\\1&0&0\\0&0&1\end{pmatrix}$，候选$\bm R\in\{\bm U\bm W\bm V^\top,\bm U\bm W^\top\bm V^\top\}$，$\bm t\in\{\bm u_3,-\bm u_3\}$
+    \For{四种组合}
+      \State 三角化若干对应点，统计在两台相机前方（深度为正）的点数
+    \EndFor
+    \State 返回正深度点最多的组合
+  \end{algorithmic}
+\end{algorithm}
+
+最后一步的四种组合中，只有一种让空间点同时位于两台相机前方，其余三种分别对应把相机或场景“翻到背后”的解。真实数据中对应点含有错误匹配，八点法常放在\ref{sec:vision-recognition-ransac}节的随机采样一致性框架中使用：每次随机抽8对点求解，统计有多少点对到极线的距离足够小。内参已知时，还可以用只需5对点的最小解法直接估计$\bm E$，抽样次数更少。
+
+两台相机的投影矩阵$\bm\Pi_1,\bm\Pi_2$都已知时，由一对对应点可以求出空间点，这一步称为\termalias{vision-triangulation}{三角化}。由$\tilde{\bm x}\sim\bm\Pi\tilde{\bm X}$，同样用叉积为零消去比例：记$\bm\Pi$的三行为$\bm\pi^{1\top},\bm\pi^{2\top},\bm\pi^{3\top}$，像点为$(x,y)$，每台相机给出两个方程
+\[
+  x\,\bm\pi^{3\top}\tilde{\bm X}-\bm\pi^{1\top}\tilde{\bm X}=0,\qquad
+  y\,\bm\pi^{3\top}\tilde{\bm X}-\bm\pi^{2\top}\tilde{\bm X}=0\text{。}
+\]
+两台相机共4个方程，未知的齐次坐标$\tilde{\bm X}$有4个分量、3个自由度，仍用奇异值分解求解。继续上面的双目例子：$\bm\Pi_1=(\bm I\mid\bm0)$，$\bm\Pi_2=(\bm I\mid(-1,0,0)^\top)$，像点为$\hat{\bm x}_1=(0.1,0)$、$\hat{\bm x}_2=(-0.1,0)$。记$\tilde{\bm X}=(X,Y,Z,W)^\top$，第一台相机给出$0.1Z-X=0$和$Y=0$，第二台相机给出$-0.1Z-(X-W)=0$。前后两式联立得$0.1Z=W-0.1Z$，即$Z=5W$、$X=0.5W$，取$W=1$得空间点$(0.5,0,5)$，可以代回两台相机验证。
+
+有噪声时，两条射线一般不相交，线性解只是代数意义下的折中。更合理的目标是找一个空间点，使它在两幅图中的投影离观测像点最近，即最小化重投影误差。两条射线夹角越小，交点沿射线方向越不确定：相机离得太近或点太远时，像点上一个像素的误差会造成很大的深度误差。下一小节在双目情形中把这一点定量化。
+
+\subsection{多视图重建}
+\label{sec:vision-formation-multi-view}
+
+手里只有一组从不同位置拍摄的路口照片，既不知道相机在哪里，也不知道场景的形状，能否同时求出两者？这个问题称为\term{运动恢复结构}（structure from motion, SfM）。两视图几何已经提供了全部基本工具：特征匹配给出对应点，基础矩阵和本质矩阵给出两台相机的相对运动，三角化给出空间点。困难在于把许多幅图像组织成一个一致的整体，并控制误差在逐步添加图像时的累积。常用的增量式流程见算法\ref{alg:vision-formation-sfm}\scite{vision-schonberger2016sfm}
+
+\begin{algorithm}[增量式运动恢复结构]
+  \label{alg:vision-formation-sfm}
+  \begin{algorithmic}[1]
+    \Require 一组图像及其内参的初值
+    \Ensure 各图像的相机位姿与稀疏三维点
+    \State 在每幅图中检测局部特征，在图像对之间匹配\Comment{特征见\ref{sec:vision-features-sift}节}
+    \State 对每个图像对用随机采样一致性估计基础矩阵或单应，保留几何上一致的匹配
+    \State 选择匹配多、基线足够大的一对图像，分解本质矩阵得到相对位姿，三角化初始点
+    \Repeat
+      \State 选择与已有三维点对应最多的新图像，由二维—三维对应估计其投影矩阵
+      \State 三角化新图像与已注册图像之间的新对应点
+      \State 对局部或全部相机与点做光束法平差，剔除重投影误差过大的点
+    \Until{没有可注册的新图像}
+  \end{algorithmic}
+\end{algorithm}
+
+第5步由已知三维点和它们的像点估计相机，称为相机后方交会。投影矩阵$\bm\Pi$有11个自由度，每对二维—三维对应给出2个方程，用与式\eqref{eq:vision-formation-dlt}相同的直接线性变换，至少需要6对；内参已知时，只需估计6个自由度的位姿，所需对应更少。
+
+第7步的\term{光束法平差}（bundle adjustment）是整个流程的核心\scite{vision-triggs2000bundle}设有$m$台相机，参数为$\bm\theta_i$（位姿及可能的内参），$N$个空间点$\bm X_j$，$\mathcal O$为观测集合，$\bm x_{i,j}$是点$j$在图像$i$中的观测。它同时调整所有相机与点，最小化总重投影误差
+\begin{equation}
+  \min_{\{\bm\theta_i\},\{\bm X_j\}}\sum_{(i,j)\in\mathcal O}
+  \rho\Bigl(\bigl\lVert\bm x_{i,j}-\pi(\bm\theta_i,\bm X_j)\bigr\rVert_2^2\Bigr)\text{，}
+  \label{eq:vision-formation-bundle}
+\end{equation}
+其中$\pi$为式\eqref{eq:vision-formation-projection}加畸变的投影，$\rho$是鲁棒损失，例如Huber损失，用来减弱残余错误匹配的影响；M估计与Huber损失同样见于前文所引的卷二的“随机变量”章。名称中的“光束”指从每个空间点射向各相机中心的一束光线，平差就是调整它们使之与观测一致。
+
+这个问题规模很大，但有特殊的稀疏结构。每一项残差只依赖一台相机和一个点，雅可比矩阵的每一行只在这两块上非零。按“相机参数在前、点参数在后”排列，高斯—牛顿法的法方程具有分块形式
+\[
+  \begin{pmatrix}\bm U&\bm W\\\bm W^\top&\bm V\end{pmatrix}
+  \begin{pmatrix}\bm\delta_{\mathrm c}\\\bm\delta_{\mathrm p}\end{pmatrix}
+  =\begin{pmatrix}\bm g_{\mathrm c}\\\bm g_{\mathrm p}\end{pmatrix}\text{，}
+\]
+其中$\bm U$由每台相机的$6\times6$块组成（若同时优化内参则更大），$\bm V$由每个点的$3\times3$块组成，两者都是块对角的，因为不同相机之间、不同点之间没有直接耦合。由第二行解出$\bm\delta_{\mathrm p}=\bm V^{-1}(\bm g_{\mathrm p}-\bm W^\top\bm\delta_{\mathrm c})$，代入第一行，得到只含相机参数的方程
+\begin{equation}
+  (\bm U-\bm W\bm V^{-1}\bm W^\top)\,\bm\delta_{\mathrm c}
+  =\bm g_{\mathrm c}-\bm W\bm V^{-1}\bm g_{\mathrm p}\text{。}
+  \label{eq:vision-formation-schur}
+\end{equation}
+左边的矩阵是舒尔补；舒尔补与稀疏消元同样见于前文所引的卷一的“图的表示与计算”章。$\bm V^{-1}$只需逐块求$3\times3$矩阵的逆，代价很低。以100台相机、10000个点为例，原方程有$600+30000=30600$个未知数，消去点之后只需解$600\times600$的方程，再逐点回代。
+
+光束法平差还有一个必须处理的不确定性。把整个重建做一次相似变换，即同时旋转、平移和缩放全部相机与点，每个点的投影都不变，目标函数也不变。这7个自由度无法由图像确定，表现为法方程的矩阵奇异。实践中固定第一台相机的位姿和某一段距离，或者在法方程中加阻尼。这与\ref{sec:vision-recognition-measurement}节所说的“只有图像时只能确定相对尺度”是同一件事：要得到以米计的结果，必须引入已知长度、双目基线或其他度量信息。
+
+运动恢复结构得到的是稀疏点和相机。神经辐射场和三维高斯溅射在拟合场景之前，通常先用这一流程求出每张照片的相机参数，见\ref{sec:vision-generation-novel-view}节；相机估计不准，后续渲染就会出现重影和模糊。
+
+当两台相机固定在一起、位置关系已知时，问题大大简化，这就是双目立体视觉。先做\term{立体校正}（stereo rectification）：对两幅图像各施加一个只含旋转的单应$\bm K\bm R_{\mathrm{rect}}\bm K^{-1}$，使两台相机的朝向一致、$x$轴都沿基线方向。由前面的验算，此时极线都是水平的，对应点在同一行。设校正后两台相机焦距均为$f$（像素），基线长$B$，左相机中心在原点，右相机中心在$(B,0,0)$。点$(X,Y,Z)$在两图中的横坐标为$u_{\mathrm l}=fX/Z+c_x$、$u_{\mathrm r}=f(X-B)/Z+c_x$，两者之差
+\begin{equation}
+  d=u_{\mathrm l}-u_{\mathrm r}=\frac{fB}{Z},\qquad\text{即}\qquad Z=\frac{fB}{d}\text{，}
+  \label{eq:vision-formation-disparity}
+\end{equation}
+$d$称为\term{视差}（disparity）。深度与视差成反比：近处的点视差大，远处的点视差小。例如$f=700$像素、$B=0.12$米，测得$d=21$像素，则$Z=84/21=4$米。
+
+对$d$求导可以看到深度误差怎样随距离变化：$\lvert\mathrm{d}Z/\mathrm{d}d\rvert=fB/d^2=Z^2/(fB)$。视差有1个像素的误差时，4米处的深度误差约为$16/84\approx0.19$米，8米处约为$64/84\approx0.76$米：距离加倍，误差变为四倍。这定量说明了上一小节的结论：要在远处测得准，需要更长的基线或更长的焦距。
+
+求视差需要在两图同一行上找对应。最朴素的块匹配为左图每个像素取一个小窗口，在右图同一行上把窗口平移$0,1,\ldots,d_{\max}$个像素，计算绝对差之和，选代价最小的平移作为视差。一维教学例中，左图一行为$(10,10,50,90,90)$，右图一行为$(10,50,90,90,90)$。以左图第3个像素为中心、宽3的窗口为$(10,50,90)$；视差为0时，右图对应窗口为$(50,90,90)$，代价为$40+40+0=80$；视差为1时，右图窗口为$(10,50,90)$，代价为0，因此视差为1。这种方法在纹理丰富处有效，在白墙等无纹理区域、只在一幅图中可见的遮挡区域和重复纹理处会给出错误视差，需要加入平滑约束或全局优化。块匹配在视频运动估计中的用法见\ref{sec:vision-videofound-block-matching}节。
+
+学习方法在这条路线的每一环都带来了改变，但没有取消几何本身。学习得到的局部特征与匹配器替代了手工描述子，在光照和视角变化大时找到更多正确对应，匹配之后仍用本节的单应或基础矩阵做几何核验（见\ref{sec:vision-recognition-retrieval}节）。多视图深度网络在已知相机下，沿每个参考像素的射线设一组深度假设，用式\eqref{eq:vision-formation-plane-homography}把源图特征变换到参考视角再比较，形成代价体（见\ref{sec:vision-recognition-mvsnet}节）。更近的前馈模型从图像直接预测点图与相机（见\ref{sec:vision-recognition-geometry}节），省去了逐步注册和平差，但其输出仍要用重投影误差、尺度和坐标约定来检验，而这些检验所用的正是本节的投影模型。
+
+\section{本章小结}
+\label{sec:vision-formation-summary}
+
+回到开篇的两部手机。同一块路牌像素值不同，原因可以沿成像过程逐一找到：像素值在理想情况下正比于场景辐亮度，而辐亮度本身是光照与反照率的乘积；传感器读数带有随信号变化的散粒噪声和与信号无关的读出噪声，暗处的颗粒由此而来；拜耳阵列让每个位置起初只有一种颜色，去马赛克在边缘处可能产生伪彩色；成像管线中的白平衡、颜色校正、色调映射和伽马编码因设备而异，最终的sRGB数值已不与光量成比例。缩小后砖墙上的条纹是二维混叠：超出网格奈奎斯特频率的纹理被折叠成较粗、方向也可能改变的图案，缩小前应先低通。天空的色带是量化造成的伪轮廓，伽马编码和抖动分别从编码分配和误差分布两个角度缓解它，而超出传感器动态范围的部分需要多次曝光合成。路牌的颜色在不同设备上可以比较，前提是把各自的RGB经过明确的约定转换到CIE XYZ等与设备无关的空间；Lab适合度量颜色差别，YCbCr与色度下采样则服务于压缩。
+
+“路牌有多远”只有在几何模型下才有答案。针孔模型说明单幅图像中像素尺寸与距离、物体大小之间存在不可消除的歧义；内参把像素翻译成光线方向，外参把相机放进世界，标定用已知平面图案测出这些参数。两幅图像之间，平面或纯旋转给出单应，一般场景给出极线约束，已知相机时三角化可以求出空间点；多幅图像由运动恢复结构和光束法平差同时求出相机和结构，双目视差给出深度，且深度误差随距离平方增长。至此，开篇的问题都有了解释，回答的条件也已写明：辐亮度与像素的比例关系依赖线性的原始数据，采样定理依赖带限假设，三角化依赖准确的对应和足够的基线，只用图像时只能得到相对尺度。
+
+本章也留下了一些尚未处理的问题。在数组上平滑、锐化、变换到频域和多分辨率表示，是\ref{chap:vision-image-transforms}章的内容；从像素中找出边缘、角点、局部特征和区域，以支撑本章两视图几何所需的对应点，是\ref{chap:vision-image-features}章的内容；视频在时间方向上的采样以及帧间运动，由\ref{chap:vision-video-foundations}章讨论。成像中的噪声、模糊、混叠和量化怎样被反过来去除，构成\ref{chap:vision-image-restoration}章的复原问题；本章的相机模型则是\ref{chap:vision-image-recognition}章深度与几何估计、\ref{chap:vision-image-generation}章新视角合成的共同出发点。在那些章节中，学习方法从数据中获得先验，补足单凭观测模型无法确定的部分，但它们的输入从哪里来、输出应满足什么几何和物理约束，仍由本章的模型规定。
+
+\paragraph{扩展阅读}
+成像与颜色方面，本章的高动态范围合成依靠多次不同曝光，并假设场景在拍摄期间静止。Hasinoff等人的手机连拍方案改用一组曝光相同、整体偏暗的原始帧，对齐合并以降低噪声，再做局部色调映射，把本章的噪声模型、原始数据和成像管线组织成实际流程；Reinhard等人借鉴摄影中的分区曝光法提出全局与局部色调映射算子，可与本章管线中的色调映射步骤对照\scite{vision-hasinoff2016burst,vision-reinhard2002tone}Wyszecki与Stiles的《色彩科学》汇集配色函数、色度学公式与数据表，是本章CIE XYZ与Lab部分的出处型参考；Fairchild的《色貌模型》讨论色适应和观看环境怎样改变颜色感知，说明同一组XYZ值为何在不同环境下看起来不同；Sharma等人给出CIEDE2000色差公式的实现说明与测试数据，这正是本章提到的在Lab基础上加入修正项的色差公式\scite{vision-wyszecki-stiles2000,vision-fairchild2013color,vision-sharma2005ciede2000}
+
+几何与重建方面，Nistér给出内参已知时由五对对应点求本质矩阵的高效解法；与随机采样一致性结合时，每次抽样所需的点比八点法少，抽中全为正确匹配的概率随之提高\scite{vision-nister2004fivepoint}本章双目块匹配在无纹理处需要平滑约束，Hirschmüller的半全局匹配沿多个方向做一维动态规划来近似这一约束，并以互信息作匹配代价应对两图的亮度差异\scite{vision-hirschmuller2008sgm}从稀疏点走向稠密模型，Furukawa与Ponce的多视图立体方法从稀疏匹配出发反复扩展和过滤小面片；Schönberger等人则在已求出的相机上逐像素选择可用的源视图，联合估计深度与法向，常接在本章的增量式运动恢复结构之后\scite{vision-furukawa2010pmvs,vision-schonberger2016mvs}
+
+本章的运动恢复结构离线处理一组照片。Mur-Artal等人的ORB-SLAM在视频流中同时跟踪相机并建立地图，用关键帧上的局部光束法平差和回环检测抑制累积漂移，是在线的同时定位与建图（simultaneous localization and mapping, SLAM）的代表系统\scite{vision-murartal2015orbslam}Gallego等人综述的事件相机则改变了采集方式本身：每个像素在对数亮度变化超过阈值时独立、异步地输出事件，不再按帧曝光，因而时间分辨率和动态范围都远高于常规相机，本章基于帧的采样、曝光和动态范围讨论需要相应改写\scite{vision-gallego2022event}

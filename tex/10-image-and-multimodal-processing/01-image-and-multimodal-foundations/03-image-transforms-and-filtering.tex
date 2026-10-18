@@ -1,0 +1,929 @@
+\chapter{图像的变换与滤波}
+\label{chap:vision-image-transforms}
+
+设想一幅夜间街景的灰度照片。招牌很亮，墙面很暗，暗处的层次挤在少数几个灰度级里；传感器噪声让平坦的墙面布满细小的起伏，个别坏点显示为孤立的白点；路灯造成的照度从左到右逐渐变化；我们还想把招牌上的笔画提取成一张二值掩码，并去掉笔画中的小孔和旁边的零星噪点。这几项要求都不需要“识别”招牌写了什么，却都要改写像素的数值：有的只看一个像素自身的灰度，有的要看它周围的邻域，有的要看整幅图像的整体结构，有的则要按形状而不是按数值处理。
+
+本章回答的问题是：给定一幅已经采样、量化的数字图像（采样与量化见\ref{chap:vision-image-formation}章），怎样设计一个从图像到图像的映射，使某种需要的性质得到加强，而另一些性质尽量保持不变。读完本章，读者应能对每个经典方法说清三件事：它的输出依赖输入的哪一部分；它为什么这样设计，用什么公式或推导支撑；在什么条件下它会失效。由于后面的学习模型大量继承了这些方法的结构，例如卷积网络的局部加权、注意力的相似度加权、特征金字塔的多尺度表示、学习式压缩的变换编码，我们也会在每个方法之后指出这种延续。
+
+本章的路线按“一个输出像素依赖多少输入”逐步扩大。灰度变换只看同一位置的值，最简单，但无法区分处于同一灰度的噪声和细节。空间滤波让输出依赖一个邻域，可以平均噪声、突出边缘，但邻域大小固定。频域处理把整幅图像分解成不同频率的成分，适合描述周期干扰和缓慢变化的照度，却失去了位置信息。多分辨率表示在位置和尺度之间取得折中，同时为压缩和由粗到细的搜索提供了表示。最后，形态学处理换用集合运算，处理的对象从数值变成形状，适合掩码的清理和结构提取。本章的取材范围大体对应数字图像处理教材中灰度变换、空间与频域滤波、小波与多分辨率处理以及形态学处理各章\scite{vision-gonzalez-woods2018}。阅读本章需要卷积、离散傅里叶变换和基本概率的知识，相应结论会在用到时简要说明。
+
+\section{灰度变换}
+\label{sec:vision-transforms-intensity}
+
+先考虑最简单的一类映射：输出图像在位置$(x,y)$的值只取决于输入图像在同一位置的值。记输入灰度图为$f(x,y)$，其中$x=0,\ldots,W-1$是横向（列）坐标，$y=0,\ldots,H-1$是纵向（行）坐标，横向向右、纵向向下；灰度取整数$r\in\{0,1,\ldots,L-1\}$，8位图像$L=256$。\term{灰度变换}（intensity transformation）指一个函数$T$，输出为
+\begin{equation}
+  g(x,y)=T\bigl(f(x,y)\bigr),\qquad s=T(r)\text{，}
+  \label{eq:vision-transforms-point}
+\end{equation}
+其中$r$和$s$分别表示输入、输出灰度。同一个$T$作用于所有位置，因此只要列出$L$个输入值对应的输出值，就完全确定了这个变换；实际实现常用一张长度为$L$的查找表。
+
+本节要解决的问题是：怎样选择$T$，使需要观察的灰度范围得到更多的输出级别。难点在于输出级别的总数有限，拉开一段灰度的差异，必然压缩另一段。两条路线的区别在于$T$由谁决定。第一条路线由设计者按物理含义或观察需要直接给出函数形式，例如对数、幂函数和分段直线；第二条路线让图像自己的灰度分布决定$T$，也就是直方图均衡和规定化，以及它们的局部版本CLAHE。前者参数少、可解释，后者能自动适应不同图像，但同一个变换对不同图像的含义也随之不同。
+
+\subsection{基于点运算的灰度映射}
+\label{sec:vision-transforms-point-operations}
+
+只依赖单个像素自身数值的运算称为\term{点运算}（point operation）。选择点运算时，最有用的量是映射的斜率$T'(r)$：输入在$r$附近相差$\Delta r$的两个像素，输出相差约$T'(r)\Delta r$。斜率大于1的灰度段被拉开，小于1的段被压缩。下面四种常用形式，可以看成对“在哪一段放大斜率”的不同回答。
+
+\term{图像反转}（image negative）的映射是$s=L-1-r$，斜率处处为$-1$，不拉开也不压缩任何层次，只把明暗对调。它的用途是观察习惯：医学影像中暗背景上的白色细节，反转后变为白背景上的暗细节，便于按亮底暗字的习惯观察。由于映射是一一对应的，反转不丢失任何信息。
+
+\term{对数变换}（log transformation）的形式是
+\begin{equation}
+  s=c\log(1+r),\qquad c=\frac{L-1}{\log L}\text{，}
+  \label{eq:vision-transforms-log}
+\end{equation}
+常数$c$使$r=L-1$时$s=L-1$，加1保证$r=0$时有定义。它的斜率$c/(1+r)$随$r$增大而减小，所以低灰度段被拉开，高灰度段被压缩。取$L=256$，$c=255/\log256\approx46.0$：输入1映射为约31.9，输入15映射为127.5，输入255仍映射为255。原来只占前6\%的输入范围$[0,15]$，现在占据了一半的输出范围。对数变换适合动态范围跨越几个数量级的数据，典型例子是后面\ref{sec:vision-transforms-dft2d}节的傅里叶幅度谱：直流分量可能比其他分量大几个数量级，不取对数时整幅谱图除了中心一点几乎全黑。
+
+幂律变换也称\term{伽马变换}（gamma transformation），它的作用对象同样是单个像素的灰度。先把灰度归一化到$[0,1]$，记为$r$，再取
+\begin{equation}
+  s=r^{\gamma},\qquad \gamma>0\text{。}
+  \label{eq:vision-transforms-gamma}
+\end{equation}
+斜率为$T'(r)=\gamma r^{\gamma-1}$。当$\gamma<1$时，斜率在$r$很小时趋于无穷，暗部被拉开；当$\gamma>1$时情形相反。斜率等于1的分界点满足$\gamma r^{\gamma-1}=1$，即$r^{*}=\gamma^{1/(1-\gamma)}$。取$\gamma=1/2$，$r^{*}=1/4$：0.04、0.25、0.81分别映射为0.2、0.5、0.9，前两个数的差从0.21变为0.3，后两个数的差从0.56变为0.4。与对数变换相比，伽马变换用一个参数在“拉开暗部”和“拉开亮部”之间连续调节，因此常用于显示校正：显示设备的亮度大致是输入电压的幂函数，图像编码时预先施加相反方向的幂函数，才能让显示出的亮度与场景亮度成比例。具体的显示传递函数与色彩空间有关，见\ref{sec:vision-formation-color-spaces}节；这里需要记住的是，图像文件中的数值通常已经经过这种非线性编码，在线性光强上做平均或混合之前，应先撤销这层编码。
+
+\term{分段线性变换}（piecewise linear transformation）用几段直线拼成$T$，最常见的是对比度拉伸：取两个控制点$(r_1,s_1)$和$(r_2,s_2)$，$r_1<r_2$，在$[0,r_1]$、$[r_1,r_2]$、$[r_2,L-1]$三段上分别线性插值。中间一段的斜率$(s_2-s_1)/(r_2-r_1)$决定被关注灰度段的放大程度。例如$L=256$，取$(80,20)$和$(160,230)$，中间段斜率为$210/80=2.625$，输入100映射为$20+2.625\times20=72.5$。当$r_1=r_2$且$s_1=0$、$s_2=L-1$时，拉伸退化为阈值化，输出只有两个值；当只把某个灰度区间映射为高值、其余保持不变时，得到灰度切片，用于突出某种已知灰度范围的材料。分段线性变换的优点是控制点可以直接从直方图上读出；缺点是折点处斜率不连续，平滑的灰度渐变经过折点后会出现可见的折痕。
+
+最后一种点运算不改变数值，而是把它拆开观察。8位灰度可以写成二进制展开$r=\sum_{k=0}^{7}b_k2^{k}$，$b_k\in\{0,1\}$。把所有像素的第$k$位取出，就得到第$k$个位平面，这种分解称为\term{位平面分层}（bit-plane slicing）。例如$r=200$的二进制为$11001000$，最高位$b_7=1$。高位平面描述图像的大块明暗结构，最高位平面本身就是阈值为128的二值化；低位平面通常像噪声，因为它们对应的数值差小于传感器噪声的幅度。只保留最高4个位平面，200被量化为192，误差不超过15。这说明位平面分层与量化的关系：丢掉低位平面就是减少量化位数，伪轮廓等后果见\ref{sec:vision-formation-quantization}节。位平面也是一种简单的压缩思路：高位平面中大片相同的0或1，可以用很少的比特描述。
+
+四种点运算有共同的边界。第一，严格单调的$T$在连续值上可逆，但在整数灰度上，凡是斜率小于1的段都会把多个输入级映射到同一个输出级，被合并的差异无法再恢复。第二，点运算看不到邻域，同一灰度的噪声和细节受到完全相同的处理：把暗部拉开，暗处的噪声也一起被拉开。第三，参数由设计者给定，换一幅曝光不同的图像，原来合适的$\gamma$未必合适。第一点要求我们在高位深数据上做变换，第二点要等到下一节的空间滤波才能处理，第三点则由下面基于直方图的方法回答。
+
+点运算的形式在学习方法中仍然常见。网络输入前的归一化本身就是线性点运算；有些低照度增强方法不直接预测输出像素，而是让网络为每个像素预测一条曲线的参数。Zero-DCE使用二次曲线$\mathrm{LE}(I;\alpha)=I+\alpha I(1-I)$，$\alpha\in[-1,1]$，迭代施加8次，每次迭代、每个颜色通道各有一张逐像素的参数图，由一个7层卷积网络输出共24张参数图\scite{vision-zerodce2020}。这条曲线在$I=0$和$I=1$处固定不动，$\alpha$在$[-1,1]$内时曲线单调，正是上面对点运算提出的“端点不越界、次序不颠倒”两项要求；与固定的伽马曲线相比，它让曲线参数随位置变化，从而部分回答了第三点。
+
+\subsection{基于直方图的灰度映射}
+\label{sec:vision-transforms-histogram}
+
+点运算的参数需要人来定。一个自然的想法是：既然要让每个输出级别都尽量被用上，就应当看输入图像实际在哪些灰度上有像素。这需要统计各灰度出现的次数。设图像共有$n=WH$个像素，灰度为$r_k$的像素有$n_k$个，$k=0,\ldots,L-1$。\term{直方图}（histogram）就是序列$(n_0,\ldots,n_{L-1})$，归一化直方图
+\begin{equation}
+  p_r(r_k)=\frac{n_k}{n}
+  \label{eq:vision-transforms-normalized-histogram}
+\end{equation}
+可以看成从图像中随机取一个像素时，其灰度等于$r_k$的概率。直方图只记录“有多少”，不记录“在哪里”，因此两幅内容完全不同的图像可以有相同的直方图。下面三种方法都只用直方图决定$T$：直方图均衡把输出分布变成均匀分布，直方图规定化把它变成指定的分布，CLAHE在局部图块上做受限的均衡并在图块之间插值。
+
+\subsubsection{直方图均衡}
+
+直方图挤在一段很窄的灰度范围内时，图像看起来灰蒙蒙的，因为大多数像素之间的灰度差很小。我们希望找一个单调递增的$T$，使输出灰度尽量均匀地占满全部范围。
+
+先在连续情形下推导。把灰度归一化到$[0,1]$，视为随机变量$R$，密度为$p_r$，并假设$p_r$在$[0,1]$上处处为正。令$S=T(R)$，$T$可导且严格递增。随机变量经过可逆变换后，密度按变量替换公式变化：
+\begin{equation}
+  p_s(s)=p_r(r)\left|\frac{\mathrm{d}r}{\mathrm{d}s}\right|=\frac{p_r(r)}{T'(r)}\text{，}\qquad s=T(r)\text{。}
+  \label{eq:vision-transforms-change-of-variable}
+\end{equation}
+这个公式说的是：输入在$[r,r+\mathrm{d}r]$内的概率$p_r(r)\mathrm{d}r$，在输出中被摊到宽度$T'(r)\mathrm{d}r$的区间上，所以输出密度等于输入密度除以斜率。成立条件是$T$严格单调且可导；随机变量变换下密度的一般结论可参考\BookChapterRef{chap:random-variables}{卷二“随机变量”章}。要让$p_s(s)\equiv1$，只需让斜率处处等于输入密度：$T'(r)=p_r(r)$。积分并取$T(0)=0$，得到
+\begin{equation}
+  T(r)=\int_{0}^{r}p_r(w)\,\mathrm{d}w=F_R(r)\text{，}
+  \label{eq:vision-transforms-cdf}
+\end{equation}
+即输入灰度的累积分布函数。这个结果有清楚的直观含义：像素密集的灰度段，$p_r$大，映射斜率也大，被拉开；像素稀少的段被压缩。它也说明了为什么要求$p_r>0$：若某段灰度上没有像素，$F_R$在那里是平的，$T$不再严格递增，但这段灰度本来就不出现在图像中，对结果没有影响。概率论中称“$F_R(R)$服从$[0,1]$上的均匀分布”为概率积分变换，直方图均衡就是它在图像上的应用。
+
+离散情形把积分换成求和，并把$[0,1]$还原为$[0,L-1]$：
+\begin{equation}
+  s_k=T(r_k)=\operatorname{round}\Bigl((L-1)\sum_{j=0}^{k}p_r(r_j)\Bigr)
+  =\operatorname{round}\Bigl(\frac{L-1}{n}\sum_{j=0}^{k}n_j\Bigr)\text{。}
+  \label{eq:vision-transforms-histogram-equalization}
+\end{equation}
+\term{直方图均衡化}（histogram equalization）就是按式\eqref{eq:vision-transforms-histogram-equalization}构造查找表，再逐像素查表。
+
+用一个教学构造的$4\times4$图像复核计算。设$L=8$，16个像素中灰度2、3、4、5分别有5、6、3、2个，其余灰度没有像素。累计计数依次为5、11、14、16，乘以$(L-1)/n=7/16$得到2.19、4.81、6.13、7，取整后映射为
+\[
+  2\mapsto2,\quad 3\mapsto5,\quad 4\mapsto6,\quad 5\mapsto7\text{。}
+\]
+输入只占4个相邻级别，输出则分布在2到7之间，灰度2和3之间的差从1变为3，灰度3和4之间仍只差1。图\ref{fig:vision-transforms-histogram-equalization}画出了前后两个直方图。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/histogram-equalization}
+  \caption{直方图均衡的教学算例（$4\times4$图像，8个灰度级）。左图为输入直方图，右图为按累计分布取整后的输出直方图。每个灰度柱只能整体移动，不能拆分，所以输出直方图并不平坦；均衡的作用是拉开像素多的灰度之间的距离。}
+  \label{fig:vision-transforms-histogram-equalization}
+\end{figure}
+
+从图中可以看到离散均衡的两个性质。其一，输出直方图并不平坦：灰度为3的6个像素必须全部映射到同一个输出级别，离散均衡只能移动整根柱子，不能把一根柱子拆开。连续推导中的“均匀分布”只在离散情形下近似成立，灰度级越多、直方图越平滑，近似越好。其二，最小的输入灰度不一定映射到0：本例中灰度2映射为2，因为它自己的累计概率是$5/16$。有的实现改用
+\[
+  s_k=\operatorname{round}\Bigl((L-1)\frac{c_k-c_{\min}}{n-c_{\min}}\Bigr)\text{，}
+\]
+其中$c_k$是累计计数，$c_{\min}$是最小非零累计计数。本例中这一版本给出$2\mapsto0$、$3\mapsto4$、$4\mapsto6$、$5\mapsto7$，占满了输出范围。两种约定都常见，报告结果时应写明采用哪一种。
+
+直方图均衡在三种情况下效果不好。第一，若直方图有一个很高的尖峰，例如大片平坦背景，尖峰所在的灰度段会得到极大的斜率，背景中的微小起伏和噪声被放大成明显的纹理。第二，全局均衡只用一条曲线，暗墙和亮招牌共用一个映射，像素多的那一类区域占据大部分输出范围，另一类仍可能看不清。第三，均衡化改变了灰度的绝对含义，不适合需要用灰度值做测量的图像。下面的规定化回答“输出不一定要均匀”的需求，CLAHE回答前两个问题。
+
+\subsubsection{直方图规定化}
+
+有时我们并不想要均匀分布，而是希望一幅图的灰度分布与另一幅参考图一致，例如全景拼接中相邻照片曝光不同，或者多台相机拍摄同一场景需要统一外观。\term{直方图规定化}（histogram specification）也称直方图匹配，目标是找到$T$，使输出灰度服从指定的分布$p_z$。
+
+仍先看连续情形。设输入的累积分布函数为$F_R$，目标的累积分布函数为$G(z)=\int_0^zp_z(w)\,\mathrm{d}w$，并假设$G$严格递增。由式\eqref{eq:vision-transforms-cdf}，$U=F_R(R)$服从均匀分布；同理，若$Z$服从目标分布，则$G(Z)$也服从均匀分布。于是$Z=G^{-1}(U)$服从目标分布，所求映射为
+\begin{equation}
+  z=G^{-1}\bigl(F_R(r)\bigr)\text{。}
+  \label{eq:vision-transforms-specification}
+\end{equation}
+这一步的意思是：先用$F_R$把输入“拉直”成均匀分布，再用目标分布的分位数函数$G^{-1}$把均匀分布“弯”成目标形状。它把输入的第$q$分位数送到目标的第$q$分位数。
+
+离散情形下$G$是阶梯函数，没有严格的逆，常用的规则是：对每个输入级$r_k$，取使$G(z_q)\geq F_R(r_k)$成立的最小$z_q$。继续上面的例子，设目标是16个像素中灰度3、4、5、6、7分别有2、4、4、4、2个，目标累计计数为2、6、10、14、16。输入累计计数为5、11、14、16，按规则查找：5对应第一个不小于5的目标累计计数6，即灰度4；11对应14，即灰度6；14也对应灰度6；16对应灰度7。所以
+\[
+  2\mapsto4,\quad 3\mapsto6,\quad 4\mapsto6,\quad 5\mapsto7\text{，}
+\]
+输出计数为灰度4有5个、灰度6有9个、灰度7有2个，与目标并不相同，而且输入灰度3和4被合并了。原因与均衡相同：同一灰度的像素只能整体移动。规定化只能在“分位数对齐”的意义下近似匹配，目标分布越细致、输入的灰度越集中，偏差越大。
+
+规定化可以看成只对齐一维边缘分布的风格迁移。学习式的风格迁移中，自适应实例归一化把内容特征每个通道的均值和标准差换成风格特征的值\scite{huang2017adain}；这相当于只对齐分布的前两阶矩，而直方图规定化对齐整个分布，但只在像素灰度这一个通道上进行，不涉及特征之间的联合分布。
+
+\subsubsection{受限局部直方图均衡化}
+\label{sec:vision-transforms-clahe}
+
+回到夜景照片。墙面和招牌的灰度分布差别很大，全局均衡只能给出一条折中的曲线。直接的改进是对每个像素取周围一个窗口，用窗口内的直方图计算该像素的映射，这称为\term{自适应直方图均衡化}（adaptive histogram equalization, AHE）\scite{vision-pizer1987ahe}。AHE解决了“一条曲线照顾不了所有区域”的问题，却加剧了两个问题。第一，窗口越小，窗口内的直方图越容易出现尖峰：一块平坦墙面里几乎所有像素都落在两三个灰度上，由式\eqref{eq:vision-transforms-histogram-equalization}，这几个灰度之间的映射斜率约为$(L-1)\times$（尖峰处的概率），可以达到几十，噪声因此被放大成颗粒。第二，逐像素重算窗口直方图代价很高；若改为把图像切成互不重叠的图块、每块一条曲线，块与块之间又会出现明显的接缝。
+
+\term{受限局部直方图均衡化}（contrast limited adaptive histogram equalization, CLAHE）分别回答这两个问题\scite{vision-zuiderveld1994clahe}：用计数上限限制映射的最大斜率，用相邻图块映射之间的双线性插值消除接缝。
+
+先看斜率为什么能被计数上限控制。设一个图块有$n$个像素，第$k$个灰度箱的计数为$h_k$。由式\eqref{eq:vision-transforms-histogram-equalization}，相邻两级之间的输出增量为
+\begin{equation}
+  T(r_k)-T(r_{k-1})=\frac{L-1}{n}h_k\text{，}
+  \label{eq:vision-transforms-clahe-slope}
+\end{equation}
+即映射的斜率正比于该箱的计数。若规定每个箱的计数不超过上限$\beta$，把超出部分截下来，共截下$E=\sum_k\max(h_k-\beta,0)$个计数，再平均分给全部$L$个箱，则每个箱的计数不超过$\beta+E/L$，斜率不超过$(L-1)(\beta+E/L)/n$。实现中通常把上限写成平均计数$n/L$的倍数，$\beta=\kappa n/L$，$\kappa\geq1$称为裁剪系数。由于$E\leq n$，斜率上界为
+\[
+  \frac{L-1}{n}\Bigl(\frac{\kappa n}{L}+\frac{n}{L}\Bigr)=\frac{L-1}{L}(\kappa+1)<\kappa+1\text{。}
+\]
+未截断时，平均斜率是$(L-1)/L\approx1$；所以$\kappa$直接限定了“最多把局部对比放大到平均水平的多少倍”。$\kappa=1$时所有箱都被截到平均计数，映射接近恒等变换；$\kappa$很大时，CLAHE退化为不受限的AHE。截断前后的灰度次序不变，因为截断后的直方图仍然非负，累计分布仍然单调不减。
+
+用一个四箱的小例复核。某图块有8个像素，直方图为$(0,8,0,0)$，$L=4$。直接均衡时累计分布为$(0,1,1,1)$，映射为$(0,3,3,3)$，灰度0与1之间一跳就是3级，这块区域里的微小差异全被拉到满量程。取上限$\beta=2$（对应$\kappa=1$），截下6个计数。若一次平均分给4个箱，每箱加1.5，得到$(1.5,3.5,1.5,1.5)$，第二箱又超过上限；映射为$3\times(0.1875,0.625,0.8125,1)=(0.56,1.88,2.44,3)$，最大一跳从3降为1.31。若把“截断—分配”重复到不再有箱超过上限，计数在本例中收敛为$(2,2,2,2)$，映射为$(0.75,1.5,2.25,3)$，每一跳都是0.75，接近恒等映射的斜率。截下的计数只分一次还是反复分配、余数怎样分，不同实现的规定不同；论文和代码中的“裁剪阈值”也有绝对计数和相对倍数两种写法，报告参数时必须同时写明单位和分配规则。图\ref{fig:vision-transforms-clahe}左两幅画出了截断与分配。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/clahe-clipping}
+  \caption{CLAHE的两个步骤（教学构造）。左：一个图块的四箱直方图$(0,8,0,0)$，虚线为计数上限2，浅红部分被截下；中：反复分配后的直方图$(2,2,2,2)$；右：四个相邻图块的中心（蓝点）及各自映射对某一输入灰度给出的输出，红点为待处理像素，它的输出由四个值双线性插值得到，本例为120。}
+  \label{fig:vision-transforms-clahe}
+\end{figure}
+
+再看接缝怎样消除。把图像切成$m_x\times m_y$个图块（常见设置为$8\times8$个），每块计算一条截断后的映射$T_{a,b}$，并把它看成定义在图块中心的。对一个位于四个相邻图块中心之间的像素，设它到左上中心的水平、竖直相对距离分别为$\alpha_x,\alpha_y\in[0,1]$（以中心间距为单位），灰度为$r$，则输出为
+\begin{equation}
+  \begin{aligned}
+  s={}&(1-\alpha_x)(1-\alpha_y)\,T_{\mathrm{ul}}(r)+\alpha_x(1-\alpha_y)\,T_{\mathrm{ur}}(r)\\
+  &+(1-\alpha_x)\alpha_y\,T_{\mathrm{ll}}(r)+\alpha_x\alpha_y\,T_{\mathrm{lr}}(r)\text{，}
+  \end{aligned}
+  \label{eq:vision-transforms-clahe-interp}
+\end{equation}
+下标ul、ur、ll、lr依次表示左上、右上、左下、右下图块。双线性插值本身见\ref{sec:vision-formation-interpolation}节；这里插值的对象不是像素值，而是四条曲线在同一输入灰度上的输出。像素从一个图块中心移到相邻中心时，权重连续地从一条曲线过渡到另一条，所以不会出现接缝。若某像素灰度$r=100$，四条曲线给出120、140、100、160，$\alpha_x=0.25$，$\alpha_y=0.5$，则
+\[
+  s=0.375\times120+0.125\times140+0.375\times100+0.125\times160=120\text{。}
+\]
+图像边缘附近的像素只落在两个图块中心之间，用一维线性插值；四个角上只受一个图块影响，直接用该图块的映射。插值的另一个好处是计算量：只需为每个图块算一次直方图和查找表，每个像素做四次查表和一次加权，不必为每个像素重新统计窗口。
+
+\begin{algorithm}[受限局部直方图均衡化]
+  \label{alg:vision-transforms-clahe}
+  \begin{algorithmic}[1]
+    \Require 灰度图$f$，灰度级数$L$，图块网格$m_x\times m_y$，裁剪系数$\kappa$，分配规则
+    \Ensure 增强后的图像$g$
+    \For{每个图块$(a,b)$}
+      \State 统计图块直方图$h_k$，像素数$n$，令$\beta\gets\kappa n/L$
+      \Repeat
+        \State $E\gets\sum_k\max(h_k-\beta,0)$，$h_k\gets\min(h_k,\beta)$
+        \State 按分配规则把$E$个计数分回各箱
+      \Until{没有箱超过$\beta$，或已达到规定的分配次数}
+      \State 由截断后的直方图按式\eqref{eq:vision-transforms-histogram-equalization}构造查找表$T_{a,b}$
+    \EndFor
+    \For{每个像素$(x,y)$}
+      \State 找到包围它的至多四个图块中心，计算相对位置$\alpha_x,\alpha_y$
+      \State 按式\eqref{eq:vision-transforms-clahe-interp}对各查找表在$f(x,y)$处的输出插值，得$g(x,y)$
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+CLAHE有三个参数：图块数、裁剪系数和分配规则。图块越小，映射越能跟随局部内容，但每块的像素越少，直方图越容易被噪声和小结构主导；裁剪系数越大，局部对比越强，平坦区噪声和亮边周围的光晕也越明显。它有几种典型的失效情形。第一，局部映射改变了区域之间的明暗关系：一块原本比另一块暗的墙面，均衡后可能变得更亮，所以医学测量、档案复制等需要保持灰度含义的场合要慎用。第二，强边缘两侧的图块直方图差别很大，插值后边缘附近会出现亮或暗的晕圈。第三，彩色图像若在R、G、B三个通道上分别做CLAHE，三个通道的映射不同，颜色会偏移；通常的做法是把图像转换到亮度与色度分离的空间（见\ref{sec:vision-formation-color-spaces}节），只对亮度通道做CLAHE。CLAHE在图像增强中的具体用法见\ref{sec:vision-restoration-clahe}节。
+
+表\ref{tab:vision-transforms-intensity-compare}把本节的方法放在同一张夜景照片上比较。从点运算到CLAHE，映射的依据从人为设定转向数据统计，又从全图统计转向局部统计；每一步换来更强的适应性，也付出更多的参数和更少的可解释性。
+
+\begin{table*}[tbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{18mm}XXX@{}}
+    \toprule
+    方法 & 映射的依据 & 适用情形 & 主要风险\\
+    \midrule
+    伽马、对数、分段线性 & 设计者给定的函数和参数 & 已知需要拉开的灰度段，需要可复现、可撤销 & 参数不随图像变化；整数灰度上压缩段会合并级别\\
+    直方图均衡 & 全图累积分布 & 灰度挤在窄范围内，全图内容相近 & 尖峰处放大噪声；一条曲线照顾不了明暗差别大的区域\\
+    直方图规定化 & 输入与目标的分位数对齐 & 统一多幅图像的外观 & 只能近似匹配；可能合并相邻灰度\\
+    CLAHE & 每个图块截断后的累积分布，图块间插值 & 局部对比不足，各区域亮度差别大 & 改变区域间明暗关系；强边缘附近出现晕圈；参数需写明单位与分配规则\\
+    \bottomrule
+  \end{tabularx}
+  \caption{灰度变换方法的比较。所有方法都只重新分配已有的灰度层次，不能恢复已经饱和或被量化合并的细节。}
+  \label{tab:vision-transforms-intensity-compare}
+\end{table*}
+
+\section{空间滤波}
+\label{sec:vision-transforms-spatial}
+
+点运算无法区分同一灰度上的噪声和细节，因为它只看一个像素。一个孤立的亮点是噪声还是细节，取决于它和周围像素的关系：周围都暗而它独亮，多半是坏点；它恰好位于一条亮线上，则可能是细节。要利用这种关系，输出像素就必须依赖一个邻域。\term{空间滤波}（spatial filtering）指输出$g(x,y)$由输入在$(x,y)$周围一个窗口内的值计算得到的处理，窗口在图像上逐位置滑动。本节先建立线性空间滤波的共同计算规则，再按滤波的目的分三个小节：线性平滑用加权平均压低噪声，非线性去噪让权重或汇总方式随数据变化以保护边缘，锐化与梯度则用差分突出变化。前两者都要回答“怎样平均才不抹掉边缘”，第三者回答相反的问题“怎样放大变化又不放大噪声”。
+
+线性空间滤波的计算规则如下。设\term{卷积核}（convolution kernel）$w$定义在$(2a+1)\times(2b+1)$的窗口上，偏移$i\in\{-a,\ldots,a\}$为横向，$j\in\{-b,\ldots,b\}$为纵向。图像处理文献中的“滤波”通常指\term{互相关}（cross-correlation）
+\begin{equation}
+  g(x,y)=\sum_{i=-a}^{a}\sum_{j=-b}^{b}w(i,j)\,f(x+i,y+j)\text{，}
+  \label{eq:vision-transforms-correlation}
+\end{equation}
+而\term{卷积}（convolution）把核翻转后再做同样的运算：
+\begin{equation}
+  (w*f)(x,y)=\sum_{i=-a}^{a}\sum_{j=-b}^{b}w(i,j)\,f(x-i,y-j)\text{。}
+  \label{eq:vision-transforms-convolution}
+\end{equation}
+对于关于中心对称的核，例如均值核和高斯核，两者结果相同；对于Sobel这类反对称核，两者差一个符号。卷积满足交换律和结合律，因此依次用核$w_1$、$w_2$滤波，等价于用一个核$w_1*w_2$滤波，这是后面分析“级联滤波”时用到的性质；互相关不满足交换律。卷积网络中的“卷积层”实际计算的是式\eqref{eq:vision-transforms-correlation}，由于核是学出来的，翻不翻转没有区别。一维与多维网格上的卷积、互相关的定义，以及“线性且平移不变的系统一定是卷积”的结论，可参考\BookChapterRef{chap:signal-analysis}{卷一“信号”章}；本章只用到它们在二维有限图像上的形式。
+
+二维的新问题首先在边界。窗口移到图像边缘时，$f(x+i,y+j)$可能落在图像外。常用的规则有四种：补零，即把图像外的值当作0；复制边界，即取最近的边界像素；镜像反射，即以边界为轴对称地取值；周期延拓，即把图像看成上下、左右首尾相接。补零会让靠近边缘的平滑结果偏暗，因为窗口里混进了0；周期延拓把左边缘和右边缘拼在一起，两侧内容不同时会在边缘产生假的跳变；镜像反射在边界处既不引入突变值也不引入跳变，因此是平滑滤波的常见默认选择。输出尺寸也有三种约定：只保留窗口完全落在图像内的位置，输出比输入小$2a\times2b$；保持与输入同尺寸；或保留所有有重叠的位置，输出更大。卷积网络中的“填充”参数就是在这几种约定之间选择。
+
+第二个问题是计算量。对$W\times H$的图像用$m\times m$的核直接滤波，每个输出要做$m^2$次乘加，共$WHm^2$次。若核可以写成一列向量与一行向量的外积，$w(i,j)=v(j)\,u(i)$，则式\eqref{eq:vision-transforms-correlation}可以拆成两次一维滤波：
+\begin{equation}
+  g(x,y)=\sum_{j}v(j)\Bigl[\sum_{i}u(i)\,f(x+i,y+j)\Bigr]\text{，}
+  \label{eq:vision-transforms-separable}
+\end{equation}
+先沿每一行用$u$滤波，再沿每一列用$v$滤波，每个输出只需$2m$次乘加。这样的核称为\term{可分离滤波器}（separable filter），判据是把核排成矩阵后秩为1。例如$3\times3$均值核是$\tfrac13(1,1,1)^{\top}$与$\tfrac13(1,1,1)$的外积，Sobel核是$(1,2,1)^{\top}$与$(-1,0,1)$的外积。$m=7$时，计算量从每像素49次降到14次。秩大于1的核可以用奇异值分解写成几个秩一核之和，分别做可分离滤波后相加。
+
+\subsection{线性平滑}
+\label{sec:vision-transforms-smoothing}
+
+平滑要回答的问题是：怎样用邻域里的多个观测压低噪声。设观测$f=f_0+\eta$，$f_0$为无噪声图像，$\eta$在各像素上独立、均值为0、方差为$\sigma^2$。若邻域内$f_0$近似不变，用权重和为1的核做加权平均，输出的期望仍为$f_0$，噪声部分的方差为
+\begin{equation}
+  \operatorname{Var}\Bigl[\sum_{i,j}w(i,j)\,\eta(x+i,y+j)\Bigr]=\sigma^2\sum_{i,j}w(i,j)^2\text{。}
+  \label{eq:vision-transforms-noise-variance}
+\end{equation}
+第一步用到独立噪声的方差可加，常数系数平方后提出。权重和为1保证不改变平坦区域的亮度，$\sum w^2$越小，降噪越多。在权重和为1的约束下，$\sum w^2$在权重全相等时最小，这就是均值滤波。
+
+\term{均值滤波}（mean filter）取$w(i,j)=1/m^2$。$3\times3$均值滤波使噪声方差降为$\sigma^2/9$，标准差降为原来的三分之一。它的代价在边缘处：窗口跨过边缘时，两侧的值被平均到一起，原来陡峭的跳变变成宽度为$m$的斜坡。均值滤波的另一个缺点在频域才看得清：方形窗口的频率响应有负的旁瓣，某些高频成分会以相反的符号漏过去，这一点在\ref{sec:vision-transforms-frequency-filters}小节讨论振铃时再说明。均值滤波可以用\term{积分图}（integral image）在常数时间内计算：先求$S(x,y)=\sum_{x'\leq x}\sum_{y'\leq y}f(x',y')$，任一矩形窗口内的和只需对$S$在四个角上的值做两次减法和一次加法，与窗口大小无关。
+
+\term{高斯滤波}（Gaussian filter）让权重随距离平滑衰减：
+\begin{equation}
+  w(i,j)=\frac1Z\exp\Bigl(-\frac{i^2+j^2}{2\sigma_s^2}\Bigr)\text{，}
+  \label{eq:vision-transforms-gaussian}
+\end{equation}
+$Z$使权重和为1，$\sigma_s$控制平滑的空间尺度。由于$\exp(-(i^2+j^2)/2\sigma_s^2)=\exp(-i^2/2\sigma_s^2)\exp(-j^2/2\sigma_s^2)$，高斯核是可分离的，在连续情形下还是唯一既可分离又旋转对称（只依赖到中心的距离）的正函数。实际计算时把核截断到半宽约$3\sigma_s$，覆盖一维高斯分布约99.7\%的质量。取$\sigma_s=1$并截断到$3\times3$，一维权重为$(e^{-1/2},1,e^{-1/2})$归一化后的$(0.274,0.452,0.274)$，二维核是它与自身的外积，$\sum w^2\approx0.126$，比同尺寸均值核的$1/9\approx0.111$略大，即降噪略少；作为交换，高斯核的频率响应仍是高斯函数，没有负旁瓣，平滑结果不会出现振铃。常用的整数近似是二项式核$\tfrac14(1,2,1)$，它与自身反复卷积，迅速逼近高斯形状。
+
+高斯核还有一个后面反复用到的性质：两个方差为$\sigma_1^2$和$\sigma_2^2$的高斯核卷积，得到方差为$\sigma_1^2+\sigma_2^2$的高斯核。这是两个独立高斯随机变量之和仍为高斯、方差相加的同一个事实。于是“先用小尺度平滑、再用小尺度平滑”等于一次大尺度平滑，\ref{sec:vision-transforms-pyramid}小节的金字塔和\ref{sec:vision-features-sift}节的尺度空间都以此为基础。
+
+线性平滑的边界很清楚。它假设邻域内信号近似不变，这在平坦区成立，在边缘和纹理处不成立，所以降噪和保边是同一个参数$\sigma_s$的两端，无法同时得到。它对脉冲噪声尤其不利：一个灰度255的坏点落在全0的邻域中，$3\times3$均值滤波把它摊成九个约28.3的值，坏点没有消失，只是变成了一块灰斑。
+
+线性平滑在学习模型中以两种形式延续。其一，卷积网络的每一层都是式\eqref{eq:vision-transforms-correlation}，只是核由数据学习；AlexNet的论文观察到，第一层学到了多种对频率和方向有选择性的核\scite{krizhevsky2012}。其二，网络中的下采样层若不先平滑，会产生混叠（见\ref{sec:vision-formation-aliasing}节），使输出对输入的一像素平移很敏感；有工作在步长为2的池化或卷积之前插入固定的模糊核，恢复了相当一部分平移不变性，并在ImageNet分类上报告了准确率提升\scite{vision-zhang2019antialias}。
+
+\subsection{非线性去噪}
+\label{sec:vision-transforms-nonlinear-denoising}
+
+线性平滑的困难来自一个固定的事实：权重只依赖位置，不依赖数值，边缘两侧的像素和同侧的像素被同等对待。非线性去噪的共同思路是让汇总方式依赖数据本身。三条路线的差别在于用什么判断“哪些邻居可信”。中值与顺序统计滤波不改权重，而是把加权平均换成排序后取值，用排序天然地忽略极端值；双边滤波保留加权平均，但权重同时依赖空间距离和灰度差；非局部均值把“灰度差”换成“图像块的差”，并把邻域扩大到一个搜索窗口。
+
+\subsubsection{中值与顺序统计滤波}
+
+先看脉冲噪声。传感器坏点、传输错误会让少数像素变成极亮或极暗，称为\term{椒盐噪声}（salt-and-pepper noise）。对这种噪声，平均是错误的汇总方式，因为一个极端值就能把平均值拉走很远。\term{中值滤波}（median filter）把窗口内的值排序后取中位数。例如$3\times3$窗口中的值为
+\[
+  10,12,11,255,13,12,11,10,12\text{，}
+\]
+排序后为$10,10,11,11,12,12,12,13,255$，中位数为12，坏点255完全不影响结果；同一窗口的均值则为$346/9\approx38.4$。
+
+中值滤波为什么抗脉冲：在$m^2$个值中，只要被污染的值少于一半，中位数就一定落在未被污染的值的范围之内。原因是排序后第$(m^2+1)/2$个位置的两侧各有$(m^2-1)/2$个值，污染值无论多大，最多只能占据一侧的那些位置。统计学用崩溃点描述这种性质：中位数的崩溃点为1/2，均值为0，任意一个异常值都能使均值任意偏离。中位数还是使绝对误差和最小的估计量，即$\argmin_c\sum_k|f_k-c|$，对应拉普拉斯噪声下的最大似然估计；这与均值对应平方误差、高斯噪声的关系相互对照，中位数作为$L_1$损失下的估计已在前面引用的卷二“随机变量”章中讨论。
+
+中值滤波还能保持单调的边缘：在一个阶跃边缘两侧，窗口内大的值和小的值保持原有比例，中位数仍取两侧之一，不会产生中间灰度。它的失效情形同样来自“少于一半”这个条件。宽度小于窗口一半的细线、尖角在窗口中本身就是少数，会被当作噪声去掉；高斯噪声下，每个像素都被扰动，中值滤波的降噪效果不如同尺寸的均值滤波。中值的直接推广是\term{顺序统计滤波}（order-statistic filter）：取排序后的第$k$个值。取最大值的滤波去除暗的脉冲，取最小值的滤波去除亮的脉冲，二者在\ref{sec:vision-transforms-grayscale-morphology}小节会以灰度膨胀和腐蚀的面目再次出现；去掉两端各$d$个值后再取平均，得到修正的阿尔法均值滤波，它在高斯噪声与脉冲噪声混合时介于均值和中值之间。
+
+\subsubsection{双边滤波}
+
+中值滤波靠“丢掉极端值”保边，但对高斯噪声效果有限。我们希望保留加权平均的降噪能力，同时让边缘对面的像素不参与平均。\term{双边滤波}（bilateral filter）在高斯空间权重之外，再乘一个依赖灰度差的权重\scite{vision-tomasi1998bilateral}：
+\begin{equation}
+  g(\bm{p})=\frac{1}{Z(\bm{p})}\sum_{\bm{q}\in N(\bm{p})}
+  \exp\Bigl(-\frac{\lVert\bm{p}-\bm{q}\rVert_2^2}{2\sigma_s^2}\Bigr)
+  \exp\Bigl(-\frac{(f(\bm{q})-f(\bm{p}))^2}{2\sigma_r^2}\Bigr)f(\bm{q})\text{，}
+  \label{eq:vision-transforms-bilateral}
+\end{equation}
+其中$\bm{p},\bm{q}$是像素位置，$N(\bm{p})$是$\bm{p}$周围的窗口，$Z(\bm{p})$是同一窗口内两项权重乘积之和，用于归一化；$\sigma_s$控制空间范围，$\sigma_r$控制“灰度差多大就不算同类”。灰度差远小于$\sigma_r$的邻居得到接近高斯滤波的权重，远大于$\sigma_r$的邻居权重几乎为0。
+
+用一维小例看它怎样保边。中心像素值10，左右邻居分别为10和100，取$\sigma_r=20$，空间权重暂且都取1。两个邻居的灰度权重分别为$\exp(0)=1$和$\exp(-90^2/800)\approx4\times10^{-5}$。归一化后输出几乎等于$(10+10)/2=10$，边缘对面的100几乎不起作用；同样的三个值用均值滤波得到40。同理，在边缘另一侧的像素只与同侧的值平均，于是边缘两侧都被平滑，边缘本身保持陡峭。
+
+双边滤波的成立条件是：噪声幅度明显小于需要保留的边缘幅度，且$\sigma_r$选在二者之间。噪声标准差接近$\sigma_r$时，噪声造成的灰度差本身就会让权重下降，被平滑的程度变小，噪声保留下来；$\sigma_r$过大，双边滤波退化为高斯滤波。它的其他代价包括：权重依赖数据，核不再可分离，每个像素要单独计算$|N(\bm{p})|$个权重；在缓慢的灰度斜坡上，同侧像素的权重也不对称，结果会出现阶梯状的平台。双边滤波在色调映射中常用于把图像分成平滑的基础层与细节层，分别处理后再合成。
+
+\subsubsection{非局部均值}
+
+双边滤波用单个像素的灰度差判断两个像素是否同类，而单个像素的灰度本身就带噪声：噪声较大时，同类像素的灰度差可能也很大。一种更可靠的判断是比较两个像素周围的小图像块。\term{非局部均值}（non-local means, NLM）对每个像素$\bm{p}$，在一个较大的搜索窗口$S(\bm{p})$内找与它周围图像块相似的位置，按相似程度加权平均\scite{vision-buades2005nlm}：
+\begin{equation}
+  g(\bm{p})=\frac{1}{Z(\bm{p})}\sum_{\bm{q}\in S(\bm{p})}
+  \exp\Bigl(-\frac{\max\bigl(\lVert\bm{P}(\bm{p})-\bm{P}(\bm{q})\rVert_2^2-2k^2\sigma^2,\,0\bigr)}{h^2}\Bigr)f(\bm{q})\text{，}
+  \label{eq:vision-transforms-nlm}
+\end{equation}
+其中$\bm{P}(\bm{p})\in\mathbb{R}^{k^2}$是以$\bm{p}$为中心的$k\times k$图像块拉成的向量，$\sigma^2$是噪声方差，$h$控制相似度的衰减速度，$Z(\bm{p})$为权重之和。之所以称“非局部”，是因为相似的块不必与$\bm{p}$相邻：墙面上的砖纹、招牌上重复的笔画，都可能在较远处找到很好的匹配。
+
+分子中减去$2k^2\sigma^2$的原因如下。设两个块的无噪声内容为$\bm{P}_0(\bm{p})$和$\bm{P}_0(\bm{q})$，各像素上叠加独立、均值为0、方差为$\sigma^2$的噪声，且两个块不重叠。则
+\begin{equation}
+  \mathbb{E}\lVert\bm{P}(\bm{p})-\bm{P}(\bm{q})\rVert_2^2
+  =\lVert\bm{P}_0(\bm{p})-\bm{P}_0(\bm{q})\rVert_2^2+2k^2\sigma^2\text{。}
+  \label{eq:vision-transforms-nlm-bias}
+\end{equation}
+推导只需把差写成“内容差加噪声差”，平方展开后交叉项的期望为0，噪声差在每个像素上的方差为$2\sigma^2$，共$k^2$个像素。也就是说，即使两个块的内容完全相同，带噪的块距离平均也有$2k^2\sigma^2$；减去这个偏差，再截断到非负，内容相同的块就能得到接近1的权重。这个式子也解释了为什么用块比用单个像素可靠：内容差随块大小成比例增长，而噪声造成的波动（距离的标准差）只按$k$而非$k^2$增长，块越大，两者越容易区分。
+
+非局部均值的代价是计算量：每个像素要比较$|S|$个候选块，每次比较$k^2$次运算，搜索窗口取$21\times21$、块取$7\times7$时，每像素约两万次运算。它的失效情形是图像中缺少重复结构，例如独特的细节或很小的物体，此时找不到足够的相似块，结果近似于不平滑或过度平滑；$h$过大时不同内容的块也被平均，纹理变糊。
+
+非局部均值与学习模型有直接的联系。式\eqref{eq:vision-transforms-nlm}中的权重是“相似度经指数后归一化”，与注意力机制的softmax加权在形式上相同：查询是$\bm{P}(\bm{p})$，键是各$\bm{P}(\bm{q})$，值是$f(\bm{q})$。非局部神经网络明确受非局部均值启发，把某位置的响应写成所有位置特征的加权和，权重由特征之间的相似度决定\scite{vision-wang2018nonlocal}。区别在于，非局部均值的相似度是固定的块距离，注意力的相似度由学到的投影计算；学习式去噪网络（见\ref{sec:vision-restoration-denoising}节）则不显式搜索相似块，而是从大量样本中学习去噪映射。
+
+至此可以把三种非线性方法与线性平滑放在一起比较。它们回答的是同一个问题：在边缘附近，哪些邻居应该参与平均。表\ref{tab:vision-transforms-denoise-compare}在同一噪声图像、同一窗口下比较它们与线性平滑。
+
+\begin{table*}[tbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{16mm}XXXX@{}}
+    \toprule
+    方法 & 邻居的取舍依据 & 高斯噪声 & 脉冲噪声 & 每像素运算量\\
+    \midrule
+    均值、高斯 & 只依赖位置 & 有效，但同时模糊边缘 & 摊开成灰斑 & $m^2$，可分离时$2m$\\
+    中值 & 排序，忽略少数极端值 & 效果弱于均值 & 少于一半污染时完全去除 & $m^2$次比较量级\\
+    双边 & 位置与灰度差 & 噪声远小于边缘时有效 & 坏点灰度差大，被当作边缘保留 & $m^2$，不可分离\\
+    非局部均值 & 图像块相似度 & 有重复结构时效果最好 & 块距离受坏点影响，需先处理 & $|S|k^2$\\
+    \bottomrule
+  \end{tabularx}
+  \caption{空间去噪方法的比较。$m$为窗口边长，$|S|$为搜索窗口内的候选数，$k$为图像块边长。表中的效果描述是在噪声独立、同分布条件下的定性结论。}
+  \label{tab:vision-transforms-denoise-compare}
+\end{table*}
+
+从均值到非局部均值，“判断邻居是否同类”的证据越来越多：从不判断，到看单个灰度，再到看整个图像块；每多用一份证据，计算量就增加一个数量级。中值滤波走的是另一条路，它不估计权重，而是改变汇总方式，因此对脉冲噪声特别有效，对高斯噪声却不占优。实际系统中常先用中值滤波去除脉冲，再用双边或非局部均值去除高斯噪声。
+
+\subsection{锐化与梯度}
+\label{sec:vision-transforms-sharpening}
+
+平滑压低灰度的变化，锐化则相反，要突出变化。变化的数学描述是导数。数字图像只在整数网格上有值，导数用差分近似。本小节先比较一阶和二阶差分对同一灰度剖面的响应，再由二阶差分得到拉普拉斯锐化，由“原图减模糊”得到反锐化掩模，由一阶差分得到梯度算子。三者的关系是：拉普拉斯与反锐化掩模都用于让边缘看起来更锐利，输出仍是图像；梯度算子输出每个位置的变化强度和方向，是边缘检测等后续分析的输入。
+
+一维时，一阶差分和二阶差分分别取
+\begin{equation}
+  \frac{\partial f}{\partial x}\approx f(x+1)-f(x),\qquad
+  \frac{\partial^2f}{\partial x^2}\approx f(x+1)+f(x-1)-2f(x)\text{。}
+  \label{eq:vision-transforms-differences}
+\end{equation}
+用一个教学构造的剖面比较两者。设$f=(6,6,5,4,3,2,2,2,8,8)$，位置0到9：前半段是一条缓慢的下降斜坡，位置7到8是一个高度为6的阶跃。一阶差分为$(0,-1,-1,-1,-1,0,0,6,0)$：在整条斜坡上都不为零，在阶跃处为6。二阶差分在位置1到8依次为$(-1,0,0,0,1,0,6,-6)$：斜坡内部为零，只在斜坡的起点和终点各有一个小响应；阶跃处出现一正一负两个响应，零交叉恰好位于阶跃中间。由此可见两者的分工：一阶差分对斜坡给出连续的宽响应，适合衡量“这里在变化多少”；二阶差分只在变化的开始和结束处响应，对细节和阶跃的位置更敏感，也就更适合用于锐化，但它对噪声的放大也更强。
+
+\subsubsection{拉普拉斯锐化}
+
+二维的二阶导数中，\term{拉普拉斯算子}（Laplacian operator）$\nabla^2f=\partial^2f/\partial x^2+\partial^2f/\partial y^2$是最简单的各向同性算子：把坐标系旋转任意角度，结果不变。用式\eqref{eq:vision-transforms-differences}分别近似两个方向，得到
+\begin{equation}
+  \nabla^2f(x,y)\approx f(x+1,y)+f(x-1,y)+f(x,y+1)+f(x,y-1)-4f(x,y)\text{，}
+  \label{eq:vision-transforms-laplacian}
+\end{equation}
+对应核$\bigl(\begin{smallmatrix}0&1&0\\1&-4&1\\0&1&0\end{smallmatrix}\bigr)$。离散化后只在90度旋转下保持不变；把两个对角方向的二阶差分也加进去，得到中心为$-8$、周围全为1的核，在45度旋转下也保持不变。核的元素之和为0，所以平坦区域的输出为0。
+
+锐化的做法是从原图中减去拉普拉斯：$g=f-c\nabla^2f$，$c>0$。在上面的一维剖面中取$c=1$，阶跃两侧的位置7和8变为$2-6=-4$和$8-(-6)=14$：暗侧更暗，亮侧更亮，阶跃显得更陡，这是锐化看上去更“清楚”的原因。斜坡内部的二阶差分为0，保持不变。代价同样在这个例子里：输出超出了原有的灰度范围，在图像上表现为边缘两侧的暗边和亮边；任何孤立的噪声点都会被同样加强。
+
+\subsubsection{反锐化掩模与高提升滤波}
+
+印刷业很早就用一种不求导数的办法锐化：把原图模糊一份，从原图中减去模糊版本得到细节，再把细节加回原图。记$\bar f$为$f$的平滑结果，\term{反锐化掩模}（unsharp masking）为
+\begin{equation}
+  g=f+k\,(f-\bar f),\qquad k>0\text{。}
+  \label{eq:vision-transforms-unsharp}
+\end{equation}
+$k=1$为标准的反锐化掩模，$k>1$称为\term{高提升滤波}（high-boost filtering）。用一维阶跃$f=(2,2,2,8,8,8)$复核，$\bar f$取三点均值、边界复制，得到$(2,2,4,6,8,8)$，细节$f-\bar f=(0,0,-2,2,0,0)$。$k=1$时$g=(2,2,0,10,8,8)$，$k=2$时$g=(2,2,-2,12,8,8)$。阶跃两侧出现了与拉普拉斯锐化相同的下冲和上冲，$k$越大越强。
+
+反锐化掩模与拉普拉斯锐化本质上是同一件事。若$\bar f$为方差$\sigma_s^2$的高斯平滑，对$f$在$(x,y)$处做二阶泰勒展开并对高斯权重求期望：一阶项因高斯关于中心对称而消失，二阶项中每个方向的二阶矩为$\sigma_s^2$，混合项的期望为0，于是
+\begin{equation}
+  \bar f(x,y)\approx f(x,y)+\frac{\sigma_s^2}{2}\nabla^2f(x,y),\qquad
+  f-\bar f\approx-\frac{\sigma_s^2}{2}\nabla^2f\text{。}
+  \label{eq:vision-transforms-unsharp-laplacian}
+\end{equation}
+这个近似在$f$于$\sigma_s$尺度上足够光滑时成立。它说明反锐化掩模就是$c=k\sigma_s^2/2$的拉普拉斯锐化，区别在于模糊核同时起到了先平滑、再求导的作用，对噪声比直接用式\eqref{eq:vision-transforms-laplacian}稳健；$\sigma_s$还决定了被加强的细节的尺度。二者共同的失效情形是边缘附近的光晕和噪声放大。学习式图像复原中，网络常输出一个加回到输入上的残差，例如\ref{sec:vision-restoration-denoising}节的去噪网络学习噪声残差，结构上与“原图加细节”的反锐化掩模相同，区别在于加回的量由网络从数据中估计。
+
+\subsubsection{梯度算子}
+
+锐化的输出仍是图像，后续分析则常常需要每个位置“变化有多大、朝哪个方向”。\term{图像梯度}（image gradient）$\nabla f=(g_x,g_y)^{\top}$，$g_x=\partial f/\partial x$，$g_y=\partial f/\partial y$，它指向灰度增加最快的方向，幅值
+\begin{equation}
+  M(x,y)=\sqrt{g_x^2+g_y^2},\qquad \theta(x,y)=\operatorname{atan2}(g_y,g_x)
+  \label{eq:vision-transforms-gradient}
+\end{equation}
+分别表示变化强度和方向；为减少计算，幅值有时用$|g_x|+|g_y|$近似。边缘方向与梯度方向垂直。
+
+只用相邻两个像素的差分对噪声很敏感。\term{Prewitt算子}（Prewitt operator）先在与求导垂直的方向上做三点平均，再在求导方向上做中心差分；\term{Sobel算子}（Sobel operator）把平均换成中心权重加倍的$(1,2,1)$：
+\begin{equation}
+  w_x^{\mathrm{Prewitt}}=\begin{pmatrix}-1&0&1\\-1&0&1\\-1&0&1\end{pmatrix},\qquad
+  w_x^{\mathrm{Sobel}}=\begin{pmatrix}-1&0&1\\-2&0&2\\-1&0&1\end{pmatrix}
+  =\begin{pmatrix}1\\2\\1\end{pmatrix}\begin{pmatrix}-1&0&1\end{pmatrix}\text{，}
+  \label{eq:vision-transforms-sobel}
+\end{equation}
+按式\eqref{eq:vision-transforms-correlation}作互相关得到$g_x$；$w_y$为$w_x$的转置。Sobel核的分解说明它就是“竖直方向的二项式平滑”乘“水平方向的中心差分”，是可分离的。对一个竖直边缘的$3\times3$邻域，三行都是$(10,10,50)$，Sobel给出$g_x=40+2\times40+40=160$、$g_y=0$，幅值160，方向沿$x$轴，即垂直于边缘。中心权重加倍的效果是：越靠近求导中心线的行，影响越大，平滑的方向响应更接近各向同性。
+
+梯度算子的局限在于它在单一的固定尺度上求导：噪声大时，即使Sobel内置的平滑也不够；边缘本身是模糊的宽斜坡时，三点差分的响应又很弱。处理这些问题需要先用可调尺度的高斯平滑、再求导，并对梯度幅值做细化和阈值处理，这就是\ref{sec:vision-features-canny}节Canny检测器的做法；二阶导数的零交叉也在\ref{chap:vision-image-features}章与高斯平滑结合成LoG算子。梯度方向的统计则是\ref{sec:vision-features-hog}节HOG描述子的基础。
+
+表\ref{tab:vision-transforms-sharpen-compare}比较了本小节的三类算子。拉普拉斯和反锐化掩模的输出是增强后的图像，梯度算子的输出是供后续分析使用的变化量；在噪声面前，带内置平滑的算子（反锐化掩模、Sobel）都比纯差分稳健。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{20mm}XXX@{}}
+    \toprule
+    算子 & 计算的量 & 对斜坡与阶跃的响应 & 主要风险\\
+    \midrule
+    拉普拉斯锐化 & $f-c\nabla^2f$ & 斜坡内部不变，阶跃两侧出现上冲和下冲 & 放大噪声，超出灰度范围\\
+    反锐化掩模、高提升 & $f+k(f-\bar f)$ & 与拉普拉斯锐化相近，加强的细节尺度由模糊核决定 & 光晕随$k$增大而变强\\
+    Prewitt、Sobel梯度 & $(g_x,g_y)$及其幅值、方向 & 斜坡与阶跃都有响应，幅值正比于坡度 & 固定尺度；需要阈值和细化才能成为边缘\\
+    \bottomrule
+  \end{tabularx}
+  \caption{锐化与梯度算子的比较。三者都可写成线性滤波或线性滤波与原图的组合。}
+  \label{tab:vision-transforms-sharpen-compare}
+\end{table}
+
+\section{频域处理}
+\label{sec:vision-transforms-frequency}
+
+空间滤波用一个小窗口描述处理，有两类问题它描述得很别扭。一类是大尺度的处理：要去掉从左到右缓慢变化的照度，窗口要和图像差不多大，直接卷积的代价随窗口面积增长。另一类是周期性的干扰：扫描仪或屏幕翻拍带来的规则条纹，在空间上布满整幅图像，用局部窗口很难把它和纹理分开，但它在频率上集中在少数几个点。频域处理的思路是把图像分解成不同频率、不同方向的正弦成分之和，在这个表示下逐个成分地放大或衰减，再变换回来。本节按处理流程展开：先建立二维离散傅里叶变换及其性质，读懂一幅频谱；再设计逐频率相乘的滤波器，并解释为什么理想滤波器会产生振铃；最后处理两类需要针对特定频率或特定成像模型的选择性滤波。
+
+\subsection{二维离散傅里叶变换}
+\label{sec:vision-transforms-dft2d}
+
+一维离散傅里叶变换把长度为$N$的序列写成$N$个复指数的组合，变换系数说明每个频率的成分有多强、相位如何。一维定义、逆变换以及单位根正交性，读者已在前面引用的卷一“信号”章中见过；那里只处理一维序列，本小节把它推广到图像。
+
+对$W\times H$的图像$f(x,y)$，\term{二维离散傅里叶变换}（two-dimensional discrete Fourier transform, 2D DFT）及其逆变换为
+\begin{align}
+  F(u,v)&=\sum_{x=0}^{W-1}\sum_{y=0}^{H-1}f(x,y)\,
+  e^{-\mathrm{i}2\pi(ux/W+vy/H)}\text{，}
+  \label{eq:vision-transforms-dft2d}\\
+  f(x,y)&=\frac{1}{WH}\sum_{u=0}^{W-1}\sum_{v=0}^{H-1}F(u,v)\,
+  e^{\mathrm{i}2\pi(ux/W+vy/H)}\text{，}
+  \label{eq:vision-transforms-idft2d}
+\end{align}
+其中$u$是横向频率下标，$v$是纵向频率下标，$\mathrm{i}$是虚数单位。逆变换成立的依据与一维相同：$x$方向和$y$方向的复指数各自满足单位根正交性，$\sum_xe^{\mathrm{i}2\pi(u-u')x/W}$在$u\equiv u'\pmod W$时为$W$、否则为0，$y$方向同理，二者相乘后只有$(u,v)=(u',v')$一项留下。
+
+每一对$(u,v)$对应一幅基图像$e^{\mathrm{i}2\pi(ux/W+vy/H)}$，其实部$\cos\bigl(2\pi(ux/W+vy/H)\bigr)$是一组平行条纹。条纹的等相位线满足$ux/W+vy/H=$常数，所以条纹的法向（灰度变化最快的方向）沿$(u/W,v/H)$，每像素变化的周数为$\sqrt{(u/W)^2+(v/H)^2}$。例如$u=2,v=0$对应沿横向变化、每$W/2$个像素一个周期的竖条纹；$u=v$且$W=H$对应沿对角方向变化的斜条纹。于是频谱上一个点的位置同时编码了条纹的方向和疏密：离原点越远越密，方向沿该点相对原点的方向。
+
+一个$2\times2$的例子可以完整手算。设$f(0,0)=1$、$f(1,0)=2$、$f(0,1)=3$、$f(1,1)=4$，即第一行为$(1,2)$，第二行为$(3,4)$。$W=H=2$时$e^{-\mathrm{i}\pi ux}=(-1)^{ux}$，所以
+\[
+  \begin{aligned}
+  F(0,0)&=1+2+3+4=10, & F(1,0)&=1-2+3-4=-2,\\
+  F(0,1)&=1+2-3-4=-4, & F(1,1)&=1-2-3+4=0\text{。}
+  \end{aligned}
+\]
+$F(0,0)$是所有像素之和，即$WH$倍的平均灰度，称为直流分量；$F(1,0)$度量左右两列的差，$F(0,1)$度量上下两行的差，后者绝对值更大，因为这幅图上下差别（2）大于左右差别（1）；$F(1,1)$度量对角棋盘模式，这里为0。代回式\eqref{eq:vision-transforms-idft2d}，$f(0,0)=(10-2-4+0)/4=1$，与原值相符。
+
+二维DFT可以分两步计算。式\eqref{eq:vision-transforms-dft2d}中的指数可以拆成两个因子之积，
+\[
+  e^{-\mathrm{i}2\pi(ux/W+vy/H)}=e^{-\mathrm{i}2\pi ux/W}\,e^{-\mathrm{i}2\pi vy/H}\text{，}
+\]
+于是先对每一行做长度$W$的一维DFT，再对结果的每一列做长度$H$的一维DFT。用快速傅里叶变换（FFT）计算每次一维变换，总代价为$O(WH\log(WH))$；直接按定义计算则需要$O(W^2H^2)$。一维FFT的思想和代价分析见前面引用的卷一“信号”章。
+
+下面几条性质决定了怎样读频谱，都可以由定义直接验证。
+
+周期性与共轭对称。由于$e^{-\mathrm{i}2\pi(u+W)x/W}=e^{-\mathrm{i}2\pi ux/W}$，有$F(u+W,v)=F(u,v+H)=F(u,v)$，频谱在两个方向上都以图像尺寸为周期。图像是实数时，对定义取复共轭得$F^{*}(u,v)=F(-u,-v)$，所以幅值$|F(u,v)|=|F(-u,-v)|$关于原点对称，一个正弦条纹总是在频谱上留下一对关于原点对称的点。
+
+平移与调制。设$f$平移$(x_0,y_0)$后为$f(x-x_0,y-y_0)$（下标按模$W$、$H$取）。代入定义并换元，得
+\begin{equation}
+  f(x-x_0,y-y_0)\;\longleftrightarrow\;
+  F(u,v)\,e^{-\mathrm{i}2\pi(ux_0/W+vy_0/H)}\text{。}
+  \label{eq:vision-transforms-shift}
+\end{equation}
+平移只给每个频率乘一个模为1的因子，幅值$|F|$完全不变，相位增加一项与$(u,v)$成线性的量。反过来，乘以复指数等于在频域平移：$f(x,y)e^{\mathrm{i}2\pi(u_0x/W+v_0y/H)}\leftrightarrow F(u-u_0,v-v_0)$。
+
+中心化。按定义计算的频谱，原点$(0,0)$在左上角，由于周期性，负频率$(-u,-v)$实际出现在$(W-u,H-v)$，即另外三个角上。低频成分分散在四个角，不便观察。取$u_0=W/2$、$v_0=H/2$（设$W,H$为偶数），调制因子为$e^{\mathrm{i}\pi(x+y)}=(-1)^{x+y}$，所以
+\begin{equation}
+  f(x,y)(-1)^{x+y}\;\longleftrightarrow\;F(u-W/2,\,v-H/2)\text{。}
+  \label{eq:vision-transforms-centering}
+\end{equation}
+变换前把图像乘以$(-1)^{x+y}$，频谱的原点就移到$(W/2,H/2)$，即\term{频谱中心化}（spectrum centering），等价于把未中心化频谱的四个象限对角互换（图\ref{fig:vision-transforms-spectrum-centering}）。中心化之后，离中心越远频率越高，这也是后面定义滤波器时用“到中心的距离”的原因。滤波完成后，逆变换的结果要再乘一次$(-1)^{x+y}$才能恢复正确的位置。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/spectrum-centering}
+  \caption{频谱中心化。横向频率$u$向右、纵向频率$v$向下。左：按定义计算的频谱以$(0,0)$为原点，由于周期性，低频（红点）分散在四个角上；右：变换前乘以$(-1)^{x+y}$，或把四个象限对角互换，低频集中到$(W/2,H/2)$。数字标出各象限移动后的位置。}
+  \label{fig:vision-transforms-spectrum-centering}
+\end{figure}
+
+旋转与缩放。对连续图像的傅里叶变换，把图像旋转角度$\theta$，频谱也旋转同一角度；把图像在两个方向上放大$a$倍，频谱在两个方向上缩小为$1/a$倍，幅值乘$1/a^2$。离散情形下，网格和周期边界使这两条只近似成立，但读频谱时仍然有用：图像中一组朝某个方向的条纹，在频谱中表现为沿垂直方向排列的亮点；图像越精细，能量越向外分布。
+
+能量守恒。二维情形下的Parseval关系为
+\[
+  \sum_{x,y}|f(x,y)|^2=\frac{1}{WH}\sum_{u,v}|F(u,v)|^2\text{，}
+\]
+可由正交性直接得出。在$2\times2$例中，左边为$1+4+9+16=30$，右边为$(100+4+16+0)/4=30$。它保证了在频域中衰减某些成分的能量，与在空间中去掉相应的能量是同一回事。
+
+幅度谱与相位谱。复数$F(u,v)$可以写成$|F(u,v)|e^{\mathrm{i}\phi(u,v)}$。$|F|$称为\term{幅度谱}（magnitude spectrum），$\phi$称为\term{相位谱}（phase spectrum）。显示时一般看幅度谱，并先做式\eqref{eq:vision-transforms-log}的对数变换，否则直流分量会压暗其他所有成分。幅度谱告诉我们图像中有哪些方向和尺度的条纹、各有多强，但不告诉它们在哪里。位置信息在相位里：由式\eqref{eq:vision-transforms-shift}，同一结构出现在不同位置，幅度谱相同，只有相位不同。边缘之所以是一条清晰的线，是因为许多频率成分在那个位置“同相”地叠加。一个经典的演示是交换两幅图像的幅度谱和相位谱后再逆变换：结果看起来更像提供相位的那幅图\scite{vision-oppenheim1981phase}。这提示我们，滤波器若随意改变相位，就会挪动或破坏结构；本节下面设计的滤波器都是实数且关于中心对称的，只改变幅值，不改变相位，称为零相移滤波器。
+
+二维DFT默认图像在两个方向上周期延拓，这在实际图像上通常不成立：左边缘和右边缘的灰度不同，周期延拓后在接缝处形成跳变。跳变含有各种频率，所以未经处理的图像频谱上常有沿两个坐标轴的亮十字，它们来自边界而非图像内容。常用的缓解办法是在变换前乘一个向边缘逐渐衰减到0的窗函数，或改用镜像延拓；后者正是\ref{sec:vision-transforms-dct}小节引出离散余弦变换的出发点。
+
+\subsection{频域滤波器}
+\label{sec:vision-transforms-frequency-filters}
+
+频域滤波的依据是卷积定理：空间中的卷积，在频域中变成逐点相乘。一维有限长度序列的循环卷积定理见前面引用的卷一“信号”章；二维情形的推导完全相同。设$f$与$w$都是$W\times H$的数组，二维循环卷积为$(w\circledast f)(x,y)=\sum_{x',y'}w(x',y')f(x-x',y-y')$，下标按模取。代入式\eqref{eq:vision-transforms-dft2d}，令$x''=x-x'$、$y''=y-y'$换元，指数因子分解为$e^{-\mathrm{i}2\pi(ux'/W+vy'/H)}e^{-\mathrm{i}2\pi(ux''/W+vy''/H)}$，双重求和分离成两个DFT之积：
+\begin{equation}
+  w\circledast f\;\longleftrightarrow\;W_{\mathrm{F}}(u,v)\,F(u,v)\text{，}
+  \label{eq:vision-transforms-convolution-theorem}
+\end{equation}
+其中$W_{\mathrm{F}}$是$w$的DFT。换元合法是因为下标按模取，求和范围在平移后仍是完整的一个周期。这就是二维的\term{卷积定理}（convolution theorem）。
+
+式\eqref{eq:vision-transforms-convolution-theorem}给出的是循环卷积，而空间滤波需要的是带边界规则的线性卷积。若直接把两个$W\times H$数组的DFT相乘，图像右边缘的值会通过周期延拓“绕回”到左边缘，造成两侧互相污染。补救办法是先补零：图像为$W\times H$，核为$m\times n$，把二者都补零到$P\times Q$，$P\geq W+m-1$，$Q\geq H+n-1$。这时线性卷积的全部非零输出都落在一个周期之内，不会绕回，循环卷积与线性卷积相同。把这些步骤写成算法如下。
+
+\begin{algorithm}[频域滤波]
+  \label{alg:vision-transforms-frequency-filtering}
+  \begin{algorithmic}[1]
+    \Require 图像$f$（$W\times H$），频域滤波器$H(u,v)$（$P\times Q$，实数，关于中心对称）
+    \Ensure 滤波后的图像$g$（$W\times H$）
+    \State 把$f$补零到$P\times Q$，$P\geq2W-1$，$Q\geq2H-1$（若滤波器由$m\times n$的空间核给出，取$P\geq W+m-1$，$Q\geq H+n-1$）
+    \State 乘以$(-1)^{x+y}$，使频谱中心化
+    \State 用FFT计算$F(u,v)$
+    \State 逐点相乘：$G(u,v)=H(u,v)F(u,v)$
+    \State 逆FFT，取实部，再乘以$(-1)^{x+y}$
+    \State 截取左上角$W\times H$区域作为$g$
+  \end{algorithmic}
+\end{algorithm}
+
+第5步取实部是因为浮点误差会留下极小的虚部；只要$H$是实数且关于中心对称，理论上的结果就是实数。直接在空间中用$m\times m$的核滤波，代价为$O(WHm^2)$；按算法\ref{alg:vision-transforms-frequency-filtering}计算，代价为$O(PQ\log(PQ))$，与核大小无关。核较小时（例如$3\times3$、$5\times5$）空间卷积更快；核与图像相当时，频域计算的优势明显。
+
+频域中描述滤波器最方便的量是到中心的距离
+\[
+  D(u,v)=\sqrt{(u-P/2)^2+(v-Q/2)^2}\text{，}
+\]
+它度量频率的高低，与方向无关。下面的低通滤波器都只依赖$D$，$D_0>0$为截止频率。
+
+\term{理想低通滤波器}（ideal low-pass filter）在截止频率内全部保留、之外全部去除：$H(u,v)=1$若$D(u,v)\leq D_0$，否则为0。
+
+\term{巴特沃斯滤波器}（Butterworth filter）用一个阶数$n$控制过渡的陡峭程度：
+\begin{equation}
+  H(u,v)=\frac{1}{1+\bigl(D(u,v)/D_0\bigr)^{2n}}\text{。}
+  \label{eq:vision-transforms-butterworth}
+\end{equation}
+$D=D_0$处$H=1/2$。$n$越大，过渡越陡，$n\to\infty$时趋于理想低通。
+
+高斯低通滤波器取
+\begin{equation}
+  H(u,v)=\exp\Bigl(-\frac{D(u,v)^2}{2D_0^2}\Bigr)\text{，}
+  \label{eq:vision-transforms-gaussian-lowpass}
+\end{equation}
+$D=D_0$处$H=e^{-1/2}\approx0.607$。图\ref{fig:vision-transforms-lowpass-profiles}画出了三者的径向剖面。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/lowpass-profiles}
+  \caption{三种低通滤波器沿径向的剖面，横轴为到频谱中心的距离与截止频率之比。理想滤波器在截止处突变；巴特沃斯（$n=2$）在截止处为0.5，过渡较陡；高斯在截止处约为0.607，过渡最平缓。曲线由式\eqref{eq:vision-transforms-butterworth}、\eqref{eq:vision-transforms-gaussian-lowpass}直接绘制。}
+  \label{fig:vision-transforms-lowpass-profiles}
+\end{figure}
+
+三者的差别在空间中表现为振铃。理想低通滤波器在频域是一个圆盘，它对应的空间核是一个中心为正峰、外围有一圈圈正负交替波纹的函数（一维时是sinc函数，二维圆盘对应的是一阶贝塞尔函数构成的类似形状）。用这样的核卷积一个阶跃边缘时，负的波纹在边缘的暗侧挖出比原值更低的谷，正的波纹在亮侧叠出更高的峰，并且这些起伏向两侧延续，这就是\term{振铃}（ringing）。频域截断越陡，空间核的波纹衰减越慢，振铃越明显。
+
+一个16点的一维算例可以复核这一点（教学构造）。取周期序列$f=(0,\ldots,0,1,\ldots,1)$，前8个为0，后8个为1。只保留频率下标$|k|\leq3$的成分（理想低通），逆变换得到的结果在0的一侧出现$-0.077$，在1的一侧出现$1.077$，并在两处边缘之间交替起伏。改用高斯低通、取$D_0=2$，结果从0.003单调升到0.997，没有任何越界值。原因是高斯函数的傅里叶变换仍是高斯函数，没有负值，用一个处处非负的核做加权平均，不可能产生超出原值范围的结果。由此也能理解\ref{sec:vision-transforms-smoothing}小节提到的均值滤波的缺陷：一维三点均值的频率响应为$H(\omega)=(1+2\cos\omega)/3$，在$\omega=\pi$处为$-1/3$。对交替序列$(\ldots,1,-1,1,-1,\ldots)$，三点均值在原值为1的位置给出$(-1+1-1)/3=-1/3$：最高频的成分没有被滤除，而是以相反的符号、三分之一的幅度漏了过去。
+
+巴特沃斯滤波器介于二者之间：阶数低时空间核的负波纹很弱，振铃几乎不可见；阶数升高后过渡变陡，振铃逐渐接近理想滤波器。高斯滤波器的截止频率与空间平滑的尺度一一对应。若在$P$点的频率下标上使用式\eqref{eq:vision-transforms-gaussian-lowpass}，对应的空间高斯核标准差为
+\begin{equation}
+  \sigma_s=\frac{P}{2\pi D_0}\text{。}
+  \label{eq:vision-transforms-gaussian-scale}
+\end{equation}
+推导如下：连续高斯$e^{-x^2/2\sigma_s^2}$的傅里叶变换正比于$e^{-2\pi^2\sigma_s^2\xi^2}$，$\xi$以每像素周数计；频率下标$u$对应$\xi=u/P$，令$2\pi^2\sigma_s^2\xi^2=u^2/(2D_0^2)$即得。$D_0$越小，空间核越宽。
+
+高通滤波器由低通得到：$H_{\mathrm{HP}}=1-H_{\mathrm{LP}}$。理想、巴特沃斯、高斯三种\term{高通滤波器}（high-pass filter）的振铃性质与对应的低通相同。高通滤波去掉了直流分量，输出的平均值为0，看起来是一幅灰底上的边缘图；把它与原图按比例相加，$H=a+bH_{\mathrm{HP}}$，$a\geq0$、$b>a$，就是频域中的高频提升，与\ref{sec:vision-transforms-sharpening}小节的高提升滤波相对应。拉普拉斯算子在连续频域中是乘以$-4\pi^2(\xi_x^2+\xi_y^2)$，频率越高放大越多，这正是它放大噪声的原因：噪声的能量分布在所有频率上，而图像的能量主要集中在低频。
+
+\subsection{选择性滤波}
+\label{sec:vision-transforms-selective-filtering}
+
+前面的滤波器按频率的高低一刀切。有两类问题需要更有针对性的处理：干扰集中在少数几个已知频率上，这时只应去掉那几个频率；或者成像模型是乘性的，照度与反射率相乘，此时直接在线性频域中滤波不能把二者分开。前者由陷波滤波处理，后者由同态滤波处理。
+
+\subsubsection{陷波滤波}
+
+翻拍屏幕、扫描网点印刷品，或电子设备的干扰，常在图像上叠加规则的条纹。设观测为
+\[
+  f(x,y)=f_0(x,y)+A\cos\bigl(2\pi(u_0x/W+v_0y/H)\bigr)\text{，}
+\]
+其中$u_0,v_0$为整数。由欧拉公式，余弦等于两个复指数的平均，按定义计算可知干扰在频谱中只贡献两个点：$(u_0,v_0)$和$(-u_0,-v_0)$处各增加$AWH/2$，其余频率不受影响。在幅度谱上，这对点通常比周围的图像成分亮得多，很容易定位。
+
+\term{陷波滤波器}（notch filter）在指定的频率点及其对称点附近置零，其余位置保持为1。用中心在$(u_k,v_k)$的高通滤波器$H_k$构造，
+\begin{equation}
+  H_{\mathrm{NR}}(u,v)=\prod_{k=1}^{K}H_k(u,v)\,H_{-k}(u,v)\text{，}
+  \label{eq:vision-transforms-notch}
+\end{equation}
+$H_k$与$H_{-k}$分别以$(u_k,v_k)$与$(-u_k,-v_k)$为中心，二者成对出现，保证滤波器关于原点对称、输出为实数。$H_k$可以取巴特沃斯高通的形式，把式\eqref{eq:vision-transforms-butterworth}中的$D$换成到$(u_k,v_k)$的距离，陷波半径$D_0$控制挖掉的范围。相反地，$1-H_{\mathrm{NR}}$只保留这些频率，称为陷波通过滤波器，可以把干扰图案本身提取出来，用于检查陷波是否只去掉了干扰。
+
+陷波滤波的成立条件是干扰频率与图像内容的主要频率不重合。若干扰的周期不是图像尺寸的整数分之一，它的能量不再集中在一个点上，而是泄漏到周围一片频率中，此时陷波半径要加大，图像中相同频率的真实纹理也会被一并去掉。干扰在空间上不均匀（例如只出现在图像一部分）时，频域中也不是孤立的点，需要先分块或改用空间方法。
+
+\subsubsection{同态滤波}
+
+夜景中的照度从路灯下向远处衰减，暗处的墙面和亮处的墙面材质相同，看起来却差别很大。一个简化的成像模型把观测写成照度与反射率的乘积：
+\begin{equation}
+  f(x,y)=i(x,y)\,r(x,y),\qquad i>0,\quad 0<r\leq1\text{。}
+  \label{eq:vision-transforms-illumination-reflectance}
+\end{equation}
+照度$i$由光源决定，通常在空间上变化缓慢；反射率$r$由物体表面决定，在物体边界和纹理处变化剧烈。我们希望压缩照度的变化、加强反射率的对比，但乘积的傅里叶变换不是两个变换之积，线性滤波器无法分别作用于$i$和$r$。
+
+取对数把乘积变成和：$z=\ln f=\ln i+\ln r$。在$z$上，两项是相加的，可以用线性滤波分别处理：照度对应低频，反射率对应高频。\term{同态滤波}（homomorphic filtering）依次做“取对数—DFT—乘以$H$—逆DFT—取指数”\scite{vision-oppenheim1968homomorphic}，其中
+\begin{equation}
+  H(u,v)=(\gamma_H-\gamma_L)\Bigl[1-e^{-cD(u,v)^2/D_0^2}\Bigr]+\gamma_L\text{，}
+  \label{eq:vision-transforms-homomorphic}
+\end{equation}
+在中心处$H=\gamma_L$，远离中心时趋于$\gamma_H$；取$\gamma_L<1<\gamma_H$，低频被压缩，高频被放大。$c$控制两者之间过渡的陡峭程度。
+
+用两个像素对说明为什么在对数域中处理才合理（教学构造，假设照度与反射率已被完美分到低频和高频）。阴影里$i=0.1$，亮处$i=1$；每处都有两种材料，$r=0.2$和$r=0.6$。观测值在阴影中为0.02和0.06，在亮处为0.2和0.6。两处材料的比值都是3，但阴影里的绝对差只有0.04，亮处为0.4，任何加性的线性对比增强都会对二者区别对待。在对数域中，两处的材料差都是$\ln3\approx1.10$，照度差为$\ln10\approx2.30$，二者成为可分开的加性成分。取$\gamma_L=0.5$、$\gamma_H=1.5$：照度差变为1.15，即亮暗两处的照度之比从10降为约3.16；材料差变为1.65，材料对比从3提高到约5.20。阴影和亮处的材料对比得到同样的加强，照度的不均匀被压缩。
+
+同态滤波的局限来自它的模型假设。照度并不总是缓慢变化的：硬阴影的边界和反射率边界一样陡，会被当作反射率加强，在阴影边缘产生光晕；$f=0$的像素无法取对数，通常改为$\ln(1+f)$或加一个小常数，这也改变了暗部的比例关系。把图像分解为照度与反射率的思想称为Retinex模型，学习方法沿用了这一分解：Retinex-Net用一个分解网络从配对的低光与正常光照图像中学习把图像分成反射率与照度，再由另一个网络只调整照度分量\scite{vision-retinexnet2018}。区别在于，同态滤波用“照度是低频”这个固定的先验分开二者，学习方法则从数据中学习分解，能够处理照度边界较陡的情形，但分解结果的物理含义要靠训练约束保证。
+
+表\ref{tab:vision-transforms-frequency-compare}总结了本节的频域滤波器。它们都只改变频谱的幅值，不改变相位，区别在于按什么选择要改变的频率。
+
+\begin{table*}[tbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{18mm}XXX@{}}
+    \toprule
+    滤波器 & 选择频率的依据 & 适用情形 & 主要风险\\
+    \midrule
+    理想低通、高通 & 到中心的距离，陡截止 & 演示截止概念 & 明显振铃\\
+    巴特沃斯 & 到中心的距离，阶数控制过渡 & 需要较陡的过渡且容许轻微振铃 & 阶数高时振铃\\
+    高斯 & 到中心的距离，平滑过渡 & 平滑与锐化的一般用途；与空间高斯一一对应 & 截止不陡，过渡带内的成分被部分保留\\
+    陷波 & 指定的频率点及其对称点 & 规则的周期干扰 & 频率不在网格上时泄漏，需加宽陷波而误伤纹理\\
+    同态 & 对数域中的高低频 & 照度缓慢变化、需压缩照度并加强材料对比 & 硬阴影边界处光晕；暗部取对数不稳定\\
+    \bottomrule
+  \end{tabularx}
+  \caption{频域滤波器的比较。表中所有滤波器都是实数、关于中心对称的零相移滤波器。}
+  \label{tab:vision-transforms-frequency-compare}
+\end{table*}
+
+\section{多分辨率表示}
+\label{sec:vision-transforms-multiresolution}
+
+街景中的同一种对象可以有完全不同的尺寸：近处的车占据几百个像素，远处的车只有十几个像素；招牌上的大字和小字也相差数倍。空间滤波用固定大小的窗口，只适合一种尺度；傅里叶变换能区分尺度（频率），却把每个频率成分摊到整幅图像上，告诉不了我们某个细节在哪里。我们需要的表示应当同时回答“在哪里”和“多大尺度”。这里有一个无法回避的约束：要精确地知道一个成分的频率，需要观察足够长的范围，于是位置就变得不精确；反之亦然。多分辨率表示就是在这两者之间做系统的折中：低频成分变化慢，用稀疏的采样和大的范围描述；高频成分变化快，用密集的采样和小的范围描述。
+
+三条路线对这个折中的回答不同。图像金字塔反复平滑、降采样，得到一组越来越小的图像，再由相邻两层之差得到各个频带，结构最简单，但总数据量比原图多。离散余弦变换把图像切成固定大小的块，在每块内做频率分解，位置分辨率由块大小决定，是JPEG压缩的基础。小波变换用一组正交的低通、高通滤波器递归地分解，总数据量与原图相同，并且每一层都同时保留位置和尺度信息。三者的共同点是“低频用粗网格、高频用细网格”，不同点在于是否冗余、是否正交、块是否固定。
+
+\subsection{基于金字塔的表示}
+\label{sec:vision-transforms-pyramid}
+
+最直接的多尺度表示是把图像反复缩小。直接隔点取样会产生混叠：高于新采样率一半的频率成分会折叠成虚假的低频图案（见\ref{sec:vision-formation-aliasing}节）。所以每次缩小之前，要先用低通滤波去掉缩小后无法表示的频率。
+
+\term{高斯金字塔}（Gaussian pyramid）的构造规则为
+\begin{equation}
+  G_0=f,\qquad G_{l+1}=\operatorname{reduce}(G_l)=\downarrow_2\bigl(w*G_l\bigr)\text{，}
+  \label{eq:vision-transforms-gaussian-pyramid}
+\end{equation}
+其中$w$是可分离的平滑核，常用5点二项式核$\tfrac1{16}(1,4,6,4,1)$与自身的外积，它近似于高斯核；$\downarrow_2$表示在两个方向上隔点取样。每上一层，宽和高都减半，可表示的最高频率也减半。由于两个高斯平滑的复合仍是高斯平滑（\ref{sec:vision-transforms-smoothing}小节），第$l$层相当于原图经过一个尺度约随$2^l$增长的高斯平滑后再取样。全部各层的像素总数为
+\[
+  WH\Bigl(1+\frac14+\frac1{16}+\cdots\Bigr)<\frac43WH\text{，}
+\]
+所以建一个完整的金字塔只比原图多三分之一的存储。
+
+高斯金字塔的每一层都包含了比它更粗的所有层的信息，层与层之间高度冗余。若想知道“第$l$层比第$l+1$层多了什么”，需要把$G_{l+1}$放大回$G_l$的尺寸再相减。放大操作$\operatorname{expand}$先在每两个样本之间插入0，使尺寸加倍，再用插值核平滑；用$w$平滑时，为补偿插入的零，核要乘以4（每个方向乘2）。\term{拉普拉斯金字塔}（Laplacian pyramid）定义为\scite{vision-burt1983laplacian}
+\begin{equation}
+  L_l=G_l-\operatorname{expand}(G_{l+1}),\quad l=0,\ldots,K-1;\qquad L_K=G_K\text{。}
+  \label{eq:vision-transforms-laplacian-pyramid}
+\end{equation}
+它的重建是精确的：由定义移项，$G_l=L_l+\operatorname{expand}(G_{l+1})$，从顶层$G_K=L_K$开始逐层向下，就能恢复$G_0=f$。这一步之所以不依赖$\operatorname{expand}$用什么插值核，是因为$L_l$本身就是用同一个$\operatorname{expand}$算出来的，重建时只是把减掉的部分原样加回；无论插值好坏，误差都已经存在$L_l$里。插值核影响的是$L_l$的数值大小：插值越好，$\operatorname{expand}(G_{l+1})$越接近$G_l$，$L_l$越接近0。图\ref{fig:vision-transforms-pyramid}画出了三层金字塔的构造关系。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/image-pyramid}
+  \caption{高斯金字塔与拉普拉斯金字塔。上排每一层由上一层平滑后隔点取样得到，边长减半；下排每一层是同一尺寸的高斯层减去由更粗一层扩展得到的近似，顶层直接保留。重建时自右向左，把扩展后的粗层加回各层差值。}
+  \label{fig:vision-transforms-pyramid}
+\end{figure}
+
+用一维的简化算例复核（教学构造：缩小取相邻两点的平均，放大把每个值重复两次，以便手算；实际实现使用上面的平滑核）。设$G_0=(2,4,6,8)$，则$G_1=(3,7)$，$\operatorname{expand}(G_1)=(3,3,7,7)$，$L_0=(-1,1,-1,1)$；$G_2=(5)$，$\operatorname{expand}(G_2)=(5,5)$，$L_1=(-2,2)$；$L_2=G_2=(5)$。重建时，$G_1=L_1+(5,5)=(3,7)$，$G_0=L_0+(3,3,7,7)=(2,4,6,8)$，与原序列完全相同。拉普拉斯金字塔共存7个数，比原来的4个多；在二维中，冗余的比例与高斯金字塔相同，约为$4/3$。
+
+拉普拉斯层的含义可以从频率上理解。$G_l$包含频率低于某个上限的成分，$\operatorname{expand}(G_{l+1})$只包含低于该上限一半的成分，二者之差是一个频带。由于高斯平滑之差近似于高斯的二阶导数，$L_l$近似于用高斯拉普拉斯算子滤波的结果，这也是它名称的由来；它在边缘和细节处有响应，在平坦区接近0。
+
+拉普拉斯金字塔最初是为压缩提出的：各层$L_l$的值集中在0附近，熵低，量化后用较少的比特就能编码\scite{vision-burt1983laplacian}。它更持久的用途是多频带融合。把两幅图像沿一条接缝拼接时，直接切换会留下可见的接缝，用宽的过渡带混合又会让细节出现重影。多频带融合对两幅图像各建拉普拉斯金字塔，对拼接掩码建高斯金字塔，在每一层用对应层的掩码混合两幅图像的$L_l$，再重建\scite{vision-burt1983spline}。低频层的掩码已经被平滑得很宽，过渡平缓，消除了亮度差造成的接缝；高频层的掩码仍然很窄，细节不会重影。第三个用途是由粗到细的搜索：先在顶层小图上做匹配或运动估计，把结果放大后作为下一层的初值，这样大位移在粗层上只是小位移。\ref{sec:vision-videofound-lucas-kanade}节的光流估计就用这种方式处理大运动。金字塔的局限在于各层之间不正交、数据冗余，并且只按尺度不按方向分解，同一层里横、竖、斜的细节混在一起。
+
+金字塔结构直接延续到了学习模型。卷积网络的主干逐级降采样，各级特征图就是一个特征金字塔；特征金字塔网络（FPN）在此基础上加入自顶向下的通路：把较粗一层的特征上采样2倍，与同尺寸的主干特征经$1\times1$卷积后相加，再经$3\times3$卷积输出该层的特征\scite{vision-1612-03144}。这一步与拉普拉斯金字塔的重建式$G_l=L_l+\operatorname{expand}(G_{l+1})$在结构上相同：粗层上采样后与本层的信息相加。不同的是，FPN相加的两项都是学到的特征，目的不是精确重建，而是让每一层同时具有粗层的语义和本层的位置精度；它在检测中的用法见\ref{sec:vision-recognition-retinanet}节。U-Net的跳跃连接也把编码器各级的高分辨率特征送到解码器的对应级\scite{ronneberger2015unet}，作用类似于把丢失的细节频带加回。
+
+\subsection{基于离散余弦变换的表示}
+\label{sec:vision-transforms-dct}
+
+金字塔把整幅图像分成频带，但每个频带仍覆盖整幅图像。压缩需要另一种表示：把图像切成小块，每块用少数几个系数近似。对一块做DFT是自然的选择，但\ref{sec:vision-transforms-dft2d}小节已经指出，DFT隐含周期延拓，块的左边缘和右边缘灰度不同，延拓后在接缝处出现跳变，跳变的能量散布到所有频率上，需要很多系数才能描述。若改为先把块\emph{镜像}延拓再做DFT，接缝两侧的值相同，跳变消失，能量就会集中到低频。离散余弦变换正是这样得到的。
+
+先看一维。设$f(0),\ldots,f(N-1)$，构造长度$2N$的镜像序列$y(n)=f(n)$（$n<N$），$y(n)=f(2N-1-n)$（$n\geq N$），它在$n=N-1$与$n=N$之间、以及首尾相接处都没有跳变。记$\omega=e^{-\mathrm{i}\pi/N}$为$2N$点DFT的单位根，则
+\[
+  Y(k)=\sum_{n=0}^{N-1}f(n)\bigl[\omega^{kn}+\omega^{k(2N-1-n)}\bigr]
+  =\sum_{n=0}^{N-1}f(n)\bigl[\omega^{kn}+\omega^{-k(n+1)}\bigr]\text{，}
+\]
+第二个等号用了$\omega^{2Nk}=1$。从两项中提出公因子$e^{\mathrm{i}\pi k/(2N)}$，括号内变成一对共轭复数$e^{\mp\mathrm{i}\pi k(2n+1)/(2N)}$，其和为$2\cos\bigl(\pi k(2n+1)/(2N)\bigr)$。所以
+\[
+  Y(k)=2e^{\mathrm{i}\pi k/(2N)}\sum_{n=0}^{N-1}f(n)\cos\frac{\pi(2n+1)k}{2N}\text{。}
+\]
+镜像序列的DFT只差一个相位因子，就是一组余弦和。把这组余弦和单独取出，并选择使基向量规范正交的系数，得到\term{离散余弦变换}（discrete cosine transform, DCT）\scite{vision-ahmed1974dct}，即通常所说的DCT-II，其中归一化系数为$\alpha(0)=\sqrt{1/N}$，$\alpha(k)=\sqrt{2/N}$（$k\geq1$）：
+\begin{equation}
+  C(k)=\alpha(k)\sum_{n=0}^{N-1}f(n)\cos\frac{\pi(2n+1)k}{2N}\text{，}
+  \label{eq:vision-transforms-dct}
+\end{equation}
+在这个归一化下，$N$个基向量$\alpha(k)\cos(\pi(2n+1)k/2N)$构成$\mathbb{R}^N$的规范正交基，因此逆变换就是用同样的基向量做线性组合：$f(n)=\sum_k\alpha(k)C(k)\cos(\pi(2n+1)k/2N)$，并且能量守恒，$\sum_nf(n)^2=\sum_kC(k)^2$。DCT的系数都是实数，不像DFT那样需要一对共轭系数才能描述一个实的余弦。二维DCT是可分离的，先对每行、再对每列做一维DCT：
+\begin{equation}
+  C(u,v)=\alpha(u)\alpha(v)\sum_{x=0}^{N-1}\sum_{y=0}^{N-1}f(x,y)
+  \cos\frac{\pi(2x+1)u}{2N}\cos\frac{\pi(2y+1)v}{2N}\text{。}
+  \label{eq:vision-transforms-dct2d}
+\end{equation}
+图\ref{fig:vision-transforms-dct-basis}画出了$N=4$时的16幅基图像：$(0,0)$是常数，$u$增大时沿横向变化加快，$v$增大时沿纵向变化加快。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/dct-basis}
+  \caption{$N=4$时二维DCT的基图像。第$v$行、第$u$列的小图是式\eqref{eq:vision-transforms-dct2d}中两个余弦的乘积，深色为正、浅色为负，由公式直接计算。左上角是直流分量，向右横向频率升高，向下纵向频率升高。}
+  \label{fig:vision-transforms-dct-basis}
+\end{figure}
+
+DCT的价值在于\term{能量集中}（energy compaction）：对相邻像素高度相关的数据，能量集中在少数低频系数上。用一维的线性斜坡$f=(0,1,\ldots,7)$对比DCT和DFT（两者都取规范正交的归一化）。总能量为140。DCT系数约为$(9.90,-6.44,0,-0.67,0,-0.20,0,-0.05)$，前两个系数占总能量的99.6\%，只用它们重建，结果为$(0.34,0.82,1.71,2.87,4.13,5.29,6.18,6.66)$，与原斜坡相当接近。DFT的直流分量和最低的一对频率（共三个系数）只占89.5\%，用它们重建得到$(2.5,1.09,1.09,2.5,4.5,5.91,5.91,4.5)$，两端被拉向中间，因为DFT把斜坡看成周期延拓后的锯齿波，7到0的跳变需要大量高频系数描述。这个例子是能量集中的一个特例，更一般的结论是：对相关系数接近1的一阶马尔可夫过程，DCT的去相关效果接近最优的Karhunen–Loève变换，而后者依赖数据的协方差，需要逐个数据集计算，DCT则是固定的\scite{vision-ahmed1974dct}。正交变换加截断为什么能压缩，可以从正交展开的角度理解：在规范正交基下，丢掉一部分系数造成的平方误差恰好等于这些系数的平方和，相关内容可参考\BookChapterRef{chap:functional-analysis-and-approximation}{卷一“函数空间”章}。
+
+JPEG基线编码把这一思想用于$8\times8$的块\scite{vision-wallace1992jpeg}。每块先把灰度减去128，使数值以0为中心；再做式\eqref{eq:vision-transforms-dct2d}的二维DCT；然后用量化表逐系数量化，$C_q(u,v)=\operatorname{round}\bigl(C(u,v)/Q(u,v)\bigr)$。量化表在高频处的步长较大，因为人眼对高频亮度误差不如低频敏感，大量高频系数被量化为0。量化后的系数按之字形从低频到高频排列，使连续的0聚在一起，再做游程编码和熵编码。量化后的符号怎样编码、码率与失真怎样权衡，见\ref{sec:vision-restoration-compression}节。一个可以手算的例子：一块全部为140的平坦区域减去128后全为12，二维DCT只有直流系数非零，$C(0,0)=\alpha(0)^2\times64\times12=\tfrac18\times768=96$；若该位置的量化步长为16，量化后为6，解码得$6\times16=96$，逆变换恢复全为12的块，没有误差。真实的块中直流系数一般不是步长的整数倍，量化误差不可避免。
+
+分块的选择决定了DCT的位置分辨率，也带来了它的典型失效。块大小为8时，块内的频率分析与块外无关，相邻两块的直流系数各自量化，量化误差不同，压缩率高时块与块之间出现明显的台阶，称为\term{块效应}（blocking artifact）；块内的强边缘需要很多高频系数描述，高频被量化掉之后，边缘附近出现与振铃同源的波纹。块越大，平滑区域压缩得越好，但一块内包含边缘的机会越大；8是JPEG标准在这两者之间的取舍，视频编码标准则允许多种块大小（见\ref{chap:vision-video-restoration}章）。学习式图像压缩保留了“变换—量化—熵编码”的框架，但用学到的非线性分析变换代替固定的分块DCT，变换范围也不再局限于互不重叠的块（见\ref{sec:vision-restoration-quantization}节）。
+
+\subsection{基于小波的表示}
+\label{sec:vision-transforms-wavelet}
+
+金字塔多存了约三分之一的数据，各层之间不正交；DCT的块大小固定，所有频率共用同一个位置分辨率。小波变换同时回答这两点：它把信号分成一个低频部分和一个高频部分，各取一半样本，总数不变；然后只对低频部分继续分解。于是低频成分由越来越稀疏的样本描述，高频细节始终保留较密的位置信息。
+
+最简单的小波是Haar小波。对长度为偶数的一维序列，每两个相邻样本计算一次规范化的和与差：
+\begin{equation}
+  a_k=\frac{f(2k)+f(2k+1)}{\sqrt2},\qquad
+  d_k=\frac{f(2k)-f(2k+1)}{\sqrt2}\text{。}
+  \label{eq:vision-transforms-haar}
+\end{equation}
+$a_k$称为近似系数，描述局部平均；$d_k$称为细节系数，描述局部变化。逆变换为$f(2k)=(a_k+d_k)/\sqrt2$，$f(2k+1)=(a_k-d_k)/\sqrt2$，把两式代回式\eqref{eq:vision-transforms-haar}即可验证。除以$\sqrt2$使每一对$(f(2k),f(2k+1))\mapsto(a_k,d_k)$成为一个旋转45度的正交变换，因此能量守恒：$a_k^2+d_k^2=f(2k)^2+f(2k+1)^2$。
+
+继续用$f=(2,4,6,8)$复核。第一层得到$a=(6/\sqrt2,14/\sqrt2)\approx(4.243,9.899)$，$d=(-2/\sqrt2,-2/\sqrt2)\approx(-1.414,-1.414)$。原能量为$4+16+36+64=120$，$a$的能量为$18+98=116$，$d$的能量为$2+2=4$，合计120。对$a$再做一层，得到$a'=(6+14)/2=10$，$d'=(6-14)/2=-4$，能量$100+16=116$。最终的表示是$(10,-4,-1.414,-1.414)$，仍然只有4个数，与原序列一样多；其中约83\%的能量集中在第一个系数上，细节系数都很小，这是斜坡信号在局部近似平坦的反映。与上一小节的拉普拉斯金字塔对比：同一个序列，金字塔存了7个数，小波只存4个。
+
+式\eqref{eq:vision-transforms-haar}可以理解为一个两通道的滤波器组：用低通滤波器$h_0=(1,1)/\sqrt2$和高通滤波器$h_1=(1,-1)/\sqrt2$分别滤波，再各自隔点取样。隔点取样本来会造成混叠，但两个通道的混叠项在重建时恰好相互抵消，这就是完全重建的条件。Haar滤波器只有两个抽头，频率选择性差，重建一个光滑信号时细节系数截断后会出现台阶；更长的小波滤波器（例如Daubechies族和JPEG 2000使用的双正交小波）在保持完全重建的同时有更好的频率选择性和光滑性，其设计超出本章范围。
+
+二维的\term{离散小波变换}（discrete wavelet transform, DWT）把一维变换分别作用于行和列。先沿每一行（水平方向）做一层一维分解，得到水平低通和水平高通两半；再沿每一列（竖直方向）对两半各做一层分解。结果是四个大小为原图四分之一的\term{子带}（subband）。本章用两个字母命名子带，第一个字母表示水平方向的滤波，第二个表示竖直方向的滤波：
+LL两方向都是低通，是原图的缩小近似；HL水平高通、竖直低通，对左右方向的灰度变化响应，即对竖直边缘响应；LH水平低通、竖直高通，对上下方向的变化响应，即对水平边缘响应；HH两方向都是高通，对对角方向的细节响应。不同文献对字母顺序的约定不一致，使用时应以滤波方向为准。对LL子带重复同样的分解，就得到多层的DWT，子带排列如图\ref{fig:vision-transforms-wavelet-subbands}。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/wavelet-subbands}
+  \caption{两层二维离散小波分解的子带排列。第一层把图像分成四个子带，第二层只继续分解左上角的LL子带。下标表示分解层数，层数越大，子带越小、对应的尺度越粗。浅蓝色的$\mathrm{LL}_2$是原图缩小到十六分之一的近似。}
+  \label{fig:vision-transforms-wavelet-subbands}
+\end{figure}
+
+用一个$2\times2$块复核子带的含义。上一行为$(10,10)$，下一行为$(50,50)$，即一条水平边缘。二维Haar变换的四个系数为：$\mathrm{LL}=(10+10+50+50)/2=60$；$\mathrm{HL}=(10-10+50-50)/2=0$；$\mathrm{LH}=(10+10-50-50)/2=-40$；$\mathrm{HH}=(10-10-50+50)/2=0$。水平边缘只出现在竖直高通的LH子带中，与上面的命名一致；能量$100+100+2500+2500=5200$等于$3600+1600$。
+
+\term{多分辨率分析}（multiresolution analysis, MRA）为这种逐层分解提供了函数空间的描述\scite{vision-mallat1989}。以Haar为例，记$V_j$为在每个长度为$2^j$的区间$[k2^j,(k+1)2^j)$上取常数的平方可积函数全体。区间越短，函数越精细，所以这些空间是嵌套的：$\cdots\subset V_2\subset V_1\subset V_0\subset\cdots$。$V_j$由\term{尺度函数}（scaling function）$\phi(x)=\mathbf{1}_{[0,1)}(x)$经伸缩、平移得到的函数$\phi(2^{-j}x-k)$张成。把$V_{j-1}$中的函数投影到更粗的$V_j$上，丢掉的部分落在$V_j$在$V_{j-1}$中的正交补$W_j$里，即$V_{j-1}=V_j\oplus W_j$；$W_j$由小波函数$\psi(x)=\mathbf{1}_{[0,1/2)}(x)-\mathbf{1}_{[1/2,1)}(x)$的伸缩平移张成。式\eqref{eq:vision-transforms-haar}中的$a_k$和$d_k$正是在这两组基上的正交投影系数。反复展开得到$V_0=V_K\oplus W_K\oplus W_{K-1}\oplus\cdots\oplus W_1$：一幅图像等于最粗尺度上的近似，加上从粗到细各个尺度上的细节。正交投影与正交分解的一般性质，在前面引用的卷一“函数空间”章中已有讨论。
+
+小波表示的直接用途有两个。其一是压缩：自然图像的细节系数大多接近0，量化后大量为0，JPEG 2000用小波变换代替了分块DCT，因此在高压缩率下没有块效应，代价是在边缘附近出现模糊和振铃。其二是去噪：独立同分布的高斯噪声经过正交变换后仍是同方差、相互独立的高斯噪声，均匀分布在所有系数上，而图像的能量集中在少数大系数上；把细节系数做\term{软阈值}（soft thresholding）处理，$\hat d=\operatorname{sign}(d)\max(|d|-\lambda,0)$，小系数被置0，大系数被收缩$\lambda$，再逆变换。软阈值是$L_1$正则的邻近算子，即$\argmin_x\tfrac12(x-d)^2+\lambda|x|$的解，可参考\BookChapterRef{chap:optimization}{卷一“最优化”章}。在上面的例子中取$\lambda=1$，两个$-1.414$变为$-0.414$，$d'=-4$变为$-3$。小波去噪的失效情形是纹理和噪声的系数大小相当时，阈值无法区分二者，纹理被一并抹平。
+
+表\ref{tab:vision-transforms-multiresolution-compare}比较了三种多分辨率表示。
+
+\begin{table*}[tbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{18mm}XXXX@{}}
+    \toprule
+    表示 & 数据量（相对原图） & 位置与尺度 & 典型用途 & 主要局限\\
+    \midrule
+    高斯、拉普拉斯金字塔 & 约$4/3$倍 & 每层整幅，尺度每层减半，不分方向 & 多频带融合、由粗到细搜索、尺度空间 & 冗余，层间不正交\\
+    分块DCT & 1倍 & 位置分辨率固定为块大小，块内分频率 & JPEG、视频编码中的变换编码 & 块效应；块内边缘需大量系数\\
+    离散小波 & 1倍 & 低频用粗网格、高频用细网格，按三个方向分子带 & JPEG 2000、小波阈值去噪 & 短滤波器（Haar）有台阶，长滤波器在边缘附近有振铃\\
+    \bottomrule
+  \end{tabularx}
+  \caption{多分辨率表示的比较。三者都把低频用较少的样本描述，区别在于是否冗余、是否正交，以及位置分辨率是否随尺度变化。}
+  \label{tab:vision-transforms-multiresolution-compare}
+\end{table*}
+
+\section{形态学处理}
+\label{sec:vision-transforms-morphology}
+
+把招牌笔画阈值化（阈值的选择见\ref{sec:vision-features-otsu}节）之后，得到一张二值掩码：笔画为前景，其余为背景。这张掩码通常不干净：笔画中间因反光出现小孔，背景里散落着由噪声造成的孤立前景点，相邻两个字的笔画可能粘在一起。前面的方法都按数值加权、排序或变换，处理这些问题却需要回答形状上的问题：这个前景点周围有没有足够大的前景区域，这个孔是否被前景完全包围，这两个区域是否连通。\term{数学形态学}（mathematical morphology）用集合运算回答这类问题\scite{vision-serra1982}：把前景看成平面上的点集，用一个小的探针形状在其中平移，根据探针能否放进前景、是否碰到前景来改写集合。本节先定义二值图像上的基本运算，再由它们组合出边界提取、孔洞填充、连通分量、骨架和形态学重建等算法，最后把运算推广到灰度图像。
+
+\subsection{二值形态学运算}
+\label{sec:vision-transforms-binary-morphology}
+
+把二值图像的前景看成整数网格$\mathbb{Z}^2$上的点集$\bm{A}$，元素是位置向量$\bm{z}=(x,y)$。除了并、交、补（$\bm{A}^{c}$）、差这些基本集合运算（可参考\BookChapterRef{chap:sets-functions-and-proofs}{卷一“数学对象与逻辑”章}），还需要两种几何运算：平移$(\bm{A})_{\bm{z}}=\{\bm{a}+\bm{z}:\bm{a}\in\bm{A}\}$，以及关于原点的反射$\hat{\bm{B}}=\{-\bm{b}:\bm{b}\in\bm{B}\}$。探针形状称为\term{结构元}（structuring element），记为$\bm{B}$，它是一个包含原点或位于原点附近的小集合，例如$3\times3$的方块、十字形或圆盘。结构元的形状和大小决定了“多小的结构算作噪声”。
+
+\term{腐蚀}（erosion）保留那些能让结构元整个放进前景的位置：
+\begin{equation}
+  \bm{A}\ominus\bm{B}=\{\bm{z}:(\bm{B})_{\bm{z}}\subseteq\bm{A}\}
+  =\bigcap_{\bm{b}\in\bm{B}}(\bm{A})_{-\bm{b}}\text{。}
+  \label{eq:vision-transforms-erosion}
+\end{equation}
+\term{膨胀}（dilation）保留那些让反射后的结构元碰到前景的位置：
+\begin{equation}
+  \bm{A}\oplus\bm{B}=\{\bm{z}:(\hat{\bm{B}})_{\bm{z}}\cap\bm{A}\neq\varnothing\}
+  =\bigcup_{\bm{b}\in\bm{B}}(\bm{A})_{\bm{b}}
+  =\{\bm{a}+\bm{b}:\bm{a}\in\bm{A},\bm{b}\in\bm{B}\}\text{。}
+  \label{eq:vision-transforms-dilation}
+\end{equation}
+式\eqref{eq:vision-transforms-dilation}最右边的形式就是集合的\term{Minkowski和}（Minkowski sum），腐蚀则对应Minkowski差。两式中间的等号说明了实现方法：膨胀是把$\bm{A}$按结构元中的每个偏移平移后取并，腐蚀是平移后取交。用$\bm{z}\in(\bm{A})_{-\bm{b}}\Leftrightarrow\bm{z}+\bm{b}\in\bm{A}$可以直接验证第一个等号。
+
+腐蚀和膨胀是对偶的：对前景做腐蚀，等于对背景做膨胀再取补，
+\begin{equation}
+  (\bm{A}\ominus\bm{B})^{c}=\bm{A}^{c}\oplus\hat{\bm{B}}\text{。}
+  \label{eq:vision-transforms-duality}
+\end{equation}
+证明只需逐步改写成员关系：$\bm{z}\notin\bm{A}\ominus\bm{B}$，当且仅当存在$\bm{b}\in\bm{B}$使$\bm{z}+\bm{b}\notin\bm{A}$，即$\bm{z}+\bm{b}\in\bm{A}^{c}$；这又等价于$\bm{z}\in(\bm{A}^{c})_{-\bm{b}}$对某个$\bm{b}$成立，也就是$\bm{z}\in\bigcup_{\bm{b}}(\bm{A}^{c})_{-\bm{b}}=\bm{A}^{c}\oplus\hat{\bm{B}}$。对偶性的实际意义是：关于前景的结论可以通过交换前景与背景转移给另一种运算，不必分别证明。
+
+两种运算还有几条基本性质，都可由定义直接得出。它们与平移可交换：先平移图像再腐蚀，等于先腐蚀再平移，这与卷积的平移等变性相同，但腐蚀和膨胀不是线性运算。它们是单调的：$\bm{A}_1\subseteq\bm{A}_2$蕴含$\bm{A}_1\ominus\bm{B}\subseteq\bm{A}_2\ominus\bm{B}$，膨胀同理。若结构元包含原点，则$\bm{A}\ominus\bm{B}\subseteq\bm{A}\subseteq\bm{A}\oplus\bm{B}$：腐蚀只会缩小前景，膨胀只会扩大前景。膨胀满足交换律和结合律，$(\bm{A}\oplus\bm{B}_1)\oplus\bm{B}_2=\bm{A}\oplus(\bm{B}_1\oplus\bm{B}_2)$，所以用大结构元膨胀可以分解为用几个小结构元依次膨胀，这与可分离卷积降低计算量的思路相同。
+
+腐蚀去掉了小于结构元的前景部分，但也把留下的部分削瘦了一圈；膨胀填上了小缝隙，也把整体加粗了一圈。把两者依次组合，可以只做前一半的事而大致保持尺寸。\term{开运算}（opening）先腐蚀再膨胀，\term{闭运算}（closing）先膨胀再腐蚀：
+\begin{equation}
+  \bm{A}\circ\bm{B}=(\bm{A}\ominus\bm{B})\oplus\bm{B},\qquad
+  \bm{A}\bullet\bm{B}=(\bm{A}\oplus\bm{B})\ominus\bm{B}\text{。}
+  \label{eq:vision-transforms-opening-closing}
+\end{equation}
+开运算有一个直观的刻画：
+\begin{equation}
+  \bm{A}\circ\bm{B}=\bigcup\bigl\{(\bm{B})_{\bm{z}}:(\bm{B})_{\bm{z}}\subseteq\bm{A}\bigr\}\text{，}
+  \label{eq:vision-transforms-opening-fit}
+\end{equation}
+即所有能放进$\bm{A}$的结构元平移副本的并。推导：由式\eqref{eq:vision-transforms-dilation}，$(\bm{A}\ominus\bm{B})\oplus\bm{B}=\bigcup_{\bm{z}\in\bm{A}\ominus\bm{B}}(\bm{B})_{\bm{z}}$，而$\bm{z}\in\bm{A}\ominus\bm{B}$恰好意味着$(\bm{B})_{\bm{z}}\subseteq\bm{A}$。由此立刻得到开运算的三条性质：结果是$\bm{A}$的子集；结构元放不进去的细小部分被去掉；对结果再做一次开运算不再改变它（幂等），因为能放进$\bm{A}\circ\bm{B}$的副本一定能放进$\bm{A}$，而能放进$\bm{A}$的副本已经都在$\bm{A}\circ\bm{B}$里。由对偶性，闭运算的结果包含$\bm{A}$，填上结构元无法穿过的缝隙和小孔，也是幂等的。
+
+用一行像素复核（教学构造）。位置0到7，前景$\bm{A}=\{1,2,3,6\}$，结构元$\bm{B}=\{-1,0,1\}$，区间外按背景处理。腐蚀要求$\bm{z}-1,\bm{z},\bm{z}+1$都在$\bm{A}$中，只有$\bm{z}=2$满足，$\bm{A}\ominus\bm{B}=\{2\}$。膨胀把每个前景点向两侧各扩一格，$\{0,\ldots,4\}\cup\{5,6,7\}$，即全部8个位置。开运算为$\{2\}\oplus\bm{B}=\{1,2,3\}$：长度为3的段恰好放得下结构元，保留下来；孤立点6放不下，被去掉。闭运算为全集的腐蚀，由于区间外是背景，两端的0和7被腐蚀掉，得到$\{1,\ldots,6\}$：长度为2的空隙4、5被填上。图\ref{fig:vision-transforms-morphology}画出了这五行结果。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/morphology-operations}
+  \caption{一维二值形态学运算（教学构造）。每行8个格表示位置0至7，深色为前景；结构元$\bm{B}$由三个相邻格组成，原点在中间；区间外按背景处理。开运算去掉了放不下结构元的孤立点6，闭运算填上了宽度为2的空隙。}
+  \label{fig:vision-transforms-morphology}
+\end{figure}
+
+这个例子也提示了边界约定的作用：闭运算本应包含$\bm{A}$，若$\bm{A}$包含位置0或7，把区间外当作背景会让腐蚀把它们削掉，结果反而不包含$\bm{A}$。实现中对膨胀通常把图像外当作背景，对腐蚀则常当作前景，或者先补足够宽的边再运算。
+
+开和闭只能判断“结构元放不放得进去”，有时我们需要找某种特定的局部图案，例如孤立的单点、线段的端点或某种角点，这时既要规定哪里必须是前景，也要规定哪里必须是背景。\term{击中击不中变换}（hit-or-miss transform）用一对不相交的结构元$\bm{B}_1$（必须是前景的位置）和$\bm{B}_2$（必须是背景的位置）：
+\begin{equation}
+  \bm{A}\circledast(\bm{B}_1,\bm{B}_2)=(\bm{A}\ominus\bm{B}_1)\cap(\bm{A}^{c}\ominus\bm{B}_2)\text{。}
+  \label{eq:vision-transforms-hit-or-miss}
+\end{equation}
+在上面的一行中取$\bm{B}_1=\{0\}$、$\bm{B}_2=\{-1,1\}$，即“自己是前景、两侧都是背景”。$\bm{A}\ominus\bm{B}_1=\bm{A}$；$\bm{A}^{c}\ominus\bm{B}_2$是两侧都不在$\bm{A}$中的位置，在0到7中为$\{6\}$（位置0的右侧1属于$\bm{A}$，位置4、5各有一侧邻接前景，位置7的左侧6属于$\bm{A}$）。二者之交为$\{6\}$，正好找出孤立点。二维中把$\bm{B}_2$取为8邻域，就得到孤立前景点的检测；改变$\bm{B}_1$、$\bm{B}_2$的图案，可以检测端点、分叉点和角点，后面的骨架细化算法就反复使用这种模板。
+
+表\ref{tab:vision-transforms-morphology-compare}汇总了五种运算。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{22mm}XXX@{}}
+    \toprule
+    运算 & 保留或加入哪些位置 & 与原集合的关系（结构元含原点） & 典型用途\\
+    \midrule
+    腐蚀 & 结构元整个放得进前景的位置 & 缩小 & 去掉细小前景，分开细连接\\
+    膨胀 & 反射后的结构元碰到前景的位置 & 扩大 & 填小缝，连接断开的笔画\\
+    开运算 & 放得进前景的结构元副本之并 & 缩小，幂等 & 去孤立噪点、细突起，大致保持尺寸\\
+    闭运算 & 开运算在背景上的对偶 & 扩大，幂等 & 填小孔、窄缝\\
+    击中击不中 & 同时满足前景图案与背景图案的位置 & 不一定 & 检测孤立点、端点、角点\\
+    \bottomrule
+  \end{tabularx}
+  \caption{二值形态学基本运算的比较。五种运算都与平移可交换，但都不是线性运算。}
+  \label{tab:vision-transforms-morphology-compare}
+\end{table}
+
+\subsection{形态学算法}
+\label{sec:vision-transforms-morphology-algorithms}
+
+基本运算本身只做一步改写。实际任务要提取的是边界、孔洞、连通区域和形状的中轴，这些对象由基本运算的有限组合或迭代得到。下面的算法都可以看成同一个模式的变体：从一个种子集合出发，反复膨胀，并在每一步用一个约束集合截断，直到不再变化。二维像素之间的4邻接、8邻接与连通性的定义见\ref{sec:vision-formation-connectivity}节，结构元的形状决定了算法采用哪一种连通性。
+
+边界提取最简单。前景减去它的腐蚀，剩下的就是至少有一个邻居属于背景的前景像素：
+\begin{equation}
+  \beta(\bm{A})=\bm{A}-(\bm{A}\ominus\bm{B})\text{，}
+  \label{eq:vision-transforms-boundary}
+\end{equation}
+其中$\bm{B}$常取$3\times3$方块。一维时$\bm{A}=\{1,2,3\}$、$\bm{B}=\{-1,0,1\}$，腐蚀为$\{2\}$，边界为$\{1,3\}$。用更大的结构元得到更粗的边界。
+
+孔洞填充要把被前景完全包围的背景区域变成前景。如果已知孔洞内的一个种子点$\bm{p}$，令$\bm{X}_0=\{\bm{p}\}$，迭代
+\begin{equation}
+  \bm{X}_k=(\bm{X}_{k-1}\oplus\bm{B})\cap\bm{A}^{c}\text{，}
+  \label{eq:vision-transforms-hole-filling}
+\end{equation}
+直到$\bm{X}_k=\bm{X}_{k-1}$，结果$\bm{A}\cup\bm{X}_k$即为填充后的前景。每一步膨胀让种子向外扩一圈，与$\bm{A}^{c}$求交保证它只在背景中扩张，碰到前景的包围圈就停下。这里$\bm{B}$要取十字形（4邻接）：若取$3\times3$方块，种子可以从包围圈的对角缝隙中漏出去，把外部背景也填满。实际中往往不知道孔洞在哪里，这时换一个方向思考：外部背景一定与图像边框连通，孔洞则不连通。以边框上的背景像素为种子，用同样的迭代在$\bm{A}^{c}$中扩张，得到所有与边框连通的背景，剩下的背景就是孔洞。一维例：位置0到7，$\bm{A}=\{1,2,5,6\}$，背景$\{0,3,4,7\}$；从边框上的0和7出发，在背景内扩张，相邻位置1和6都是前景，扩不出去，于是与边框连通的背景只有$\{0,7\}$，孔洞为$\{3,4\}$，填充后前景为$\{1,\ldots,6\}$。
+
+连通分量的提取是同一个迭代，只是把约束集合换成前景：从某个前景像素出发，$\bm{X}_k=(\bm{X}_{k-1}\oplus\bm{B})\cap\bm{A}$，稳定后得到包含该像素的连通分量。$\bm{B}$取$3\times3$方块时得到8连通分量，取十字形时得到4连通分量。一维例中从位置1出发，第一步得到$\{0,1,2\}\cap\bm{A}=\{1,2\}$，第二步不变，分量为$\{1,2\}$。对所有分量依次这样做并编号，就是连通分量标记。这个迭代本质上是在像素邻接图上做广度优先搜索；大图像上更高效的做法是两遍扫描加并查集，其图论依据可参考\BookChapterRef{chap:graph-theory}{卷一“图的表示与计算”章}。
+
+骨架希望用一组细线概括形状，例如把粗笔画化为单像素宽的中心线。直观的定义是：一个点在骨架上，当且仅当以它为中心、完全包含在$\bm{A}$内的最大圆盘至少在两处接触边界，这些点组成形状的中轴。离散情形下，\term{形态学骨架}（morphological skeleton）用多次腐蚀和开运算来实现这个定义：
+\begin{equation}
+  S(\bm{A})=\bigcup_{k=0}^{K}S_k(\bm{A}),\qquad
+  S_k(\bm{A})=(\bm{A}\ominus k\bm{B})-(\bm{A}\ominus k\bm{B})\circ\bm{B}\text{，}
+  \label{eq:vision-transforms-skeleton}
+\end{equation}
+其中$\bm{A}\ominus k\bm{B}$表示连续腐蚀$k$次，$K$是使腐蚀结果非空的最大次数。$S_k$是第$k$次腐蚀后“放不下一个结构元”的部分，即恰好以$k$次腐蚀为最大内切尺度的中心点。由这些点可以精确重建原形状：$\bm{A}=\bigcup_k\bigl(S_k(\bm{A})\oplus k\bm{B}\bigr)$，其中$\oplus k\bm{B}$表示连续膨胀$k$次。一维例：$\bm{A}=\{0,\ldots,4\}$，$\bm{B}=\{-1,0,1\}$。$\bm{A}$本身是结构元副本之并，开运算不变，$S_0=\varnothing$；腐蚀一次得$\{1,2,3\}$，仍是一个结构元副本，$S_1=\varnothing$；腐蚀两次得$\{2\}$，单点放不下结构元，开运算为空，$S_2=\{2\}$。骨架为中心点2，重建时把它膨胀两次，恢复$\{0,\ldots,4\}$。形态学骨架的缺点是不保证连通，并且对边界噪声很敏感：边界上一个小突起就会长出一条骨架分支。需要连通的单像素中心线时，通常改用细化算法：反复用一组击中击不中模板删除不影响连通性的边界点，直到不能再删。
+
+上面的孔洞填充和连通分量提取有一个共同的结构：一个“标记”集合在一个“掩模”集合内部反复膨胀。把它独立出来，就得到形态学重建\scite{vision-vincent1993reconstruction}。设标记$\bm{F}\subseteq\bm{G}$，掩模为$\bm{G}$，定义一次测地膨胀$\delta_{\bm{G}}(\bm{F})=(\bm{F}\oplus\bm{B})\cap\bm{G}$，\term{形态学重建}（morphological reconstruction）是反复做测地膨胀直到稳定的结果：
+\begin{equation}
+  R_{\bm{G}}(\bm{F})=\delta_{\bm{G}}^{(k^{*})}(\bm{F})\text{，}
+  \label{eq:vision-transforms-reconstruction}
+\end{equation}
+其中$\delta_{\bm{G}}^{(k)}$表示连续做$k$次测地膨胀，$k^{*}$是使$\delta_{\bm{G}}^{(k+1)}(\bm{F})=\delta_{\bm{G}}^{(k)}(\bm{F})$成立的最小次数。由于每次结果都包含上一次的结果且不超出有限的$\bm{G}$，迭代一定在有限步内停止。重建的结果是$\bm{G}$中所有与$\bm{F}$连通的分量，结构元决定按4连通还是8连通计算。
+
+\begin{algorithm}[二值形态学重建]
+  \label{alg:vision-transforms-reconstruction}
+  \begin{algorithmic}[1]
+    \Require 掩模$\bm{G}$，标记$\bm{F}\subseteq\bm{G}$，结构元$\bm{B}$（十字形对应4连通，$3\times3$方块对应8连通）
+    \Ensure 重建结果$R_{\bm{G}}(\bm{F})$
+    \State $\bm{X}\gets\bm{F}$
+    \Repeat
+      \State $\bm{X}_{\mathrm{old}}\gets\bm{X}$
+      \State $\bm{X}\gets(\bm{X}\oplus\bm{B})\cap\bm{G}$
+    \Until{$\bm{X}=\bm{X}_{\mathrm{old}}$}
+    \State \Return $\bm{X}$
+  \end{algorithmic}
+\end{algorithm}
+
+在这个框架下，连通分量提取是$\bm{F}$取一个种子、$\bm{G}=\bm{A}$；孔洞填充是$\bm{F}$取边框上的背景、$\bm{G}=\bm{A}^{c}$，再取补。重建最有用的新用途是\emph{基于重建的开运算}：先用较大的结构元腐蚀，只保留足够粗大的对象留下的“残核”，再以这些残核为标记、以原图为掩模做重建。与普通开运算不同，重建恢复的是整个对象的原始形状，而不是结构元副本之并。例如招牌上一个笔画粗细不均的字，普通开运算会把它较细的部分削掉，基于重建的开运算则只要它有一处足够粗，就把整个字完整保留，同时彻底去掉所有比结构元细的噪点和细线。类似地，以边框上的前景为标记重建，再从原图中减去，就去掉了所有与边框相接的对象，常用于清除被画面截断的不完整目标。算法\ref{alg:vision-transforms-reconstruction}每次迭代都扫描整幅图像，迭代次数可能与对象的直径相当；实际实现用队列只处理边界上发生变化的像素，代价接近与像素数成正比。
+
+形态学算法在学习方法中主要作为前处理和后处理出现。分割网络输出的掩码同样会有小孔和孤立的碎片，用开、闭、孔洞填充和小连通分量的剔除来清理，是常见的后处理步骤；骨架和连通分量则把掩码转换成线条、计数和拓扑结构，供测量与识别使用。需要注意的是，这些后处理会改变掩码的面积和边界，用掩码计算面积或交并比等指标时，应说明是否做过后处理。
+
+\subsection{灰度形态学}
+\label{sec:vision-transforms-grayscale-morphology}
+
+二值运算中，“结构元放得进前景”和“结构元碰到前景”分别对应窗口内的“全是1”和“有一个1”，也就是窗口内的最小值和最大值。这给出了推广到灰度图像的自然方式。取平坦的结构元$\bm{B}$（只规定形状，不带高度），灰度腐蚀与膨胀定义为
+\begin{equation}
+  (f\ominus\bm{B})(x,y)=\min_{(i,j)\in\bm{B}}f(x+i,y+j),\qquad
+  (f\oplus\bm{B})(x,y)=\max_{(i,j)\in\bm{B}}f(x-i,y-j)\text{。}
+  \label{eq:vision-transforms-grayscale-morphology}
+\end{equation}
+二值图像是灰度图像只取0和1的特例，此时上式退化为式\eqref{eq:vision-transforms-erosion}和\eqref{eq:vision-transforms-dilation}。灰度腐蚀和膨胀正是\ref{sec:vision-transforms-nonlinear-denoising}小节的最小值和最大值滤波；也可以给结构元规定高度，此时取最值前先减去或加上相应的高度，这里不展开。开、闭运算的定义与式\eqref{eq:vision-transforms-opening-closing}相同。把灰度图看成一张地形，开运算相当于用结构元从下方向上顶，削去所有比结构元窄的亮峰；闭运算从上方压下，填平所有比结构元窄的暗谷。两者都不改变比结构元宽的结构。
+
+\term{形态学梯度}（morphological gradient）是膨胀与腐蚀之差：
+\begin{equation}
+  \nabla_{\bm{B}}f=(f\oplus\bm{B})-(f\ominus\bm{B})\text{，}
+  \label{eq:vision-transforms-morphological-gradient}
+\end{equation}
+即窗口内的最大值减最小值，总是非负的，在灰度变化处取大值。一维剖面$f=(10,10,10,50,50,50)$，结构元宽3、边界复制，膨胀为$(10,10,50,50,50,50)$，腐蚀为$(10,10,10,10,50,50)$，梯度为$(0,0,40,40,0,0)$：在阶跃两侧各响应一格，幅值等于阶跃高度。与\ref{sec:vision-transforms-sharpening}小节的差分梯度相比，形态学梯度不给出方向，但对任何方向的变化都同样响应，而且不涉及加权求和，结果不会超出原有的灰度范围。
+
+\term{顶帽变换}（top-hat transform）从原图中减去开运算的结果，$T_{\mathrm{w}}(f)=f-f\circ\bm{B}$，取出那些被开运算削掉的、比结构元窄的亮结构；对偶的底帽变换$T_{\mathrm{b}}(f)=f\bullet\bm{B}-f$取出窄的暗结构。顶帽变换的一个典型用途是校正不均匀的背景。设一维剖面为$f=(10,12,14,40,18,20,22)$，背景从10缓慢升到22，位置3有一个窄的亮点。用宽3的平坦结构元、边界复制，腐蚀得$(10,10,12,14,18,18,20)$，再膨胀得开运算$(10,12,14,18,18,20,20)$，它跟随了缓慢上升的背景，却削掉了亮点。顶帽为$(0,0,0,22,0,0,2)$：背景的斜坡几乎完全去掉，亮点以高出局部背景22的幅度被保留下来；末端的2来自边界处理。若直接在原图上用一个全局阈值提取亮点，阈值必须高于背景的最大值22；假如背景为10的左端另有一个只比局部背景高12的亮点（灰度22），它就无法与右端的背景区分。做了顶帽之后，两个亮点分别高出局部背景22和12，背景接近0，一个固定阈值就能在整幅图上工作。
+
+顶帽变换与\ref{sec:vision-transforms-selective-filtering}小节的同态滤波都用于处理不均匀照度，但依据不同。同态滤波假设照度与反射率相乘，且照度在频率上是低频；顶帽变换假设目标比结构元窄、背景比结构元宽，与乘性模型无关，也不需要取对数。所以顶帽适合在缓慢背景上提取尺寸已知的小目标，例如文字笔画、细胞或缺陷点；结构元必须比目标宽，否则目标的一部分会留在开运算结果里而被减掉。
+
+灰度形态学在学习模型中最直接的对应是最大池化：$k\times k$窗口、步长$s$的最大池化，就是用$k\times k$平坦结构元做灰度膨胀，再按步长$s$取样。卷积网络在两个线性卷积层之间插入的最大池化，因此是一个非线性的形态学运算；它对窗口内的小平移不敏感，原因与膨胀扩大亮结构的范围相同。
+
+\section{本章小结}
+\label{sec:vision-transforms-summary}
+
+本章从一幅夜间街景照片的几项改写要求出发：拉开暗墙与亮招牌各自的层次，去掉传感器噪声与坏点，压平缓慢变化的照度，并把招牌笔画整理成干净的掩码。现在可以为每一项给出经典的回答及其适用条件。层次的重新分配由灰度变换完成：伽马、对数和分段线性映射由设计者指定斜率的分布，直方图均衡由累积分布推导出使输出近似均匀的映射，CLAHE用计数上限把局部映射的斜率限制在裁剪系数附近，再用相邻图块间的双线性插值消除接缝。噪声与坏点由空间滤波处理：线性平滑按$\sum w^2$降低噪声方差，却必然模糊边缘；中值滤波依靠排序抵御少于一半的污染；双边滤波和非局部均值让权重依赖灰度差和图像块的相似度，在边缘处只平均同类像素。缓慢的照度变化在频域中是低频，同态滤波在对数域中压低它、提高反射率的对比；规则的条纹干扰集中在少数频率上，陷波滤波可以只去掉这些频率；频域中陡峭的截止会在空间中造成振铃，这解释了为什么高斯平滑比理想低通和均值滤波更受欢迎。笔画掩码由形态学处理：开运算去掉放不下结构元的碎片，闭运算和孔洞填充补上小孔，连通分量和形态学重建按连通性选择和保留整个对象，顶帽变换则在不均匀背景上直接提取窄的亮结构。多分辨率表示贯穿其间：金字塔给出由粗到细的处理顺序，DCT和小波说明为什么去相关的变换能用少数系数近似图像。
+
+这些方法有一个共同的特点：每一个都依赖一条明确的先验假设，例如噪声独立且小于边缘、图像中有重复的结构、照度是低频、目标比结构元窄、相邻像素高度相关。假设成立时，它们可解释、无需训练数据、参数可以写下来并复现；假设不成立时，它们的失效方式也可以预先指出，例如晕圈、振铃、块效应和被抹去的纹理。本章没有解决的问题是：这些方法都不知道图像中是什么。双边滤波分不清招牌上的笔画边缘和墙面的砖缝，CLAHE不知道哪一块是需要看清的文字，形态学的结构元大小要由人根据字号来定。下一章在本章的梯度、金字塔和形态学的基础上提取边缘、角点、局部特征和区域，开始回答“图像中有什么结构”；学习模型则把本章中固定的核、权重和变换换成从数据中学到的参数，\ref{chap:vision-image-video-models}章中的卷积网络、注意力和多尺度特征，以及\ref{chap:vision-image-restoration}章中的学习式去噪、增强和压缩，都可以看作对本章各个结构的参数化和端到端训练。
+
+\paragraph{扩展阅读}
+边缘保持的平滑与去噪还有几条本章未展开的路线。Perona与Malik把平滑写成扩散过程，让扩散系数随梯度增大而减小，使平滑在边缘处停下；Rudin、Osher与Fatemi以全变分作正则项写出去噪的优化问题，解可以保留跳变边缘，但平缓渐变区域容易变成阶梯状；He等人的引导滤波用引导图像上的局部线性模型代替双边滤波的权重，计算量与窗口大小无关，并避免双边滤波用于细节增强时常见的梯度反转伪影\scite{vision-perona-malik1990,vision-rof1992tv,vision-he2013guided}Dabov等人的BM3D沿非局部均值的思路再进一步：把相似图像块叠成三维数组，在三维变换域中协同收缩系数，长期是经典去噪的性能参照，也是\ref{chap:vision-image-restoration}章学习式去噪常用的对比基线\scite{vision-dabov2007bm3d}
+
+多分辨率表示方面，本章的二维小波只区分水平、垂直和对角三个方向。Freeman与Adelson证明一类滤波器在任意方向上的响应可由少数基滤波器线性组合得到；Simoncelli与Freeman据此构造可控金字塔，在每个尺度上分出多个方向子带，以过完备为代价避免子带混叠\scite{vision-freeman-adelson1991steerable,vision-simoncelli-freeman1995pyramid}Candès与Donoho的曲波、Do与Vetterli的轮廓波针对沿光滑曲线分布的边缘设计细长、多方向的基元，后者直接由本章的拉普拉斯金字塔接方向滤波器组构成；对含光滑边缘的图像，它们比可分离小波给出更稀疏的近似\scite{vision-candes-donoho2004curvelet,vision-do-vetterli2005contourlet}Donoho与Johnstone证明，在正交小波系数上做阈值收缩即可在一类信号上接近理想的去噪风险，把本章所说的小波稀疏性直接变成去噪方法\scite{vision-donoho-johnstone1994}系统学习小波理论可读Mallat的《信号处理的小波导引》；形态学方面，Soille的《形态学图像分析》在Serra的理论基础上把本章的测地膨胀扩展为成套的测地变换，并系统整理形态学滤波、分割与纹理分析算法，更偏重实现\scite{vision-mallat2009wavelet,vision-soille2004morphology}
