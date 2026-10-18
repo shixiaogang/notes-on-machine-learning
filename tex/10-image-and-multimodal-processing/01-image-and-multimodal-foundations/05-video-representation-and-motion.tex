@@ -1,0 +1,690 @@
+\chapter{视频的表示与运动}
+\label{chap:vision-video-foundations}
+
+路口的一台固定摄像头每秒记录30帧画面，一辆汽车从左向右驶过，在画面中每秒移动约600像素。前几章已经能对其中任意一帧回答“哪里有边缘、哪里有角点、哪片区域像一辆车”。把这些画面按时间排成视频后，又出现了几个单帧无法回答的问题：车轮看上去为什么在慢慢倒转？相机转动时，竖直的路灯杆为什么变斜？相邻两帧之间，车身上的每一点移动了多少？哪些像素属于驶过的车，哪些属于不动的路面？这段录像被剪进一条新闻后，镜头在哪里切换？对每帧单独提亮以后，播放时画面为什么一闪一闪？
+
+这些问题都来自时间，可以归结为视频相对于图像新增的六项挑战。第一，时间也被采样：帧率有限，快速的周期运动会混叠；每帧又是一段曝光时间内的积分，运动会在帧内留下模糊。第二，同一帧内各位置未必在同一时刻记录：隔行扫描先后记录奇偶两组行，卷帘快门逐行读出，运动因此会改变单帧的几何形状。第三，数据量随时长线性增长，视频几乎总以压缩码流存储，算法读到的是解码、色度插值之后的数值。第四，帧与帧之间的对应没有记录在数据里：同一物体点在下一帧中的位置需要估计，而一个像素的亮度只能提供一个方程，物体之间还会遮挡和显露。第五，长视频有结构：镜头切换打断时间上的连续性，同一镜头内又高度冗余。第六，结果需要在时间上连续：逐帧都合格的输出仍可能闪烁，同一辆车的编号可能中途改变，这类错误用单帧指标发现不了。
+
+本章的学习目标是：能根据帧率、快门与扫描方式判断一段视频可靠记录了哪些运动，并说明格式转换丢掉了什么；能推导光流约束方程并解释孔径问题，用块匹配、Horn-Schunck和Lucas-Kanade三种方法估计运动，说明各自成立和失效的条件；能用镜头边界、关键帧和背景模型组织长视频；能定义并计算闪烁、扭曲误差、身份切换与轨迹碎片。本章的四节按依赖关系排列。时间采样决定了相邻帧之间的位移能有多大，这一条件在第一节由采样定理推出，在第二节又以线性化与迭代收敛范围的形式出现。运动估计随后成为后两节的工具：镜头切换处运动的连续性断开，相机运动时背景建模要先补偿全局运动，度量时间一致性时也要借助光流把相邻帧对齐。\ref{chap:vision-video-recognition}章和\ref{chap:vision-video-restoration}章的“问题与挑战”（\ref{sec:vision-video-recognition-challenges}节、\ref{sec:vision-video-restoration-challenges}节）都从这里列出的挑战出发，再说明学习方法改变了什么。
+
+阅读本章需要\ref{chap:vision-image-formation}章的空间采样与混叠（\ref{sec:vision-formation-aliasing}节）、色彩空间（\ref{sec:vision-formation-color-spaces}节）、插值（\ref{sec:vision-formation-interpolation}节）与几何变换（\ref{sec:vision-formation-geometric-transforms}节），\ref{chap:vision-image-transforms}章的平滑滤波与图像金字塔，以及\ref{chap:vision-image-features}章Harris角点所用的梯度二阶矩矩阵。数学上要用到一维采样定理、多元Taylor展开、最小二乘与对称矩阵的特征值，用到时先在本章写出结论和条件；变分法在前几卷只有一维特例，本章补足所需的部分。除注明出处者外，本章的像素值、速度、阈值和得分都是教学构造。
+
+\section{视频的时间采样与格式}
+\label{sec:vision-videofound-sampling}
+
+场景中的连续变化要经过几道工序才成为算法读到的数组。镜头把场景成像到像平面上，形成随位置和时间变化的辐照度$L(x,y,t)$；相机在一系列时刻打开快门，在一段曝光时间内对$L$积分，再按某种行顺序读出，得到一帧；帧序列被转换为亮度与色度分量，降低色度分辨率，压缩成码流，最后装进文件。每道工序都丢掉或改变一部分信息，而且丢掉的部分事后通常无法从数据本身补回。
+
+本节按处理对象分三部分讨论这些工序。帧序列在时间轴上的采样决定能区分多快的变化；单帧内部各位置被记录的时刻与时长，决定运动是否改变单帧的清晰度和几何形状；帧序列的存储形式决定颜色细节与压缩失真。前两部分是成像时就固定下来的，后一部分则可能在传输和转码中多次改变。理解它们，才能判断一段视频里的某个现象究竟来自场景，还是来自记录方式。
+
+\subsection{帧率与时间混叠}
+\label{sec:vision-videofound-frame-rate}
+
+\term{帧率}（frame rate）$f$是每秒记录的帧数，单位为帧每秒（frames per second, fps）。固定帧率时第$k$帧的时刻为$\tau_k=k/f$，相邻帧间隔$1/f$秒。常见的帧率有电影的24、欧洲电视的25与50、北美电视的30与60；后两者的实际值常为$30000/1001\approx29.97$和$60000/1001\approx59.94$，处理时应以文件记录的时间戳为准，不能把帧编号直接当成时间（见\ref{sec:vision-overview-observations}节）。
+
+帧率限制了能看清多快的变化。固定一个像素位置$\bm{p}$，它的值随时间变化，构成一维信号$s_{\bm p}(t)=L(\bm p,t)$，视频只保留了样本$s_{\bm p}(k/f)$。一维采样定理回答了这些样本何时足以确定原信号：若$s_{\bm p}$不含频率大于等于$f/2$的成分，样本唯一确定原信号，并可用sinc插值重建；$f/2$称为Nyquist频率。若含有频率为$\nu$的成分，它在样本中与频率
+\begin{equation}
+  \nu_{\mathrm a}=\nu-mf,\qquad m\in\mathbb{Z},\quad
+  \nu_{\mathrm a}\in\left(-\tfrac{f}{2},\tfrac{f}{2}\right]
+  \label{eq:vision-videofound-alias}
+\end{equation}
+的成分无法区分，于是被当成后者，这就是混叠。这一结论的条件、证明与频率折叠的推导可参考\BookChapterRef{chap:signal-analysis}{卷一“信号”章}；\ref{sec:vision-formation-aliasing}节讨论了它在空间上的对应现象，即摩尔纹。发生在时间轴上的混叠称为\term{时间混叠}（temporal aliasing）。
+
+采样定理把问题转成了“像素信号含有多高的时间频率”。时间频率来自运动。设场景中的图样以速度$v$（像素每秒）水平平移，$L(x,t)=L_0(x-vt)$，为简洁只写横坐标。取一个空间频率为$\xi$（周期每像素）的余弦条纹$L_0(x)=\cos(2\pi\xi x)$，则
+\[
+  L(x,t)=\cos\bigl(2\pi\xi x-2\pi\xi v t\bigr)\text{。}
+\]
+固定$x$看，这是时间的余弦，频率为$\xi|v|$。代入采样定理的条件，就得到不发生时间混叠的要求
+\begin{equation}
+  \xi|v|<\frac{f}{2}
+  \quad\Longleftrightarrow\quad
+  \frac{|v|}{f}<\frac{1}{2\xi}\text{。}
+  \label{eq:vision-videofound-temporal-nyquist}
+\end{equation}
+右边的式子更直观：$|v|/f$是相邻帧间的位移，$1/\xi$是条纹的空间周期，所以条件是每帧位移小于条纹周期的一半。同样的速度下，细密的纹理（$\xi$大）先发生混叠；同样的纹理下，运动越快越容易混叠。真实图像包含许多空间频率，任何非零速度都会使足够细的纹理成分超过这一界限；能减轻这种混叠的，是镜头与传感器在空间上的低通作用，以及\ref{sec:vision-videofound-shutter}节将讨论的曝光积分在时间上的低通作用。
+
+式\eqref{eq:vision-videofound-temporal-nyquist}还有一个对应关系上的解释。若位移超过半个周期，下一帧中离原位置最近的同相位条纹已经是相邻的另一道条纹，任何只看局部亮度的方法都会把它当成对应点。\ref{sec:vision-videofound-motion}节的运动估计方法都隐含要求位移足够小，原因正在这里。
+
+\begin{example}[车轮倒转的计算]
+  \label{ex:vision-videofound-wagon-wheel}
+  车轮有8根均匀分布的辐条，相邻辐条相隔$45^\circ$；以每秒30帧拍摄，车轮每秒转3.5圈。每帧间隔中车轮转过$3.5/30$圈，即$42^\circ$。由于辐条每隔$45^\circ$重复一次，第1帧中与参考方向最近的辐条，是原先落后$45^\circ$的那一根，它此时位于$42^\circ-45^\circ=-3^\circ$处；第2帧中最近的辐条位于$-6^\circ$处。观看者把最近的辐条认作同一根，于是看到车轮以每帧$3^\circ$、即每秒$90^\circ$的速度倒转。用式\eqref{eq:vision-videofound-alias}验证：辐条图样经过固定方向的频率为$8\times3.5=28$赫兹，$f=30$，取$m=1$得$\nu_{\mathrm a}=-2$赫兹，每秒倒退两个辐条间隔，也是$90^\circ$。要看到正确的转向，每帧转角须小于半个辐条间隔$22.5^\circ$，即转速低于$1.875$圈每秒。
+\end{example}
+
+图\ref{fig:vision-videofound-temporal-aliasing}画出了这个例子的前三帧。读图时应比较两种辐条：红色辐条是物理上的同一根，它每帧前进$42^\circ$；蓝色辐条是离参考线最近的那一根，人眼和只做局部匹配的算法都倾向于追踪它。这种由时间混叠造成的倒转错觉称为\term{车轮效应}（wagon-wheel effect）。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/video-temporal-aliasing}
+  \caption{时间混叠的教学构造：8根辐条、每帧逆时针转$42^\circ$。虚线为固定参考方向；红色为同一根辐条，蓝色为每帧中最接近参考方向的辐条。蓝色辐条每帧后退$3^\circ$，这正是观看者看到的倒转。}
+  \label{fig:vision-videofound-temporal-aliasing}
+\end{figure}
+
+这个例子说明，混叠之后的样本本身不携带“真实转向”的信息。无论人工设计的方法还是学习模型，只看这些帧都无法区分“每帧前进$42^\circ$”和“每帧后退$3^\circ$”；只有引入先验，例如汽车在前进、车轮应当正转，才能选出前者。数据处理也会改变有效帧率：按步长$k$取帧时，有效帧率变为$f/k$，式\eqref{eq:vision-videofound-temporal-nyquist}中的$f$要换成$f/k$。\ref{sec:vision-ivm-pipeline}节的视频模型取帧时面对的正是这一限制。
+
+帧率转换也会改变时间结构。把每秒24帧的电影送到每秒60帧的显示设备上，常见做法是交替地把一帧重复3次和2次，因为$24\times2.5=60$；画面内容的时刻因而不再均匀，匀速运动看起来时快时慢。反过来，从高帧率视频中丢帧，相当于以更低的帧率重新采样，若事先没有沿时间平滑，就会引入新的混叠。时间戳可变或丢帧时，运动速度要用实际时间间隔计算。
+
+\subsection{隔行扫描与卷帘快门}
+\label{sec:vision-videofound-shutter}
+
+上一小节把一帧当成某一瞬间的快照。实际上，传感器上每个位置在一段时间内收集光，而且不同位置开始收集的时刻可以不同。忽略噪声、增益和成像管线中的非线性处理（见\ref{sec:vision-formation-isp}节），第$k$帧在位置$\bm{p}$的值可以写成
+\begin{equation}
+  X_k(\bm p)=\frac{1}{T_{\mathrm e}}
+  \int_{\tau_k+\delta(\bm p)}^{\tau_k+\delta(\bm p)+T_{\mathrm e}}
+  L(\bm p,t)\,\mathrm{d}t\text{，}
+  \label{eq:vision-videofound-exposure}
+\end{equation}
+其中$T_{\mathrm e}$是\term{曝光时间}（exposure time），$\delta(\bm p)$是位置$\bm p$相对于帧时刻$\tau_k$的延迟。这个模型有两个参数，分别对应两类现象：$T_{\mathrm e}$决定一帧内积分多长时间，造成运动模糊；$\delta(\bm p)$随位置变化时，同一帧的不同部分记录的是不同时刻的场景，造成几何畸变。所有位置同时曝光、$\delta\equiv0$的方式称为\term{全局快门}（global shutter）。
+
+先看曝光时间。仍设图样以速度$v$水平平移，$L(x,t)=L_0(x-vt)$，并取$\delta=0$。把积分变量写成$t=\tau_k+s$，再令$z=vs$，得到
+\[
+  X_k(x)=\frac{1}{T_{\mathrm e}}\int_0^{T_{\mathrm e}}L_0(x-v\tau_k-vs)\,\mathrm{d}s
+  =\frac{1}{vT_{\mathrm e}}\int_0^{vT_{\mathrm e}}L_0(x-v\tau_k-z)\,\mathrm{d}z\text{，}
+\]
+这里设$v>0$。右边是$L_0$与一个宽为$vT_{\mathrm e}$、高为$1/(vT_{\mathrm e})$的方波核的卷积，再平移到当前位置。也就是说，匀速运动在曝光时间内把图样沿运动方向抹开了$\ell=|v|T_{\mathrm e}$个像素，这就是\term{运动模糊}（motion blur）。汽车以每秒600像素移动、帧率30时，相邻帧位移20像素；曝光$1/60$秒时模糊长度为10像素，曝光$1/1000$秒时只有0.6像素。电影拍摄常用“快门角”描述曝光占帧间隔的比例，快门角为$360^\circ\times T_{\mathrm e}f$；$f=30$、$T_{\mathrm e}=1/60$秒对应$180^\circ$。
+
+从频率上看，式\eqref{eq:vision-videofound-exposure}对时间做了一次宽为$T_{\mathrm e}$的方波平均。方波平均的频率响应幅值为$|\sin(\pi\nu T_{\mathrm e})/(\pi\nu T_{\mathrm e})|$，高时间频率被削弱，所以曝光积分是采样之前的一道时间低通滤波，能减轻上一小节的时间混叠。它并非理想低通：取$T_{\mathrm e}=1/f$时，响应在$\nu=f$处才第一次降到零，$f/2$到$f$之间的成分只被部分削弱。于是曝光时间的选择是一种权衡：曝光短，单帧清晰，但进入的光子少、噪声大，快速运动看起来跳跃；曝光长，噪声小、运动平滑，但细节被模糊。模糊也携带信息，它的方向和长度记录了曝光期间的运动，\ref{chap:vision-image-restoration}章和\ref{chap:vision-video-restoration}章的去模糊方法正是利用这一点。
+
+再看延迟$\delta(\bm p)$随位置变化的两种方式。第一种是\term{隔行扫描}（interlaced scanning）：每帧分成两“场”，一场只含奇数行，另一场只含偶数行，两场相隔半个帧间隔记录。若帧率为$f$，可写成$\delta(\bm p)=(y\bmod2)/(2f)$，其中$y$是行号。广播电视中的“1080i”格式每秒传送50场或约60场，两场合成一帧。静止场景中两场拼起来就是完整画面；物体运动时，相邻两行记录的是相差$1/(2f)$秒的场景。上例的汽车若在每秒50场的视频中出现，相邻两行之间横向错开$600/50=12$像素，车身边缘呈梳齿状。
+
+把隔行视频转为逐行视频称为\term{去隔行}（deinterlacing）。最直接的两种做法各有缺陷。“织合”把两场按行交错拼回一帧，静止区域没有损失，运动区域却保留梳齿。“行倍”只用一场，缺失的行由上下两行插值，不再有梳齿，却把垂直分辨率减半，细的水平线还会随场交替而闪动。运动自适应的方法逐像素检测是否在动，静止处织合、运动处插值；运动补偿的方法先估计两场之间的运动，再把另一场的行平移到当前时刻后填入。后者效果最好，但它需要\ref{sec:vision-videofound-motion}节的运动估计，而运动估计本身又会出错。旧的广播电视素材常为隔行格式；若直接按逐行视频读入，梳齿会被当作图像内容。
+
+第二种方式是\term{卷帘快门}（rolling shutter）。许多CMOS传感器逐行复位和读出，第$y$行比第0行晚$y t_{\mathrm r}$开始曝光，即$\delta(\bm p)=y t_{\mathrm r}$，$t_{\mathrm r}$为行间延迟；整帧的读出时间$T_{\mathrm r}\approx Ht_{\mathrm r}$，$H$为行数。由此可以直接推出运动造成的畸变。设一根竖直的杆以速度$v$向右移动，在时刻$t$位于$x_0+vt$。第$y$行在$\tau_k+yt_{\mathrm r}$时刻记录，它看到的杆位于
+\begin{equation}
+  x(y)=x_0+v\tau_k+v t_{\mathrm r}\,y\text{，}
+  \label{eq:vision-videofound-rolling-skew}
+\end{equation}
+即一条斜率为$\mathrm{d}x/\mathrm{d}y=vt_{\mathrm r}$的斜线，顶行与底行横向相差$vT_{\mathrm r}$。设1080行在20毫秒内读完，车以每秒600像素移动，杆的上下两端相差12像素，倾斜约$0.64^\circ$；相机以每秒3000像素的速度横摇时，画面中所有竖直结构都倾斜约60像素，即约$3.2^\circ$。
+
+垂直运动则使物体被拉长或压扁。设物体上下边缘在时刻$t$位于$a+wt$与$b+wt$（$a<b$，$w$为向下的速度），第$y$行在时刻$yt_{\mathrm r}$记录（取$\tau_k=0$）。第$y$行看到物体，当且仅当$a+wyt_{\mathrm r}\leq y\leq b+wyt_{\mathrm r}$；当$wt_{\mathrm r}<1$时，它等价于$a/(1-wt_{\mathrm r})\leq y\leq b/(1-wt_{\mathrm r})$。所以向下运动的物体在图中的高度变为原来的$1/(1-wt_{\mathrm r})$倍，向上运动的物体则变矮。以上述读出速度，向下每秒600像素的物体约被拉长1.1\%。相机抖动时各行的位移随时间来回变化，整幅画面像果冻一样晃动；光源以交流电频率闪烁时，不同的行处在光源亮暗的不同相位，画面上会出现水平的明暗条带。图\ref{fig:vision-videofound-rolling-shutter}左侧画出逐行开始曝光的时间窗，右侧画出由此造成的倾斜。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/video-rolling-shutter}
+  \caption{卷帘快门的成像过程（示意，不按比例）。左：每一行的曝光时间窗依次推迟，首末行开始时刻相差读出时间$T_{\mathrm r}$；若为全局快门，各行的时间窗应上下对齐。右：向右运动的竖杆在各行被记录时已到达不同位置，于是在图中倾斜，上下端横向相差$vT_{\mathrm r}$。}
+  \label{fig:vision-videofound-rolling-shutter}
+\end{figure}
+
+卷帘快门的影响不止于外观。\ref{sec:vision-formation-two-view}节的单应和对极几何都假设一帧对应一个相机位姿；在卷帘快门下，每一行有自己的位姿，相机快速运动时这些模型的残差会系统性地增大。补偿的思路是估计帧间运动，再按式\eqref{eq:vision-videofound-rolling-skew}把各行重新采样到同一时刻\scite{vision-liang2008rolling}。全局快门传感器在结构上避免了逐行时差，但它仍有曝光时间，因而仍有运动模糊。两类现象应当分开诊断：边缘被抹开是曝光时间问题，直线变斜是逐行时差问题。
+
+\subsection{视频的色彩采样与码流格式}
+\label{sec:vision-videofound-formats}
+
+不压缩的视频数据量很大。一帧$1920\times1080$的8位RGB图像有$2073600\times3=6220800$字节，每秒30帧就是约186.6兆字节每秒，合约1.49吉比特每秒。存储和传输都承受不了这样的数据率，所以视频在离开相机之前通常要经过三道变换：转换为亮度与色度分量并降低色度分辨率，按某个编码标准压缩成码流，再装进某种文件格式。算法读到的帧是这些变换的逆过程的结果，而不是传感器的原始记录。
+
+第一道变换把RGB转换为一个亮度分量$Y'$和两个色差分量$C_{\mathrm b},C_{\mathrm r}$，即常说的YUV或$Y'C_{\mathrm b}C_{\mathrm r}$表示，转换矩阵和取值范围见\ref{sec:vision-formation-color-spaces}节。人眼对亮度细节比对颜色细节敏感，于是可以只保留较低分辨率的色度，这称为\term{色度下采样}（chroma subsampling）。下采样的比例用“$J{:}a{:}b$”记号描述：取一块宽$J$像素、高两行的区域，$a$是第一行中的色度样本数，$b$是第二行中新增的色度样本数。4:4:4表示不下采样；4:2:2表示色度在水平方向减半；4:2:0表示色度在水平和垂直方向都减半，第二行不再有新的色度样本。在4:2:0中，每个$2\times2$像素块有4个亮度样本和各1个$C_{\mathrm b}$、$C_{\mathrm r}$样本，共6个，是4:4:4的一半；8位时平均每像素12比特。上面那帧图像在4:2:0下占$2073600\times1.5=3110400$字节。
+
+色度下采样损失的是颜色的空间细节。设一盏红色信号灯在图中只占一个$2\times2$块的上半部分，四个像素的$C_{\mathrm r}$值依次为160、160、100、100（教学数值）。4:2:0只存它们的平均值130，最近邻上采样后四个像素都是130：灯的颜色变淡，下方的背景却被染上颜色。细的彩色线条、彩色文字边缘和小的彩色目标都会受到这种影响。上采样时还要知道色度样本相对于亮度样本的位置，不同标准对此的规定不同；此外，同一组数值按BT.601还是BT.709的矩阵、按有限范围（8位亮度取16至235）还是全范围解释，得到的RGB也不同。这些约定若在读取时弄错，画面会整体偏色或对比度改变，而且错误发生在模型之前，很难从模型输出中追查。内存中的排列方式也有多种，例如I420依次存放完整的$Y$平面、$C_{\mathrm b}$平面和$C_{\mathrm r}$平面，NV12在$Y$平面之后交错存放两个色度分量。
+
+第二道变换是压缩。编码标准，例如H.264/AVC和H.265/HEVC，规定的是码流的语法和解码过程：给定一段符合标准的码流，解码器应当得到确定的结果；编码器怎样做出选择则留给实现，只要产生的码流合乎规定即可\scite{vision-wiegand2003h264}。所以“用H.264编码”并没有确定画质，画质还取决于编码器实现、码率和参数。这些标准都采用混合编码框架：用已解码的帧预测当前帧的每一块，预测依据是块的\term{运动矢量}（motion vector），也就是这一块相对于参考帧的位移；预测残差经变换（与\ref{sec:vision-transforms-dct}节的离散余弦变换相近）和量化后，再做熵编码。只用本帧内信息预测的帧称为I帧，参考前面已解码帧的称为P帧，还可参考后面帧的称为B帧；从一个I帧到下一个I帧之间的一组帧称为\term{图像组}。H.264允许从$16\times16$到$4\times4$的多种块大小做运动补偿，运动矢量精确到四分之一像素，并可从多个参考帧中选择\scite{vision-wiegand2003h264}；HEVC在相同主观质量下把码率降低约一半\scite{vision-sullivan2012hevc}。混合编码框架的各个环节，以及学习式编码怎样替代它们，在\ref{sec:vision-video-codec}节展开；运动矢量怎样求出，是下一节块匹配要回答的问题。
+
+压缩给后续处理留下三个需要注意的后果。其一，压缩是有损的，常见失真包括块边界处的方块效应、边缘附近的振铃，以及随运动和码率变化的细节损失；训练数据和测试数据的压缩程度不同，就是一种分布差异。其二，B帧的存在使解码顺序与显示顺序不同，每帧要靠时间戳确定显示时刻。其三，随机访问有代价：要读取某一帧，解码器必须从它之前最近的I帧开始解码；从长视频中均匀抽取16帧，实际解码的帧数可能远多于16。编码中常把I帧称为“关键帧”，它是解码的入口，与\ref{sec:vision-videofound-keyframes}节按内容选出的关键帧不是一回事。
+
+第三道变换是封装。\term{封装格式}（container format），例如MP4、MKV和MPEG-TS，把一条或多条已编码的视频、音频和字幕码流，连同时间戳和索引装进一个文件。同一条H.264码流可以从MP4换装进MKV而不重新编码，这一过程不损失画质；转码则要先解码再重新编码，每转一次都会叠加一次压缩损失。文件扩展名只说明封装格式，不说明其中的编码标准。表\ref{tab:vision-videofound-format-layers}按层次总结了上述三道变换。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}lXXX@{}}
+    \toprule
+    层次 & 规定什么 & 例子 & 处理时的注意点\\
+    \midrule
+    色彩采样 & 色彩空间、转换矩阵、取值范围、色度分辨率与样本位置 & BT.709，4:2:0，有限范围，NV12 & 约定读错会整体偏色；细小彩色目标的颜色已被平均\\
+    编码标准 & 码流语法与解码过程 & H.264/AVC，H.265/HEVC & 画质取决于编码器与码率；解码顺序不同于显示顺序\\
+    封装格式 & 多条码流、时间戳与索引的组织 & MP4，MKV，MPEG-TS & 换封装不损失画质，转码会叠加损失；时间以时间戳为准\\
+    \bottomrule
+  \end{tabularx}
+  \caption{视频存储的三个层次。三者相互独立：同一编码标准的码流可装入不同封装格式，同一色彩采样可用不同标准编码。读取视频时应分别核对三层约定。}
+  \label{tab:vision-videofound-format-layers}
+\end{table}
+
+\section{运动的估计}
+\label{sec:vision-videofound-motion}
+
+本节要解决的问题是：给定相邻两帧灰度图像$I_t$和$I_{t+1}$，对第一帧的每个位置$\bm p=(x,y)^\top$，求它在第二帧中的位移$\bm u(\bm p)=(u,v)^\top$，使$\bm p+\bm u(\bm p)$是同一场景点的像。输出可以是每个像素一个位移的稠密场，也可以只对若干块或若干特征点给出位移。彩色图像可以把各通道的约束合并使用，下文为简洁只写灰度。困难在于：一个像素只有一个亮度值，位移却有两个分量；画面中亮度相同的位置很多；物体之间会遮挡和显露，被遮挡的点在第二帧中根本没有对应；光照也可能在两帧之间改变。
+
+先要区分两个容易混淆的对象。场景中的点相对相机运动，它们的三维速度经过\ref{sec:vision-formation-camera-intrinsics}节的投影落到像平面上，形成的二维速度场称为\term{运动场}（motion field）。\term{光流}（optical flow）则是图像中亮度图样的表观运动，即两幅图像之间亮度图样的二维位移场。二者一般不相等。一个表面均匀的球绕自身的轴旋转时，明暗由表面朝向决定，并不随表面移动，于是光流为零而运动场不为零；反过来，静止场景中移动的光源使阴影和高光移动，光流不为零而运动场为零\scite{vision-horn1981flow}。只有在表面有纹理、反射近似与观察方向无关、光照不变、没有遮挡时，光流才近似等于运动场。需要三维运动或物体轨迹时，所求的是运动场；对齐相邻帧以融合像素时，所求的则正是亮度的对应，即光流。下文的方法都从亮度出发，求得的是光流。
+
+亮度提供的约束来自一个假设：同一场景点在相邻两帧中的亮度相同。这称为\term{亮度恒常假设}（brightness constancy assumption），写成
+\begin{equation}
+  I(x+u,\,y+v,\,t+1)=I(x,y,t)\text{，}
+  \label{eq:vision-videofound-brightness-constancy}
+\end{equation}
+时间以帧间隔为单位，位移以像素为单位。这个方程对$(u,v)$是非线性的，因为$I$是任意的图像函数。若$I$可微，且位移小到使亮度梯度在位移范围内近似不变，就可以对左边在$(x,y,t)$处做一阶Taylor展开：
+\[
+  I(x+u,y+v,t+1)=I(x,y,t)+I_x u+I_y v+I_t+r\text{，}
+\]
+其中$I_x,I_y,I_t$是$I$在$(x,y,t)$处的偏导数，余项$r$由二阶导数和位移的平方控制。多元Taylor公式及余项的形式可参考\BookChapterRef{chap:mathematical-analysis}{卷一“测度与分析”章}。略去余项，代入式\eqref{eq:vision-videofound-brightness-constancy}，两边的$I(x,y,t)$相消，得到
+\begin{equation}
+  I_x u+I_y v+I_t=0
+  \quad\text{即}\quad
+  \nabla I^\top\bm u+I_t=0\text{，}
+  \label{eq:vision-videofound-flow-constraint}
+\end{equation}
+称为\term{光流约束方程}（optical flow constraint equation）。离散图像上，$I_x,I_y$用\ref{sec:vision-transforms-sharpening}节的差分算子估计，$I_t$用两帧之差$I_{t+1}-I_t$估计；三者应当在同一位置、同一时刻估计，否则方程的系数彼此不匹配。略去余项的条件很重要：位移超过图样的半个周期时，线性化给出的方向可能完全错误，这与式\eqref{eq:vision-videofound-temporal-nyquist}的时间采样条件是同一件事。
+
+式\eqref{eq:vision-videofound-flow-constraint}是关于两个未知数的一个方程。在$(u,v)$平面上，它表示一条与梯度$\nabla I$垂直的直线，位移只能确定落在这条线上。把$\bm u$分解为沿梯度方向和沿等亮度线方向的两个分量，方程只约束前者：
+\[
+  \bm u_{\mathrm n}=-\frac{I_t}{\lVert\nabla I\rVert_2^2}\nabla I\text{，}
+\]
+这一分量称为\term{法向光流}（normal flow）；沿等亮度线的分量完全不受约束。这就是\term{孔径问题}（aperture problem）：透过一个小孔观察一条移动的直边缘，只能看出边缘沿法向移动了多少，看不出它沿自身方向滑动了多少。
+
+举一个具体的数。设边缘沿图像中$(1,1)$方向延伸，某点处$I_x=10$、$I_y=-10$、$I_t=-20$。约束为$10u-10v-20=0$，即$u-v=2$。真实位移$(2,0)$满足它，$(0,-2)$、$(3,1)$等也都满足；法向光流是$20\times(10,-10)/200=(1,-1)$，即约束线上离原点最近的点。图\ref{fig:vision-videofound-aperture}左侧画出小孔中的边缘与这几个位移，右侧画出速度平面中的约束线。若小孔中出现一个角点，两条边的梯度方向不同，就有两条不平行的约束线，交点唯一；若小孔中亮度均匀，$\nabla I=\bm 0$，式\eqref{eq:vision-videofound-flow-constraint}退化为$I_t=0$，对位移没有任何约束。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/video-aperture-problem}
+  \caption{孔径问题的教学构造，图像坐标纵轴向下。左：小孔中的直边缘（实线）移动到虚线位置；真实位移$(2,0)$（红色实箭头）、另一种同样可能的位移$(0,-2)$（红色虚箭头）与法向光流$(1,-1)$（蓝色）都把边缘送到同一位置。右：速度平面中，满足光流约束方程的位移构成直线$u-v=2$，法向光流是其上离原点最近的点。}
+  \label{fig:vision-videofound-aperture}
+\end{figure}
+
+亮度恒常本身也会失效：光照变化、阴影与高光移动、自动曝光调整、噪声，以及遮挡与显露，都使式\eqref{eq:vision-videofound-brightness-constancy}不成立。这些情形下，再精确的求解也只能得到满足错误方程的位移。
+
+于是要从两帧中求出位移，必须在亮度恒常之外补充约束。下面三种方法对“补充什么约束”给出了不同回答。块匹配假设一整块像素共享同一个整数平移，直接比较像素值，不做线性化，因此能处理搜索范围内的大位移，但精度受整数网格限制，计算量随搜索范围平方增长。Horn-Schunck假设位移场在整幅图像上平滑变化，把约束方程和平滑性合成一个全局能量，因而能给出处处有定义的稠密光流，代价是在运动边界处把不同物体的运动抹平。Lucas-Kanade假设位移在一个小窗口内不变，用窗口内所有像素的约束方程做最小二乘，得到亚像素精度的局部估计，但要求窗口内有足够的纹理，且位移要小，大位移需借助图像金字塔。三者在小节末尾统一比较。
+
+\subsection{基于块匹配的估计}
+\label{sec:vision-videofound-block-matching}
+
+视频编码最先需要运动估计。要用参考帧预测当前帧的一块，就得知道这一块从参考帧的哪里来；预测越准，残差越小，需要的比特越少。对编码来说，最简单有效的假设是：一块像素作为整体平移。\term{块匹配}（block matching）据此把当前帧划分成不重叠的$N\times N$块，对每一块在参考帧的一个搜索窗口中寻找最相似的同样大小的块，两块位置之差就是这一块的运动矢量。
+
+设当前帧$I_t$中块$B$的像素位置集合为$B$，候选位移$\bm d=(d_x,d_y)^\top$为整数，且$|d_x|,|d_y|\leq p$，$p$称为搜索范围。用两种代价衡量两块的差异：
+\begin{equation}
+  \operatorname{SAD}(\bm d)=\sum_{\bm q\in B}\bigl|I_t(\bm q)-I_{t-1}(\bm q+\bm d)\bigr|\text{，}\qquad
+  \operatorname{SSD}(\bm d)=\sum_{\bm q\in B}\bigl(I_t(\bm q)-I_{t-1}(\bm q+\bm d)\bigr)^2\text{，}
+  \label{eq:vision-videofound-sad}
+\end{equation}
+前者称为\term{绝对差之和}（sum of absolute differences, SAD），后者称为平方差之和（sum of squared differences, SSD）。运动矢量取代价最小的位移$\bm d^*=\argmin_{\bm d}\operatorname{SAD}(\bm d)$。这里$\bm d$从当前块指向它在前一帧中的来源，物体在两帧间的运动是$-\bm d$；编码中的运动矢量通常采用这种“从当前指向参考”的约定，比较不同来源的运动矢量时须先统一方向。SAD只需加减和取绝对值，计算便宜，对少数离群像素也不如SSD敏感；SSD对应独立高斯噪声下的最大似然，数学上便于分析。两帧之间亮度整体变化时，可改用\ref{sec:vision-features-template-matching}节的归一化互相关。
+
+逐一计算所有$(2p+1)^2$个候选的代价，称为全搜索。全搜索保证找到网格上代价最小的位移，但成本高：每块要算$(2p+1)^2N^2$次绝对差。取$N=16$、$p=7$，每块是$225\times256=57600$次；$1920\times1080$的画面（高度补齐到1088）有$120\times68=8160$块，每帧约$4.7\times10^8$次，每秒30帧就是约$1.4\times10^{10}$次。
+
+降低成本的思路是只计算一部分候选，靠代价曲面的形状引导搜索。\term{三步搜索}（three-step search）就是这样的做法\scite{vision-koga1981tss}：对$p=7$，先以步长4检查中心及其周围8个点，把中心移到代价最小处；再以步长2检查新中心周围8个点；最后以步长1检查一次。总共只算$9+8+8=25$个候选，约为全搜索的九分之一。算法\ref{alg:vision-videofound-tss}写出了这一过程。
+
+\begin{algorithm}[三步搜索]
+  \label{alg:vision-videofound-tss}
+  \begin{algorithmic}[1]
+    \Require 当前块$B$，参考帧$I_{t-1}$，初始步长$s_0$（$p=7$时取4）
+    \Ensure 运动矢量$\bm d$
+    \State $\bm d\gets(0,0)^\top$，$s\gets s_0$
+    \While{$s\geq1$}
+      \State $C\gets\{\bm d+s(a,b)^\top:a,b\in\{-1,0,1\}\}$
+      \Comment{含中心共9个候选}
+      \State $\bm d\gets\argmin_{\bm c\in C}\operatorname{SAD}(\bm c)$
+      \Comment{中心的代价可沿用上一步的结果}
+      \State $s\gets\lfloor s/2\rfloor$
+    \EndWhile
+    \State \Return $\bm d$
+  \end{algorithmic}
+\end{algorithm}
+
+图\ref{fig:vision-videofound-block-matching}画出了一次三步搜索的路径。设代价在搜索范围内从最小点向外单调增大，三步依次走到$(4,4)$、$(6,6)$和$(7,6)$；灰点是全搜索要检查的全部225个候选。三步搜索依赖的正是这个单调假设：每一步只在当前最优点附近找，若代价曲面有多个局部极小，例如块内是周期性条纹，或第一步的粗采样恰好跳过了真正的谷底，搜索就会停在错误的位置，而且后续步骤无法纠正。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/video-block-matching}
+  \caption{三步搜索的教学构造，搜索范围$p=7$，坐标为位移$(d_x,d_y)$，纵轴向下。蓝点、黄圈、红框分别是三步的候选，箭头是每步选中的最优点。假设代价随离真实位移$(7,6)$的距离单调增大；三步共计算25个候选，全搜索需计算225个。}
+  \label{fig:vision-videofound-block-matching}
+\end{figure}
+
+下面用一个可以手算的小例子检查代价的计算。参考帧$I_{t-1}$中一块区域的值为（行对应$y=0,\ldots,3$，列对应$x=0,\ldots,4$）
+\[
+  \begin{bmatrix}
+    10&10&10&10&10\\
+    10&50&80&10&10\\
+    10&60&90&10&10\\
+    10&10&10&10&10
+  \end{bmatrix}\text{，}
+\]
+当前帧中一个$2\times2$块$\bm C$位于$x=2,3$、$y=1,2$，取$p=1$。候选$\bm d$对应的参考块$\bm R_{\bm d}$左上角在$(2+d_x,1+d_y)$。以两个候选为例：
+\[
+  \bm C=\begin{bmatrix}52&80\\60&88\end{bmatrix}\text{，}\quad
+  \bm R_{(-1,0)}=\begin{bmatrix}50&80\\60&90\end{bmatrix}\text{，}\quad
+  \bm R_{(0,0)}=\begin{bmatrix}80&10\\90&10\end{bmatrix}\text{，}
+\]
+前者的SAD为$2+0+0+2=4$，后者为$28+70+30+78=206$。其余七个候选的SAD依次为：$(1,0)$为240，$(-1,-1)$为130，$(0,-1)$为210，$(1,-1)$为240，$(-1,1)$为146，$(0,1)$为236，$(1,1)$为240。最小值在$\bm d^*=(-1,0)$，即这一块来自前一帧左边一个像素处，物体向右移动了1像素。用这个运动矢量预测时，残差$\bm C-\bm R_{(-1,0)}$只在左上和右下两个像素上非零，分别为2和$-2$，编码器只需编码这个小残差和运动矢量。若用SSD，$(-1,0)$处的代价为8，选择相同。
+
+整数位移不够精确时，可以在最优整数位置附近，用\ref{sec:vision-formation-interpolation}节的插值生成半像素或四分之一像素位置的参考块，再比较代价。可变块大小则让编码器在平坦区域用大块、在运动复杂处用小块。
+
+块匹配的失效情形都与它的假设有关。平坦的块中，许多候选的代价几乎相同，最小值的位置由噪声决定，这是孔径问题的离散形式；沿一条直边缘方向的候选也难以区分。块内包含两个运动不同的物体时，单一平移的假设不成立，求出的矢量对两个物体都不准确。旋转、缩放和透视变化使块的形状改变，平移比较就会失配。遮挡区域在参考帧中没有对应。还有一点常被忽视：编码器选择运动矢量是为了让“残差比特加矢量比特”最少，所以编码码流中的运动矢量并不一定是真实运动；把解码器给出的运动矢量当作运动场使用时，必须考虑这一点。
+
+块匹配的思想在学习方法中保留了下来。它的代价$\operatorname{SAD}(\bm d)$对所有候选位移排成一张表，就是一种“代价体”；\ref{sec:vision-video-raft}节的RAFT对所有像素对计算特征内积，得到的相关体正是在学习到的特征上、对所有位移做的匹配，只是用迭代更新代替了取最小值。
+
+\subsection{Horn-Schunck}
+\label{sec:vision-videofound-horn-schunck}
+
+块匹配给出的是每块一个整数矢量；在平坦区域，它的答案由噪声决定。很多任务需要每个像素都有位移，而且希望位移在没有纹理的地方也有合理的值。Horn和Schunck注意到，场景中多数表面属于有限大小的不透明物体，物体做刚体运动或平缓变形时，相邻像素的位移相近，于是位移场在大部分地方是平滑的\scite{vision-horn1981flow}。他们把平滑性作为第二个约束，与光流约束方程合成一个对整幅图像定义的能量，求使能量最小的位移场。这样，有纹理处由约束方程决定位移，平坦处则由周围的位移“填入”。
+
+把位移场$u(x,y)$、$v(x,y)$看作图像区域$\Omega$上的两个函数，定义
+\begin{equation}
+  E(u,v)=\iint_{\Omega}\Bigl[(I_xu+I_yv+I_t)^2
+  +\alpha^2\bigl(\lVert\nabla u\rVert_2^2+\lVert\nabla v\rVert_2^2\bigr)\Bigr]
+  \,\mathrm{d}x\,\mathrm{d}y\text{。}
+  \label{eq:vision-videofound-hs-energy}
+\end{equation}
+第一项称为数据项，度量每一点违反光流约束方程的程度；第二项称为平滑项，$\lVert\nabla u\rVert_2^2=u_x^2+u_y^2$度量位移在空间上变化的剧烈程度；$\alpha>0$权衡二者。$\alpha$越大，结果越平滑，越不在乎单点的约束是否满足。原文建议$\alpha^2$大致取$I_x^2+I_y^2$估计中的噪声水平\scite{vision-horn1981flow}，因为$\alpha$只在梯度小于这个量级的地方起主导作用。
+
+能量$E$的自变量是函数，而不是有限个数。求函数使积分取极值，属于\term{变分法}（calculus of variations）的问题，这种以函数为自变量、以数为值的映射称为\term{泛函}（functional）。卷一只讨论过它的一维特例，例如由$\int|f'|^2$推出$f''=0$；这里需要两个自变量的一般形式，下面推导到够用为止。设泛函$J[u]=\iint_\Omega F(x,y,u,u_x,u_y)\,\mathrm{d}x\,\mathrm{d}y$，$F$对各变量连续可微。若$u$使$J$取极小，则对任意光滑函数$\eta$和实数$\varepsilon$，一元函数$\varepsilon\mapsto J[u+\varepsilon\eta]$在$\varepsilon=0$处取极小，导数为零。在积分号下求导，
+\[
+  \frac{\mathrm{d}}{\mathrm{d}\varepsilon}J[u+\varepsilon\eta]\Big|_{\varepsilon=0}
+  =\iint_\Omega\bigl(F_u\eta+F_{u_x}\eta_x+F_{u_y}\eta_y\bigr)\,\mathrm{d}x\,\mathrm{d}y\text{，}
+\]
+其中$F_u,F_{u_x},F_{u_y}$是$F$对相应变量的偏导数，在$(x,y,u,u_x,u_y)$处取值。后两项含$\eta$的导数，用散度定理（二维的Green公式）把导数从$\eta$移到$F_{u_x},F_{u_y}$上：
+\[
+  \begin{aligned}
+    \iint_\Omega\bigl(F_{u_x}\eta_x+F_{u_y}\eta_y\bigr)\,\mathrm{d}x\,\mathrm{d}y
+    &=\oint_{\partial\Omega}\eta\bigl(F_{u_x}n_x+F_{u_y}n_y\bigr)\,\mathrm{d}s\\
+    &\quad-\iint_\Omega\eta\Bigl(\frac{\partial F_{u_x}}{\partial x}+\frac{\partial F_{u_y}}{\partial y}\Bigr)\,\mathrm{d}x\,\mathrm{d}y\text{，}
+  \end{aligned}
+\]
+$(n_x,n_y)$是边界的单位外法向。先只考虑在边界上为零的$\eta$，边界积分消失，于是对所有这样的$\eta$都有$\iint_\Omega\eta\,g=0$，其中$g=F_u-\partial_xF_{u_x}-\partial_yF_{u_y}$。若连续函数$g$在某点不为零，就能取一个只在该点附近非零、与$g$同号的$\eta$使积分为正，矛盾；所以$g\equiv0$，即
+\begin{equation}
+  F_u-\frac{\partial}{\partial x}F_{u_x}-\frac{\partial}{\partial y}F_{u_y}=0\text{，}
+  \label{eq:vision-videofound-euler-lagrange}
+\end{equation}
+称为\term{Euler--Lagrange方程}（Euler--Lagrange equation）。再允许$\eta$在边界上取任意值，剩下的边界积分也必须为零，得到自然边界条件$F_{u_x}n_x+F_{u_y}n_y=0$。泛函含两个未知函数时，对每个函数分别扰动，各得一个方程。一维的特例、散度定理以及Dirichlet能量的讨论可参考\BookChapterRef{chap:functional-analysis-and-approximation}{卷一“函数空间”章}。还需说明一点：式\eqref{eq:vision-videofound-euler-lagrange}只是极小的必要条件；式\eqref{eq:vision-videofound-hs-energy}的被积函数是$(u,v)$及其梯度的线性式的平方和，泛函是凸的，所以满足方程的解就是极小解。
+
+对式\eqref{eq:vision-videofound-hs-energy}，被积函数$F=(I_xu+I_yv+I_t)^2+\alpha^2(u_x^2+u_y^2+v_x^2+v_y^2)$。对$u$求各偏导数：$F_u=2I_x(I_xu+I_yv+I_t)$，$F_{u_x}=2\alpha^2u_x$，$F_{u_y}=2\alpha^2u_y$。代入式\eqref{eq:vision-videofound-euler-lagrange}并除以2，再对$v$做同样的计算，得到
+\begin{equation}
+  \begin{aligned}
+    I_x(I_xu+I_yv+I_t)-\alpha^2\nabla^2u&=0\text{，}\\
+    I_y(I_xu+I_yv+I_t)-\alpha^2\nabla^2v&=0\text{，}
+  \end{aligned}
+  \label{eq:vision-videofound-hs-el}
+\end{equation}
+其中$\nabla^2u=u_{xx}+u_{yy}$是Laplace算子。自然边界条件为$\partial u/\partial n=\partial v/\partial n=0$，即位移在图像边界处沿法向不变。式\eqref{eq:vision-videofound-hs-el}的含义很直观：在每一点，数据项的“拉力”$I_x(\cdots)$与平滑项的“拉力”$\alpha^2\nabla^2u$平衡。
+
+在像素网格上，Laplace算子用邻域平均近似。Horn和Schunck取局部平均$\bar u$为四邻域权重各$1/6$、对角邻域权重各$1/12$的加权平均（权重之和为1），并取$\nabla^2u\approx\kappa(\bar u-u)$，以网格间距为长度单位时$\kappa=3$\scite{vision-horn1981flow}。可以用$u=x^2$检验：中心为0，左右邻居为1，四个对角邻居为1，$3(\bar u-u)=3(2/6+4/12)=2$，与$\nabla^2(x^2)=2$一致。记$\lambda=\kappa\alpha^2$（原文把常数$\kappa$并入$\alpha^2$），把近似代入式\eqref{eq:vision-videofound-hs-el}，整理为
+\[
+  \begin{aligned}
+    (\lambda+I_x^2)u+I_xI_yv&=\lambda\bar u-I_xI_t\text{，}\\
+    I_xI_yu+(\lambda+I_y^2)v&=\lambda\bar v-I_yI_t\text{。}
+  \end{aligned}
+\]
+若把$\bar u,\bar v$暂时看作已知，这是每个像素上关于$(u,v)$的$2\times2$线性方程组。为了求解，令$u=\bar u+\delta_u$、$v=\bar v+\delta_v$，并记$\bar r=I_x\bar u+I_y\bar v+I_t$，即用局部平均代入约束方程得到的残差。第一式化为$(\lambda+I_x^2)\delta_u+I_xI_y\delta_v=-I_x\bar r$，第二式化为$I_xI_y\delta_u+(\lambda+I_y^2)\delta_v=-I_y\bar r$。试取$(\delta_u,\delta_v)=-c(I_x,I_y)$，第一式左边为$-cI_x(\lambda+I_x^2+I_y^2)$，令其等于$-I_x\bar r$得$c=\bar r/(\lambda+I_x^2+I_y^2)$，第二式给出同一个$c$。系数矩阵的行列式为$\lambda(\lambda+I_x^2+I_y^2)>0$，解唯一，所以
+\begin{equation}
+  u=\bar u-\frac{I_x\,(I_x\bar u+I_y\bar v+I_t)}{\lambda+I_x^2+I_y^2}\text{，}\qquad
+  v=\bar v-\frac{I_y\,(I_x\bar u+I_y\bar v+I_t)}{\lambda+I_x^2+I_y^2}\text{。}
+  \label{eq:vision-videofound-hs-update}
+\end{equation}
+
+式\eqref{eq:vision-videofound-hs-update}有清楚的几何意义：从局部平均$(\bar u,\bar v)$出发，沿梯度方向、也就是垂直于约束线的方向移动，移动量正比于局部平均违反约束的程度$\bar r$。$\lambda\to0$时，这一步恰好把点投影到约束线上；$\lambda$越大，移动得越少，越相信邻居。梯度为零的地方，$u=\bar u$，位移完全由邻居决定。
+
+$\bar u$依赖相邻像素的$u$，所以各像素的方程是耦合的：$n$个像素共有$2n$个未知数，组成一个大型稀疏线性方程组。Horn和Schunck用迭代求解：用上一轮的位移计算局部平均，再按式\eqref{eq:vision-videofound-hs-update}得到新一轮的位移\scite{vision-horn1981flow}。这与求解稀疏线性方程组的Jacobi迭代同形；它的收敛条件属于线性迭代法的一般理论，这里不展开。算法\ref{alg:vision-videofound-hs}写出了完整步骤。
+
+\begin{algorithm}[Horn-Schunck迭代]
+  \label{alg:vision-videofound-hs}
+  \begin{algorithmic}[1]
+    \Require 两帧$I_t,I_{t+1}$，权重$\lambda>0$，迭代次数$K$
+    \Ensure 每个像素的位移$(u,v)$
+    \State 在每个像素估计$I_x,I_y,I_t$，三者取同一位置和时刻
+    \State $u^{(0)}\gets0$，$v^{(0)}\gets0$
+    \For{$k=0,\ldots,K-1$}
+      \State 按邻域权重计算$\bar u^{(k)},\bar v^{(k)}$，边界处复制相邻内部像素的值
+      \State $\bar r\gets I_x\bar u^{(k)}+I_y\bar v^{(k)}+I_t$
+      \State $u^{(k+1)}\gets\bar u^{(k)}-I_x\bar r/(\lambda+I_x^2+I_y^2)$
+      \State $v^{(k+1)}\gets\bar v^{(k)}-I_y\bar r/(\lambda+I_x^2+I_y^2)$
+    \EndFor
+    \State \Return $(u^{(K)},v^{(K)})$
+  \end{algorithmic}
+\end{algorithm}
+
+用一个像素的一次更新检查这些式子。设某像素处$I_x=2$、$I_y=1$、$I_t=-4$，$\lambda=5$，上一轮的局部平均为$\bar u=0.5$、$\bar v=0$。则$\bar r=2\times0.5+0-4=-3$，分母为$5+4+1=10$，更新得$u=0.5-2\times(-3)/10=1.1$，$v=0-1\times(-3)/10=0.3$。新位移的残差为$2\times1.1+0.3-4=-1.5$，正好是$\bar r$乘以$\lambda/(\lambda+I_x^2+I_y^2)=0.5$。这个比例对任意数值都成立：每次更新把局部残差缩小到原来的$\lambda/(\lambda+\lVert\nabla I\rVert_2^2)$，梯度越强，约束执行得越彻底。
+
+平滑项让信息在图像中扩散。在一块亮度均匀的区域里，每次迭代只把边界上的位移向内传一个像素左右，整个过程类似热在平板上扩散；所以迭代次数应当超过需要填充的最大区域的宽度（以像素计）\scite{vision-horn1981flow}。处理视频时，可以用上一对帧的结果作为下一对帧的初值，每对帧只迭代少数几次。
+
+Horn-Schunck的弱点也来自它的假设。平滑项在整幅图像上一视同仁，于是在运动边界处，前景车辆和背景路面的位移被平均，边界附近的光流变得模糊；遮挡区域没有对应，却也被平滑项填上了值。二次罚函数对违反亮度恒常的点（高光、阴影）过于敏感，一个坏点会把错误扩散到周围。线性化要求位移小，大位移需要像\ref{sec:vision-videofound-lucas-kanade}节那样由粗到细地求解。后来的变分方法把二次罚换成增长较慢的稳健罚函数，在运动边界处允许位移跳变，但“数据项加平滑项”的框架没有变。这个框架也被学习方法沿用：若把式\eqref{eq:vision-videofound-hs-energy}中的两项直接作为网络输出光流的训练目标，就不需要光流真值，而\ref{sec:vision-video-raft}节的RAFT在合成真值上做监督训练，二者的监督来源不同。
+
+\subsection{Lucas-Kanade}
+\label{sec:vision-videofound-lucas-kanade}
+
+Horn-Schunck用全局平滑补足约束，代价是全图迭代和边界模糊。很多任务并不需要每个像素的位移：跟踪几十个角点，或者把一个小模板对准到下一帧，只需要局部的估计。Lucas和Kanade把补充约束换成局部的：假设在点$\bm p$周围的小窗口$W$内，所有像素的位移相同\scite{vision-lucas1981iterative}。窗口内每个像素各给出一个光流约束方程，未知数仍只有两个，方程数多于未知数，于是可以用最小二乘求解。
+
+设窗口内的像素为$\bm q_1,\ldots,\bm q_m$，权重$w_i\geq0$（常取以$\bm p$为中心的高斯权重），求
+\begin{equation}
+  \bm u^*=\argmin_{\bm u}\sum_{i=1}^{m}w_i\bigl(\nabla I(\bm q_i)^\top\bm u+I_t(\bm q_i)\bigr)^2\text{。}
+  \label{eq:vision-videofound-lk-objective}
+\end{equation}
+这是一个加权线性最小二乘问题。目标对$\bm u$的梯度为
+\[
+  2\sum_{i=1}^{m}w_i\nabla I(\bm q_i)\bigl(\nabla I(\bm q_i)^\top\bm u+I_t(\bm q_i)\bigr)\text{，}
+\]
+令其为零得到正规方程
+\begin{equation}
+  \bm G\bm u=\bm b\text{，}\qquad
+  \bm G=\sum_{i=1}^{m}w_i
+  \begin{bmatrix}I_x^2&I_xI_y\\I_xI_y&I_y^2\end{bmatrix}_{\bm q_i}\text{，}\qquad
+  \bm b=-\sum_{i=1}^{m}w_i
+  \begin{bmatrix}I_xI_t\\I_yI_t\end{bmatrix}_{\bm q_i}\text{，}
+  \label{eq:vision-videofound-lk-normal}
+\end{equation}
+下标$\bm q_i$表示在该像素处取值。线性最小二乘的结论在这里直接适用：正规方程的解就是最小二乘解；当且仅当$\bm G$可逆，解唯一，$\bm u^*=\bm G^{-1}\bm b$。这些结论以及对称矩阵的特征分解可参考\BookChapterRef{chap:linear-algebra-and-matrix-analysis}{卷一“线性空间”章}。
+
+矩阵$\bm G$是窗口内梯度外积$\nabla I\nabla I^\top$的加权和，称为\term{结构张量}（structure tensor）；\ref{sec:vision-features-harris}节的Harris角点检测用的正是同一个矩阵。每个外积都是半正定的，所以$\bm G$对称半正定，有两个非负特征值$\lambda_1\geq\lambda_2\geq0$。它们刻画了窗口内梯度方向的分布，也就决定了方程能否解、解得多稳：两个特征值都很小，窗口内几乎没有纹理，$\bm G$接近零矩阵，位移不确定；$\lambda_1$大而$\lambda_2\approx0$，梯度集中在一个方向，窗口内是一条直边缘，$\bm G$近似奇异，这正是孔径问题；两个特征值都大，梯度方向多样，例如角点或丰富的纹理，$\bm G$良态，位移可以稳定地解出。$\lambda_2$小时，$\bm G^{-1}$把$\bm b$中的噪声沿对应特征向量方向放大约$1/\lambda_2$倍。
+
+下面的小例子可以手算。窗口内有四个像素，权重都为1，梯度和时间导数$(I_x,I_y,I_t)$依次为$(1,0,-2)$、$(1,0,-2)$、$(0,1,-1)$和$(1,1,-3)$。逐项相加得$\sum I_x^2=3$、$\sum I_xI_y=1$、$\sum I_y^2=2$、$\sum I_xI_t=-7$、$\sum I_yI_t=-4$，于是
+\[
+  \bm G=\begin{bmatrix}3&1\\1&2\end{bmatrix}\text{，}\quad
+  \bm b=\begin{bmatrix}7\\4\end{bmatrix}\text{，}\quad
+  \bm u^*=\frac{1}{5}\begin{bmatrix}2&-1\\-1&3\end{bmatrix}\begin{bmatrix}7\\4\end{bmatrix}
+  =\begin{bmatrix}2\\1\end{bmatrix}\text{。}
+\]
+代回检查，四个约束方程都恰好满足。$\bm G$的特征值为$(5\pm\sqrt5)/2$，约为3.62和1.38，两者都不小，解稳定。若窗口内只有前两个像素，$\bm G=\operatorname{diag}(2,0)$奇异，只能确定$u=2$，$v$可以取任何值。
+
+式\eqref{eq:vision-videofound-lk-normal}依赖一阶线性化，位移大时结果不准。Lucas和Kanade的原始做法是迭代：先求出一个位移，用它把第二帧变形回来，再对剩余的小位移重新线性化\scite{vision-lucas1981iterative}。写成目标函数，就是最小化$E(\bm d)=\sum_iw_i\bigl[I_{t+1}(\bm q_i+\bm d)-I_t(\bm q_i)\bigr]^2$。在当前估计$\bm d^{(k)}$处把$I_{t+1}(\bm q_i+\bm d^{(k)}+\bm\Delta)$对$\bm\Delta$做一阶展开，记$e_i=I_{t+1}(\bm q_i+\bm d^{(k)})-I_t(\bm q_i)$为变形后的差，$\bm g_i=\nabla I_{t+1}(\bm q_i+\bm d^{(k)})$，则增量满足
+\[
+  \Bigl(\sum_iw_i\bm g_i\bm g_i^\top\Bigr)\bm\Delta=-\sum_iw_i\bm g_ie_i\text{，}\qquad
+  \bm d^{(k+1)}=\bm d^{(k)}+\bm\Delta\text{。}
+\]
+这正是非线性最小二乘的Gauss--Newton迭代：每步把残差线性化，解一个线性最小二乘问题，其收敛性质可参考\BookChapterRef{chap:optimization}{卷一“最优化”章}。$\bm q_i+\bm d^{(k)}$一般不在整数网格上，取值要用双线性等插值。原文分析了一维正弦图像$\sin x$的情形：初始误差小于半个波长时迭代收敛到正确位移\scite{vision-lucas1981iterative}。这与式\eqref{eq:vision-videofound-temporal-nyquist}的“每帧位移小于半个周期”是同一个条件。它提示了扩大收敛范围的办法：先平滑图像、压低高空间频率，相当于增大周期；代价是细节被抹掉，估计变得不精确。
+
+把这个办法系统化，就是由粗到细的金字塔估计。对两帧分别构造\ref{sec:vision-transforms-pyramid}节的高斯金字塔，第$\ell$层的分辨率是原图的$2^{-\ell}$，同一位移在第$\ell$层只有原来的$2^{-\ell}$。从最粗的第$L$层开始，以零为初值估计位移；把结果乘以2作为下一层的初值，在下一层只需估计剩下的小修正；逐层进行，直到原图。Lucas和Kanade在原文中已经提出用低分辨率的平滑图像先求近似匹配，再到高分辨率上细化\scite{vision-lucas1981iterative}。算法\ref{alg:vision-videofound-pyramid-lk}写出了对一个点的完整过程。
+
+\begin{algorithm}[金字塔Lucas-Kanade]
+  \label{alg:vision-videofound-pyramid-lk}
+  \begin{algorithmic}[1]
+    \Require 两帧的高斯金字塔$\{I_t^{(\ell)}\}$、$\{I_{t+1}^{(\ell)}\}$，$\ell=0,\ldots,L$；点$\bm p$；每层迭代次数$K$
+    \Ensure 点$\bm p$的位移$\bm d$
+    \State $\bm d\gets\bm 0$
+    \For{$\ell=L,L-1,\ldots,0$}
+      \State $\bm p^{(\ell)}\gets\bm p/2^{\ell}$
+      \For{$k=1,\ldots,K$}
+        \State 在$\bm p^{(\ell)}$的窗口内计算$e_i=I_{t+1}^{(\ell)}(\bm q_i+\bm d)-I_t^{(\ell)}(\bm q_i)$及梯度$\bm g_i$
+        \State 解$\bigl(\sum_iw_i\bm g_i\bm g_i^\top\bigr)\bm\Delta=-\sum_iw_i\bm g_ie_i$；若矩阵近似奇异，标记该点不可靠
+        \State $\bm d\gets\bm d+\bm\Delta$
+      \EndFor
+      \If{$\ell>0$}
+        \State $\bm d\gets2\bm d$
+        \Comment{换算到下一层的像素单位}
+      \EndIf
+    \EndFor
+    \State \Return $\bm d$
+  \end{algorithmic}
+\end{algorithm}
+
+图\ref{fig:vision-videofound-flow-pyramid}给出一个三层的例子。真实位移为8.6像素，在第2层只有2.15像素，单层迭代能可靠处理；第2层估计为2.1，乘以2后作为第1层的初值4.2，第1层只需修正0.1；第0层的初值8.6已经与真值一致。若单层迭代可靠处理的位移约为2像素（教学假设），$L$层金字塔把可处理的位移扩大到约$2\times2^{L}$像素。金字塔也有它的失效情形：一个又小又快的物体，例如远处飞过的鸟，在粗层上已经被平滑掉了，粗层给出的是背景的位移，细层的初值从一开始就错了，而细层只做小修正，无法纠正。\ref{sec:vision-video-raft}节的RAFT正是针对这一点放弃了由粗到细的结构。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/video-flow-pyramid}
+  \caption{由粗到细的金字塔光流（教学构造，真实位移8.6像素）。方块表示各层图像，边长逐层减半；红色箭头表示该层像素单位下的位移。每层的估计乘以2作为下一层的初值，下一层只需修正剩余的小位移。}
+  \label{fig:vision-videofound-flow-pyramid}
+\end{figure}
+
+在视频中持续跟踪一组点，就把上面的步骤串了起来，形成常说的\term{KLT跟踪器}（Kanade--Lucas--Tomasi tracker）。先选点：既然$\bm G$的较小特征值决定位移能否稳定求解，就直接用它选点，只保留$\min(\lambda_1,\lambda_2)$超过阈值的位置\scite{vision-shi1994good}。这个准则与Harris角点的响应函数出发点相同，但它直接对应跟踪方程的可解性。然后逐帧用金字塔Lucas-Kanade求每个点的位移。最后检查结果：变形后窗口的残差过大、结构张量变得奇异、点移出画面时，丢弃该点；还可以从第二帧反向跟踪回第一帧，检查是否回到出发点，这就是\ref{sec:vision-video-warping}节式\eqref{eq:vision-video-fb-consistency}的前后向一致性。逐帧跟踪的误差会累积，点会慢慢漂离原来的物体位置；Shi和Tomasi的做法是把当前窗口与首帧窗口在仿射变形下比较，残差持续增大的点判为已不可靠\scite{vision-shi1994good}。被丢弃的点由新检测的点补充。KLT跟踪得到的点轨迹可用于视频稳像，也可作为\ref{sec:vision-formation-multi-view}节多视图重建的对应点。
+
+局部窗口内位移不变，是对平移的假设。整幅画面由相机运动造成的位移，往往可以用少数几个参数描述。\term{参数化运动模型}（parametric motion model）把位移写成位置的函数$\bm u(\bm p;\bm a)$，用全图或大区域的像素估计参数$\bm a$。最常用的是仿射模型
+\[
+  u=a_1+a_2x+a_3y\text{，}\qquad v=a_4+a_5x+a_6y\text{，}
+\]
+它能表示平移、旋转、缩放和剪切；例如以原点为中心放大10\%，就是$a_2=a_6=0.1$、其余为零。把它代入光流约束方程，得到每个像素一个关于$\bm a$的线性方程
+\[
+  \bigl[I_x,\ xI_x,\ yI_x,\ I_y,\ xI_y,\ yI_y\bigr]\,\bm a=-I_t\text{，}
+\]
+所有像素合起来就是一个六个未知数的线性最小二乘问题，正规方程是$6\times6$的。场景近似为一个平面，或相机只绕光心转动时，两帧之间的变换是\ref{sec:vision-formation-two-view}节的单应，有8个参数，位移对参数是非线性的。这时可以像上面一样迭代：在当前参数下变形第二帧，对剩余误差线性化，用Gauss--Newton更新参数。Lucas和Kanade在原文中就指出这一方法能推广到旋转、缩放和剪切；Baker和Matthews后来把各种参数化变形下的这类算法统一在同一框架中，比较了不同更新方式的计算量\scite{vision-baker2004lk}。
+
+估计出全局运动后，就可以做相机运动补偿：把前一帧按全局运动变形到当前帧的坐标，再与当前帧比较。这样剩下的差异来自独立运动的物体，\ref{sec:vision-videofound-background}节的背景建模就能用于运动的相机；把全局运动平滑后再反向补偿，就是视频稳像。独立运动的物体对全局运动的估计而言是离群点，应当用稳健的方法压低它们的权重，例如M估计的Huber损失，其定义与影响函数可参考\BookChapterRef{chap:statistical-inference}{卷2《数学准备：概率、因果与决策》的“统计推断”章}；运动物体占画面比例很大时，全局估计仍可能被它们带偏。卷帘快门下各行对应不同时刻，全局运动在一帧之内也随行变化，单一的仿射或单应模型就不再精确。
+
+三种方法的区别归结为补充约束的来源，表\ref{tab:vision-videofound-motion-compare}在同一组维度上比较了它们。块匹配的约束来自“块内同一平移”，它直接比较像素值，不依赖线性化，搜索范围内的大位移都能找到，但只有整数精度，平坦块和运动边界上不可靠，成本随搜索范围的平方增长。Horn-Schunck的约束来自全局平滑，它对每个像素都给出位移，能填补无纹理区域，但运动边界被抹平，需要全图迭代，线性化又限制了位移大小。Lucas-Kanade的约束来自窗口内的一致，它只在纹理充分处求解，并用结构张量的特征值报告解是否可靠，精度可达亚像素，计算局部，但没有纹理的地方无解，大位移依赖金字塔，而金字塔会丢失又小又快的物体。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}lXXX@{}}
+    \toprule
+    维度 & 块匹配 & Horn-Schunck & Lucas-Kanade\\
+    \midrule
+    补充约束 & 块内同一整数平移 & 位移场全局平滑 & 窗口内位移相同\\
+    输出 & 每块一个矢量 & 每像素一个位移 & 选定点的位移\\
+    精度 & 整数，插值后可到分数像素 & 亚像素 & 亚像素\\
+    大位移 & 搜索范围内可处理 & 需由粗到细 & 需迭代与金字塔\\
+    无纹理区 & 结果由噪声决定 & 由周围填入 & 无解，可由特征值检出\\
+    运动边界 & 块内混合两种运动 & 被平滑抹开 & 窗口跨边界时出错\\
+    计算 & 每块$(2p+1)^2N^2$次比较 & 全图迭代，次数随填充范围增加 & 每点每次迭代解$2\times2$方程\\
+    \bottomrule
+  \end{tabularx}
+  \caption{三种运动估计方法的比较，均以相邻两帧灰度图像为输入。各项描述的是方法的基本形式，不含后来的改进。}
+  \label{tab:vision-videofound-motion-compare}
+\end{table}
+
+三种思路都延续到了学习方法中，但被重新组合。块匹配的穷举代价变成了在学习到的特征上计算的相关体；Lucas-Kanade和Horn-Schunck的迭代修正变成了反复读取相关体、预测位移增量的循环更新模块；由粗到细的金字塔曾是多数学习式光流网络的骨架，而RAFT保留全部位移的相关信息，用单一分辨率上的迭代更新避开了粗层丢失小物体的问题。\ref{sec:vision-video-raft}节将完整讲解RAFT；读者可以把那里的每个组件与本节的三种方法对应起来，看它改变了哪一个设计、保留了哪一个。
+
+\section{视频结构的分析}
+\label{sec:vision-videofound-structure}
+
+运动估计处理的是相邻两帧。一段长视频却不是均匀的帧流：剪辑过的节目由许多段连续拍摄拼接而成，每段内部画面变化平缓、高度冗余，段与段之间则内容突变；固定摄像头的录像里，路面、建筑长期不变，只有车辆和行人在变化。把这些结构找出来，后续处理才有合适的单位：跨过镜头切换做运动估计或跟踪没有意义；模型一次只能读入有限帧时，需要知道选哪几帧；监控任务关心的是偏离长期场景的那部分像素。
+
+本节按要找出的对象分三部分讨论：时间上连续性断开的位置，即镜头边界；能代表一段内容的少数帧，即关键帧；空间上长期不变的场景与变化的部分，即背景与前景。三者都比较帧之间的差异，区别在于参照物：镜头边界检测比较相邻帧，关键帧选择比较一段内的帧与已选的代表，背景建模比较当前帧与长期统计。
+
+\subsection{镜头边界的检测}
+\label{sec:vision-videofound-shot-boundary}
+
+\term{镜头}（shot）是一台摄像机连续拍摄、中间没有剪断的一段视频。剪辑把多个镜头连接起来，连接处称为镜头边界。\term{镜头边界检测}（shot boundary detection）的输入是帧序列，输出是边界的位置和类型。边界分两类。\term{硬切}（hard cut）在相邻两帧之间直接从镜头$A$跳到镜头$B$。\term{渐变}（gradual transition）则持续若干帧，常见的有\term{叠化}（dissolve）、淡入淡出（fade）和划变（wipe）。叠化在$K$帧内把两个镜头按比例混合：
+\begin{equation}
+  \bm X_t=(1-a_t)\bm A_t+a_t\bm B_t\text{，}\qquad a_t\text{从0增加到1，}
+  \label{eq:vision-videofound-dissolve}
+\end{equation}
+淡出是$\bm B_t$为全黑画面的特例，划变则让$\bm B$从画面一侧逐步推入。
+
+检测的核心是一个帧间差异的度量。最直接的是逐像素平均绝对差，但它对运动太敏感：路口录像中汽车每帧移动20像素，车身经过的大片像素都在变化，而这显然不是镜头切换。直方图差异对运动更稳健。设$\bm h_t\in\mathbb{R}^{n_{\mathrm b}}$为第$t$帧的归一化灰度或量化颜色直方图，各分量之和为1，定义
+\begin{equation}
+  d(t)=\sum_{b=1}^{n_{\mathrm b}}\bigl|h_{t,b}-h_{t-1,b}\bigr|\text{，}
+  \label{eq:vision-videofound-hist-diff}
+\end{equation}
+它的取值在0到2之间。直方图只统计各亮度或颜色出现的比例，不记录位置，所以物体在画面内移动、只要不进出画面，直方图就基本不变；换了一个镜头，场景的颜色分布通常整体改变。例如四个分箱的直方图，同一镜头内相邻两帧为$(0.40,0.30,0.20,0.10)$和$(0.38,0.32,0.20,0.10)$，$d=0.04$；切到新镜头后为$(0.10,0.10,0.30,0.50)$，与前一帧的差为$0.28+0.22+0.10+0.40=1.0$。取阈值$T_{\mathrm h}=0.5$即可把硬切与镜头内的变化分开。阈值也可以随视频自适应，例如取一段滑动窗口内差值的均值加若干倍标准差。
+
+直方图差异有两类典型错误。漏检：两个镜头的颜色分布相近，例如同一场景从两个角度拍摄，切换处$d(t)$很小。误检：闪光灯使一帧突然变亮，或者大物体迅速进入画面，$d(t)$出现尖峰却不是切换。闪光的特点是持续时间短，第$t-1$帧与第$t+1$帧仍然相似，所以可以加一条检查：若$\bm h_{t-1}$与$\bm h_{t+1}$的差异小，就不判为切换。
+
+渐变更难检测，因为每对相邻帧之间的变化都不大。在式\eqref{eq:vision-videofound-dissolve}中，若$a_t$每帧增加$1/K$，相邻两帧的像素差只有$(\bm B_t-\bm A_t)/K$左右，$d(t)$略高于镜头内的水平，却远低于硬切的阈值；但叠化开始前和结束后的两帧之间，差异与一次硬切相当。Zhang等人提出的\term{双阈值比较}（twin-comparison）利用了这一点\scite{vision-zhang1993partitioning}：用高阈值$T_{\mathrm h}$检测硬切，用低阈值$T_{\mathrm l}$标记可能的渐变起点；此后相邻差只要保持在$T_{\mathrm l}$以上，就认为渐变仍在进行，直到相邻差回落到$T_{\mathrm l}$以下，再把终点帧与起点帧直接比较，二者的差超过$T_{\mathrm h}$时判为一次渐变，否则放弃这个候选。算法\ref{alg:vision-videofound-twin}写出了这一过程。
+
+\begin{algorithm}[双阈值比较]
+  \label{alg:vision-videofound-twin}
+  \begin{algorithmic}[1]
+    \Require 帧序列$\bm X_1,\ldots,\bm X_n$，阈值$T_{\mathrm l}<T_{\mathrm h}$，差异度量$D(\cdot,\cdot)$
+    \Ensure 硬切位置集合$\mathcal{C}$，渐变区间集合$\mathcal{G}$
+    \State $\mathcal C\gets\emptyset$，$\mathcal G\gets\emptyset$，$s\gets\text{无}$
+    \For{$t=2,\ldots,n+1$}
+      \State $d\gets D(\bm X_{t-1},\bm X_t)$；$t=n+1$时取$d\gets0$
+      \Comment{末尾补一次回落}
+      \If{$d>T_{\mathrm h}$}
+        \State 将$t$加入$\mathcal C$；$s\gets\text{无}$
+      \ElsIf{$d>T_{\mathrm l}$}
+        \If{$s=\text{无}$}
+          \State $s\gets t-1$
+          \Comment{记下可能的渐变起点}
+        \EndIf
+      \ElsIf{$s\neq\text{无}$}
+        \If{$D(\bm X_s,\bm X_{t-1})>T_{\mathrm h}$}
+          \State 将$[s,t-1]$加入$\mathcal G$
+          \Comment{起点与终点的累积差足够大}
+        \EndIf
+        \State $s\gets\text{无}$
+      \EndIf
+    \EndFor
+    \State \Return $\mathcal C,\mathcal G$
+  \end{algorithmic}
+\end{algorithm}
+
+图\ref{fig:vision-videofound-twin-comparison}给出一个教学序列。第10帧的相邻差为1.0，超过$T_{\mathrm h}=0.5$，判为硬切。第22至31帧的相邻差约为0.11，都在$T_{\mathrm l}=0.08$与$T_{\mathrm h}$之间；第22帧时记下起点第21帧；此后各帧与第21帧的差逐帧增大，在第26帧已超过$T_{\mathrm h}$；第32帧的相邻差回落到0.05，此时第31帧与第21帧的差为0.93，大于$T_{\mathrm h}$，于是把第21至31帧判为渐变。若只用单一阈值，0.5会漏掉这次叠化，0.08又会把许多镜头内的正常变化判为边界。这个算法也能被相机运动骗过：缓慢的横摇同样使相邻差持续略高、累积差持续增大。原文因此加入运动分析，若候选区间内的运动符合相机平移或缩放，就不判为渐变\scite{vision-zhang1993partitioning}。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/video-twin-comparison}
+  \caption{双阈值比较的教学序列，所有差值均为构造数值。柱为相邻帧差$d(t)$，虚线为低阈值$T_{\mathrm l}=0.08$与高阈值$T_{\mathrm h}=0.5$。第10帧的尖峰是硬切；第22至31帧的相邻差只略高于$T_{\mathrm l}$，但各帧与起点第21帧的差（红线）逐帧增大并超过$T_{\mathrm h}$；相邻差在第32帧回落后，第21至31帧判为渐变。}
+  \label{fig:vision-videofound-twin-comparison}
+\end{figure}
+
+学习方法把一个时间窗口内的若干帧直接送入网络，逐帧预测是否为边界及其类型。它改变的是差异特征和判决规则的来源：不再人工选择直方图和阈值，而是从标注了边界的数据中学习。问题的定义没有变，评价时仍按边界位置比较，通常允许预测与标注相差几帧。
+
+\subsection{关键帧的选择}
+\label{sec:vision-videofound-keyframes}
+
+一个镜头往往有数百帧，内容大量重复。浏览、索引和检索都不需要全部帧；视觉语言模型一次能读入的帧数有限，也必须从中挑选（见\ref{sec:vision-video-evidence-selection}节）。\term{关键帧}（key frame）就是从一段视频中选出、用来代表其内容的少数帧。注意它与\ref{sec:vision-videofound-formats}节编码意义上的“关键帧”不同：后者是解码的入口I帧，由编码器按码率和随机访问的需要放置，与内容是否有代表性无关。
+
+选择关键帧要同时考虑三点：覆盖，即这一段中出现过的不同内容都有代表；不冗余，即选出的帧彼此不同；质量，即选出的帧本身清晰可用，不是模糊或过渡中的帧。把每帧用一个特征向量$\bm x_t$（例如颜色直方图）表示，覆盖可以量化为每帧到最近关键帧的距离之和
+\begin{equation}
+  C(S)=\sum_{t=1}^{n}\min_{s\in S}\lVert\bm x_t-\bm x_s\rVert\text{，}
+  \label{eq:vision-videofound-coverage}
+\end{equation}
+其中$S$是关键帧的下标集合。在给定关键帧数$k$时最小化$C(S)$，就是要求关键帧位于内容分布的各个“中心”。
+
+方法上有三种常见做法。最简单的是按位置取，例如每个镜头取第一帧或中间帧，或在时间上均匀取样，成本最低，但镜头内容变化时会漏掉后半段的内容。第二种是顺序比较：从第一帧开始，当前帧与上一个关键帧的差异超过阈值时，就把当前帧选为新的关键帧；它随内容变化自适应地增减关键帧数，但结果依赖起点和阈值。第三种是聚类：把一个镜头内所有帧的特征聚成若干类，每类取离类中心最近的帧\scite{vision-zhuang1998keyframe}。K均值等聚类方法的目标与收敛性质可参考\BookChapterRef{chap:clustering}{卷四“聚类”章}；它们最小化的平方误差与式\eqref{eq:vision-videofound-coverage}的覆盖代价相近。
+
+下面用一维特征比较后两种做法。设七帧的特征依次为0、0.1、0.2、1.0、1.1、1.2、3.0。顺序比较取阈值0.5：第1帧为关键帧；第4帧与它相差1.0，选入；第7帧与第4帧相差2.0，选入；关键帧为第1、4、7帧，覆盖代价为$0+0.1+0.2+0+0.1+0.2+0=0.6$。聚成三类$\{0,0.1,0.2\}$、$\{1.0,1.1,1.2\}$、$\{3.0\}$，各取最接近中心的帧，即第2、5、7帧，覆盖代价为$0.1+0+0.1+0.1+0+0.1+0=0.4$，代表性更好。但若第7帧只是一帧闪光造成的过曝画面，两种做法都会把它选为关键帧，因为覆盖代价只看内容差异，不看质量。所以实际系统还要过滤质量差的帧，例如用图像Laplace响应的方差衡量清晰度，丢弃模糊帧。
+
+关键帧没有唯一的标准答案。用于人工浏览时，代表性由人判断；用于检索或问答时，好的关键帧是使下游任务做对的那些帧。评价关键帧选择，应当说明它服务于哪个任务，并在该任务上比较。
+
+\subsection{背景建模与前景提取}
+\label{sec:vision-videofound-background}
+
+路口的固定摄像头长时间对着同一场景。要找出驶过的车辆和行人，一个思路是先学会“没有它们时画面应该是什么样”，再把偏离这一预期的像素标为前景。这称为\term{背景减除}（background subtraction）；维护“预期画面”的过程称为\term{背景建模}（background modeling）。输出是每帧一张二值掩码$F_t(\bm p)\in\{0,1\}$，1表示前景。困难来自背景本身也在变：云遮住太阳使亮度整体改变；树叶摆动、水面反光使同一像素在几种值之间来回变化；车辆的阴影随车移动；一辆车停下等红灯后，它是否应当并入背景，开走后原来的路面又要恢复为背景。
+
+最简单的做法是\term{帧差法}（frame differencing）：$F_t(\bm p)=1$当且仅当$|I_t(\bm p)-I_{t-1}(\bm p)|>\tau$。它不需要任何模型，对光照的缓慢变化天然不敏感，但有两个缺陷。一是颜色均匀的物体只在边缘处被检出，内部前后两帧都是车身颜色，差为零，这是孔径问题在检测上的表现；二是一个物体在旧位置和新位置都会产生差异，检出的是两个位置的并集。
+
+第二种做法是维护一张背景图像$\bm B_t$，用\term{运行平均}（running average）更新：
+\begin{equation}
+  \bm B_t=(1-\alpha)\bm B_{t-1}+\alpha\bm I_t\text{，}
+  \label{eq:vision-videofound-running-average}
+\end{equation}
+前景判为$|I_t(\bm p)-B_{t-1}(\bm p)|>\tau$。把递推展开，$\bm B_t=(1-\alpha)^t\bm B_0+\alpha\sum_{s=1}^{t}(1-\alpha)^{t-s}\bm I_s$，即对过去各帧的指数加权平均，越近的帧权重越大，当$\alpha$较小时，权重的衰减时间约为$1/\alpha$帧；一般时间间隔下可用指定物理时间常数来确定更新权重，推导可参考\BookChapterRef{chap:dynamical-systems-and-state-estimation}{卷二“动力系统”章}。$\alpha$的选择是一种权衡。取$\alpha=0.05$，记忆长度约20帧；一辆车停下60帧后，它在背景中的权重已达$1-0.95^{60}\approx0.954$，几乎完全并入背景，开走后又要几十帧才能从背景中消退，期间原位置留下一个“鬼影”。$\alpha$小，适应光照变化慢；$\alpha$大，慢速或暂停的物体被吸收得快。运行平均的更根本的局限在于，每个像素只有一个背景值，摆动的树叶在两种颜色之间来回，任何单一平均值都离两者有距离，于是树叶处不断被误检为前景。
+
+Stauffer和Grimson用一个\term{高斯混合模型}（Gaussian mixture model, GMM）描述每个像素的取值历史\scite{vision-stauffer1999adaptive}。动机是：一个像素可能先后看到几种稳定的表面，例如路面和偶尔遮住它的树叶，各自带有噪声，因而它的取值分布是多峰的；其中出现得频繁且稳定的峰属于背景，偶然出现、方差大的峰属于前景。对像素$\bm p$，在时刻$t$用$K$个高斯分量（原文用3至5个）描述它的近期取值：
+\begin{equation}
+  P(\bm X_t)=\sum_{k=1}^{K}\omega_{k,t}\,
+  \mathcal N\bigl(\bm X_t;\bm\mu_{k,t},\sigma_{k,t}^2\bm I\bigr)\text{，}
+  \label{eq:vision-videofound-gmm}
+\end{equation}
+其中$\bm X_t$是该像素的颜色向量，$\omega_{k,t}$是第$k$个分量的权重，表示近期数据中由它解释的比例，$\bm\mu_{k,t}$和$\sigma_{k,t}^2$是均值和方差。为了节省计算，协方差取为各通道独立且方差相同的$\sigma^2\bm I$。
+
+高斯混合模型本可以用EM算法拟合：E步计算每个样本属于各分量的后验概率，M步按后验加权更新参数，反复迭代直到收敛，其推导同样可参考前面引用的卷四“聚类”章。但这里每个像素都有一个模型，每帧要更新几百万个；而且像素的分布随时间变化，不是平稳的。所以原文采用一种在线近似：每来一帧，只把新值当作一个样本，用硬分配和指数遗忘更新参数，作者称之为在线K均值近似\scite{vision-stauffer1999adaptive}。
+
+具体规则如下。先找匹配：按顺序检查各分量，新值与某分量均值的距离在2.5个标准差以内，即$\lVert\bm X_t-\bm\mu_k\rVert_2<2.5\sigma_k$，就认为匹配。权重按
+\begin{equation}
+  \omega_{k,t}=(1-\alpha)\,\omega_{k,t-1}+\alpha M_{k,t}
+  \label{eq:vision-videofound-gmm-weight}
+\end{equation}
+更新，其中$M_{k,t}$对匹配的分量为1、其余为0，$\alpha$是学习率。这与式\eqref{eq:vision-videofound-running-average}的形式相同，只是平均的对象换成了“是否匹配”的指示量，所以$\omega_k$近似为最近约$1/\alpha$帧中该分量被匹配的比例。由于恰有一个$M_{k,t}=1$，若更新前权重之和为1，更新后仍为1。只有匹配的分量更新均值和方差：
+\[
+  \bm\mu_t=(1-\rho)\bm\mu_{t-1}+\rho\bm X_t\text{，}\qquad
+  \sigma_t^2=(1-\rho)\sigma_{t-1}^2+\rho(\bm X_t-\bm\mu_t)^\top(\bm X_t-\bm\mu_t)\text{，}
+\]
+原文取$\rho=\alpha\,\mathcal N(\bm X_t;\bm\mu_k,\sigma_k^2\bm I)$\scite{vision-stauffer1999adaptive}；这一取法依赖密度值的量纲，后续文献讨论过其他取法，下文算例为简明直接取$\rho=\alpha$。若没有任何分量匹配，就用一个新分量替换最不可能的分量：均值取当前值，方差取一个较大的初值，权重取一个较小的初值。
+
+然后决定哪些分量代表背景。背景应当出现得频繁（$\omega$大）且稳定（$\sigma$小），所以按$\omega_k/\sigma_k$从大到小排序，取前$B$个分量为背景，其中
+\begin{equation}
+  B=\argmin_{b}\Bigl(\sum_{k=1}^{b}\omega_k>T\Bigr)\text{，}
+  \label{eq:vision-videofound-gmm-background}
+\end{equation}
+$T$是背景至少应解释的数据比例。$T$小时背景通常只有一个分量；$T$大时，摇动的树叶或闪烁的信号灯这类重复变化可以由两个以上的分量共同构成背景。当前值匹配的分量若在前$B$个之中，像素判为背景，否则判为前景；没有匹配的值当然也是前景。算法\ref{alg:vision-videofound-gmm}汇总了一个像素一帧的处理。
+
+\begin{algorithm}[高斯混合背景模型的单像素更新]
+  \label{alg:vision-videofound-gmm}
+  \begin{algorithmic}[1]
+    \Require 当前值$\bm X_t$，分量参数$\{\omega_k,\bm\mu_k,\sigma_k^2\}_{k=1}^{K}$，学习率$\alpha$，阈值$T$
+    \Ensure 前景标记$F_t\in\{0,1\}$，更新后的参数
+    \State 按$\omega_k/\sigma_k$降序排列分量，按式\eqref{eq:vision-videofound-gmm-background}求$B$
+    \State 按排列顺序找第一个满足$\lVert\bm X_t-\bm\mu_k\rVert_2<2.5\sigma_k$的分量$k^*$
+    \If{找到$k^*$}
+      \State $F_t\gets0$若$k^*$在前$B$个分量中，否则$F_t\gets1$
+      \State 按式\eqref{eq:vision-videofound-gmm-weight}更新所有权重，$M_{k^*}=1$
+      \State 用$\rho$更新$\bm\mu_{k^*}$和$\sigma_{k^*}^2$
+    \Else
+      \State $F_t\gets1$
+      \State 用均值$\bm X_t$、大方差、小权重的新分量替换$\omega_k/\sigma_k$最小的分量，权重重新归一化
+    \EndIf
+    \State \Return $F_t$与更新后的参数
+  \end{algorithmic}
+\end{algorithm}
+
+用一个灰度像素演算一遍（教学数值）。设$K=3$，$\alpha=0.05$，$T=0.7$。三个分量为：分量1，$\omega=0.6$、$\mu=100$、$\sigma=5$，对应路面；分量2，$\omega=0.3$、$\mu=150$、$\sigma=8$，对应不时遮住路面的浅色树叶；分量3，$\omega=0.1$、$\mu=60$、$\sigma=20$，对应偶尔经过的深色车辆。$\omega/\sigma$依次为0.12、0.0375和0.005，排序为1、2、3；累积权重0.6不超过0.7，加上分量2后为0.9，所以$B=2$，路面和树叶都是背景。图\ref{fig:vision-videofound-background-mixture}画出了这三个分量。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/10-image-and-multimodal-processing/01-image-and-multimodal-foundations/tikz/video-background-mixture}
+  \caption{一个灰度像素的三分量混合模型（教学数值，与正文例题一致）。曲线高度按权重缩放，宽度按标准差；底色为各分量的匹配区间$\mu\pm2.5\sigma$，蓝色两个分量构成背景，红色分量不属于背景。下方三个刻度是正文依次讨论的三个新观测。}
+  \label{fig:vision-videofound-background-mixture}
+\end{figure}
+
+第一个新值$X=145$：与分量1相差45，超过$2.5\times5=12.5$，不匹配；与分量2相差5，小于20，匹配。分量2属于背景，像素判为背景。权重更新为$0.95\times0.6=0.57$、$0.95\times0.3+0.05=0.335$、$0.95\times0.1=0.095$，和仍为1。分量2的均值变为$0.95\times150+0.05\times145=149.75$，方差变为$0.95\times64+0.05\times(145-149.75)^2\approx61.93$，即$\sigma\approx7.87$。第二个新值$X=30$，一辆深色车驶过：与分量1相差70，不匹配；与分量2相差119.75，超过$2.5\times7.87\approx19.7$，不匹配；与分量3相差30，小于50，匹配。但分量3排在第三，不在前$B=2$个之中，像素判为前景。若这辆车停下等红灯，每帧都匹配分量3，它的权重从0.14025起按$1-0.85975\times0.95^{n}$增长，约21帧后超过0.7；只要它的方差也随稳定的观测缩小、在排序中升到首位，这辆车就会被并入背景。第三个新值$X=230$，一束车灯的反光：三个分量都不匹配，于是用均值230的新分量替换$\omega/\sigma$最小的分量，像素判为前景。
+
+与运行平均相比，混合模型改进的关键在于背景不必是单一的值。树叶摆动形成的两个峰都被纳入背景，不再被误检；停下的车被并入背景时，原来路面的分量并没有被覆盖，只是权重下降，车开走后路面的值立刻又能匹配这个分量，背景很快恢复\scite{vision-stauffer1999adaptive}。表\ref{tab:vision-videofound-background-compare}比较了三种做法。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}lXXX@{}}
+    \toprule
+    维度 & 帧差法 & 运行平均 & 高斯混合模型\\
+    \midrule
+    参照物 & 上一帧 & 每像素一个背景值 & 每像素$K$个分量\\
+    均匀物体内部 & 漏检 & 可检出 & 可检出\\
+    多峰背景（树叶、水面） & 部分误检 & 误检 & 可纳入背景\\
+    暂停物体 & 停下即消失 & 按$1/\alpha$吸收，开走后留鬼影 & 吸收后保留原背景分量，恢复快\\
+    阈值 & 全局$\tau$ & 全局$\tau$ & 每分量$2.5\sigma_k$，随噪声自适应\\
+    每像素存储 & 一帧 & 一个值 & $K$组权重、均值与方差\\
+    \bottomrule
+  \end{tabularx}
+  \caption{三种背景建模方法的比较，均假设相机固定。表中描述的是基本形式。}
+  \label{tab:vision-videofound-background-compare}
+\end{table}
+
+逐像素的判决还需要整理成物体。前景掩码中常有孤立的噪声点和小孔洞，可以用\ref{sec:vision-transforms-binary-morphology}节的开运算和闭运算清理，再用\ref{sec:vision-transforms-morphology-algorithms}节的连通分量标记把相连的前景像素组成区域，得到每个运动物体的位置、面积和形状。原文正是这样把前景像素分组，再在帧间跟踪这些区域\scite{vision-stauffer1999adaptive}。
+
+背景建模的基本形式依赖固定相机。相机移动时，所有像素都在变化，需要先用\ref{sec:vision-videofound-lucas-kanade}节的参数化运动模型补偿全局运动，再做比较；补偿不准的地方会出现成片的误检。阴影与物体一起移动，按上面的规则会被判为前景，原文也观察到这一点\scite{vision-stauffer1999adaptive}，区分阴影要利用颜色等额外线索。开关灯这类突然的全局光照变化，使几乎所有像素同时不匹配，整个画面被判为前景。学习方法改变了这一流程的出发点：\ref{chap:vision-image-recognition}章的检测与分割模型从单帧中直接判断哪里有车和人，不依赖固定相机和长期统计；但“以长期观测为参照，检测偏离”的思想在变化检测与异常检测中仍在使用。
+
+\section{时间连续性的度量}
+\label{sec:vision-videofound-consistency}
+
+视频处理的结果常常逐帧产生：逐帧增强、逐帧分割、逐帧检测再关联。单帧指标逐帧计算再平均，每一帧都合格，播放时却可能闪烁，同一辆车的编号也可能在中途改变。本节要回答的问题是：怎样定量地度量这类只在时间上出现的错误。
+
+时间连续性有两个维度。外观的连续性关心像素值是否沿运动轨迹保持，度量对象是输出视频本身；身份的连续性关心对象标签是否沿时间保持，度量对象是跟踪输出的轨迹。二者都需要知道“同一个东西”在相邻帧中的对应：前者依赖\ref{sec:vision-videofound-motion}节的光流，后者依赖真实轨迹的标注。这些对应必须独立于被评价的方法，否则方法自身的错误会掩盖它要度量的错误。
+
+\subsection{时间一致性}
+\label{sec:vision-videofound-temporal-consistency}
+
+\termalias{vision-temporal-consistency}{时间一致性}（temporal consistency）指视频中同一场景点的外观在相邻帧之间保持稳定，除非场景本身确实变化。违反时间一致性最常见的表现是\term{闪烁}（flicker）：亮度或颜色在帧间来回波动，而场景并没有相应的变化。逐帧做自动曝光或色调映射，各帧的映射曲线不同；逐帧做风格化，各帧的纹理细节不同；光源以交流电频率闪烁时，帧率或卷帘快门的逐行时差（\ref{sec:vision-videofound-shutter}节）使不同帧采到光源的不同亮度。
+
+度量闪烁最简单的办法是在静止区域内观察平均亮度的帧间跳变。设$m_t$是第$t$帧在一个静止区域内的平均亮度，定义
+\begin{equation}
+  \Phi=\frac{1}{n-1}\sum_{t=2}^{n}\bigl|m_t-m_{t-1}\bigr|\text{。}
+  \label{eq:vision-videofound-flicker}
+\end{equation}
+例如路面区域在增强前五帧的平均亮度为100、100、101、100、100，$\Phi=(0+1+1+0)/4=0.5$；逐帧增强后为100、104、99、105、100，$\Phi=(4+5+6+5)/4=5$。增强引入了原视频中没有的闪烁。这个度量只在区域确实静止时有意义，而且应当与输入视频的同一量相比较：如果输入本身就因光源闪烁而波动，输出的波动不全是处理造成的。
+
+静止区域在运动的画面中往往不够，需要在运动区域也能比较。思路是先用光流把下一帧对齐到当前帧，再比较对齐后的差异；若外观沿运动保持，差异应当很小。Lai等人把这一量定义为\term{扭曲误差}（warping error）\scite{vision-lai2018blind}。设$\bm V_t$是待评价的输出视频的第$t$帧，$\widehat{\bm V}_{t+1}$是把$\bm V_{t+1}$按光流变形到第$t$帧坐标后的结果，$M_t^{(i)}\in\{0,1\}$标记第$i$个像素是否未被遮挡，则
+\begin{equation}
+  E_{\mathrm{warp}}(\bm V_t,\bm V_{t+1})
+  =\frac{1}{\sum_{i}M_t^{(i)}}\sum_{i}M_t^{(i)}
+  \bigl\lVert\bm V_t^{(i)}-\widehat{\bm V}_{t+1}^{(i)}\bigr\rVert_2^2\text{，}
+  \label{eq:vision-videofound-warping-error}
+\end{equation}
+整段视频的扭曲误差是所有相邻帧对的平均$\frac{1}{n-1}\sum_{t=1}^{n-1}E_{\mathrm{warp}}(\bm V_t,\bm V_{t+1})$。计算时有三点要求。光流应当在原始输入视频上估计，而不是在被评价的输出上估计，使对应关系独立于被评价的方法。变形要用\ref{sec:vision-formation-interpolation}节的插值在非整数位置取值。遮挡掩码要排除没有对应的像素，例如用式\eqref{eq:vision-video-fb-consistency}的前后向一致性检测。
+
+举一个三像素的例子。设$\bm V_t$在三个像素上的值为0.50、0.60、0.20，变形后的$\widehat{\bm V}_{t+1}$为0.52、0.55、0.90，第三个像素在下一帧中被遮挡，$M_t=(1,1,0)$。扭曲误差为$(0.02^2+0.05^2)/2=(0.0004+0.0025)/2=0.00145$。若不排除被遮挡的像素，它的差$0.70^2=0.49$会使结果增大一百多倍，而这一差异并不是处理方法造成的。
+
+扭曲误差小并不等于结果好。每帧都输出同一张灰图，扭曲误差为零，内容却全错了。所以它必须与内容保真的度量一起报告，例如输出与逐帧处理结果之间的感知距离，Lai等人正是这样同时使用两者\scite{vision-lai2018blind}。光流本身的误差、变形插值的平滑作用以及遮挡掩码的漏判，也都会进入这个数值。\ref{sec:vision-video-temporal-quality}节在视频复原的评价中使用这一度量的变体，并讨论了它与单帧指标的配合。
+
+\subsection{身份连续性}
+\label{sec:vision-videofound-identity}
+
+多目标跟踪的输出是一组轨迹，每个检测结果带有一个轨迹编号。身份连续性要求：每个真实对象在它出现的整个时间内，都对应同一个预测编号。路口录像中，车辆计数、轨迹分析都以此为前提；编号一旦从一辆车跳到另一辆车，按编号统计的结果就会出错。
+
+度量身份连续性要先在每帧把预测与真实对象对应起来，通常按框的重叠程度做一对一匹配；匹配的具体规则在\ref{sec:vision-video-association}节和\ref{sec:vision-video-evaluation}节讨论。在逐帧的对应之上，可以数出两类错误。\term{身份切换}（identity switch, IDSW）：一个真实对象在本帧匹配的预测轨迹，与它上一次被匹配时的轨迹不同。\term{轨迹碎片}（track fragmentation, FM）：一个真实对象的轨迹从“被跟踪”变为“未被跟踪”，之后又恢复被跟踪，每发生一次中断计一次\scite{vision-dendorfer2021motchallenge}。二者描述的是不同的失败：身份切换是编号换错了，轨迹碎片是跟踪断开了，断开后用同一编号接上只算碎片，用新编号接上则两类错误都要计。
+
+举一个例子。真实车辆A在第1至10帧都在画面中，跟踪器在这十帧给出的编号依次为1、1、1、无、无、1、1、2、2、2，“无”表示该帧没有预测与A匹配。第4帧起跟踪中断、第6帧恢复，计1次碎片；第6帧恢复时编号仍为1，不计身份切换；第8帧编号从1变为2，计1次身份切换。常用的多目标跟踪准确度把漏检、误检和身份切换合在一起，
+\[
+  \operatorname{MOTA}=1-\frac{\sum_t\bigl(\operatorname{FN}_t+\operatorname{FP}_t+\operatorname{IDSW}_t\bigr)}{\sum_t\operatorname{GT}_t}\text{，}
+\]
+其中$\operatorname{FN}_t$、$\operatorname{FP}_t$、$\operatorname{IDSW}_t$分别是第$t$帧的漏检数、误检数和身份切换数，$\operatorname{GT}_t$是真实对象数\scite{vision-bernardin2008clear,vision-dendorfer2021motchallenge}。本例只有A一个对象、没有误检时，漏检2次、身份切换1次，$\operatorname{MOTA}=1-3/10=0.7$。MOTA逐帧计数，一次身份切换只扣一次分，而之后三帧编号都是错的；按式\eqref{eq:vision-video-idf1}的IDF1在全局一对一对应下计算，A只能对应编号1，得$\operatorname{IDTP}=5$、$\operatorname{IDFP}=3$、$\operatorname{IDFN}=5$，IDF1为$10/18\approx0.56$，更能反映编号错了多长时间。
+
+身份错误主要发生在三种情形：遮挡使对象暂时消失，重现时需要重新认出；外观相似的对象相互靠近或交叉；检测器在某些帧漏检，留下空档。短时的连续性主要靠运动预测维持，例如由卡尔曼滤波或光流预测下一帧的位置；长时的连续性要靠外观重识别，在对象消失较久后再认出它。外观的时间一致性与身份连续性是同一要求的两个层次：前者针对像素，后者针对对象；二者都不能由单帧指标代替。
+
+\section{本章小结}
+\label{sec:vision-videofound-summary}
+
+开篇的几个问题现在都有了回答。车轮倒转是时间混叠：每帧转角超过辐条间隔的一半时，样本中的最近辐条落在反方向上，采样本身不再携带真实转向的信息。路灯杆变斜是卷帘快门逐行读出的结果，倾斜量等于运动速度乘以读出时间；运动模糊则来自曝光时间内的积分，它同时也是采样前的一道时间低通。读入的帧还经过了色度下采样、有损压缩和封装，这些约定读错，误差会在模型之前就进入数据。
+
+车身上每一点的位移，要在亮度恒常的假设下估计。光流约束方程只给出一个方程，孔径问题因此不可避免，三种经典方法各自补充一种约束：块匹配假设块内同一平移并直接搜索，Horn-Schunck用全局平滑得到稠密光流，Lucas-Kanade用窗口内的最小二乘得到可检验可靠性的局部估计，并借金字塔处理大位移。它们共同依赖的“位移小于纹理半个周期”的条件，与时间采样定理是同一条件。哪些像素属于车，在固定相机下可以由背景建模回答，高斯混合模型允许背景有多个值，并在暂停物体离开后迅速恢复。镜头在哪里切换，由帧间直方图差异和双阈值比较回答。逐帧增强后的闪烁，可以用静止区域的亮度跳变和扭曲误差度量；跟踪编号是否保持，由身份切换和轨迹碎片度量。
+
+本章没有解决的问题，正是后续章节的出发点。经典光流在大位移、遮挡和运动边界处都不可靠，\ref{sec:vision-video-raft}节的RAFT用学习的特征和迭代更新改变了这一点；身份的长期维持需要检测、运动预测与外观重识别的配合，在\ref{chap:vision-video-recognition}章展开；对齐邻帧以复原画面、用运动矢量和残差编码视频，在\ref{chap:vision-video-restoration}章展开。这两章首节列出的挑战，例如时间采样限制下的证据选择、跨帧对应的不确定、处理结果的时间连续，都以本章的概念为基础，本章给出的度量也是评价它们的工具。
+
+\paragraph{扩展阅读}
+光流方向，\ref{sec:vision-videofound-horn-schunck}节末尾提到的稳健变分方法可以从Brox等人的工作读起：他们在亮度恒常之外加入梯度恒常假设，用增长较慢的稳健罚函数代替二次罚，并在由粗到细的变形（warping）中推迟线性化，说明这一步是一个不动点迭代的数值近似；Zach等人用全变差正则与$L^1$数据项构成TV-$L^1$模型，借助对偶形式把优化拆成可在GPU上并行的简单步骤，达到实时速度\scite{vision-brox2004warping,vision-zach2007tvl1}对超出金字塔处理范围的大位移，Weinzaepfel等人的DeepFlow先用多层相关结构做稠密匹配，再把匹配作为附加项加入变分能量；Revaud等人的EpicFlow沿图像边缘感知的测地距离把稀疏匹配插值成稠密光流，再做变分细化，使运动边界与图像边缘对齐\scite{vision-weinzaepfel2013deepflow,vision-revaud2015epicflow}比较这些方法要依靠带真值的基准：Middlebury用隐藏的荧光纹理和合成场景提供小位移的高精度真值，并系统比较了角误差、端点误差与插值误差等指标；MPI Sintel取自开源动画电影，包含大位移、运动模糊与遮挡；KITTI用激光雷达为真实道路场景提供半稠密真值\scite{vision-baker2011middlebury,vision-butler2012sintel,vision-geiger2012kitti}\ref{sec:vision-video-raft}节的RAFT主要在后两个基准上报告结果。
+
+背景建模方向，Elgammal等人用每个像素近期样本上的核密度估计代替高斯混合的参数形式，不必预先假设分量个数；Zivkovic在Stauffer–Grimson模型的递推更新中引入狄利克雷先验，使每个像素的分量数在线自动增减；Barnich与Van Droogenbroeck的ViBe只为每个像素保存一组历史样本，以随机替换的方式更新，并把样本随机传播给邻域像素，计算量很小\scite{vision-elgammal2000nonparametric,vision-zivkovic2004improved,vision-barnich2011vibe}比较这些方法可以使用ChangeDetection.net（CDnet），它按动态背景、相机抖动、阴影、间歇运动物体等类别提供逐像素标注\scite{vision-goyette2012cdnet}镜头边界检测方面，Smeaton等人总结了TRECVid七年评测的数据、切变与渐变的评价方法以及各类方法的表现，可以与\ref{sec:vision-videofound-shot-boundary}节的直方图方法对照阅读\scite{vision-smeaton2010trecvid}
