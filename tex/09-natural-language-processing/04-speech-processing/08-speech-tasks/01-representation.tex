@@ -1,0 +1,431 @@
+\section{语音信号与表示}
+\label{sec:nlp-speech-representation}
+
+识别、合成、翻译与对话都要先回答同一个问题：把波形变成什么样的序列，后续模型才能高效学习。16\,kHz采样的一秒录音有16000个数，相邻采样高度相关，单个采样几乎不携带“这是哪个音”的信息；直接把它交给注意力模型，序列长、冗余大。第二个困难来自声学变化：同一句“四月十八日”，换一位说话者、换一个房间或换一种语速，波形可以完全不同，而带人工转写的录音远少于没有转写的录音。第三个困难来自生成侧：语言模型按离散词元逐步预测，连续的频谱帧既不便直接作为它的输出，也不便低码率传输。
+
+方法谱系沿这三个困难展开：手工短时频谱与卷积下采样缩短序列（第\ref{sec:nlp-speech-features}、\ref{sec:nlp-speech-encoder}小节），自监督预训练用无标注录音弥补转写不足（第\ref{sec:nlp-speech-ssl}小节），神经编解码器把波形变成语言模型可以读写的离散码流（第\ref{sec:nlp-speech-codec}小节）。节末表\ref{tab:nlp-speech-representations}比较这些表示的帧率、形式、监督需求与用途。
+
+\subsection{声学特征与数据增强}
+\label{sec:nlp-speech-features}
+
+本小节解决两件事：用短时频谱表达“每一小段时间里有哪些频率成分”，以及在训练数据有限时让模型不过分依赖少数频带或帧。划分训练、开发与测试数据时应按录音或说话者分组，再截段和增强，否则同一录音的相邻切片会同时进入训练集与测试集。
+
+后文会同时出现三种长度：特征帧数$n_{\mathrm{frame}}$（每10\,ms一帧）、编码器输出的编码步数$T$（下采样后），以及文字或子词符号数$U$。三者一般互不相等，识别模型要解决的对齐问题正是$T$步声音与$U$个符号之间的对应。
+
+\subsubsection{log-Mel与MFCC}
+\label{sec:nlp-speech-logmel-mfcc}
+
+波形$x_n$记录的是瞬时振幅，直接观察它不容易区分某个音的频率成分；而语音的频率结构又随发音快速变化。短时分析的做法是把信号切成相互重叠的小窗，在每个窗内把信号近似看作平稳，观察局部频谱。设单声道波形采样率为$f_s$，窗长$w$个采样，帧移$h$个采样；统一采样率时应先作抗混叠滤波再重采样。
+
+浊音的频谱能量随频率升高而下降，高频成分容易被低频淹没。\term{预加重}（pre-emphasis）先用一阶差分提升高频：$x'_n=x_n-\alpha x_{n-1}$，常取$\alpha=0.97$。随后对第$i$帧乘以窗函数$g_n$。直接截取一段信号相当于乘矩形窗，窗边缘的突变会把能量泄漏到其他频率；\term{汉明窗}（Hamming window）$g_n=0.54-0.46\cos\bigl(2\pi n/(w-1)\bigr)$让两端平滑衰减，减轻这种泄漏。加窗后补零到变换长度$k_{\mathrm{fft}}\geq w$，计算\term{短时傅里叶变换}（short-time Fourier transform, STFT）与功率谱：
+\begin{equation}
+ S_{i,k}=\sum_{n=0}^{w-1}x'_{ih+n}g_n
+       \exp\!\left(-\mathrm{i}\frac{2\pi kn}{k_{\mathrm{fft}}}\right),
+ \qquad P_{i,k}=\frac{|S_{i,k}|^2}{k_{\mathrm{fft}}}.
+ \label{eq:nlp-speech-stft}
+\end{equation}
+这里帧号$i$从0开始，$\mathrm{i}$为虚数单位，第$k$个频率点对应$f_k=kf_s/k_{\mathrm{fft}}$；实信号的频谱共轭对称，只保留$k=0,\ldots,k_{\mathrm{fft}}/2$。取平方丢掉了相位，后文从频谱生成波形的声码器要设法补回它。
+
+人耳对低频的频率差异比对高频敏感。\term{梅尔刻度}（Mel scale）用$\mathrm{mel}(f)=2595\log_{10}(1+f/700)$近似这种感知尺度：低频段近似线性，高频段近似对数。在梅尔刻度上把$[0,f_s/2]$等分，得到$m+2$个边界点，换回赫兹记为$b_0<b_1<\cdots<b_{m+1}$；第$j$个三角滤波器从$b_{j-1}$升到$b_j$再降到$b_{j+1}$：
+\begin{equation}
+ H_{j,k}=
+ \begin{cases}
+  \dfrac{f_k-b_{j-1}}{b_j-b_{j-1}}, & b_{j-1}\leq f_k\leq b_j,\\[2mm]
+  \dfrac{b_{j+1}-f_k}{b_{j+1}-b_j}, & b_j< f_k\leq b_{j+1},\\[1mm]
+  0, & \text{其他}.
+ \end{cases}
+ \label{eq:nlp-speech-mel-filter}
+\end{equation}
+功率谱经这组滤波器加权求和，再取对数，就得到\term{对数梅尔滤波器组特征}（log-Mel filterbank features，简称log-Mel）：用少量频带描述每帧的能量分布，
+\begin{equation}
+ \bm{X}_{i,j}=\log\!\left(\epsilon+
+                   \sum_k H_{j,k}P_{i,k}\right),
+ \quad j=1,\ldots,m.
+ \label{eq:nlp-speech-logmel}
+\end{equation}
+$\epsilon>0$避免对零取对数。取对数一方面压缩动态范围，另一方面把信道的乘性增益变成加性偏移，便于再按句或按全体训练数据做均值—方差归一化。滤波器定义、对数底数和归一化方式随实现而异，须随模型一起保存。
+
+以16\,kHz、$m=80$为教学例子：$\mathrm{mel}(8000)\approx2840$，82个边界点在梅尔刻度上的间距约35。第一个滤波器覆盖0至45\,Hz，最后一个覆盖约7475至8000\,Hz，宽约525\,Hz。$k_{\mathrm{fft}}=512$时频率点间隔为31.25\,Hz，所以低频滤波器只汇总一两个频率点，高频滤波器汇总十几个：频带越高，分辨越粗，这正是梅尔刻度要表达的感知特性。
+
+再看帧数。给一秒、16\,kHz的教学波形，共16000个采样。取25\,ms窗长$w=400$、10\,ms帧移$h=160$、$k_{\mathrm{fft}}=512$，不做居中补边，也丢弃不足一窗的尾部，则帧数为
+\begin{equation}
+ n_{\mathrm{frame}}=
+ 1+\left\lfloor\frac{16000-400}{160}\right\rfloor=98.
+ \label{eq:nlp-speech-frame-count}
+\end{equation}
+因此STFT单边谱为$98\times257$，log-Mel矩阵为$98\times80$。最后一窗从0.970\,s到0.995\,s，最后5\,ms未进入完整窗。改用20\,ms帧移得到49帧；保持10\,ms帧移、改用40\,ms窗，则得到97帧。更长的窗提高频率分辨率，却会混合更长时间内的变化；补零只加密离散频率采样，不增加真实分辨率。
+
+\term{梅尔倒谱系数}（Mel-frequency cepstral coefficients, MFCC）在log-Mel上再做\term{离散余弦变换}（discrete cosine transform, DCT），保留前$q$项：
+\begin{equation}
+ c_{i,r}=\sum_{j=0}^{m-1}\bm{X}_{i,j+1}\cos\!\left[\frac{\pi r(j+1/2)}{m}\right],
+ \qquad r=0,\ldots,q-1,
+ \label{eq:nlp-speech-mfcc}
+\end{equation}
+归一化系数依实现约定。取$q=13$得到$98\times13$。相邻梅尔频带的对数能量高度相关，DCT把它们变换到近似不相关的坐标上，低阶系数描述谱包络，高阶系数描述细节，截断即丢弃细节。这种去相关服务于第\ref{sec:nlp-speech-hmm}小节用对角协方差高斯混合建模特征的HMM系统。传统系统还拼接一阶、二阶差分，$\Delta c_{i,r}=\sum_{\ell=1}^{2}\ell(c_{i+\ell,r}-c_{i-\ell,r})/(2\sum_{\ell=1}^{2}\ell^2)$，得到$13\times3=39$维；第\ref{sec:nlp-speech-ssl}小节的HuBERT第一轮聚类就用这种39维MFCC。神经编码器能自己学习频带之间的相关性，DCT截断反而丢信息，所以现代识别器多直接读取log-Mel。
+
+\subsubsection{SpecAugment}
+\label{sec:nlp-speech-specaugment}
+
+识别器训练数据有限时，可能过分依赖某个频带或某几帧的局部细节。SpecAugment直接在训练输入的log-Mel矩阵上做三种变换：时间扭曲、频率遮蔽和时间遮蔽，转写标签保持不变\scite{nlp-speech-park2019}。它改变的是声学观测，不是重新录制一份独立录音；代价几乎只是一次矩阵操作，因此可以在每轮训练中重新采样。
+
+设特征矩阵有$\tau$帧、$\nu$个频带。\term{频率遮蔽}（frequency masking）从$\{0,\ldots,F\}$均匀采样宽度$f$，再从$\{0,\ldots,\nu-f\}$采样起点$j_0$，令所有帧的第$j_0$至$j_0+f-1$列取遮蔽值。\term{时间遮蔽}（time masking）同样采样长度$r\leq R$与起点$i_0$，把第$i_0$至$i_0+r-1$行取遮蔽值；原方案还限制$r\leq p\tau$，避免短句被整段遮住。两种遮蔽可以各做若干次。以零均值化后的$98\times80$特征为例，若$f=8,j_0=20,r=10,i_0=30$，列20至27与行30至39被置零；索引均从0开始。置零在这里等于填入平均特征，取决于之前的归一化，不等于真实静音。
+
+\term{时间扭曲}（time warping）模拟语速的局部变化。在$(W,\tau-W)$内随机选一个锚点帧$a$，再从$[-W,W]$采样位移$\omega$，把锚点移到$a+\omega$：锚点左侧的$a$帧被线性拉伸或压缩为$a+\omega$帧，右侧的$\tau-a$帧变为$\tau-a-\omega$帧，总帧数不变。输出第$i'$帧从原特征的位置
+\begin{equation}
+ s(i')=
+ \begin{cases}
+  i'\,\dfrac{a}{a+\omega}, & 0\leq i'\leq a+\omega,\\[2mm]
+  a+(i'-a-\omega)\dfrac{\tau-a}{\tau-a-\omega}, & a+\omega< i'<\tau
+ \end{cases}
+ \label{eq:nlp-speech-time-warp}
+\end{equation}
+处插值取值。教学例子取$\tau=98$、$a=50$、$\omega=4$：输出前54帧来自原前50帧，输出第27帧取原位置25，后半段被压缩，输出第54帧对应原第50帧。原论文的LibriSpeech基本策略取$W=80$、$F=27$、$R=100$，并在消融中指出时间扭曲计算最贵、收益最小，算力紧张时可以首先去掉。
+
+波形层面的增强作用在另一类对象上：加噪叠加其他声音，混响模拟房间传播后的拖尾，变速（常用0.9、1.0、1.1三档）同时改变时长与音高。它们要重新计算特征，成本更高，却能产生遮蔽无法模拟的声学条件。变速和时间扭曲之后文字可以沿用，时间戳须按同一映射变换。遮蔽过强若删去了日期的全部证据，标签未改，样本却已成为含歧义的条件预测；增强强度应由开发集选择。
+
+\subsection{声学编码器结构}
+\label{sec:nlp-speech-encoder}
+
+10\,ms帧移下，一句10秒的话有约1000帧。自注意力对每层每头要计算$1000\times1000$个得分，代价随长度平方增长；语音还同时需要两类信息：几十毫秒内共振峰的过渡等局部频谱模式，以及跨越词和句子的长程上下文。双向LSTM能读整句，但沿时间串行计算，难以并行；纯卷积编码器（如ContextNet）擅长局部模式，需要很深的堆叠或额外的全局汇聚才能覆盖整句\cite{nlp-speech-han2020contextnet}；纯Transformer编码器一步就能读取全局，局部模式却只能靠注意力权重间接学习。本小节的路线是：先用卷积前端把帧率降到40\,ms，再用Conformer块把卷积与自注意力放进同一层\cite{nlp-speech-gulati2020conformer}，它也是第\ref{sec:nlp-speech-recognition}节各类识别器的默认骨干。缩放点积注意力、多头与位置编码沿用第\ref{sec:nlp-llm-decoder-layer}小节的记号，其一般推导可参考\BookChapterRef{chap:transformer}{卷五的Transformer章}；逐点卷积与深度可分离卷积的定义可参考\BookChapterRef{chap:convolutional-networks}{卷五的卷积神经网络章}。下文只写语音编码器特有的组合方式与张量形状。
+
+\subsubsection{卷积下采样前端}
+\label{sec:nlp-speech-subsampling}
+
+\term{卷积下采样}（convolutional subsampling）前端把log-Mel矩阵看成单通道图像，用两层步长为2的二维卷积同时缩短时间轴与频率轴。一层卷积的输出长度为
+\begin{equation}
+ L_{\mathrm{out}}=\left\lfloor\frac{L_{\mathrm{in}}+2p-k}{s}\right\rfloor+1,
+ \label{eq:nlp-speech-conv-length}
+\end{equation}
+其中$k$为核长、$s$为步长、$p$为单侧补边。本章约定核为$3\times3$、$s=2$、$p=1$，此时$L_{\mathrm{out}}=\lceil L_{\mathrm{in}}/2\rceil$。
+
+沿用98帧的例子，取通道数$c$与模型宽度$d$都为144，各层形状为
+\[
+ \begin{aligned}
+ &1\times98\times80
+ \xrightarrow{\text{卷积}+\mathrm{ReLU}}
+ 144\times49\times40
+ \xrightarrow{\text{卷积}+\mathrm{ReLU}}
+ 144\times25\times20\\
+ &\qquad\xrightarrow{\text{重排}}
+ 25\times2880
+ \xrightarrow{\text{线性}}
+ 25\times144 .
+ \end{aligned}
+\]
+重排把每个编码步的144个通道、20个频带拼成一个2880维向量，线性层再投影到$d$维。于是一秒声音得到$T=25$个编码步，每步40\,ms；不补边的实现（$p=0$）则得到$98\to48\to23$。参数主要在第二层卷积（$9\times144\times144+144=186768$）与线性投影（$2880\times144+144=414864$）上。感受野按$r_2=r_1+(k-1)s_1=3+2\times2=7$计算，即每个编码步读取7个特征帧，对应$6\times10+25=85$\,ms的波形，频率方向覆盖7个梅尔频带。
+
+下采样4倍让后续每层注意力的得分矩阵缩小为原来的$1/16$，也让第\ref{sec:nlp-speech-recognition}节CTC与RNN-T的对齐格点按比例缩小。下采样却不能无限加大。CTC要求编码步数不少于输出符号数（相邻重复符号还需额外的空白步）。英语按字母建模时，正常语速每秒约有十几个字母；若再下采样到80\,ms（每秒12.5步），快语速句子可能没有任何合法对齐。中文按字建模每秒只有四五个字，余量较大；改用子词单位也能缓解这一矛盾。
+
+\subsubsection{Conformer块}
+\label{sec:nlp-speech-conformer}
+
+Conformer在Transformer块中加入一个卷积模块，并把前馈层拆成首尾两个半步。设输入$\bm H\in\mathbb R^{T\times d}$，每行是一个编码步的表示。一个Conformer块依次计算
+\begin{equation}
+ \begin{aligned}
+  \tilde{\bm H}&=\bm H+\tfrac12\operatorname{FFN}(\bm H),\\
+  \bm H'&=\tilde{\bm H}+\operatorname{MHSA}(\tilde{\bm H}),\\
+  \bm H''&=\bm H'+\operatorname{Conv}(\bm H'),\\
+  \bm Y&=\operatorname{LN}\bigl(\bm H''+\tfrac12\operatorname{FFN}(\bm H'')\bigr),
+ \end{aligned}
+ \label{eq:nlp-speech-conformer}
+\end{equation}
+其中$\operatorname{LN}$是层归一化，每个子层内部都先做层归一化（前置归一化），输出与输入同形，均为$T\times d$。图\ref{fig:nlp-speech-conformer}展开了整个编码器与卷积模块。
+
+\paragraph{半步前馈。}前馈模块逐行计算
+$\operatorname{FFN}(\bm H)=\operatorname{Dropout}\bigl(\operatorname{Swish}(\operatorname{LN}(\bm H)\bm W_1+\bm b_1)\bm W_2+\bm b_2\bigr)$，
+$\bm W_1\in\mathbb R^{d\times4d}$，$\bm W_2\in\mathbb R^{4d\times d}$；\term{Swish函数}$\operatorname{Swish}(x)=x\,\sigma(x)$即第\ref{sec:nlp-llm-swiglu}小节SwiGLU中的SiLU\cite{ramachandran2017swish}。普通Transformer块是“注意力—前馈”两个子层，Conformer把一个前馈换成两个权重为$\tfrac12$的前馈，夹住注意力与卷积。这一\term{马卡龙式结构}（Macaron-style structure）来自把Transformer层看作微分方程数值解的分析：一步前馈拆成首尾两个半步，类似数值积分中把一个算子拆成两个半步夹住另一个算子的分裂格式\cite{nlp-speech-lu2019macaron}。Conformer原文在参数量不变的条件下把这对半步前馈换回单个前馈，LibriSpeech test-other的词错误率（不用外部语言模型）从4.3\%升到4.5\%。
+
+\paragraph{相对位置多头自注意力。}语音句子长短差异很大，绝对位置编码在训练中没见过的长度上容易失效。Conformer沿用Transformer-XL的相对位置编码\cite{nlp-speech-dai2019transformerxl}。对某一头，记$\bm q_i,\bm k_j\in\mathbb R^{d_k}$为第$i$步的查询与第$j$步的键（由$\operatorname{LN}(\tilde{\bm H})$的对应行线性投影得到），$\bm p_{i-j}\in\mathbb R^{d}$为距离$i-j$的正弦编码（不含可学参数），注意力得分为
+\begin{equation}
+ s_{i,j}=\frac{(\bm q_i+\bm u)^{\top}\bm k_j+(\bm q_i+\bm v)^{\top}\bm W_R\,\bm p_{i-j}}{\sqrt{d_k}},
+ \label{eq:nlp-speech-relpos}
+\end{equation}
+$\bm W_R\in\mathbb R^{d_k\times d}$把距离编码投影到键空间，$\bm u,\bm v\in\mathbb R^{d_k}$是各头可学习的全局偏置。展开后四项分别是内容对内容、内容对距离，以及与查询无关的内容偏好$\bm u^{\top}\bm k_j$和距离偏好$\bm v^{\top}\bm W_R\bm p_{i-j}$。与为每个截断距离学习一个向量的相对位置编码相比，这里距离先用正弦函数编码再投影，任意距离都有定义。其余计算与标准多头注意力相同。
+
+\paragraph{卷积模块。}注意力负责全局依赖，卷积模块负责局部模式。记$\bm Z=\operatorname{LN}(\bm H')\in\mathbb R^{T\times d}$，模块依次计算
+\begin{equation}
+ \begin{aligned}
+  \bm A&=\bm Z\bm W_{\mathrm{p1}}\in\mathbb R^{T\times2d},\qquad
+  \bm G=\bm A_{:,1:d}\odot\sigma(\bm A_{:,d+1:2d})\in\mathbb R^{T\times d},\\
+  \bm D_{t,c}&=\sum_{\ell=-(K-1)/2}^{(K-1)/2}w_{\ell,c}\,\bm G_{t+\ell,c},\\
+  \operatorname{Conv}(\bm H')&=\operatorname{Dropout}\bigl(\operatorname{Swish}(\operatorname{BN}(\bm D))\,\bm W_{\mathrm{p2}}\bigr).
+ \end{aligned}
+ \label{eq:nlp-speech-conv-module}
+\end{equation}
+第一步是逐点卷积，即对每个编码步做同一个线性变换，把$d$维扩到$2d$维；随后的门控线性单元（GLU，与第\ref{sec:nlp-llm-swiglu}小节同一类门控）用后一半经sigmoid后的值逐元素调制前一半，回到$d$维。第二步是\term{深度卷积}（depthwise convolution）：每个通道$c$用自己的一维核$w_{:,c}$沿时间卷积，通道之间不混合，参数只有$Kd$个；越界位置补零。之后是批归一化$\operatorname{BN}$、Swish激活和第二个逐点卷积$\bm W_{\mathrm{p2}}\in\mathbb R^{d\times d}$，最后一步负责跨通道混合。原文的消融选了核长32；开源实现多取奇数（如31），使两侧补边对称。核长31、每步40\,ms时，深度卷积的局部窗口约为1.24秒，已经覆盖几个音节。
+
+\paragraph{形状、参数与计算。}取$T=25$、$d=144$，一个块内的形状变化为：半步前馈$25\times144\to25\times576\to25\times144$；注意力的得分矩阵每头$25\times25$；卷积模块$25\times144\to25\times288\to25\times144$，此后保持$25\times144$。忽略偏置与归一化参数，两个前馈各$8d^2$，注意力的四个投影加$\bm W_R$共$5d^2$，卷积模块两个逐点卷积共$3d^2$、深度卷积$Kd$，合计约$24d^2+Kd$；$d=144$、$K=31$时约50万个参数，16块约800万个。普通Transformer块约$12d^2$，Conformer块的参数大约是它的两倍。每层计算中，注意力为$O(T^2d)$，卷积模块为$O(TKd+Td^2)$，前馈为$O(Td^2)$；下采样后的$T$较小，前馈与逐点卷积往往占主要部分。上述$d=144$、16块的配置对应原文的小型模型；原文大型模型为17块、$d=512$、约1.2亿参数。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/04-speech-processing/tikz/speech-ch15a-conformer.tex}
+  \caption{卷积下采样前端与Conformer编码器。左列为主链路：$T_0$帧80维log-Mel经两层步长2的卷积降为$T\approx T_0/4$步、$d$维，再堆叠$N$个Conformer块；每个块按“半步前馈—相对位置多头自注意力—卷积模块—半步前馈—层归一化”的次序计算，各子层带残差（圆圈加号），两个前馈模块的输出乘以$\frac12$。右列展开卷积模块：逐点卷积把通道扩为$2d$，GLU门控回到$d$，深度卷积沿时间逐通道滤波，经批归一化与Swish后再由逐点卷积混合通道。右侧标注各步的张量形状。}
+  \label{fig:nlp-speech-conformer}
+\end{figure*}
+
+Conformer的代价主要落在流式与小批量场景：深度卷积读取后方$(K-1)/2$步，注意力默认读整句，批归一化依赖批内统计量，三者都要改造才能流式运行（第\ref{sec:nlp-speech-chunk-attention}小节）。后续结构沿“降低计算”的方向继续演进，例如Zipformer让中间的若干段编码器在更低帧率上运行，再上采样合并\cite{nlp-speech-yao2024zipformer}。表\ref{tab:nlp-speech-encoders}汇总几类编码器的取舍。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{22mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    编码器 & 局部模式 & 全局上下文 & 并行与计算 & 主要代价\\
+    \midrule
+    双向LSTM & 由循环状态隐式累积 & 读整句，但远距离信息要逐步传递 & 沿时间串行 & 训练慢；流式时只能用单向\\
+    纯卷积（ContextNet类） & 卷积核直接建模 & 靠深层堆叠或全局汇聚 & 全并行，$O(TKd)$ & 全局依赖弱；感受野须设计\\
+    Transformer & 只能由注意力权重间接学习 & 一层即可读整句 & 全并行，$O(T^2d)$ & 局部模式学得慢；长序列显存大\\
+    Conformer & 深度卷积模块 & 相对位置自注意力 & 全并行，两者之和 & 参数约为Transformer块两倍；批归一化不利于流式\\
+    Zipformer & 卷积与注意力 & 多帧率分段 & 中间段降帧率 & 结构与训练配方更复杂\\
+    \bottomrule
+  \end{tabularx}
+  \caption{语音编码器的比较。“局部模式”指几十至几百毫秒内的频谱变化，“全局上下文”指跨词与跨句的依赖；复杂度中$T$为编码步数，$d$为宽度，$K$为卷积核长。}
+  \label{tab:nlp-speech-encoders}
+\end{table*}
+
+\subsection{自监督语音表示}
+\label{sec:nlp-speech-ssl}
+
+带人工转写的录音昂贵：LibriSpeech约有960小时带转写的有声书录音，而Libri-Light提供约6万小时同类无转写录音。若能只用录音学到可迁移的帧表示，再用少量转写训练识别头，就能缓解配对数据不足。这属于\term{自监督学习}（self-supervised learning）：从数据自身构造预测任务，不依赖人工标签；一般框架可参考\BookChapterRef{chap:machine-learning-paradigms}{卷三的机器学习范式章}。
+
+文本上的遮蔽语言模型（第\ref{sec:nlp-classical-bert}小节）遮住部分词元，再从上下文预测它们。搬到语音上有两处不同：语音没有现成的离散词表，预测目标须先构造；相邻帧几乎相同，只遮一帧时模型靠左右插值就能恢复，所以要遮住连续的若干帧。下面三种方法都遮住若干段编码步、由上下文恢复，区别在恢复目标：wav2vec 2.0在同时学习的量化码本上做对比判别\cite{nlp-speech-baevski2020wav2vec2}；HuBERT先离线聚类得到离散伪标签，再做遮蔽分类\cite{nlp-speech-hsu2021hubert}；WavLM在HuBERT的基础上混入干扰声音并改进位置偏置\cite{nlp-speech-chen2022wavlm}。更早的对比预测编码（CPC）用InfoNCE预测未来若干步的潜表示\cite{nlp-matching-oord2018cpc}，wav2vec 2.0把“预测未来”改成了“恢复被遮住的部分”。
+
+\subsubsection{wav2vec 2.0遮蔽对比学习}
+\label{sec:nlp-speech-wav2vec}
+
+wav2vec 2.0由三部分组成：从波形提取潜表示的卷积特征编码器、读取遮蔽后序列的Transformer上下文网络，以及把未遮蔽的潜表示变成离散目标的量化模块，如图\ref{fig:nlp-speech-wav2vec}所示。
+
+\paragraph{特征编码器。}\term{特征编码器}（feature encoder）直接读取16\,kHz波形，由7层一维卷积组成，每层512个通道，核长依次为$(10,3,3,3,3,2,2)$，步长依次为$(5,2,2,2,2,2,2)$，每层后接归一化与GELU。总步长为$5\times2^6=320$个采样，即每20\,ms输出一步；感受野按$1+\sum_l(k_l-1)\prod_{m<l}s_m=1+9+10+20+40+80+80+160=400$个采样，即25\,ms，与手工特征的窗长相当。一秒波形依次变为$3199,1599,799,399,199,99,49$步，输出$\bm Z=(\bm z_1,\ldots,\bm z_{49})$，每步512维。这一前端代替了STFT与梅尔滤波器，滤波方式由数据学出。
+
+\paragraph{遮蔽。}从全部编码步中以概率$p=0.065$独立选出起点，每个起点连同其后共$M=10$步被遮蔽，相邻跨度可以重叠。某一步不被任何跨度覆盖的概率为$(1-p)^M=0.935^{10}\approx0.51$，所以约49\%的编码步被遮蔽，平均跨度约15步、300\,ms左右。被遮蔽位置的$\bm z_t$替换为同一个可学习的向量，再送入上下文网络；量化模块读取的是遮蔽前的$\bm Z$。
+
+\paragraph{上下文网络。}Transformer读取遮蔽后的序列，输出上下文表示$\bm c_t$。基础版为12层、宽768、8头，大型版为24层、宽1024、16头。位置信息不用绝对编码，而由一层核长128的分组卷积从输入序列算出，加到输入上，起到相对位置编码的作用。
+
+\paragraph{乘积量化与Gumbel-softmax。}目标$\bm q_t$从未遮蔽的$\bm z_t$量化得到。\term{乘积量化}（product quantization）准备$G$个码本，每个码本有$V$个码字$\bm e_{g,v}$；每一步从每个码本各选一个码字，拼接后经线性变换得到$\bm q_t=\bm W_q[\bm e_{1,i_1};\ldots;\bm e_{G,i_G}]$。原文取$G=2$、$V=320$，只存640个码字，却能组合出$320^2=102400$个目标。选码字是离散操作，无法求导。设线性层由$\bm z_t$给出第$g$组对第$v$个码字的对数几率$l_{g,v}$。Gumbel-max技巧指出：给每个$l_{g,v}$加独立的Gumbel噪声$n_v=-\log(-\log u_v)$，$u_v\sim\mathrm U(0,1)$，再取最大者，恰好等价于按$\operatorname{softmax}(l_{g,:})$抽样。Gumbel-softmax把这个取最大换成带温度$\tau$的softmax\cite{nlp-speech-jang2017gumbel}：
+\begin{equation}
+ p_{g,v}=\frac{\exp\bigl((l_{g,v}+n_v)/\tau\bigr)}{\sum_{k=1}^{V}\exp\bigl((l_{g,k}+n_k)/\tau\bigr)}.
+ \label{eq:nlp-speech-gumbel}
+\end{equation}
+前向计算取$i_g=\argmax_v p_{g,v}$的硬选择，反向传播则沿软概率$p_{g,v}$求梯度，这种前向离散、反向连续的做法称为\term{直通估计器}（straight-through estimator）。温度从2按每步乘以0.999995退火，基础版下限为0.5、大型版为0.1：早期分布较平，各码字都能得到梯度；后期接近硬选择，训练与使用一致。
+
+\paragraph{对比损失与多样性损失。}对每个被遮蔽的步$t$，模型要从一组候选$\mathcal Q_t$中认出本步的量化向量$\bm q_t$。候选还包括从同一句其他被遮蔽步均匀抽取的$K$个干扰项。记$\operatorname{sim}(\bm a,\bm b)=\bm a^{\top}\bm b/(\lVert\bm a\rVert\lVert\bm b\rVert)$为余弦相似度，$\kappa$为温度，$\bm c_t$先经线性层投影到$\bm q_t$的维数，\term{对比损失}（contrastive loss）为
+\begin{equation}
+ L_m=-\log\frac{\exp\bigl(\operatorname{sim}(\bm c_t,\bm q_t)/\kappa\bigr)}
+ {\sum_{\tilde{\bm q}\in\mathcal Q_t}\exp\bigl(\operatorname{sim}(\bm c_t,\tilde{\bm q})/\kappa\bigr)},
+ \qquad |\mathcal Q_t|=K+1.
+ \label{eq:nlp-speech-wav2vec}
+\end{equation}
+原文取$K=100$、$\kappa=0.1$。这正是第\ref{chap:nlp-classification-matching-organization}章式\eqref{eq:nlp-matching-infonce}的InfoNCE损失：查询是遮蔽位置的上下文输出，正例是同一位置的量化目标，负例是同一句其他位置的量化目标。负例取自同一句，意味着正负例共享说话者与信道条件，模型无法靠音色区分，只能依据该位置的内容。
+
+与文本匹配不同，这里的正负例本身也是学出来的：量化模块若只使用少数几个码字，许多位置的目标相同，对比任务就失去区分力。\term{多样性损失}（diversity loss）鼓励各码字被均匀使用。记$\bar p_{g,v}$为一批句子中各步不加Gumbel噪声的softmax概率的平均，
+\begin{equation}
+ L_d=\frac{1}{GV}\sum_{g=1}^{G}\sum_{v=1}^{V}\bar p_{g,v}\log\bar p_{g,v}
+    =-\frac{1}{GV}\sum_{g=1}^{G}H(\bar{\bm p}_g),
+ \label{eq:nlp-speech-diversity}
+\end{equation}
+最小化$L_d$即最大化平均分布的熵$H$，在全部码字均匀使用时取最小值。总目标为$L=L_m+\alpha L_d$，原文取$\alpha=0.1$；在较小的LibriSpeech预训练集上，另对特征编码器输出加L2惩罚。原文消融比较了输入与目标是否量化，连续输入配离散目标效果最好；原文的解释是连续输入保留更多信息，便于上下文网络建模，而离散目标使训练更稳健。算法\ref{alg:nlp-speech-wav2vec}汇总一步预训练。
+
+\begin{algorithm}[wav2vec 2.0的一步预训练]
+  \label{alg:nlp-speech-wav2vec}
+  \begin{algorithmic}[1]
+    \Require 一批波形，特征编码器$f$，上下文网络$g$，量化模块，遮蔽参数$p,M$，干扰项数$K$，温度$\kappa,\tau$及下限$\tau_{\min}$
+    \Ensure 更新后的参数
+    \For{批中每条波形$\bm x$}
+      \State $\bm Z=f(\bm x)$，$\bm Z\in\mathbb R^{T\times512}$ \Comment{每20\,ms一步}
+      \State 对每步按式\eqref{eq:nlp-speech-gumbel}选码字，得到量化目标$\bm q_1,\ldots,\bm q_T$ \Comment{读取未遮蔽的$\bm Z$}
+      \State 以概率$p$抽起点，每个起点遮蔽$M$步，得到遮蔽集合$\mathcal M$；把$\bm z_t,t\in\mathcal M$换成可学习向量，得$\tilde{\bm Z}$
+      \State $\bm C=g(\tilde{\bm Z})$
+      \For{$t\in\mathcal M$}
+        \State 从$\mathcal M\setminus\{t\}$均匀抽$K$个位置，取其量化向量作干扰项
+        \State 按式\eqref{eq:nlp-speech-wav2vec}计算$L_m^{(t)}$
+      \EndFor
+    \EndFor
+    \State 按式\eqref{eq:nlp-speech-diversity}在全批计算$L_d$；$L\gets\operatorname{mean}_t L_m^{(t)}+\alpha L_d$
+    \State 反向传播（量化选择用直通估计器），更新$f$、$g$、码本与投影层；$\tau\gets\max(\tau_{\min},\,0.999995\,\tau)$
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/04-speech-processing/tikz/speech-ch15a-wav2vec.tex}
+  \caption{wav2vec 2.0的预训练结构。卷积特征编码器把波形变成每20\,ms一步的潜表示$\bm z_t$；一路经乘积量化（两个码本各选一个码字后拼接投影）得到目标$\bm q_t$，另一路把被遮蔽的步（灰色）换成同一个可学习向量后送入Transformer，得到$\bm c_t$。对比损失要求遮蔽位置的$\bm c_t$与本位置的$\bm q_t$最相似，干扰项取自同一句其他遮蔽位置；多样性损失作用于码字的平均使用分布。}
+  \label{fig:nlp-speech-wav2vec}
+\end{figure*}
+
+预训练之后去掉量化模块，在上下文网络顶部加一个随机初始化的线性层，输出字符与词边界符号，用第\ref{sec:nlp-speech-ctc}小节的CTC损失微调。微调时特征编码器通常冻结，输入仍做类似SpecAugment的遮蔽。原文在约5.3万小时无标注录音上预训练后，只用10分钟带转写数据微调（配合语言模型），在LibriSpeech的test-clean与test-other上得到4.8\%与8.2\%的词错误率。代价在于预训练计算量大，Gumbel温度、多样性权重与遮蔽比例都要调；目标与表示同时学习，训练早期目标本身也不稳定。
+
+\subsubsection{HuBERT与WavLM遮蔽预测}
+\label{sec:nlp-speech-hubert}
+
+wav2vec 2.0的目标在训练中不断变化，还需要负样本、多样性损失与温度退火来维持。HuBERT（hidden-unit BERT）把两件事拆开：先离线给每个编码步分配一个离散的“隐藏单元”标签，再像BERT那样只在被遮蔽的步上做分类。标签由K均值聚类给出：在一组帧特征上找$C$个聚类中心，使每帧到最近中心的平方距离之和最小，每帧的标签就是最近中心的编号；算法细节可参考\BookChapterRef{chap:clustering}{卷四的聚类章}。
+
+HuBERT的编码器结构与wav2vec 2.0相同：卷积特征编码器加Transformer，遮蔽方式也相同（原文取$p=0.08$、$M=10$）。记$\tilde{\bm X}$为遮蔽后的输入，$\bm o_t$为Transformer在第$t$步的输出，$z_t\in\{1,\ldots,C\}$为该步的聚类标签，$\mathcal M$为遮蔽位置集合。模型为每个类别$c$学一个嵌入$\bm e_c$，并用投影矩阵$\bm A$把$\bm o_t$映到嵌入空间，预测分布为
+\[
+ p(c\mid\tilde{\bm X},t)=\frac{\exp\bigl(\operatorname{sim}(\bm A\bm o_t,\bm e_c)/\tau\bigr)}{\sum_{c'=1}^{C}\exp\bigl(\operatorname{sim}(\bm A\bm o_t,\bm e_{c'})/\tau\bigr)},
+\]
+$\operatorname{sim}$为余弦相似度，$\tau=0.1$。损失分为遮蔽位置与未遮蔽位置两部分：
+\begin{equation}
+ \begin{gathered}
+ L=\beta L_{\mathrm m}+(1-\beta)L_{\mathrm u},\\
+ L_{\mathrm m}=-\sum_{t\in\mathcal M}\log p(z_t\mid\tilde{\bm X},t),\qquad
+ L_{\mathrm u}=-\sum_{t\notin\mathcal M}\log p(z_t\mid\tilde{\bm X},t).
+ \end{gathered}
+ \label{eq:nlp-speech-hubert}
+\end{equation}
+原文发现$\beta=1$即只在遮蔽位置计损失效果最好。机制上的理由是：未遮蔽位置的输入就在眼前，模型只需模仿聚类函数“由本帧特征算出最近中心”，用不到上下文；只有被遮住的位置，才迫使模型从周围推断这里应是哪个单位。
+
+对比式\eqref{eq:nlp-speech-wav2vec}，HuBERT的预测分布同样是余弦相似度除以温度后的softmax，区别在候选集合：wav2vec 2.0从同一句抽取$K$个量化向量作负例，HuBERT以全部$C$个类别嵌入为候选，相当于固定类别上的分类交叉熵。与BERT相比，BERT的词表事先给定，HuBERT的词表由聚类构造。
+
+标签的质量来自迭代。第一轮在39维MFCC上做$C=100$的K均值聚类，这些标签与音素的对应很粗；模型学会从上下文预测它们之后，中间层表示比MFCC更接近语音内容。第二轮取第一轮基础模型第6层Transformer的输出重新聚类（$C=500$），再从头训练；大型模型又用第二轮基础模型第9层的特征聚类。这个过程与自训练相似：每轮用当前最好的表示产生目标，再学习预测目标。标签不必正确，只需在相同声音上前后一致，模型就能从大量上下文中平均掉标签噪声。原文还用多组不同$C$的聚类结果同时作为目标，进一步降低对单次聚类的依赖。代价是要训练多轮，每轮要在海量帧特征上聚类，初始特征差时第一轮目标信息量少。
+
+\paragraph{WavLM：去噪遮蔽预测。}HuBERT与wav2vec 2.0主要为识别内容而设计；说话者验证、说话者日志与语音分离则需要保留“谁在说”，并在多人交叠时仍能工作。WavLM沿用HuBERT式的聚类伪标签与遮蔽预测，做了两处修改。第一处是\term{话语混合}（utterance mixing）：训练时以一定概率从同一批中取另一条话语或从噪声库中取一段噪声，随机截取不超过主话语一半长度的片段，叠加到主话语的随机位置；能量比对话语从$[-5,5]$\,dB、对噪声从$[-5,20]$\,dB均匀抽取。预测目标仍是主话语在干净条件下的伪标签。模型因此要在遮蔽之外再去掉干扰，学到的表示须区分主说话者与其他声音。
+
+第二处是\term{门控相对位置偏置}（gated relative position bias）。设$d_{i-j}$为按距离分桶的可学习标量偏置，$\bm q_i$为第$i$步的查询，$\bm a,\bm b\in\mathbb R^{d_k}$与标量$\gamma$可学习，门控由查询内容决定：
+\begin{equation}
+ g^{\mathrm u}_i=\sigma(\bm q_i^{\top}\bm a),\quad
+ g^{\mathrm r}_i=\sigma(\bm q_i^{\top}\bm b),\quad
+ r_{i-j}=d_{i-j}+g^{\mathrm u}_i d_{i-j}+(1-g^{\mathrm u}_i)\,\gamma\,g^{\mathrm r}_i\,d_{i-j},
+ \label{eq:nlp-speech-wavlm-gate}
+\end{equation}
+得分为$\bm q_i^{\top}\bm k_j/\sqrt{d_k}+r_{i-j}$。固定的距离偏置对所有位置一视同仁；门控让偏置强度随当前帧内容变化，例如静音帧与语音帧可以对邻近上下文给出不同权重。Base+与大型版在约9.4万小时英语录音上预训练。原文对下游各层加权权重的分析显示，识别、意图分类等内容类任务主要使用较高层；说话者类任务在基础版中主要使用较低层，在大型版中主要使用中间层。
+
+\paragraph{使用方式。}下游使用这些表示时，常冻结预训练模型，像式\eqref{eq:nlp-classical-elmo}的ELMo那样对各层输出学一组softmax权重加权求和，再接轻量的任务头；识别任务也可整体微调。表\ref{tab:nlp-speech-ssl}比较三种方法。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{20mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 预测目标与来源 & 损失 & 解决的问题 & 新代价\\
+    \midrule
+    wav2vec 2.0 & 同一网络在线学习的乘积量化码字 & 对比损失（同句负例）加多样性损失 & 无须转写即可学习帧表示 & 目标与表示同时变化；需负样本与温度退火\\
+    HuBERT & 离线K均值聚类标签，逐轮由更好的特征重聚 & 遮蔽位置交叉熵 & 去掉负样本与码本训练，目标稳定 & 多轮预训练；大规模聚类\\
+    WavLM & 主话语的聚类伪标签，输入混入干扰 & 遮蔽位置交叉熵 & 兼顾说话者、交叠与噪声条件 & 混合策略与数据规模需设计\\
+    \bottomrule
+  \end{tabularx}
+  \caption{三种自监督语音表示的比较。三者共享卷积特征编码器、Transformer与跨度遮蔽，区别在恢复目标怎样构造以及输入是否加入干扰。}
+  \label{tab:nlp-speech-ssl}
+\end{table*}
+
+\subsection{神经音频编解码与离散声学词元}
+\label{sec:nlp-speech-codec}
+
+连续特征适合作为识别输入，却不便让语言模型直接生成声音：语言模型按离散词元逐步预测，log-Mel既不是离散的，丢掉的相位也要另由声码器补回。传输和存储同样希望用少量比特表示声音。\term{神经音频编解码器}（neural audio codec）用编码器把波形压成低帧率的潜向量，把每个向量量化为若干个码字编号，再由解码器从编号重建波形。这些编号组成的离散序列称为\term{声学词元}（acoustic token），可以像文本词元一样交给语言模型。其核心技术是残差向量量化。
+
+\subsubsection{残差向量量化}
+\label{sec:nlp-speech-rvq}
+
+\term{向量量化}（vector quantization, VQ）用一个有限的\term{码本}（codebook）$\mathcal E=\{\bm e_1,\ldots,\bm e_N\}\subset\mathbb R^{D}$近似连续向量：输入$\bm z$被替换为最近的码字，
+\[
+ k(\bm z)=\argmin_{j}\lVert\bm z-\bm e_j\rVert_2^2,\qquad Q(\bm z)=\bm e_{k(\bm z)},
+\]
+只需传送编号$k(\bm z)$，每个向量占$\log_2N$比特。码本的学习本身就是在编码器输出上做K均值聚类，只是聚类空间随编码器一起变化。
+
+最近邻选择不可求导。VQ-VAE的做法是：解码器读取$\bm z+\operatorname{sg}(Q(\bm z)-\bm z)$，其中$\operatorname{sg}$表示停止梯度；前向值等于$Q(\bm z)$，反向时梯度原样传给$\bm z$，这与wav2vec 2.0的直通估计器思路相同\cite{nlp-speech-oord2017vqvae}。码本与编码器另由两项损失连接：
+\begin{equation}
+ L_{\mathrm{vq}}=\bigl\lVert\operatorname{sg}(\bm z)-\bm e_{k(\bm z)}\bigr\rVert_2^2
+ +\beta\bigl\lVert\bm z-\operatorname{sg}(\bm e_{k(\bm z)})\bigr\rVert_2^2 .
+ \label{eq:nlp-speech-vq}
+\end{equation}
+第一项把被选中的码字拉向编码器输出；第二项称为\term{承诺损失}（commitment loss），让编码器输出靠近已选码字，避免它在码字之间来回跳动，原文取$\beta=0.25$。码字也可以不用梯度更新，而按指数滑动平均设为分配给它的编码器输出的均值，即在线K均值；长期没有被选中的“死码字”可以用当前批中的随机向量重新初始化。
+
+单码本的问题在于比特数与码本大小呈对数关系。若每帧要用80比特表示，单码本须有$2^{80}$个码字，既存不下也训不动。\term{残差向量量化}（residual vector quantization, RVQ）改为串联$N_q$个各有$N$个码字的小码本，每一级量化上一级剩下的误差：
+\begin{equation}
+ \bm r^{(1)}=\bm z,\qquad
+ \bm r^{(k+1)}=\bm r^{(k)}-Q_k\bigl(\bm r^{(k)}\bigr),\qquad
+ \hat{\bm z}=\sum_{k=1}^{N_q}Q_k\bigl(\bm r^{(k)}\bigr),
+ \label{eq:nlp-speech-rvq}
+\end{equation}
+$Q_k$是第$k$级码本上的最近邻量化。每帧输出$N_q$个编号$(i_1,\ldots,i_{N_q})$，共$N_q\log_2N$比特，需要存储的码字只有$N_qN$个。各级的作用由粗到细：第一级给出大致位置，后续各级逐步修正残差。承诺损失对每一级分别计算，$\sum_k\lVert\bm r^{(k)}-Q_k(\bm r^{(k)})\rVert_2^2$。
+
+用二维向量做一个可复核的教学例子。设两级码本与输入分别为
+\[
+ \begin{gathered}
+ \mathcal E_1=\{(0,0),(4,0),(0,4),(4,4)\},\qquad
+ \mathcal E_2=\{(0,1),(0,-1),(1,0),(-1,0)\},\\
+ \bm z=(4.6,1.3).
+ \end{gathered}
+\]
+第一级到四个码字的平方距离为$22.85,2.05,28.45,7.65$，选$(4,0)$，残差$\bm r^{(2)}=(0.6,1.3)$。第二级到四个码字的平方距离为$0.45,5.65,1.85,4.25$，选$(0,1)$，重建$\hat{\bm z}=(4,1)$，误差$(0.6,0.3)$，平方误差从一级时的2.05降到0.45。两级各2比特，合计4比特，存储8个码字；单码本要达到同样的4比特需要16个码字，比特越多，这一差距按指数扩大。贪心的逐级选择不保证每一级都缩小误差（码本中有零向量时才有此保证），实际训练中后续码本学到的尺度逐级变小，误差随级数下降。
+
+码率按“帧率$\times$码本数$\times\log_2$码本大小”计算。24\,kHz波形经总步长320的编码器后为每秒75帧；码本大小$N=1024$即每个编号10比特；$N_q=8$时码率为$75\times8\times10=6000$比特每秒，即6\,kbps。同样一秒的16比特线性PCM为$24000\times16=384$\,kbps，压缩了64倍。对语言模型而言，6\,kbps意味着每秒600个词元，远多于文字的每秒几个词元；第\ref{sec:nlp-speech-codec-lm-tts}小节的合成模型与第\ref{sec:nlp-speech-moshi}小节的Moshi都要专门处理这种多路码流。
+
+RVQ与wav2vec 2.0用的乘积量化都用几个小码本组合出巨大的码字空间，组合方式不同：乘积量化把向量切成几段或几组，各自独立量化后拼接，各组地位平等；RVQ对整个向量逐级相加，编号有先后与主次，只截取前几级就得到较粗的重建。正是这一性质使下文的可变码率成为可能。
+
+\subsubsection{SoundStream与EnCodec}
+\label{sec:nlp-speech-soundstream}
+
+SoundStream与EnCodec是两种代表性的神经编解码器，都采用“卷积编码器—RVQ—镜像解码器”的结构，并用重建与对抗目标联合训练\cite{nlp-speech-zeghidour2022soundstream,nlp-speech-defossez2023encodec}。图\ref{fig:nlp-speech-codec}画出这一结构及训练信号。
+
+\paragraph{编码器与解码器。}以EnCodec的24\,kHz模型为例，编码器先用一层32通道的一维卷积，再接4个卷积块；每块由带残差的卷积单元与一层步长分别为$2,4,5,8$的下采样卷积组成，每次下采样通道数加倍。其后是两层LSTM与一层输出卷积，得到$D=128$维的潜向量。总步长$2\times4\times5\times8=320$，一秒波形$\bm x\in\mathbb R^{1\times24000}$变为$\bm Z\in\mathbb R^{75\times128}$，经RVQ得到编号矩阵$\{1,\ldots,1024\}^{75\times N_q}$，再由镜像结构的转置卷积解码器重建$\hat{\bm x}\in\mathbb R^{1\times24000}$。SoundStream的结构类似，但全部使用因果卷积，可以边录边编码。
+
+\paragraph{训练目标。}只用时域误差训练，重建声音往往发闷，高频细节被平均掉。EnCodec的生成器目标由五项组成。时域重建项为$\ell_t=\lVert\bm x-\hat{\bm x}\rVert_1$。频域重建项在多种窗长上比较梅尔谱，记$S_i(\cdot)$为窗长$2^i$、64个梅尔频带的梅尔谱，
+\[
+ \ell_f=\frac{1}{|\mathcal I|}\sum_{i\in\mathcal I}\Bigl(\lVert S_i(\bm x)-S_i(\hat{\bm x})\rVert_1+\lVert S_i(\bm x)-S_i(\hat{\bm x})\rVert_2\Bigr),
+ \qquad \mathcal I=\{5,\ldots,11\},
+\]
+短窗约束时间细节，长窗约束频率细节。重建误差仍不足以保证听感自然，于是再加对抗训练：判别器区分真实与重建声音，编解码器则学习使重建难以分辨，生成对抗网络的一般原理可参考\BookChapterRef{chap:neural-generative-models}{卷五的神经生成模型章}。EnCodec使用\term{多尺度短时傅里叶变换判别器}（multi-scale STFT discriminator）：$K=5$个子判别器分别读取窗长为2048、1024、512、256、128的复数STFT（实部与虚部作为两个通道），用二维卷积网络输出真假得分$D_k(\cdot)$。判别器与生成器采用合页形式的对抗损失：
+\[
+ \begin{gathered}
+ L_D=\frac1K\sum_{k=1}^{K}\Bigl[\max\bigl(0,1-D_k(\bm x)\bigr)+\max\bigl(0,1+D_k(\hat{\bm x})\bigr)\Bigr],\\
+ \ell_g=\frac1K\sum_{k=1}^{K}\max\bigl(0,1-D_k(\hat{\bm x})\bigr).
+ \end{gathered}
+\]
+\term{特征匹配损失}（feature matching loss）比较判别器各层$l=1,\ldots,L$对真实与重建声音的内部特征，$\ell_{\mathrm{feat}}=\frac{1}{KL}\sum_{k,l}\lVert D_k^l(\bm x)-D_k^l(\hat{\bm x})\rVert_1/\operatorname{mean}\lVert D_k^l(\bm x)\rVert_1$；判别器特征相当于学到的感知度量，这一项也使生成器的训练比单用对抗项稳定。最后是各级RVQ的承诺损失$\ell_w$。生成器总目标为
+\begin{equation}
+ L_G=\lambda_t\ell_t+\lambda_f\ell_f+\lambda_g\ell_g+\lambda_{\mathrm{feat}}\ell_{\mathrm{feat}}+\lambda_w\ell_w,
+ \label{eq:nlp-speech-encodec}
+\end{equation}
+原文24\,kHz模型取$\lambda_t=0.1$、$\lambda_f=1$、$\lambda_g=3$、$\lambda_{\mathrm{feat}}=3$，并用一个“损失平衡器”按各项对输出$\hat{\bm x}$的梯度范数重新缩放，使这四个权重近似表示各项在总梯度中所占的比例；承诺损失不依赖$\hat{\bm x}$，不进入平衡器。SoundStream的组合相同而形式略异：判别器为多分辨率波形判别器加STFT判别器，频谱项为多尺度梅尔谱距离；两者的码本都按滑动平均更新。训练按算法\ref{alg:nlp-speech-codec}交替更新两方。
+
+\begin{algorithm}[神经音频编解码器的一步训练（EnCodec式）]
+  \label{alg:nlp-speech-codec}
+  \begin{algorithmic}[1]
+    \Require 一批波形$\bm x$，编码器$E$，解码器$G$，$N_q^{\max}$级码本，判别器$\{D_k\}_{k=1}^{K}$
+    \Ensure 更新后的编解码器与判别器
+    \State $\bm Z\gets E(\bm x)$ \Comment{$75\times128$每秒}
+    \State 从$\{1,\ldots,N_q^{\max}\}$均匀抽取本批使用的级数$n_q$ \Comment{量化器丢弃}
+    \State 按式\eqref{eq:nlp-speech-rvq}只用前$n_q$级量化，得到$\hat{\bm Z}$与各级残差；前向用$\hat{\bm Z}$，反向直通传给$\bm Z$
+    \State $\hat{\bm x}\gets G(\hat{\bm Z})$
+    \State 计算$\ell_t,\ell_f,\ell_g,\ell_{\mathrm{feat}},\ell_w$，按式\eqref{eq:nlp-speech-encodec}更新$E$、$G$（码本按梯度或滑动平均更新）
+    \State 计算$L_D$，更新判别器 \Comment{$\hat{\bm x}$停止梯度}
+  \end{algorithmic}
+\end{algorithm}
+
+\paragraph{量化器丢弃与可变码率。}若每个码率都单独训练一个模型，部署要保存多套参数。SoundStream提出\term{量化器丢弃}（quantizer dropout）：每个训练样本从$1$至$N_q^{\max}$中均匀抽取$n_q$，只用前$n_q$级码本量化与重建。由于RVQ的各级按由粗到细排列，模型学会让前几级承载最主要的信息，推理时截取不同级数就得到不同码率。EnCodec的24\,kHz模型据此支持1.5、3、6、12、24\,kbps，分别对应$N_q=2,4,8,16,32$。码率越低，重建越粗，高频与音色细节损失越多。SoundStream原文的主观听测显示，它在3\,kbps下优于12\,kbps的传统编解码器Opus。EnCodec还在码字序列上训练一个小型Transformer语言模型做熵编码，进一步压缩比特数。代价是：对抗训练需要多个判别器与细致调参；码流有$N_q$路，交给语言模型时序列很长；各级码字同时编码内容、音色、韵律与录音条件，彼此纠缠。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/04-speech-processing/tikz/speech-ch15a-codec.tex}
+  \caption{神经音频编解码器的结构与训练信号（以24\,kHz、每秒75帧为例）。编码器以总步长320把波形压为128维潜向量序列；残差向量量化逐级量化上一级残差，每级输出一个码字编号，$N_q$路编号即声学词元；各级码字相加后由镜像解码器重建波形。训练时，重建声音与原声音在时域和多尺度梅尔谱上比较，同时送入多尺度STFT判别器，产生对抗损失与特征匹配损失。}
+  \label{fig:nlp-speech-codec}
+\end{figure*}
+
+\subsubsection{语义词元与声学词元}
+\label{sec:nlp-speech-semantic-acoustic}
+
+离散单位还有另一个来源：对自监督表示做K均值聚类。取HuBERT某一中间层的输出，聚成几百至一千类，每个编码步得到一个编号，这类编号称为\term{语义词元}（semantic token）。它通常每秒25至50个、只有一路，与音素等语言内容高度相关，说话者、韵律与录音条件的信息大多被丢弃。于是语义词元适合让语言模型学习“说了什么”，却不能单独还原原声：从它合成波形需要另训单位声码器，并另外提供音色条件。编解码器的声学词元正相反，保真度高、能还原音色与录音条件，但多路码流中内容与声学细节纠缠，仅在声学词元上训练的语言模型容易生成音质好、语言内容却不连贯的声音。
+
+AudioLM把两者分工使用：先由语言模型生成语义词元，负责长程的内容与结构；再以语义词元为条件生成SoundStream前几级的粗粒度声学词元；最后生成其余各级的细粒度词元，负责音色与音质\cite{nlp-speech-borsos2023audiolm}。另一种折中是让编解码器的第一级码本直接承载语义：SpeechTokenizer在RVQ训练中加入蒸馏损失，使第一级量化输出经投影后与HuBERT表示的余弦相似度尽量高，后续各级则编码剩余的音色与韵律\cite{nlp-speech-zhang2024speechtokenizer}；Moshi所用的Mimi编解码器也把自监督表示蒸馏进第一级码本（第\ref{sec:nlp-speech-moshi}小节）。这样一套码流同时提供“先读第一级得到内容”与“读全部级得到原声”两种用法。
+
+\paragraph{本节对照。}表\ref{tab:nlp-speech-representations}按同一组维度比较本节的各种表示。后文的词元化合成（第\ref{sec:nlp-speech-codec-lm-tts}小节）以声学词元为目标，直接语音翻译（第\ref{sec:nlp-speech-direct-translation}小节）以HuBERT聚类单位为目标，语音大模型（第\ref{sec:nlp-speech-realtime-dialogue}节）同时读写文字与声学词元。这些帧或词元与文字之间怎样对应，留给下一节的识别模型回答。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}p{26mm}p{20mm}p{14mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    表示 & 帧率 & 形式 & 是否需要标注 & 主要用途 & 代价\\
+    \midrule
+    波形 & 16000或24000\,Hz & 连续 & 否 & 声码器与编解码器的输入输出 & 序列极长，单个采样信息少\\
+    log-Mel、MFCC & 100\,Hz & 连续 & 否（手工设计） & 识别输入；合成的中间目标 & 丢弃相位，还原波形需声码器\\
+    Conformer输出 & 25\,Hz & 连续 & 是（随识别目标训练） & CTC、RNN-T、注意力识别器的骨干 & 与任务绑定；流式需改造\\
+    自监督表示 & 50\,Hz & 连续 & 预训练否，微调需少量 & 低资源识别、说话者等下游任务 & 预训练计算量大\\
+    语义词元 & 25至50\,Hz，一路 & 离散 & 否 & 语言模型的内容建模；单位翻译 & 难以还原音色与录音条件\\
+    声学词元 & 75\,Hz，$N_q$路 & 离散 & 否 & 词元化合成；语音大模型的输出 & 码流多、序列长；内容与声学纠缠\\
+    \bottomrule
+  \end{tabularx}
+  \caption{本节各种声音表示的比较。帧率按本节例子的配置给出（语义词元依所取的自监督模型而定），实际系统可以不同；“是否需要标注”指学习该表示本身是否需要转写。}
+  \label{tab:nlp-speech-representations}
+\end{table*}
+\FloatBarrier

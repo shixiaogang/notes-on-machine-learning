@@ -1,0 +1,52 @@
+% Tacotron 2 architecture: encoder (left), location-sensitive attention (middle),
+% autoregressive decoder with post-net (right). Layer sizes follow Shen et al. (2018).
+\begin{tikzpicture}[
+  x=1mm,y=1mm,figure picture,
+  enc/.style={figure node,draw=FigureInput,fill=FigureInputFill,text width=33mm,minimum height=9mm},
+  dec/.style={figure node,draw=FigureModel,fill=FigureModelFill,text width=33mm,minimum height=9mm},
+  att/.style={figure node,draw=FigureLoss,fill=FigureLossFill,text width=27mm,minimum height=11mm},
+  io/.style={figure node,draw=FigureStroke,fill=white,text width=24mm,minimum height=8mm},
+  flow/.style={figure flow},
+  tstep/.style={figure flow,dash pattern=on 2pt off 1.5pt,draw=FigureMuted},
+  lab/.style={figure edge label,font=\figurefont\scriptsize}
+]
+  % encoder
+  \node[io] (chars) at (0,0) {字符序列，长度$N$};
+  \node[enc] (emb) at (0,14) {字符嵌入\\$N\times512$};
+  \node[enc] (conv) at (0,28) {3层卷积\\核宽5，512通道};
+  \node[enc] (lstm) at (0,42) {双向LSTM\\每向256单元};
+  \node[io,text width=30mm] (H) at (0,56) {编码$\bm H\in\mathbb R^{N\times512}$};
+  \foreach \a/\b in {chars/emb,emb/conv,conv/lstm,lstm/H}{\draw[flow] (\a) -- (\b);}
+
+  % attention
+  \node[att] (att) at (50,42) {位置敏感注意力\\权重$\bm\alpha_i$};
+  \draw[flow] (H.east) -- (att.north west);
+  \draw[tstep] ([xshift=4mm]att.north) .. controls +(1,9) and +(9,7) .. (att.north east);
+  \node[anchor=south,font=\figurefont\scriptsize,text=FigureMuted,align=center] at (57,55.5) {累积权重$\sum_{k<i}\bm\alpha_k$\\经卷积成位置特征};
+
+  % decoder
+  \node[io,text width=30mm] (prev) at (100,0) {前一帧$\bm m_{i-1}\in\mathbb R^{80}$};
+  \node[dec] (pre) at (100,14) {预网络\\2层全连接256};
+  \node[dec] (dlstm) at (100,28) {2层单向LSTM\\每层1024单元};
+  \node[dec] (proj) at (100,42) {两个线性投影\\输入$[\bm s_i;\bm c_i]$};
+  \draw[flow] (prev) -- (pre);
+  \draw[flow] (pre) -- (dlstm);
+  \draw[flow] (dlstm) -- (proj);
+  \draw[flow] ([yshift=1.5mm]dlstm.west) -- (60,29.5) -- node[lab,pos=.45] {$\bm s_i$} (60,36.5);
+  \draw[flow] (att.east) -- node[lab] {$\bm c_i$} (proj.west);
+  \draw[tstep] (44,36.5) |- node[lab,pos=.75] {$\bm c_{i-1}$} ([yshift=-2mm]dlstm.west);
+
+  % outputs
+  \node[io,text width=20mm] (stop) at (80,62) {停止概率$\hat p_i$};
+  \node[io,text width=20mm] (mel) at (114,62) {梅尔帧$\hat{\bm m}_i$};
+  \draw[flow] (proj.north) ++(-6,0) |- ++(0,4) -| (stop.south);
+  \draw[flow] (proj.north) ++(6,0) |- ++(0,4) -| (mel.south);
+  \node[dec,text width=28mm] (post) at (114,74) {后处理网络\\5层卷积，预测残差};
+  \node[circle,draw=FigureStroke,line width=.75pt,inner sep=1pt] (plus) at (114,84) {$+$};
+  \node[io,text width=30mm] (melp) at (114,93) {修正频谱$\widehat{\bm M}^{+}$};
+  \draw[flow] (mel) -- (post);
+  \draw[flow] (post) -- (plus);
+  \draw[flow] (plus) -- (melp);
+  \draw[flow] (mel.west) -- (95,62) |- (plus.west);
+  \draw[tstep] (mel.east) -- (134,62) |- node[pos=.25,fill=white,font=\figurefont\scriptsize,text=FigureMuted,align=center] {推断时\\反馈；\\训练时\\用真实帧} (prev.east);
+\end{tikzpicture}
