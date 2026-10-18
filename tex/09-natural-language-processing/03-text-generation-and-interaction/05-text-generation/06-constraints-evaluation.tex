@@ -1,0 +1,870 @@
+\section{约束生成}
+\label{sec:nlp-generation-constraints}
+
+把改期通知译成英文时，学校的术语表规定“海棠楼”须译为Haitang Hall，“校外来宾”须译为
+external guests；同一份通知还要写进日历系统，系统只接受带固定字段的JSON，日期字段必须是
+通知中的新日期。前一种要求规定输出必须出现哪些短语，称为词汇约束；后一种要求规定输出的
+格式与字段取值，称为结构约束。两者都是硬要求：违反一次，整条输出就不能交付。
+
+满足硬要求有四个困难。第一，普通束搜索只按模型分数剪枝，术语的首词元若概率较低，含它的
+前缀可能在头几步就被剪掉，生成结束后再筛选已经找不回来。第二，生成后再把术语强行替换或
+插入，会破坏词形、语序与上下文的衔接。第三，结构合法不等于取值正确：一个能被解析的JSON
+仍可能把报名截止日期填进活动日期字段。第四，约束之间、约束与长度预算之间可能互相冲突，
+此时应当报告失败，而不是交付一个看似可用的近似结果。
+
+本节按约束的类型组织方法。词汇约束沿着“生成后筛选或占位替换→在搜索状态中跟踪约束进度
+的网格束搜索→固定总束宽、在进度组间分配名额的动态束分配”展开，并以训练时注入术语的软
+方法作对照。结构约束的机制已在第~\ref{sec:nlp-inference-fsm}与第~\ref{sec:nlp-inference-grammar}小节
+用有限状态机和下推自动机讲过，这里只补生成任务特有的取值绑定检查。正式、礼貌这类软属性
+无法写成必含短语，改用属性分类器重加权，见第~\ref{sec:nlp-generation-fudge}小节。
+
+\subsection{词汇约束解码}
+\label{sec:nlp-generation-lexical-constraints}
+
+词汇约束最常见的用途是术语翻译。机构名、产品名、法律与医学术语在同一份文件里必须使用
+客户或术语库指定的译法，模型自己选出的近义译法即使正确，也会造成同一文件内的前后不一致。
+单语改写中保留关键词、数据到文本中必须出现的实体名，也是同类要求。
+
+把要求写成搜索问题。给定输入$x$与约束集合$\mathcal Z=\{z_1,\ldots,z_K\}$，每条约束
+$z_i=(z_{i,1},\ldots,z_{i,\ell_i})$是长度为$\ell_i$的词元序列，总约束词元数为
+$C=\sum_{i}\ell_i$。所求输出为
+\begin{equation}
+  \widehat y=\argmax_{y\in\mathcal Y_{\mathcal Z}}\log p_{\bm\theta}(y\mid x),
+  \label{eq:nlp-generation-lexical-objective}
+\end{equation}
+其中可行集合$\mathcal Y_{\mathcal Z}$由所有以EOS结束、且每个$z_i$都作为连续子串出现的
+输出组成。
+它与第~\ref{sec:nlp-generation-beam}小节束搜索的目标相同，只是可行集合缩小了。困难在于
+$\mathcal Y_{\mathcal Z}$不能逐词元判断：前缀“The meeting”还没有出现任何术语，却完全可能
+延续成合格输出，因此不能像格式约束那样在每一步屏蔽非法词元，只能在搜索状态中记住每条
+约束完成了多少。
+
+一个搜索假设记为$h=(y_{<t},s,S,\pi)$：$y_{<t}$是已生成前缀，$s$是累计对数概率，
+$S\subseteq\{1,\ldots,K\}$是已经完整出现的约束集合，$\pi=(i,j)$表示正处在第$i$条约束内部、
+已匹配前$j$个词元，$\pi=\varnothing$表示没有未完成的短语，称为开放状态。假设的约束进度为
+\[
+  g(h)=\sum_{i\in S}\ell_i+j,
+\]
+开放状态下$j=0$。只有$g(h)=C$、处于开放状态的假设才允许生成EOS并交付。
+
+在引入专门的搜索之前，有三种更简单的做法。生成后筛选先取$n$个最佳候选，再保留满足
+约束的那些；当候选全部漏掉术语时它无从补救。占位替换先把源文术语换成特殊占位符，译完
+再把占位符换成指定译法；它总能放进术语，却让模型看不到术语本身，在需要变格、变数或
+调整冠词的语言里容易产生不合语法的句子。训练时注入术语则把指定译法直接拼在源文术语
+旁边，并用额外的输入标记区分原文与注入词，让模型在训练中学会复制它们
+\scite{dinu-etal-2019-training}
+这种做法不改变解码器，也能让模型自行处理词形与衔接，但满足约束只是高概率行为，并没有
+保证。下面两种解码方法给出硬保证：只要搜索在预算内找到可行路径，交付的输出一定包含全部
+约束。
+
+为在两种方法之间比较，固定一个教学模型。用两个双词元术语演示：$\mathtt{ab}$代表
+Haitang Hall，$\mathtt{cd}$代表external guests，$\mathtt{o}$代表其他文字片段，故$K=2$、
+$C=4$。下一词元的分布只依赖前缀结尾，按下表给出，空格表示概率为零：
+\begin{center}
+  \small
+  \begin{tabular}{@{}lcccccc@{}}
+    \toprule
+    前缀结尾 & $\mathtt o$ & $\mathtt a$ & $\mathtt b$ & $\mathtt c$ & $\mathtt d$ & EOS\\
+    \midrule
+    起始 & 0.50 & 0.30 & & 0.15 & & 0.05\\
+    $\mathtt o$ & 0.40 & 0.25 & & 0.25 & & 0.10\\
+    $\mathtt a$ & 0.30 & & 0.60 & & & 0.10\\
+    $\mathtt c$ & 0.10 & & & & 0.80 & 0.10\\
+    $\mathtt{ab}$ & 0.30 & & & 0.50 & & 0.20\\
+    $\mathtt{cd}$ & 0.10 & & & & & 0.90\\
+    \bottomrule
+  \end{tabular}
+\end{center}
+最多五步，EOS占一步，平局按$\mathtt a<\mathtt c<\mathtt o$打破。这些数值只用于演示搜索
+状态，不是任何翻译模型的输出。
+
+宽度为1的普通束搜索第一步选$\mathtt o$，此后每步都是$\mathtt o$比$\mathtt a$、$\mathtt c$
+概率高，于是一路走成$\mathtt{oooo}\,\mathrm{EOS}$，两个术语都没有出现；生成后筛选只能丢弃
+它，无法补回第一步就被剪掉的$\mathtt a$。
+
+\subsubsection{Grid Beam Search}
+\label{sec:nlp-generation-gbs}
+
+普通束搜索让所有前缀争夺同一批名额。已经开始写术语的前缀往往含有低概率词元，累计分数
+较低，会被只顾高分的普通前缀挤出束外。\term{网格束搜索}（Grid Beam Search, GBS）的思想
+是按约束进度分组竞争：在生成步数$t$之外再加一维进度$g$，网格的每一格$G_{t,g}$独立保留
+至多$k$个假设，只有进度相同的前缀互相比较\scite{hokamp-liu-2017-lexically}
+
+格$G_{t,g}$的候选来自三种操作。\emph{生成}作用于开放状态的假设，由模型自由选择一个词元，
+进度不变（即使选中的词元恰好是某个约束词元，也不计入进度），所以从$G_{t-1,g}$转移到$G_{t,g}$；\emph{开始}作用于开放状态的假设，追加某条
+未完成约束$z_i$的首词元，进度加一，从$G_{t-1,g-1}$转移而来，若$\ell_i=1$该约束随即完成；
+\emph{继续}作用于处在短语内部的假设，它只能追加下一个约束词元$z_{i,j+1}$，进度加一，
+当$j+1=\ell_i$时把$i$并入$S$并回到开放状态。于是
+\begin{equation}
+  G_{t,g}=\operatorname{top}_k\Bigl(\mathrm{Gen}(G_{t-1,g})\cup
+  \mathrm{Start}(G_{t-1,g-1})\cup\mathrm{Cont}(G_{t-1,g-1})\Bigr),
+  \label{eq:nlp-generation-gbs}
+\end{equation}
+$\operatorname{top}_k$按累计对数概率取前$k$项。每个追加词元$v$都按模型原分布计分，
+$s(hv)=s(h)+\log p_{\bm\theta}(v\mid x,y_{<t})$；约束只决定哪些扩展可以进入哪一格，
+不改写模型概率。处于短语内部的假设不能执行生成操作，这保证了约束短语连续出现。
+算法~\ref{alg:nlp-generation-gbs}写出完整过程。
+
+\Needspace{16\baselineskip}
+\begin{algorithm}[网格束搜索]
+  \label{alg:nlp-generation-gbs}
+  \begin{algorithmic}[1]
+    \Require 模型$p_{\bm\theta}$，输入$x$，约束$z_1,\ldots,z_K$（总词元数$C$），每格宽度$k$，最大步数$T$
+    \Ensure 满足全部约束的最高分输出，或失败状态
+    \State $G_{0,0}\gets\{(\mathrm{BOS},0,\varnothing,\varnothing)\}$；完成集合$\mathcal F\gets\varnothing$
+    \For{$t=1,\ldots,T$}
+      \For{$g=0,\ldots,\min(t,C)$}
+        \State $\mathcal A\gets$ 对$G_{t-1,g}$中开放假设取模型前$k$个扩展，不计入约束进度；EOS仅在$g=C$时允许
+        \State $\mathcal A\gets\mathcal A\,\cup$ 对$G_{t-1,g-1}$中开放假设追加每条未完成约束的首词元
+        \State $\mathcal A\gets\mathcal A\,\cup$ 对$G_{t-1,g-1}$中短语内部假设追加该短语的下一个词元
+        \State $G_{t,g}\gets\mathcal A$中累计分数最高的$k$项，更新各自的$S$与$\pi$
+      \EndFor
+      \State 把$G_{t,C}$中以EOS结尾的假设移入$\mathcal F$
+    \EndFor
+    \If{$\mathcal F=\varnothing$}
+      \State \Return 失败：预算内未找到满足全部约束的输出
+    \EndIf
+    \State \Return $\mathcal F$中累计分数最高的输出
+  \end{algorithmic}
+\end{algorithm}
+
+在教学模型上取每格宽度$k=1$。图~\ref{fig:nlp-generation-gbs-grid}给出每格保留的假设。
+第一步，$g=0$格保留$\mathtt o:0.50$；$g=1$格在开始操作得到的$\mathtt a:0.30$与
+$\mathtt c:0.15$中保留$\mathtt a$，它的内部状态是“第一条约束已匹配一个词元，等待
+$\mathtt b$”。第二步三格分别保留$\mathtt{oo}:0.20$、$\mathtt{oa}:0.125$（与$\mathtt{oc}$
+同分，按平局规则取$\mathtt a$）和$\mathtt{ab}:0.18$；$\mathtt{ab}$完成了第一条短语，
+但$g=2<C$，还不能接受EOS。沿右上对角线，
+$\mathtt{ab}\to\mathtt{abc}\to\mathtt{abcd}\to\mathtt{abcd}\,\mathrm{EOS}$的累计概率依次为
+$0.18,0.09,0.072,0.0648$，在第五步交付。$\mathtt{abc}$的进度为3，表示第二条短语仍缺
+$\mathtt d$，而不是“两条约束都已完成”。其余格中的路径来不及在第五步前补齐术语和EOS。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/03-text-generation-and-interaction/tikz/generation-ch12d-gbs-grid.tex}
+  \caption{教学模型上的网格束搜索，每格宽度$k=1$。横轴是生成步$t$，纵轴是约束进度$g$
+  （已匹配的约束词元数）；每格写出保留的前缀与累计概率。水平箭头是生成操作（进度不变），
+  斜箭头是开始或继续约束（进度加一）。加粗路径$\mathtt{ab}\to\mathtt{abc}\to\mathtt{abcd}$在
+  $g=C=4$的格中生成EOS后交付；宽度为1的普通束只会沿底行$g=0$前进，两条术语都不出现。第5步只画出交付的假设。}
+  \label{fig:nlp-generation-gbs-grid}
+\end{figure*}
+
+例子同时显示了可行性的边界。两条不重叠的双词元短语至少需要四个正文词元和一个EOS，
+把预算改成四步，任何路径都不可能完成；若再要求“必须含$\mathtt{ab}$”且“禁止出现
+$\mathtt b$”，增加预算也无解。这两种情形下算法都返回失败，调用方应据此放宽预算或报告
+约束冲突，而不是退回一条缺术语的输出。
+
+网格共有$C+1$行，每步至多保存$(C+1)k$个假设，模型前向的批量也随之扩大，计算与存储
+都按约束词元数线性增长。网格只是把束搜索的剪枝按进度分组，仍是近似搜索，找到的可行
+输出不一定是式\eqref{eq:nlp-generation-lexical-objective}的全局最优。约束以固定词形出现，
+需要变格的术语要么列出多种形式，要么交给训练时注入的方法；约束也只保证术语出现，
+不保证出现的位置正确，external guests可能被放进“无需报名”的从句里，含义仍要另行核验。
+
+\subsubsection{Dynamic Beam Allocation}
+\label{sec:nlp-generation-dba}
+
+网格束搜索的假设数随$C$增长，带来两个实际问题：约束多时解码变慢，而且同一批句子各自
+的约束数不同，网格大小不一，难以组成整齐的批量。\term{动态束分配}（Dynamic Beam Allocation,
+DBA）把总束宽固定为$k$，不论约束多少，每步都只对$k$个前缀调用模型；约束进度仍然参与
+选择，但改为在一条束内部把名额分给不同进度的假设\scite{post-vilar-2018-fast}
+
+每一步的候选来自三个来源：整个束的前$k$个高分扩展；每个前缀对每条未完成约束的约束扩展
+（开始一条新约束，或继续当前短语）；每个前缀自身的最佳单一扩展，保证每个前缀至少有一个
+后继参与竞争。候选按进度$g$分入$C+1$个组，原方法称之为银行（bank）。分配时先给每组
+$\lfloor k/(C+1)\rfloor$个名额，整除剩下的名额给进度最高的组$C$；某组候选少于名额时，
+把多出的名额从相邻组开始向外让给候选多于名额的组，组内按累计分数取优。原论文正文把每组
+名额写作$\lfloor k/C\rfloor$，其参考实现按$C+1$组均分，这里按后者叙述。
+与网格束搜索的另一处不同是允许“回退”：处在短语内部的假设若追加了非约束词元，它在该短语
+上的部分进度清零，例如$\mathtt{ao}$不再算完成了$\mathtt{ab}$的一半，以后再出现$\mathtt a$
+时重新开始匹配；已经完整出现的短语保留完成标记。算法~\ref{alg:nlp-generation-dba}写出一步
+的更新。
+
+\Needspace{14\baselineskip}
+\begin{algorithm}[动态束分配的一步更新]
+  \label{alg:nlp-generation-dba}
+  \begin{algorithmic}[1]
+    \Require 当前束$\mathcal B$（$|\mathcal B|\leq k$），约束$z_1,\ldots,z_K$（总词元数$C$）
+    \Ensure 下一步的束$\mathcal B'$
+    \State $\mathcal A\gets\mathcal B$中全部扩展里累计分数最高的$k$项
+    \For{每个$h\in\mathcal B$}
+      \State $\mathcal A\gets\mathcal A\,\cup$ $h$对每条未完成约束的开始或继续扩展
+      \State $\mathcal A\gets\mathcal A\,\cup\{h\text{的最佳单一扩展}\}$
+    \EndFor
+    \State 更新$\mathcal A$中每个候选的$S$与$\pi$；打断短语的候选清零该短语的部分进度
+    \State 按进度$g$把$\mathcal A$分为$\mathcal A_0,\ldots,\mathcal A_C$，每组分配$\lfloor k/(C+1)\rfloor$个名额，余数给$\mathcal A_C$
+    \State 候选不足的组把空余名额由近及远转给仍有候选的组；各组按累计分数取优，合并为$\mathcal B'$
+    \State 把$\mathcal B'$中进度为$C$且以EOS结尾的假设移入完成集合
+  \end{algorithmic}
+\end{algorithm}
+
+沿用同一模型，取总宽度$k=2$。此时$k<C+1$，均分给每组零个名额，两个余数名额都归进度最高的空组，再由近及远
+转出，结果偏向较高进度的组。为把取舍看得更清楚，本例改用一个教学分配规则：只有两组时各一项；有三组以上而只有两个名额时，给最高与最低进度组各一项。
+这个规则只用来显示固定容量的取舍，不复现原方法的全部配额细节。第一步的候选分为
+$\{\mathtt o:0.50\}$与$\{\mathtt a:0.30,\mathtt c:0.15\}$两组，保留$\mathtt o$与$\mathtt a$。
+第二步候选包含$\mathtt{oo}:0.20$、$\mathtt{oa}:0.125$、$\mathtt{oc}:0.125$与
+$\mathtt{ab}:0.18$，分属进度0、1、2三组；两个名额分给$\mathtt{oo}$与$\mathtt{ab}$，
+网格束搜索在$g=1$格保留的$\mathtt{oa}$被丢掉。此后$\mathtt{ab}$仍能沿
+$\mathtt{abc}\to\mathtt{abcd}\to\mathrm{EOS}$完成，在本例中结果与网格束搜索相同，但束内
+已经少了一条备用路径；若后续分布不利于$\mathtt{ab}$，这条被丢掉的路径可能正是唯一可行解。
+
+两种方法的关系可以这样理解：若取DBA的总宽度为$(C+1)k$，并且每组总有足够候选、每组恰好
+分到$k$个名额，它的选择就接近每格宽度为$k$的网格束搜索，差别只在候选来源与回退规则。
+DBA把“每组多少名额”从固定值变成随候选情况调整的量，换来每步$k$次模型前向、与$C$无关的
+批量形状；构造约束扩展、更新匹配状态和分组仍有与约束数相关的开销，约为每步$O(kK)$个
+额外候选。后续工作用前缀树表示多条约束的匹配状态，把这些操作向量化，使约束解码能在
+GPU上与普通束搜索同样批量执行\scite{hu-etal-2019-improved}
+总束宽必须至少为$C+1$，每个进度组才能分到名额；约束很多而束宽很小时，DBA会像本例一样
+在中间进度组上失去候选。
+
+表~\ref{tab:nlp-generation-lexical-methods}汇总词汇约束的几种做法。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \renewcommand{\tabularxcolumn}[1]{>{\raggedright\arraybackslash}p{#1}}
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm}XXX@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价\\
+    \midrule
+    生成后筛选 & 不改解码即可检查约束 & 取$n$个最佳候选，保留含全部约束者 & 候选全漏术语时无解\\
+    占位替换 & 保证术语出现 & 源文术语换成占位符，译后替换 & 模型看不到术语，词形与衔接易错\\
+    训练时注入 & 让模型自行处理词形 & 源文旁拼接指定译法并加标记，训练复制 & 只是高概率满足，无硬保证\\
+    网格束搜索 & 术语前缀在剪枝中被挤掉 & 按约束进度分格，每格各留$k$项 & 假设数$(C+1)k$，随约束线性增长\\
+    动态束分配 & 网格束的开销与批量问题 & 固定总束宽，按进度组分配名额，允许回退 & 束宽小于$C+1$时丢失中间进度路径\\
+    \bottomrule
+  \end{tabularx}
+  \caption{词汇约束的处理方法。后两种在搜索找到可行路径时保证约束全部出现；所有方法都只
+  保证术语在输出中出现，术语的位置与含义仍需另行核验。}
+  \label{tab:nlp-generation-lexical-methods}
+\end{table*}
+
+\subsection{结构约束与值绑定检查}
+\label{sec:nlp-generation-grammar}
+
+日历系统要求的输出形如代码~\ref{code:nlp-generation-calendar-json}。
+
+\begin{codeblock}[label={code:nlp-generation-calendar-json}]{日历系统接收的教学输出}
+{"event": "ML-0418", "date": "2025-04-18",
+ "weekday": "Fri", "time": "14:00", "room": "201"}
+\end{codeblock}
+
+第~\ref{chap:nlp-model-inference}章已经给出保证这类输出可解析的机制：把接口模式编译为
+有限状态机或下推自动机，每一步只允许能延续成合法输出的词元，代价是局部重新归一化带来的
+分布偏移和计算掩码的时间。这里不重复该机制，只讨论生成任务在结构合法之后还要检查的部分。
+
+对一个结构化输出，要依次确认四件事。\emph{模式合法}：能被解析，必需字段齐全，类型正确；
+这一层可由约束解码在构造时保证。\emph{值域合法}：日期是真实存在的日历日期，时间在
+00:00至23:59之间，房间号属于允许的格式或枚举。\emph{事实绑定}：每个字段的值来自输入中
+角色正确的那一项，或经过允许的规范化得到。\emph{跨字段一致}：星期与日期相符，报名截止
+早于活动开始。后两层是生成任务特有的，第6章的约束解码不负责它们。
+
+把事实绑定写成可以检查的条件。设从输入中抽取出带角色的事实集合
+$R=\{(\rho,v)\}$，本例为
+\[
+  \begin{aligned}
+  R=\{&(\text{新日期},\text{4月18日}),(\text{原日期},\text{4月17日}),
+  (\text{截止},\text{4月16日18:00}),\\
+  &(\text{时间},\text{14:00}),(\text{地点},\text{海棠楼201})\}.
+  \end{aligned}
+\]
+接口为每个输出字段$f$规定它应绑定的角色$\rho(f)$和规范化函数$N_f$，例如日期字段绑定
+“新日期”，$N_{\mathrm{date}}$按发布年份2025把“4月18日”写成\code{2025-04-18}；房间字段
+绑定“地点”，$N_{\mathrm{room}}$只保留房间号。输出$o$通过事实绑定，当且仅当
+\begin{equation}
+  \forall f:\quad \exists\,(\rho(f),v)\in R,\quad N_f(o_f)=N_f(v).
+  \label{eq:nlp-generation-binding}
+\end{equation}
+一个更弱的条件是“取值出现在输入中”，即$o_f\in\{N_f(v):(\rho,v)\in R\}$，不要求角色匹配。
+弱条件能挡住凭空编造的日期，却挡不住角色互换：把报名截止日期\code{2025-04-16}填进
+日期字段，值确实来自通知，绑定的角色却错了。
+
+哪些检查可以前移到解码中？弱条件可以：为每个输入单独构造一份文法，让日期字段只能取
+$\{\code{2025-04-16},\code{2025-04-17},\code{2025-04-18}\}$之一，第~\ref{sec:nlp-inference-grammar}小节
+的机制就能保证输出不出现输入以外的日期。角色绑定通常不能，因为它需要知道哪个日期是
+新日期，这一信息来自对输入的理解，可由信息抽取得到带角色的记录
+（第~\ref{chap:nlp-information-extraction}章），再在生成后按式\eqref{eq:nlp-generation-binding}比对。
+跨字段一致需要日历计算，也放在生成后检查：2025年4月18日是星期五，与\code{"Fri"}相符。
+算法~\ref{alg:nlp-generation-binding-check}把这四层组织成一次核验。
+
+\Needspace{14\baselineskip}
+\begin{algorithm}[结构化输出的分层核验]
+  \label{alg:nlp-generation-binding-check}
+  \begin{algorithmic}[1]
+    \Require 输出文本$y$，接口模式，带角色的输入事实$R$，字段绑定$\rho(f)$与规范化$N_f$，跨字段条件$\phi_1,\ldots,\phi_M$
+    \Ensure 通过，或失败原因列表
+    \State 解析$y$得到对象$o$；失败则返回“结构不合法”及位置
+    \For{每个字段$f$}
+      \State 检查$o_f$的类型与值域；不合法则记录“值域错误：$f$”
+      \If{$R$中没有角色$\rho(f)$}
+        \State 模式允许空值且$o_f$为空则通过，否则记录“输入缺少$\rho(f)$”
+      \ElsIf{$N_f(o_f)$不等于任何$(\rho(f),v)\in R$的$N_f(v)$}
+        \State 记录“绑定错误：$f$”，并附上$o_f$实际匹配到的角色（若有）
+      \EndIf
+    \EndFor
+    \State 对每个$\phi_m$检查$\phi_m(o)$；不成立则记录“跨字段冲突：$\phi_m$”
+    \State \Return 原因列表为空则通过，否则返回列表
+  \end{algorithmic}
+\end{algorithm}
+
+逐层检查代码~\ref{code:nlp-generation-calendar-json}：模式合法；日期、时间与星期都在值域内；日期绑定“新日期”，房间绑定
+“地点”且规范化后为201，事实绑定通过；星期与日期一致。若模型输出\code{"date":"2025-04-17"}，
+前两层仍然通过，第三层报告日期实际匹配到“原日期”角色，这正是改期通知最容易出的错。
+若接口还要求主讲人字段，而通知没有给出，模式允许空值时应输出空值；不允许时应返回
+“输入缺少主讲人”，不能补一个看似合理的名字。约束解码在预算内无法闭合结构、或文法与
+长度限制冲突时，同样返回失败及原因。
+
+值绑定检查在多个生成任务中复用。数据到文本要求句中数值能回溯到记录；文本到SQL的
+条件值须来自问题或数据库，见第~\ref{sec:nlp-analysis-text-to-sql}小节；工具调用的参数要
+绑定到用户请求中的实体，见第~\ref{chap:nlp-solving-and-execution}章。这类检查的可靠性取决于
+带角色的输入事实是否抽取正确，抽取错误会让一个正确输出被判为失败，或让错误输出通过，
+因此抽取结果本身也要可追溯到原文位置。
+
+\section{生成结果的评价}
+\label{sec:nlp-generation-evaluation}
+
+上一节的约束可以逐条判定对错，大部分生成质量却没有这样的判定程序。评价生成结果有五个
+挑战。第一，一个输入有许多合法输出，参考文本只覆盖其中少数，合法改写可能因为与参考不同
+而得低分。第二，流畅与忠实可以分离，一句通顺的译文可能改错了日期。第三，编辑任务的
+输出与来源高度重合，只比较输出与参考，会奖励什么都不改。第四，自动指标与人工判断的
+一致程度有限，而且随语言、领域和系统质量变化。第五，人工评价成本高，结果还依赖错误
+类别的定义与评价者的一致性。
+
+本节的方法谱系按“测量什么、需要什么输入”展开：先用来源检查忠实性；再看只需参考的
+重合指标；编辑任务另用同时读取来源、输出与参考的编辑指标；为容忍合法改写，学习型指标
+用预训练模型比较语义，无参考质量估计进一步去掉参考；人工评价是这些指标的最终参照，
+元评价衡量指标与人工判断的一致程度；最后讨论用大语言模型按准则评判。评测协议、数据
+独立性与统计比较已在第~\ref{chap:nlp-evaluation}章给出，这里只写各指标的定义、手算例子
+与失效情形，节末表~\ref{tab:nlp-generation-metrics}列出它们的测量对象与输入。
+
+\subsection{忠实性与无依据内容检测}
+\label{sec:nlp-generation-faithfulness}
+
+检查\term{忠实性}（faithfulness）之前，先要确定忠实于什么。翻译以源文原意为依据，
+摘要以选定来源及用途为依据，编辑还要检查每处修改是否必要；开放故事中的虚构人物可以说
+虚构的话，但引用的真实活动安排仍不能改成另一天。生成文本中没有来源支持的内容称为
+幻觉（hallucination）。按与来源的关系可以分为两类\scite{nlp-generation-maynez2020faithfulness}
+\term{内在幻觉}（intrinsic hallucination）错误地组合或改写了来源中的信息，与来源矛盾，
+例如“活动仍于4月17日举行”，或把报名截止日期说成活动日期；\term{外在幻觉}（extrinsic
+hallucination）加入了来源中无法核实的信息，例如“预计50人到场”。外在幻觉的内容在现实中
+可能恰好为真，例如“海棠楼位于校园东区”，但它不能从来源得到支持，评价忠实性时仍记为
+无依据；它是否可以接受，要看任务是否允许引入外部知识。两类错误的修订方式也不同：前者
+要按来源改正，后者要删去或补上出处。
+
+最直接的检查是规则：把实体、日期和数量规范化后逐项与来源比对。规则可解释，但只能覆盖
+预先列出的类型，而且必须保留角色，否则把报名时间与开会时间互换，数值集合仍然一致；这与
+上一节的值绑定是同一个问题。为覆盖任意陈述，学习式核验把问题化归为已有的语言理解任务，
+沿两条路线发展：一条用自然语言推断判断来源能否推出生成文本，先有在合成错误样本上训练的
+文档级分类器FactCC\scite{kryscinski-etal-2020-evaluating}，后有下面的句级聚合方法SummaC；
+另一条从生成文本中提问，再用来源回答并比对，先有QAGS\scite{wang-etal-2020-asking}，后有
+组件经过系统比较的QAFactEval。把生成文本进一步拆成原子事实逐条核验的方法见
+第~\ref{chap:nlp-question-answering-dialogue}章。
+
+\subsubsection{SummaC的句对推断核验}
+\label{sec:nlp-generation-summac}
+
+推断模型通常在单句对上训练，把整篇来源和整篇摘要一次性交给它，粒度与长度都超出训练
+分布。SummaC先分句，为每个摘要句寻找来源中的支持，再汇总成文档分数
+\scite{laban-etal-2022-summac}
+设来源句为$x_1,\ldots,x_M$，摘要句为$y_1,\ldots,y_N$，推断模型（第~\ref{sec:nlp-classification-nli}小节）
+给出蕴含概率$E_{i,j}=p(\text{蕴含}\mid x_i,y_j)$，构成$M\times N$的矩阵。零样本版本
+SummaC-ZS对每个摘要句取最佳支持，再对摘要句平均：
+\begin{equation}
+  s_{\mathrm{ZS}}=\frac{1}{N}\sum_{j=1}^{N}\max_{1\leq i\leq M}E_{i,j}.
+  \label{eq:nlp-generation-summac}
+\end{equation}
+取最大值意味着一个摘要句只要被某一来源句支持即可，平均则让每个摘要句同等计入。这一步
+没有可学习参数。最大值只看一个数，丢掉了整列的分布：一列中有一个0.6，和一列中有多个
+0.5，含义并不相同。卷积版本SummaC-Conv把第$j$列的$M$个蕴含分数离散成$H$个区间的直方图
+$\bm u_j\in\mathbb R^H$，用一个可学习的一维卷积把直方图映射为该句的一致性分数，再平均：
+\begin{equation}
+  s_{\mathrm{Conv}}=\frac{1}{N}\sum_{j=1}^{N}g_{\bm\psi}(\bm u_j),
+  \label{eq:nlp-generation-summac-conv}
+\end{equation}
+参数$\bm\psi$在带一致性标签的数据上训练。两个版本共用同一个推断模型，差别只在列聚合。
+
+把通知第一句作为$x_1$，参加规则作为$x_2$，候选摘要两句为$y_1$：“读书会改至4月18日举行”，
+$y_2$：“预计50人到场”。设教学蕴含矩阵为
+\[
+  \bm E=\begin{pmatrix}0.95&0.05\\0.10&0.02\end{pmatrix}.
+\]
+按列取最大值得$(0.95,0.05)$，平均为$0.50$，低分直接定位到人数句。若用四个等宽区间构造
+直方图，第一列在最低、最高区间各有一个元素，第二列两个元素都落在最低区间，这就是
+$g_{\bm\psi}$读取的分布信息。人数句蕴含分低，并不说明它与来源矛盾：它对$x_1$可能是中立
+$0.92$、矛盾$0.03$，属于外在幻觉；若改成“活动仍在4月17日举行”，才会得到高矛盾分数，
+属于内在幻觉。同时保存三类分数，就能区分两种幻觉。
+
+分句也会带来问题。若来源把“读书会已经改期”和“新日期为4月18日”分成两句，摘要中的完整
+陈述可能单靠任何一句都得不到充分支持；可以改用相邻句窗口重新核查，而不是把分句造成的
+缺口判为幻觉。平均分还会冲淡唯一但严重的日期错误，报告时应同时给出最低支持的句子及其
+对应来源。计算上，SummaC需要$MN$次推断模型调用，长文档的代价随句数乘积增长。
+
+\subsubsection{QAFactEval的问答核验}
+\label{sec:nlp-generation-qafacteval}
+
+句对推断给出的是“能否推出”的整体判断，不说明错在哪个信息点。问答核验换一个角度：
+从生成文本中的具体信息点出发提问，看来源能否给出相同答案。QAFactEval的流水线有四步：
+从摘要中选出实体、名词短语等答案片段；以摘要和片段为条件生成问题；先用摘要回答这些
+问题，过滤掉连摘要自己都答不回原片段的坏问题；再用来源回答保留的问题，用学习式答案
+匹配器比较来源答案与原片段\scite{fabbri-etal-2022-qafacteval}
+记过滤后保留的问题集为$\mathcal Q$，$m_q\in[0,1]$为问题$q$上两份答案的匹配分，来源
+不可回答时$m_q=0$，则
+\begin{equation}
+  s_{\mathrm{QA}}=\frac{1}{|\mathcal Q|}\sum_{q\in\mathcal Q}m_q .
+  \label{eq:nlp-generation-qafacteval}
+\end{equation}
+没有问题通过过滤时应报告“无法核验”，不能把空集合的平均当作满分。
+
+沿用含错误人数的摘要，另加正确的第三句“校外来宾须在4月16日18:00前提交报名信息”。
+选出的三个答案为“4月18日”“50人”和第三句的报名条件，对应问题为“读书会现在哪天举行”
+“预计多少人到场”“校外来宾参加前需要在何时完成什么”。三题都能在摘要上答回原片段，全部
+保留；到原通知中，第一题答出4月18日，第二题不可回答，第三题答出“在4月16日18:00前提交
+报名信息”。若为教学采用二值匹配，得分为$(1+0+1)/3=2/3$；这不是QAFactEval真实匹配器
+的输出尺度。
+
+流水线的每一步都可能出错，核验日志要分别保留答案片段、问题、摘要答案、来源答案及出处。
+人数确实是无依据新增；若问题生成成“50人何时到场”，问题本身就混入了未经证实的前提；
+若来源阅读器把4月16日当成活动日期，失败发生在阅读一步。另一个局限是问题只覆盖被选中的
+信息点：若选择漏掉了14:00或海棠楼201，得分高也不说明完整性已经通过。与句对推断相比，
+问答核验能指出错在哪个信息点，代价是三个模型的串联误差和更多调用。
+
+\subsection{参考重合指标}
+\label{sec:nlp-generation-overlap}
+
+忠实性核验需要来源和推断或问答模型。若手头有人工写的参考输出，更便宜的做法是统计输出与
+参考共享多少单位。这类指标计算快、可复现，长期用于系统比较；它们的共同弱点是对合法改写
+不宽容，对一个关键数字的错误又不够敏感。下面的例子统一小写、按空格分词、不含标点，
+单参考为$r$=“the meeting is on april 18”，错日期候选$y_1$=“the meeting is on april 17”，
+合法改写$y_2$=“the event takes place on april 18”。分词器、大小写、词干、参考数与聚合
+层级都会改变分数，必须固定后才能比较。
+
+\subsubsection{BLEU}
+\label{sec:nlp-generation-bleu}
+
+BLEU为机器翻译设计，衡量候选与参考共享多少词$n$元组\scite{papineni-etal-2002-bleu}
+直接数候选中有多少$n$元组出现在参考里，会让重复一个常见词刷高分，所以每种$n$元组的匹配
+次数要截断到它在参考中的出现次数，多参考时取各参考计数的最大值。记$\mathrm{cnt}_y(u)$为
+$n$元组$u$在候选$y$中的出现次数，$R$为该句的参考集合。语料级$n$阶精确率先在句内截断，
+再跨句累加：
+\[
+  p_n=\frac{\sum_{(y,R)}\sum_{u}\min\bigl(\mathrm{cnt}_y(u),\max_{r\in R}\mathrm{cnt}_r(u)\bigr)}
+  {\sum_{(y,R)}\sum_{u}\mathrm{cnt}_y(u)} .
+\]
+精确率不惩罚过短的候选，只输出最有把握的几个词就能得高分，BLEU因此乘一个简短惩罚。
+设语料候选总长为$\ell_y$，每句取长度最接近的参考后累加得有效参考总长$\ell_r$，则
+\begin{equation}
+  \mathrm{BLEU}_N=\mathrm{BP}\cdot\exp\!\Bigl(\sum_{n=1}^{N}w_n\log p_n\Bigr),\qquad
+  \mathrm{BP}=\min\bigl(1,\,e^{1-\ell_r/\ell_y}\bigr),
+  \label{eq:nlp-generation-bleu}
+\end{equation}
+其中$w_n$非负且和为一，标准设置为$N=4$、$w_n=1/4$；空候选另记零。几何平均使任何一阶
+精确率为零都会让总分为零。
+
+手算$y_1$：六个一元组匹配五个，五个二元组匹配四个，四个三元组匹配三个，三个四元组匹配
+两个，长度相等使$\mathrm{BP}=1$，于是
+$\mathrm{BLEU}_4=(\tfrac56\cdot\tfrac45\cdot\tfrac34\cdot\tfrac23)^{1/4}=(1/3)^{1/4}\approx0.760$。
+日期错误只损失少量重合，得分仍高。$y_2$的七个一元组只匹配the、on、april、18四个，六个
+二元组只匹配on april与april 18，取$N=2$时
+$\mathrm{BLEU}_2=\sqrt{\tfrac47\cdot\tfrac13}\approx0.436$，远低于$y_1$的
+$\mathrm{BLEU}_2=\sqrt{\tfrac56\cdot\tfrac45}\approx0.816$：保留了正确日期的改写反而得分低。
+若候选只有“the meeting”，两阶精确率都是1，简短惩罚为$e^{1-6/2}=e^{-2}\approx0.135$；
+它没有三元组和四元组，不平滑的$\mathrm{BLEU}_4$直接为零。若候选为“the the meeting”，
+两个the只有一个能匹配，一元精确率为$2/3$而不是1。
+
+最后一个例子说明了句级BLEU的不稳定：短句的高阶$n$元组很少，一个词的变化就能让某阶
+精确率归零，必须选择某种平滑方法，不同平滑给出不同分数。BLEU原本按语料累加计数，
+语料BLEU也不等于逐句BLEU的平均。分词与大小写的选择对分数影响很大，同一系统在不同
+预处理下可相差数个点；为此SacreBLEU固定参考侧的预处理，并要求随分数报告一个记录全部
+设置的签名\scite{post-2018-call}
+
+\subsubsection{ROUGE-N与ROUGE-L}
+\label{sec:nlp-generation-rouge}
+
+摘要更关心参考中的要点有没有被覆盖，而不是候选里有多少词是对的。ROUGE因此以召回为
+取向\scite{lin-2004-rouge}
+ROUGE-N统计参考中的$n$元组有多少被候选覆盖：
+\begin{equation}
+  \mathrm{ROUGE\text{-}N}=\frac{\sum_{r\in R}\sum_{u\in r}\min\bigl(\mathrm{cnt}_y(u),\mathrm{cnt}_r(u)\bigr)}
+  {\sum_{r\in R}\sum_{u\in r}\mathrm{cnt}_r(u)},
+  \label{eq:nlp-generation-rouge-n}
+\end{equation}
+分母是参考的$n$元组总数，而BLEU的分母是候选的$n$元组总数，这是两者取向不同的来源。
+多参考时，原定义在分子分母上对所有参考累加，参考中重复出现的要点权重更大；常用实现也
+有对每个参考分别计算、再取最大值的做法，报告时需写明。
+
+ROUGE-N要求词连续匹配，换一个词序就丢分。ROUGE-L改用\term{最长公共子序列}（longest
+common subsequence, LCS），即两个序列中保持先后顺序、但不要求相邻的最长共同词串。设参考
+长度为$m$，候选长度为$n$，LCS长度为$L$，则
+\begin{equation}
+  R_{\mathrm{L}}=\frac{L}{m},\qquad P_{\mathrm{L}}=\frac{L}{n},\qquad
+  F_{\mathrm{L}}=\frac{(1+\beta^2)R_{\mathrm{L}}P_{\mathrm{L}}}{R_{\mathrm{L}}+\beta^2P_{\mathrm{L}}},
+  \label{eq:nlp-generation-rouge-l}
+\end{equation}
+$\beta$越大越偏向召回，原文在摘要评测中取很大的$\beta$，常用工具包则报告$\beta=1$的F值。
+多句摘要还要说明是逐句计算后平均，还是在整篇上取各参考句与候选句的LCS并集。
+
+对$y_1$，参考的五个二元组被覆盖四个，ROUGE-1与ROUGE-2分别为$5/6$与$4/5$；LCS为
+“the meeting is on april”，$L=5$，$F_{\mathrm L}=5/6\approx0.833$。对$y_2$，ROUGE-1为
+$4/6\approx0.667$，ROUGE-2为$2/5$；LCS为“the on april 18”，$L=4$，
+$F_{\mathrm L}=2L/(m+n)=8/13\approx0.615$。与BLEU一样，错日期候选在三项上都高于正确改写。
+
+\subsubsection{chrF与METEOR}
+\label{sec:nlp-generation-chrf-meteor}
+
+词级匹配依赖分词：形态丰富的语言里同一个词有许多变体，中文还要先确定词边界。chrF改看
+字符$n$元组\scite{popovic-2015-chrf}
+对$n=1,\ldots,N$分别计算字符$n$元组的精确率$P_n$与召回率$R_n$，先取算术平均
+$\bar P=N^{-1}\sum_nP_n$、$\bar R=N^{-1}\sum_nR_n$，再计算
+\[
+  \mathrm{chrF}_\beta=\frac{(1+\beta^2)\bar P\bar R}{\beta^2\bar P+\bar R},
+\]
+$\beta>1$使召回的权重更大。取参考“4月18日”、候选“4月17日”，按字符切分：五个一元字符
+匹配四个，四个二元字符中只有“4月”“月1”匹配，所以$P_1=R_1=4/5$，$P_2=R_2=1/2$。教学取
+$N=2,\beta=2$，得$\bar P=\bar R=0.65$，$\mathrm{chrF}=0.65$；工具包的默认设置用更高的阶数。
+字符匹配减轻了分词问题，同样不理解数字的含义。
+
+前面的指标都把starts与begins当作完全不同的词。METEOR在词级上逐步放宽匹配
+\scite{banerjee-lavie-2005-meteor}
+对齐分三个阶段进行：先匹配完全相同的词，再对剩余词匹配词干相同者，最后用同义词表匹配
+同义词；每个词至多参与一次对齐，若有多种对齐方式，选交叉最少的一种。设匹配词数为$m_a$，
+一元精确率$P=m_a/n$、召回率$R=m_a/m$。METEOR用召回权重为精确率九倍的调和平均，并按
+匹配词在两句中被切成多少个连续块施加碎片惩罚：
+\begin{equation}
+  F_{\mathrm{mean}}=\frac{10PR}{R+9P},\qquad
+  \mathrm{Pen}=0.5\Bigl(\frac{\mathit{ch}}{m_a}\Bigr)^3,\qquad
+  \mathrm{METEOR}=F_{\mathrm{mean}}(1-\mathrm{Pen}),
+  \label{eq:nlp-generation-meteor}
+\end{equation}
+其中$\mathit{ch}$是块数：一个块是一串在候选与参考中都相邻、且顺序一致的匹配词。所有匹配
+连成一块时惩罚最小，词序越乱块越多，惩罚越大，最多扣去一半。
+
+取参考“the meeting begins today”、候选“the meeting starts today”，并假定同义词表把starts
+与begins归入同一组。精确阶段匹配the、meeting、today，同义词阶段匹配starts与begins，
+$m_a=4$，$P=R=1$，四个词连成一块，$\mathrm{Pen}=0.5\times(1/4)^3\approx0.0078$，
+$\mathrm{METEOR}\approx0.992$；同一对句子的一元BLEU精确率只有$3/4$。若候选改为
+“today the meeting starts”，匹配仍是四个词，但today单独成块，$\mathit{ch}=2$，
+$\mathrm{Pen}=0.0625$，得分降为$0.9375$。回到$y_1$，它与$r$匹配五个词、连成一块，
+$\mathrm{METEOR}=\tfrac56(1-0.5\times0.2^3)\approx0.830$，日期错误仍只扣一个词的分。
+METEOR的词干器与同义词表依赖语言资源，没有这类资源的语言只能退化为精确匹配。
+
+\subsection{编辑任务指标}
+\label{sec:nlp-generation-edit-metrics}
+
+纠错与简化的输出大部分照抄来源。取来源$x$=“the previously announced meeting starts today”、
+参考$r$=“the meeting begins today”。原样输出$x$的ROUGE-1为$3/4$，删去背景的候选
+“the meeting starts today”同样是$3/4$：只看输出与参考的重合，分辨不出“做了正确的修改”
+和“什么也没改”。编辑指标因此同时读取来源、输出和参考，比较的是修改本身：要么分别统计
+增加、保留与删除了什么，要么先把输出与来源对齐成编辑，再与参考编辑比对。
+
+\subsubsection{SARI}
+\label{sec:nlp-generation-sari}
+
+SARI为文本简化设计，分别评价增加、保留和删除三种操作\scite{xu-etal-2016-optimizing}
+在单参考、集合计数的教学口径下，记来源、候选、参考的$n$元组集合为$X_n,Y_n,R_n$。增加
+比较$Y_n\setminus X_n$与$R_n\setminus X_n$，保留比较$Y_n\cap X_n$与$R_n\cap X_n$，删除比较
+$X_n\setminus Y_n$与$X_n\setminus R_n$。增加与保留用F1，精确率的分母是候选的操作数，召回
+的分母是参考的操作数；删除只用精确率，避免参考删得多时奖励不加选择的删除。一至四阶
+平均：
+\begin{equation}
+  \mathrm{SARI}=\frac{1}{4}\sum_{n=1}^{4}
+  \frac{F_{\mathrm{add},n}+F_{\mathrm{keep},n}+P_{\mathrm{del},n}}{3}.
+  \label{eq:nlp-generation-sari}
+\end{equation}
+分母为零的项记零，这沿用原实现的约定；多参考时还按参考中的频次加权，不能把参考简单拼接。
+
+取候选$y$=“the meeting starts today”，任务允许略去“此前已宣布”的背景。一阶上候选没有新增
+词，参考新增begins，增加F值为0；候选保留四词，参考要求保留其中三词，
+$P_{\mathrm{keep},1}=3/4$，$R_{\mathrm{keep},1}=1$，F值为$6/7$；候选删除previously与announced，
+都属于参考的删除，删除精确率为1。二阶候选只新增the meeting，参考新增the meeting、meeting
+begins、begins today，增加精确率1、召回$1/3$、F值$1/2$；候选保留的meeting starts与starts
+today都不在参考保留集合中，保留F值为0。各阶结果为
+\begin{center}
+  \small
+  \begin{tabular}{@{}crrrccc@{}}
+    \toprule
+    阶 & 增加数 & 保留数 & 删除数 & 增加F1 & 保留F1 & 删除P\\
+    \midrule
+    1 & 0/1/0 & 4/3/3 & 2/3/2 & 0 & $6/7$ & 1\\
+    2 & 1/3/1 & 2/0/0 & 3/5/3 & $1/2$ & 0 & 1\\
+    3 & 1/2/0 & 1/0/0 & 3/4/3 & 0 & 0 & 1\\
+    4 & 1/1/0 & 0/0/0 & 3/3/3 & 0 & 0 & 1\\
+    \bottomrule
+  \end{tabular}
+\end{center}
+每个操作数单元按“候选操作数／参考操作数／匹配数”排列。最终
+$\mathrm{SARI}=(13/21+1/2+1/3+1/3)/4=25/56\approx0.446$。
+
+原样输出$x$时，候选没有增加也没有删除，两项各阶都记零；一阶保留六词，参考保留其中三词，
+保留F值为$2/3$；二阶以上参考保留集合为空，保留F值为零。于是
+$\mathrm{SARI}=(2/9)/4=1/18\approx0.056$，远低于做了删除的候选，这正是编辑指标要区分的
+情形。starts与begins意思相近，参考的操作仍偏好后者，说明操作匹配不等于语义判断；背景是否
+允许删除也要由任务决定，不能反过来由SARI高低决定。
+
+\subsubsection{M2与ERRANT}
+\label{sec:nlp-generation-m2-errant}
+
+纠错要求的是最小必要修改，评价时关心每一处编辑是否正确。M2评分器把系统输出与来源对齐
+成编辑集合，与人工标注的参考编辑集合比对\scite{dahlmeier-ng-2012-better}
+同一变化可以切成“替换一个短语”或“几处替换加插入”，切法不同会让计数不同；M2在来源到
+输出的编辑格中保留所有最短对齐，加入跨越多个基本操作的短语编辑边，再选出与参考标注
+匹配最多的编辑序列。对句子$s$，记系统编辑集合为$e_s$、参考编辑集合为$g_s$，跨句累加：
+\begin{equation}
+  P=\frac{\sum_s|e_s\cap g_s|}{\sum_s|e_s|},\qquad
+  R=\frac{\sum_s|e_s\cap g_s|}{\sum_s|g_s|},\qquad
+  F_\beta=\frac{(1+\beta^2)PR}{\beta^2P+R}.
+  \label{eq:nlp-generation-m2}
+\end{equation}
+有多名标注者时，每句选使该句得分最高的那份参考。纠错任务通常取$\beta=0.5$，精确率的
+权重更大，因为把正确的句子改错比漏改一处更伤害用户。
+
+取来源“He go to school yesterday with book .”，零起始词坐标下参考编辑为
+$e_1:[1,2)\mapsto\text{went}$和$e_2:[6,6)\mapsto\text{a}$。候选甲执行两项，匹配2、预测2、
+参考2，$P=R=1$；候选乙只把go改为went，$P=1,R=1/2$；候选丙在甲上还把He改成The boy，
+新增了来源未支持的人物描述，$P=2/3,R=1$。按$F_{0.5}$，乙得$5/6$，丙得$5/7$；按F1，
+乙得$2/3$，丙得$4/5$，排序恰好相反。原始M2论文报告F1，$F_{0.5}$是后来的纠错评测指定的
+协议，比较时必须写明。
+
+M2只告诉我们改对了多少，不告诉我们哪类错误没改。ERRANT从平行句子自动抽取编辑并分类：
+它用结合词元与词性信息的Damerau--Levenshtein对齐找出编辑，按语言规则合并相邻编辑，再依据
+来源与目标词的词性、词形等特征把编辑归入错误类别\scite{bryant-etal-2017-automatic}
+这样，系统输出与参考都能自动转成带类别的编辑，评分不再依赖人工标注的编辑边界。在上例中，
+go到went可归入动词时态替换，缺a归入限定词缺失；按类别计数，乙的时态召回为1、限定词召回
+为0，比总分更直接地指出遗漏。ERRANT的对齐合并规则与类别体系是为英语设计的，中文没有
+词形变化与冠词，需要另定分词、编辑边界与错误类别。
+
+\subsection{学习型指标}
+\label{sec:nlp-generation-learned-metrics}
+
+重合指标对合法改写不宽容，编辑指标也只认参考中出现的操作。学习型指标用预训练模型比较
+语义：BERTScore不需训练，直接匹配上下文向量；BLEURT与COMET在人工评分上训练回归器，
+直接预测人会打多少分；无参考质量估计再去掉参考，只用来源与候选。它们的共同代价是分数
+依赖模型版本、语言覆盖与训练标注的领域，换了模型或领域就要重新检查与人工判断的一致性。
+
+\subsubsection{BERTScore语义匹配}
+\label{sec:nlp-generation-bertscore}
+
+BERTScore用上下文词元向量代替字面匹配\scite{nlp-generation-zhang2020bertscore}
+用同一预训练编码器分别编码候选与参考，取某一层的词元向量并归一化为单位长度，记候选
+向量为$\bm h_i$（$i=1,\ldots,|y|$），参考向量为$\bm r_j$（$j=1,\ldots,|r|$）。让候选中
+每个词元找最相似的参考词元，得到精确率；再从参考向候选反向匹配，得到召回：
+\begin{equation}
+  P_{\mathrm{B}}=\frac{1}{|y|}\sum_i\max_j\bm h_i^\top\bm r_j,\qquad
+  R_{\mathrm{B}}=\frac{1}{|r|}\sum_j\max_i\bm h_i^\top\bm r_j,
+  \label{eq:nlp-generation-bertscore}
+\end{equation}
+二者的调和平均为$F_{\mathrm B}$。这是双向最大相似匹配，不是一对一对齐，多个候选词元可以
+匹配同一个参考词元。常见虚词贡献的相似度高却信息少，可选的逆文档频率加权把平均改为
+加权平均，例如
+$R_{\mathrm B}=\sum_j\mathrm{idf}(r_j)\max_i\bm h_i^\top\bm r_j/\sum_j\mathrm{idf}(r_j)$。
+上下文向量的余弦普遍偏高，不相关的句子也常得到0.8以上的分数，可读性差；基线重标度
+用随机句对上的平均分$b$把分数线性变换为$(F_{\mathrm B}-b)/(1-b)$，只改变尺度，不改变排序。
+
+令参考词元为“甲／帮助／乙”，候选为“甲／协助／乙”。用四维标准单位向量构造教学表示：参考
+依次取$\bm e_1,\bm e_2,\bm e_3$，候选取$\bm e_1,0.8\bm e_2+0.6\bm e_4,\bm e_3$。中间向量的
+平方范数为$0.8^2+0.6^2=1$，余弦矩阵的对角线为$(1,0.8,1)$，其余为零。双向最大值相同，
+$P_{\mathrm B}=R_{\mathrm B}=F_{\mathrm B}=2.8/3=14/15\approx0.933$，而一元词重合只有$2/3$：
+近义替换得到了部分分数。若教学基线$b=0.8$，重标度后为$(14/15-0.8)/0.2=2/3$。再把候选改成
+“乙／帮助／甲”，若各词的表示仍分别靠近$\bm e_3,\bm e_2,\bm e_1$，矩阵只是交换了行，双向
+最大值全部为1，帮助者与被帮助者却已经互换。真实的上下文编码器会让“乙”在不同位置上的
+向量有所不同，可能降低分数，但匹配公式本身不检查角色，数字与否定同样要单独核对。
+
+\subsubsection{BLEURT与COMET}
+\label{sec:nlp-generation-comet}
+
+BERTScore的匹配规则是人为设计的，并不知道人工评价者在意哪些差异。BLEURT与COMET改为
+直接学习人工评分。
+
+BLEURT把参考与候选拼成一个序列送入BERT，取$[\mathrm{CLS}]$位置的向量$\bm v$，用线性层
+预测分数$\widehat q=\bm w^\top\bm v+b$，以均方误差在人工评分上训练\scite{sellam-etal-2020-bleurt}
+人工评分数据规模有限，且集中在少数语言与系统，直接微调容易在质量分布变化时失效。
+BLEURT因此在微调前加了一个预训练阶段：从维基百科句子出发，用掩码语言模型填空、回译和随机
+删词构造数百万对“参考—扰动句”，再为每对句子计算多种自动信号作为回归或分类目标，包括
+BLEU、ROUGE、BERTScore、回译似然、蕴含分类器给出的蕴含/中立/矛盾概率，以及该扰动是否来自
+回译。多任务预训练目标是各信号损失的加权和
+\begin{equation}
+  \mathcal L_{\mathrm{pre}}=\frac{1}{K}\sum_{k=1}^{K}\gamma_k\,\ell_k\bigl(\tau_k,\widehat\tau_k\bigr),
+  \label{eq:nlp-generation-bleurt}
+\end{equation}
+$\tau_k$是第$k$个信号的值，$\widehat\tau_k$是模型在该信号上的预测，$\gamma_k$是权重。
+预训练让模型先学会“什么样的扰动改变了意思、改变了多少”，再用少量人工评分校准到人的
+尺度。BLEURT只读参考与候选，不读源文。
+
+COMET面向翻译，把源文也作为输入\scite{rei-etal-2020-comet}
+它的估计器结构是：用跨语言编码器XLM-R分别编码源句$x$、候选$y$与参考$r$，对各层输出做
+可学习的加权混合，再对词元做平均池化，得到句向量$\bm s,\bm h,\bm r$；把候选与另两者的
+关系写成特征
+\begin{equation}
+  \bm f=[\bm h;\bm r;\bm h\odot\bm s;\bm h\odot\bm r;|\bm h-\bm s|;|\bm h-\bm r|],
+  \label{eq:nlp-generation-comet}
+\end{equation}
+交给前馈网络回归人工质量分，以均方误差$n^{-1}\sum_i(\widehat q_i-q_i)^2$训练。逐元素乘积
+衡量两句在各维上的一致程度，绝对差衡量偏离程度；源向量不单独作为一块，但通过乘积和
+差值参与预测。与BLEURT的交叉编码不同，COMET分别编码三句，候选与参考之间没有逐词元
+注意力，换来的是可以预先缓存源与参考的向量。若教学标签为$(1.0,0.2)$，预测为$(0.8,0.5)$，
+这一批的损失为$(0.04+0.09)/2=0.065$，仅演示回归目标。
+
+读取源文的好处在参考不完全时显现。源文补充记录为“资料袋共12份”，正确候选为“There are 12
+information packs”，错误候选把12改成21；若参考恰好写成“Twelve packs are provided”，两条
+候选与它的词重合几乎一样低，而COMET可以从源向量与候选向量的差别中察觉第二条的数字不符。
+这只是有机会察觉，句向量并不保证对数字交换敏感，关键数字仍要按上一节的方法直接核验。
+系统级分数是固定测试集上句级预测的平均，整体均值高不说明每个关键句都合格。
+
+\subsubsection{无参考质量估计}
+\label{sec:nlp-generation-qe}
+
+上线后的翻译系统没有参考，BLEU、BLEURT和参考型COMET都无从计算。\term{无参考质量估计}
+（reference-free quality estimation, QE）只输入源文与候选，预测候选的质量。它仍需人工质量
+标注来训练，只是推断时不再需要参考；把参考型模型的参考字段删掉并不能得到同样有效的
+QE模型。QE的输出有两种粒度：句级回归一个质量分；词级或跨度级为每个词元预测OK或BAD标签，
+或直接预测错误跨度及其严重程度，后者能指出该改哪里。COMET框架下的CometKiwi把源文与候选
+拼接后联合编码，同时输出句级分数与词级标签\scite{rei-etal-2022-cometkiwi}
+官方发布的模型中，\code{wmt22-comet-da}需要源文、候选与参考，\code{wmt22-cometkiwi-da}只需
+源文与候选，两者的输入、训练标签与分数尺度不同，需分别记录。
+
+QE有三种主要用途。其一是候选重排：对同一源句生成多个候选，按QE分数选优；也可以把参考型COMET当作效用函数，
+以其他候选充当伪参考做最小贝叶斯风险解码，两种做法及其代价见第~\ref{sec:nlp-generation-qe-mbr}小节。
+其二是过滤：把低分译文送人工复核，或从回译数据中剔除低质量句对。其三是无参考监控：
+跟踪线上译文质量随时间的变化。用同一个指标既选候选又报告质量，会把选择偏差算作质量
+提升，报告时应换用另一个指标或人工评价。QE分数不是“译文正确的概率”，在训练语向之外、
+陌生领域、术语密集或需要篇章上下文的输入上，校准与错误分布都要另行检查；数字与角色
+绑定仍需独立核验。
+
+\subsection{人工评价与指标元评价}
+\label{sec:nlp-generation-human-meta}
+
+前面的指标都声称在近似人工判断，人工判断本身也需要规定：评价者看什么材料、按什么类别
+记错、错误多重算多少分。元评价则反过来，以人工判断为参照衡量一个自动指标可信到什么
+程度、可以在什么粒度上使用。
+
+\subsubsection{MQM错误标注与人工比较}
+\label{sec:nlp-generation-mqm}
+
+只给译文打一个总分，既难以复核，也不告诉译者怎样修订。\term{多维质量指标}（Multidimensional
+Quality Metrics, MQM）是按错误类别与严重程度组织人工标注的框架：评价者在译文中标出每处
+错误的位置，归入准确性（误译、遗漏、增译）、流畅性、术语、风格等类别，并标注严重程度。
+片段的罚分是各错误按严重程度加权后的和：
+\begin{equation}
+  \mathrm{MQM}(y)=\sum_{e\in\mathcal E(y)}w_{\mathrm{sev}(e)},
+  \label{eq:nlp-generation-mqm}
+\end{equation}
+$\mathcal E(y)$是标出的错误集合，罚分越高质量越差。专家MQM标注的研究使用主要错误记5分、
+次要错误记1分的权重，并发现非专家众包评分可能把人工译文排在机器译文之后，而专家MQM能
+纠正这一排序\scite{nlp-intro-freitag2021}
+具体研究还要规定类别子集、标注单位、评价者能否看到篇章上下文、复评方式与汇总规则，
+这些设置不是一个缩写就能确定的。
+
+固定源句“校外来宾须在4月16日18:00前提交报名信息”。候选甲为“Guests are welcome to join”，
+候选乙为“External guests must, before 18:00 on April 16, submit registration information”。
+甲简短流畅，却没有告诉校外来宾必须完成什么；乙较生硬，但保留了角色、动作与截止条件。
+只问“更喜欢读哪句”与问“能否据此正确参加活动”，可能得到相反的结论。评价界面应提供
+同一份源文与用途说明，随机交换候选的左右位置，分别收集偏好、错误位置与用途是否满足。
+按上述权重，甲的关键条件遗漏记为一处主要错误，罚分为5；乙无已识别错误，罚分为0。
+若用途规定任何关键条件遗漏都不合格，还应同时记录甲未通过硬验收，不能让语料平均罚分
+掩盖这次失败。
+
+局部错误标注与总体差异的证据也不同。一个教学的配对文档罚分差为$d=(5,0,5,0)$，正值表示
+甲更差。若暂把四份文档看作独立样本，平均差为2.5，样本标准差约2.887，标准误约1.443，
+自由度3的$t_{0.975}=3.182$给出区间$2.5\pm3.182\times1.443\approx[-2.09,7.09]$，包含零。
+样本这么少，不能断言总体上甲更差；但这不妨碍对已核实的那一处遗漏作出明确修订。区间
+估计与重采样的一般做法见第~\ref{sec:nlp-eval-uncertainty}小节。
+
+\subsubsection{指标与人工判断的相关性}
+\label{sec:nlp-generation-meta-eval}
+
+一个指标好不好，要看它的排序与人工判断有多一致，这类研究称为\term{元评价}
+（meta-evaluation）。一致性分两个粒度衡量。系统级比较各系统在整个测试集上的平均指标分
+与平均人工分，回答“能否用它选出更好的系统”；段级比较同一来源句的不同译文，回答“能否
+用它判断单句好坏或做候选重排”。两种粒度上的结论可以不同。
+
+系统级常用Pearson相关系数。设四个系统的教学人工分依次为72、75、78、80，指标分依次为
+30、33、32、35，两组均值为76.25与32.5，离差乘积之和为18.5，离差平方和分别为36.75与13，
+相关系数$18.5/\sqrt{36.75\times13}\approx0.846$。相关不低，但指标把第二、三个系统的顺序
+排反了。若再加入一个明显很差的系统，人工分40、指标分10，相关系数升到约0.995：一个离群
+系统就能让相关显得近乎完美，却没有让指标更会区分前四个接近的系统
+\scite{mathur-etal-2020-tangled}
+系统级相关因此应在去掉离群系统后复核，或改报两两系统排序的一致比例。
+
+段级常用\term{Kendall秩相关系数}（Kendall rank correlation coefficient），它只看成对排序
+是否一致。对$n$个对象的全部$\binom n2$对，若人工与指标对某对的排序相同记为一致，相反
+记为不一致，则
+\begin{equation}
+  \tau=\frac{\#\text{一致}-\#\text{不一致}}{\#\text{一致}+\#\text{不一致}} .
+  \label{eq:nlp-generation-kendall}
+\end{equation}
+无平局时分母就是$\binom n2$。设同一来源句的四个系统译文，人工分为$(60,75,40,90)$，指标分为
+$(0.52,0.48,0.30,0.81)$。六对中只有第1、2条译文的顺序相反，$\tau=(5-1)/6=2/3$。人工直接
+打分本身有噪声，分差很小的两条译文谁好谁坏并不可靠；WMT曾只保留人工分差超过25分的译文
+对来计算$\tau$\scite{ma-etal-2019-results}
+本例按此规则只剩第1与4、第2与3、第3与4三对，全部一致，$\tau=1$。阈值与平局处理都会
+改变$\tau$，报告时必须写明。
+
+WMT指标评测任务把这些做法组织成年度比较：参评者提交自己的指标在当年翻译任务全部系统
+输出上的分数，组织者收集人工判断，按语向分别计算系统级与段级相关，并用重采样或成对
+显著性检验判断指标之间的差异是否可靠。人工判断起初主要来自众包的直接评估打分，自2021年
+起改以专家MQM标注为主要参照\scite{freitag-etal-2021-results}
+这些评测反复显示，学习型指标与人工判断的相关普遍高于BLEU，但在不同语向、领域与高质量
+系统之间的排序上仍不稳定；在一个语向或领域上的元评价结论，不能直接搬到另一个。
+
+\subsection{大语言模型评判}
+\label{sec:nlp-generation-llm-judge}
+
+参考与人工评分都难以覆盖的维度，例如摘要是否连贯、对话回复是否有趣，可以写成文字准则，
+让大语言模型按准则打分。第~\ref{sec:nlp-eval-judge-protocol}小节已给出\term{大模型评判}的
+三种形式、位置与长度偏差的修正，以及用一致率和$\kappa$校准评判模型的方法；这里只讨论
+生成任务特有的做法。
+
+G-Eval把评判拆成三步\scite{liu-etal-2023-geval}
+第一步写出任务说明与一个维度的评价准则，例如摘要的一致性定义为“摘要中的事实都能在原文中
+找到支持，按1至5分打分”。第二步让模型根据准则自行生成一串评价步骤，例如“先通读原文，再
+逐条找出摘要中的事实陈述，检查每条是否与原文一致”，即思维链形式的评价程序。第三步把
+原文、摘要与这些步骤填进评分表单，让模型输出分数。直接取模型输出的整数分，大量样本会
+挤在同一个分数上，难以区分；G-Eval改用分数词元的概率加权求期望：
+\begin{equation}
+  \mathrm{score}=\sum_{s=1}^{5}s\cdot p(s\mid\text{准则},\text{步骤},x,y).
+  \label{eq:nlp-generation-geval}
+\end{equation}
+接口不提供词元概率时，原文以多次采样的频率近似$p(s)$。设两条摘要的教学分数分布为
+$(0.05,0.10,0.20,0.45,0.20)$与$(0,0.05,0.10,0.50,0.35)$，取最可能的整数分都是4，期望分则为
+3.65与4.15，后者更好的信号得以保留。
+
+翻译评价上也有类似做法：直接让模型按0至100分给译文打分，或让模型按MQM的类别与严重程度
+标出错误跨度，再按式\eqref{eq:nlp-generation-mqm}换算成分数
+\scite{kocmi-federmann-2023-large,kocmi-federmann-2023-gemba}
+后者的输出可以逐条复核，与人工MQM标注的接口一致。按维度分别评判也是生成任务的常见
+做法：摘要按一致性、连贯性、流畅性与相关性四个维度分别打分，与SummEval的人工标注维度对应，
+便于逐维做元评价。
+
+评判模型在生成任务上有一种额外偏差：它倾向于给大语言模型写出的文本更高的分数，即使人工
+评价者认为人写的摘要更好；G-Eval的作者也报告了这一倾向。评判与被评系统同源时，这种偏好
+会放大。因此，评判的分数与上一小节的指标一样，要在本任务、本语言的人工标注子集上做
+元评价，评判提示、模型版本与解码设置任一变化都要重新校准。忠实性等有来源可查的维度，
+仍应优先用第~\ref{sec:nlp-generation-faithfulness}小节的核验程序，评判模型适合作补充。
+
+表~\ref{tab:nlp-generation-metrics}汇总本节各指标的测量对象、所需输入与主要失效情形。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \renewcommand{\tabularxcolumn}[1]{>{\raggedright\arraybackslash}p{#1}}
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}>{\raggedright\arraybackslash}p{30mm}XX@{}}
+    \toprule
+    指标 & 所需输入 & 测量对象 & 主要失效情形\\
+    \midrule
+    SummaC & 来源、输出 & 每个输出句能否由来源推出 & 跨句证据被分句切断；平均冲淡单个严重错误\\
+    QAFactEval & 来源、输出 & 选出的信息点在来源中能否答出相同答案 & 只覆盖被选中的信息点；三模型误差串联\\
+    BLEU & 输出、参考 & 截断$n$元精确率与长度 & 合法改写低分；句级不稳定；关键数字错误扣分少\\
+    ROUGE & 输出、参考 & 参考$n$元或LCS的覆盖 & 同上；多参考与汇总方式需写明\\
+    chrF、METEOR & 输出、参考 & 字符重合；含词干与同义词的对齐与词序 & 依赖语言资源；仍不理解数字与角色\\
+    SARI & 来源、输出、参考 & 增加、保留、删除操作 & 近义操作不计；删除是否允许由任务决定\\
+    M2、ERRANT & 来源、输出、参考编辑 & 编辑的精确率与召回，按类别细分 & 编辑边界与类别依赖语言\\
+    BERTScore & 输出、参考 & 上下文向量的双向最大匹配 & 角色互换可能高分；依赖编码器与层\\
+    BLEURT、COMET & 输出、参考；COMET另需来源 & 预测的人工质量分 & 领域与语向外的校准；对数字交换不保证敏感\\
+    质量估计 & 来源、输出 & 无参考的质量分或错误跨度 & 用于选择后再报告会高估；校准随领域变化\\
+    MQM & 来源、输出、人工 & 带类别与严重程度的错误 & 成本高；类别与权重需按用途规定\\
+    大模型评判 & 准则、来源、输出 & 按文字准则的打分或错误标注 & 偏好模型生成文本；须在本任务上元评价\\
+    \bottomrule
+  \end{tabularx}
+  \caption{生成评价指标的输入与测量对象。各指标测量不同的事件，分数不能相互换算；关键事实与
+  硬约束应由来源核验或值绑定检查单独判定，再用这些指标观察表达质量。}
+  \label{tab:nlp-generation-metrics}
+\end{table*}
+
+\Needspace{8\baselineskip}

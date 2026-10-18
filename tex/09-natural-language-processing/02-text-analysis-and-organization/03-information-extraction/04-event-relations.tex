@@ -1,0 +1,320 @@
+\section{事件关系抽取}
+\label{sec:nlp-extraction-event-relations}
+
+两次事件没有合并为一次，不意味着它们彼此无关。报名先于活动、改期由场地冲突引起、
+讨论是会议的一个环节，分别表达时间、因果和组成联系。本节在事件已经确定的前提下，
+抽取事件之间的这些有向关系。MAVEN-ERE在同一批文档的同一组事件上标注了共指、
+时间、因果与子事件四类关系，含约5.8万条因果关系和1.6万条子事件关系，
+使四类任务可以在共享输入上比较和联合训练\scite{wang2022mavenere}
+EventRelBench则以选择题形式在句级与文档级两种粒度上评估大模型对事件关系的理解
+\scite{gong2025eventrelbench}
+给定事件对再选答案，与从原文恢复全部关系是两种任务设置。
+
+事件关系的挑战有四项。一是规模：$m$个事件有$O(m^2)$个有序对，而绝大多数对没有关系，
+标签极度稀疏。二是证据分布：许多关系由上下文隐含，或跨越多个句子。
+三是全局一致性：时间关系要满足逆关系对称与传递，组成关系要无环，
+局部分类器各自决策时会产生“甲先于乙、乙先于丙、丙又先于甲”的矛盾。
+四是类型间的相互约束：原因不晚于结果，父事件在时间上包含子事件，共指事件共享全部关系。
+方法谱系据此分三层：局部分类器对事件对打分；全局推断（区间约束传播、整数线性规划）
+在局部分数上恢复一致结构；约束感知的学习（结构化学习、可微逻辑约束、多类联合训练）
+把约束提前到训练阶段。表~\ref{tab:nlp-extraction-event-relation-methods}在节末汇总。
+
+\subsection{时间表达与时间关系}
+\label{sec:nlp-extraction-temporal}
+
+时间信息有三层对象：“明天”是待归一化的时间表达，某个日期属于哪次事件是关联，
+两事件是否先后或重叠是关系。三层彼此独立：开始时间都找对了，也未必知道结束时间和区间关系；
+章首通知只给出活动开始时刻而没有时长，不能补出结束时间。
+日期粒度的“4月18日”表示一个日历日范围，“4月16日18:00前”是严格早于该时刻的条件。
+三层任务依次由规则归一化、事件对分类器和区间代数与整数线性规划处理。
+
+\subsubsection{HeidelTime与SUTime时间归一化}
+\label{sec:nlp-extraction-time-normalization}
+
+时间表达的归一化以规则为主：先用模式识别日期、时刻、时长或周期表达，
+再结合语言资源与参照时间输出TIMEX3标准值。HeidelTime把模式、归一化资源与文本类型
+条件分开组织\scite{strotgen2010heideltime}
+SUTime以规则和组合机制识别、解析时间表达，原始资源以英语为主\scite{chang2012sutime}
+中文规则的教学适配是：匹配“$k$天后”，选出参照日期$d_0$，计算$d_0+k$个日历日。
+设补充句发布于2025年4月15日：“明天18:00前报名，三天后14:00开始。”
+“明天”以文档日期为参照，得到\code{2025-04-16T18:00:00+08:00}；
+“三天后”从发布日期加三个日历日，得到\code{2025-04-18T14:00:00+08:00}，与章首通知一致。
+参照并不总是文档日期：“读书会4月18日举行，三天后公布纪要”应以活动日为参照得到4月21日；
+规则因此输出值、粒度与参照来源，缺少参照时保留$d_{\mathrm{ref}}+3\text{天}$。
+
+\subsubsection{事件对时间关系分类}
+\label{sec:nlp-extraction-temporal-classifier}
+
+给定有序事件对$(e_i,e_j)$，编码两事件的触发、相关时间表达及上下文，
+形成$\bm{g}_{i,j}\in\mathbb{R}^{d}$（例如两触发表示的拼接），关系头为
+$p(r\mid e_i,e_j,x)=\operatorname{softmax}(\bm{W}\bm{g}_{i,j}+\bm{b})_r$，
+$\bm{W}\in\mathbb{R}^{|T|\times d}$，以有向时间标签的交叉熵训练。
+标签集$T$随语料而定。TimeBank-Dense要求对一定窗口内的全部事件对标注，
+标签为先于、后于、包含、被包含、同时与模糊六类\scite{nlp-extraction-cassidy2014dense}
+MATRES只比较事件的开始点，把标签减为先于、后于、相等、模糊四类，以提高标注一致性
+\scite{nlp-extraction-ning2018matres}
+标签集决定端点含义：同一对事件在两个语料中的正确答案可能不同。
+
+对“报名截止时点、活动开始时点”这一有向对，两者相差44小时，应输出“先于”；
+交换事件顺序时应输出逆关系“后于”。
+
+神经分类器出现之前，CAEVO用\term{筛子架构}（sieve architecture）组织多个分类器
+\scite{nlp-extraction-chambers2014caevo}
+它把若干规则与机器学习分类器按精确率从高到低排成序列，每个筛子只给它有把握的事件对加标签；
+每加一批标签就计算传递闭包，把推得的关系一并加入；后面的筛子不能推翻或违反前面的决定。
+筛子架构的好处是天然保持一致，代价是早期错误会被传递闭包放大，且各筛子的次序需要人工调定。
+
+\subsubsection{Allen区间约束与全局关系恢复}
+\label{sec:nlp-extraction-allen}
+
+局部分类器之间的矛盾需要全局方法消除。Allen用13种基本关系描述两个非退化时间区间的位置：
+先于、相接、重叠、同始而先结束、严格位于内部、同终而晚开始，这六种及其逆关系，再加相等
+\scite{allen1983intervals}
+设区间$I=[a,b)$与$J=[c,d)$，$a<b$，$c<d$。先于要求$b<c$，相接要求$b=c$，
+重叠要求$a<c<b<d$，严格位于内部要求$c<a<b<d$。事件只有开始时刻时，
+不能直接套用完整区间关系，应保留未知终点或改用点时间关系。
+
+不确定的关系用基本关系的集合$R_{i,j}$表示。组合$R_{i,j}\circ R_{j,k}$给出两条边允许的$(i,k)$关系，
+路径一致性反复收缩
+\begin{equation}
+  R_{i,k}\leftarrow R_{i,k}\cap
+      (R_{i,j}\circ R_{j,k}).
+  \label{eq:nlp-extraction-allen-propagation}
+\end{equation}
+例如$\mathrm{before}\circ\mathrm{before}=\{\mathrm{before}\}$，
+$\mathrm{meets}\circ\mathrm{meets}=\{\mathrm{before}\}$。
+若$a$先于$b$、$b$先于$c$，而$R_{a,c}=\{\mathrm{before},\mathrm{overlaps}\}$，更新后只剩before；
+若原集合只有after，交集为空，暴露冲突。对一般的Allen关系网络，路径一致性不是可满足性的充分条件。
+
+要兼顾模型分数，可为每个有序对与基本关系设二元变量$x_{i,j}^{r}$，求
+\[
+  \max_{\bm{x}}\sum_{i\ne j}\sum_r s_{i,j}^{r}x_{i,j}^{r}
+  \quad\text{s.t.}\quad
+  \sum_r x_{i,j}^{r}=1,\qquad x_{i,j}^{r}=x_{j,i}^{r^{-1}},
+\]
+其中$s_{i,j}^{r}$是局部对数概率，$r^{-1}$是逆关系；三元组合约束为
+\begin{equation}
+  x_{i,j}^{r}+x_{j,k}^{s}
+  -\sum_{t\in r\circ s}x_{i,k}^{t}\leq1,
+  \label{eq:nlp-extraction-temporal-ilp}
+\end{equation}
+即前两条边都选中时，第三条必须落入组合允许的集合。
+这种“局部分类加整数线性规划推断”与第~\ref{sec:nlp-analysis-srl}节语义角色标注中的
+ILP恢复是同一构造（式~\eqref{eq:nlp-analysis-srl-ilp}）。
+教学三事件的候选先后边权为$a\to b:9$、$b\to c:8$、$c\to a:6$，反方向均为0，
+要求三者有确定先后。局部取最大会成环；枚举六种全序，$a<b<c$总分17最高，
+它舍去权重6的边，并由约束得到$a<c$。
+
+上述推断只在测试时使用约束，训练时局部分类器并不知道约束的存在。
+Ning等把推断放进训练循环，用结构化感知机学习时间关系\scite{nlp-extraction-ning2017structured}
+每篇文档的预测不再是逐对取最大，而是带约束的整体最优；
+参数按“金标准图的特征减去约束推断图的特征”更新，如算法~\ref{alg:nlp-extraction-temporal-structured}。
+原文还用这一推断步骤处理语料中缺失的关系标注。代价是每次参数更新都要求解一次整数线性规划，
+文档中事件数增多时训练变慢。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[带全局约束推断的时间关系结构化学习]
+  \label{alg:nlp-extraction-temporal-structured}
+  \begin{algorithmic}[1]
+    \Require 训练文档$\{(x^{(n)},\bm{y}^{(n)})\}$，事件对特征$\bm{\phi}(x,i,j,r)$，
+      约束集合$\mathcal{C}$（逆关系对称、三元组合），轮数$E$
+    \Ensure 权重$\bm{w}$（取各步平均）
+    \State $\bm{w}\gets\bm{0}$
+    \For{$e=1,\ldots,E$}
+      \For{每篇文档$(x,\bm{y})$}
+        \State $\hat{\bm{y}}\gets\argmax_{\bm{y}'\in\mathcal{C}}
+          \sum_{i\ne j}\bm{w}^{\top}\bm{\phi}(x,i,j,y'_{i,j})$\Comment{求解式~\eqref{eq:nlp-extraction-temporal-ilp}}
+        \If{$\hat{\bm{y}}\ne\bm{y}$}
+          \State $\bm{w}\gets\bm{w}+\sum_{i\ne j}\bigl(\bm{\phi}(x,i,j,y_{i,j})-\bm{\phi}(x,i,j,\hat{y}_{i,j})\bigr)$
+        \EndIf
+      \EndFor
+    \EndFor
+    \State \Return 平均后的$\bm{w}$
+  \end{algorithmic}
+\end{algorithm}
+
+\subsection{因果关系}
+\label{sec:nlp-extraction-causal}
+
+“天气变差后会议取消”表达先后，“因天气变差会议取消”表达文本中的因果主张。
+因果抽取识别的是这样的主张及其方向，不是在观测数据上估计干预效应。
+挑战有三项：多数因果是隐式的，没有“因为”“导致”等连接词；
+标注数据少，常用的EventStoryLine只有258篇文档\scite{nlp-extraction-caselli2017esc}
+Causal-TimeBank只有318对因果事件\scite{nlp-extraction-mirza2014causal}
+跨句的因果对远多于句内，在EventStoryLine中句间因果约3900对，句内约1800对
+\scite{nlp-extraction-chen2022ergo}
+三项挑战分别对应下面三类方法：事件对分类处理显式与隐式情形，
+知识增强扩充训练数据，文档级因果图聚合跨句证据。
+
+\subsubsection{显式与隐式因果识别}
+\label{sec:nlp-extraction-causal-explicit}
+
+显式因果可由连接词、因果谓词和依存路径产生候选，再把原因和结果绑定到已识别的事件；
+隐式因果没有这些标志，只能依靠事件对的上下文表示。两种情形共用一个有向分类头。
+设两事件的上下文表示为$\bm{u},\bm{v}\in\mathbb{R}^{d}$，关系$r$的双仿射分数为
+$z_r=\bm{u}^{\top}\bm{W}_r\bm{v}+\bm{w}_r^{\top}[\bm{u};\bm{v}]+b_r$，
+$\bm{W}_r\in\mathbb{R}^{d\times d}$；标签可为原因指向结果、结果指向原因、无因果，
+以有向事件对标注作交叉熵训练；连接词可作为特征或输入标记加入，但“后”“随后”这类时间连接词不表示因果。
+“天气变差使交通中断，也导致会议取消”中，交通中断与会议取消只有共同原因，不能补出二者之间的因果。
+
+因果与时间相互约束：在一般的因果语义下，原因不晚于结果。
+Ning等把这一点写进联合推断\scite{nlp-extraction-ning2018joint}
+时间变量$x^{r}_{i,j}$沿用式~\eqref{eq:nlp-extraction-temporal-ilp}，
+再加因果变量$c_{i,j}\in\{0,1\}$与约束$c_{i,j}\leq x^{\mathrm{before}}_{i,j}$，
+目标是两类局部分数之和。于是有把握的“后于”会否决弱的因果判断，强的因果判断也能纠正时间关系；
+持续过程或预期原因需要放宽这一约束。
+
+\subsubsection{知识增强的因果识别}
+\label{sec:nlp-extraction-causal-knowledge}
+
+标注稀少时，一个自然的想法是用外部知识自动造出更多训练句。
+难点在于：自动找到的句子要同时满足两条，事件对确有因果，句子确实表达了这种因果。
+KnowDis用远程监督解决前者、用常识过滤解决后者\scite{nlp-extraction-zuo2020knowdis}
+第一步扩充事件对：对每个已标注的因果对，用WordNet取两事件中心词的同义词与上位词，
+用VerbNet取同一动词类中的词，交叉组合成新的候选因果对；
+再以TransE式的间隔损失（第~\ref{sec:nlp-extraction-kge}节）学习一个因果表示空间，
+按两事件的距离排序，保留最近的10\%。第二步远程标注：
+在纽约时报语料中随机抽取5\%的句子，凡含有这些事件对的句子标为因果候选，
+这与第~\ref{sec:nlp-extraction-relations}节关系抽取的远程监督同理，也带来同样的噪声。
+
+第三步用常识过滤噪声。KnowDis从COPA这类“前提--原因或结果”的常识推理数据和已标注数据中，
+统计原因侧词$i$与结果侧词$j$的共现，从必要性$p(i\mid j)$与充分性$p(j\mid i)$两个方向度量因果强度，
+并用指数$\alpha$惩罚高频词：
+\begin{equation}
+  \mathrm{CS}(i,j)=\Bigl(\frac{p(i\mid j)}{p(i)^{\alpha}}\Bigr)^{\lambda}
+                   \Bigl(\frac{p(j\mid i)}{p(j)^{\alpha}}\Bigr)^{1-\lambda}.
+  \label{eq:nlp-extraction-knowdis-cs}
+\end{equation}
+$\alpha=1$时两个因子都等于点互信息的指数形式$p(i,j)/(p(i)p(j))$。
+候选句按两事件之间文本片段的平均因果强度排序：两事件由因果连接词相连的保留前50\%，其余只保留前10\%。
+最后用人工数据预训练的检测器重新标注这些句子，只保留仍判为因果的部分，并在训练中逐步加入。
+
+KnowDis的数据生成与识别模型相互独立。LearnDA把二者放进\term{对偶学习}（dual learning）框架：
+识别器$I$做“句子$\to$关系”，生成器$G$做“事件对与关系$\to$句子”，两个方向互为对偶任务
+\scite{nlp-extraction-zuo2021learnda}
+事件对仍由WordNet、VerbNet扩充，并从FrameNet、PDTB2的因果连接词在KBP语料中找出新的对；
+生成器分三步造句：为事件分配与原句同类型且BERT表示最相近的实体，
+用掩码语言模型在事件与实体之间填充连接词语，再按填充词元的平均概率与和已标注句子的
+表示相似度加权打分，保留前一部分。两个模型通过两种奖励交互：因果奖励$R_c$取识别器对句子判断的概率，
+判对为正、判错为负；语义对齐奖励$R_s$取生成器在给定关系下生成该句词元的平均概率。
+原始循环中生成器造句、识别器判断，生成器按$R_s$与$R_c$的加权和做策略梯度更新；
+对偶循环中识别器判断真实句子、生成器重建，识别器按同样两种奖励更新。
+与KnowDis相比，LearnDA让生成随识别任务调整，代价是同时训练两个模型并承受强化学习的方差。
+
+\subsubsection{跨句与文档级因果图}
+\label{sec:nlp-extraction-causal-document}
+
+句间因果缺少局部线索，但常能通过中间事件推出：若“断裂”导致“停电”，
+“停电”又导致“抢修”，就可以推出“断裂”与“抢修”的因果。
+ERGO把这种传递性直接建进图结构\scite{nlp-extraction-chen2022ergo}
+它不以单个事件为节点，而以\emph{事件对}为节点：对文档中$m$个事件的每个有序对$(e_i,e_j)$
+建一个节点，初始表示为两事件上下文表示的拼接
+$\bm{v}^{(0)}_{i,j}=[\bm{h}_{e_i};\bm{h}_{e_j}]\in\mathbb{R}^{2d}$；
+只有共享至少一个事件的两个节点之间才连边，因为没有共同事件的两对之间不存在中介链条。
+文档编码用BERT分段处理或直接用Longformer。
+
+在这张关系图上，ERGO用关系图Transformer更新节点：节点$a$对邻居$b$的注意力为
+\begin{equation}
+  \alpha_{a,b}=\operatorname*{softmax}_{b\in\mathcal{N}(a)}
+  \frac{(\bm{v}_a\bm{W}_q)(\bm{v}_b\bm{W}_k)^{\top}}{\sqrt{d_k}},\qquad
+  \bm{v}'_a=\sum_{b\in\mathcal{N}(a)}\alpha_{a,b}\,\bm{v}_b\bm{W}_v,
+  \label{eq:nlp-extraction-ergo-attention}
+\end{equation}
+多头输出拼接后经$\bm{W}_o$投影，堆叠若干层后，每个节点表示与文档的CLS表示拼接，
+做因果与否的二分类。由于因果对远少于非因果对，ERGO用$\alpha$平衡的\term{焦点损失}（focal loss）
+\begin{equation}
+  L_{\mathrm{FL}}=-\sum_{(i,j)}\alpha_{i,j}(1-p_{i,j})^{\gamma}\log p_{i,j},
+  \label{eq:nlp-extraction-focal}
+\end{equation}
+其中$p_{i,j}$是模型给真实类别的概率，$\gamma\geq0$；判得越准的样本权重$(1-p)^{\gamma}$越小，
+训练集中到难分的样本上，$\gamma=0$时退化为加权交叉熵。
+
+事件对节点的代价是规模：$m$个事件有$O(m^2)$个节点、约$O(m^3)$条边，长文档需要剪枝候选对。
+外生因素可以切断因果链条，因此ERGO只把传递性作为图结构的归纳偏置，而非硬约束。
+
+\subsection{组成与子事件关系}
+\label{sec:nlp-extraction-subevents}
+
+补充教学安排“本次会议由专题报告和分组讨论两个环节组成”，支持报告、讨论是会议的子事件。
+它不同于事件共指（报告不是整场会议），也不同于类型上下位（“学术会议是一类会议”谈的是类别）；
+午休即使在会议时间范围内也未必是会议的一部分，时间包含不是充分条件。
+挑战是父子方向、层次的无环性，以及子事件关系与共指、时间关系的相互约束。
+方法先做层次关系分类再施加无环约束，进一步把这些约束与其他事件关系联合学习。
+
+\subsubsection{层次关系分类与无环约束}
+\label{sec:nlp-extraction-subevent-acyclic}
+
+HiEve把新闻中的事件层次标为父子、子父、共指与无关四类\scite{nlp-extraction-glavas2014hieve}
+给定事件对$(p,c)$，把两者锚点、参与者及上下文编码为$\bm{g}_{p,c}$，
+用线性或双仿射头在这四类上分类，以有向实例对的交叉熵训练。
+若所选定义要求组成关系无环，可对选边变量$z_{p,c}$作整数优化：
+最大化$\sum_{p,c}w_{p,c}z_{p,c}$，并用拓扑次序变量$u_p$约束
+\begin{equation}
+  u_p+1\leq u_c+M(1-z_{p,c}),\qquad
+  0\leq u_p\leq N-1,\quad M=N,
+  \label{eq:nlp-extraction-subevent-ilp}
+\end{equation}
+其中$N$是事件节点数。选中边时强制父在子之前；这里的次序是图的拓扑次序，不是时间先后。
+允许一个环节属于多个上层活动时，结构是有向无环图，而非单父树。
+
+教学候选为会议$\to$报告得分3.0、报告$\to$讨论得分2.0、讨论$\to$会议得分0.2。
+局部阈值0.1会选出环，无环最大权子图舍弃0.2的边，保留总分5.0。
+但原文把报告和讨论列为并列环节，“报告$\to$讨论”缺乏语义支持：
+去环只清除结构矛盾，最终仍应只保留会议到两个环节的边。
+
+整数规划只在推断时起作用。Wang等把时间与子事件关系的逻辑约束改写成可微的训练损失
+\scite{nlp-extraction-wang2020jcl}
+记模型给关系$\alpha$的概率为$\alpha(e_1,e_2)$。对称性要求一个关系与其逆关系同真同假，
+损失为$|\log\alpha(e_1,e_2)-\log\bar{\alpha}(e_2,e_1)|$；
+合取规则“$\alpha(e_1,e_2)\wedge\beta(e_2,e_3)\to\gamma(e_1,e_3)$”在乘积t-范数下转为
+\begin{equation}
+  L_{t}=\bigl|\log\alpha(e_1,e_2)+\log\beta(e_2,e_3)-\log\gamma(e_1,e_3)\bigr|,
+  \label{eq:nlp-extraction-transitivity-loss}
+\end{equation}
+“推出$\delta$不成立”的规则把$\log\gamma$换成$\log(1-\delta)$。
+例如“甲先于乙”与“乙是丙的父事件”推出“甲先于丙”，并排除“甲是丙的子事件”，
+这条规则同时涉及时间与子事件两类关系。总损失为标注交叉熵加
+$\lambda_S$倍的对称损失与$\lambda_C$倍的合取损失。
+与算法~\ref{alg:nlp-extraction-temporal-structured}相比，这里不在训练中求解整数规划，
+而是把每条规则写成损失项，梯度直接把违反约束的概率组合推开；
+约束不再严格成立，测试时仍可再加一次整数线性规划。
+
+\subsubsection{多类事件关系的联合抽取}
+\label{sec:nlp-extraction-joint-event-relations}
+
+MAVEN-ERE的标注本身体现了类型间的约束：因果关系只在已标为先于或重叠的事件对上标注，
+子事件关系只在已标为包含的事件对上标注，共指的事件共享全部关系。
+其时间关系采用先于、包含、重叠、同时开始、同时结束、同时六类。
+基线模型用RoBERTa编码整篇文档，取每个事件触发位置的上下文表示，
+对事件对设分类头；四个任务可以分别训练，也可以共享编码器、把四个损失相加联合训练
+\scite{wang2022mavenere}
+原文报告联合训练对数据较少的因果与子事件任务帮助较明显。
+
+联合训练只靠共享参数隐式传递约束，可微逻辑约束则把规则显式写成损失。
+需要严格一致时，仍可在四类局部分数上联合求解整数线性规划：
+共指簇内事件取相同的对外关系，子事件边蕴含包含，因果边蕴含先于或重叠。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm} XXX@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新的代价或局限\\
+    \midrule
+    HeidelTime\slash SUTime & 时间表达归一化 & 模式规则＋参照时间的日历计算 & 依赖语言资源；参照选择易错 \\
+    事件对分类 & 局部时间、因果、组成判断 & 事件对表示上的有向分类头 & 结果可能自相矛盾 \\
+    CAEVO & 多个分类器的一致组合 & 按精确率排序的筛子＋逐步传递闭包 & 早期错误被传播；次序需人工调定 \\
+    Allen约束与ILP & 局部结果不一致 & 区间组合传播；带对称、传递约束的整数规划 & 只在推断时用约束；求解代价 \\
+    结构化学习 & 训练不知道约束 & 训练循环内做约束推断的感知机更新 & 每步求解一次整数规划 \\
+    时间--因果联合ILP & 因果与时间互相矛盾 & 原因先于结果的跨类约束 & 约束对持续过程需放宽 \\
+    KnowDis\slash LearnDA & 因果标注稀少 & 词汇知识扩充事件对；常识过滤或对偶生成 & 增广数据带噪；过滤阈值需调 \\
+    ERGO & 跨句因果缺少局部线索 & 事件对为节点的关系图Transformer＋焦点损失 & 节点$O(m^2)$；需剪枝 \\
+    无环ILP & 组成关系成环 & 拓扑次序变量约束选边 & 去环不等于有证据 \\
+    可微逻辑约束 & 约束只在推断时生效 & 对称与合取规则改写为对数空间损失 & 约束只被软性满足 \\
+    MAVEN-ERE联合 & 各类关系分开训练 & 共享文档编码器，四个关系头损失相加 & 类型间约束只隐式传递 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{事件关系抽取方法对照。前四行处理时间关系，其后依次为约束感知学习、因果关系
+  和组成关系；“新的代价”指相对于逐对局部分类新增的计算、依赖或局限。}
+  \label{tab:nlp-extraction-event-relation-methods}
+\end{table*}

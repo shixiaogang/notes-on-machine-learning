@@ -1,0 +1,447 @@
+\section{知识记录的构建}
+\label{sec:nlp-extraction-records}
+
+抽取系统可能从每份通知都正确读出了字段，汇总后仍然出错：把两场活动误并，
+把一条转发当成新的独立证据，或用旧通知覆盖更正后的日期。
+知识构建因此不只是把三元组装进图里，还要回答四个问题：哪些记录指同一对象（对齐）；
+指同一对象的记录在值上冲突时信哪一个（合并与冲突处理）；图中缺失的事实能否由已有结构推测
+（知识图谱补全）；新材料到来时改变了哪一条已有主张（核验与更新）。
+贯穿的例子是同一活动的更正：旧排期与新排期是同一活动的两个版本，不是两场活动。
+
+图~\ref{fig:nlp-extraction-records}把本章各层产出连成处理流程。
+其中旧通知是额外的教学构造，现通知仍是章首2025年4月15日的材料。
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/nlp-extraction-records}
+  \caption{从文本证据到知识记录。上部保存定位、身份、关系或事件以及来源字段，
+  核验失败后返回相关定位或绑定步骤。下部两条通知均为教学构造；
+  旧通知发布于4月14日，新通知发布于4月15日，本例约定更正从发布日生效。
+  排期主张的有效期与活动开始时刻分开记录，系统写入日期也不决定事实的新旧。}
+  \label{fig:nlp-extraction-records}
+\end{figure*}
+
+\subsection{记录对齐}
+\label{sec:nlp-extraction-alignment}
+
+对齐先解决“字段说的是不是同一种东西”，再解决“记录说的是不是同一个对象”。
+“举行时间”与“start”可以通过模式映射对应，“报名截止”却不能因为同为日期就映射到start。
+单位、时区、粒度与关系方向也要规范化并保留原值：“14:00”与“下午2点”在同一日、同一时区可对应，
+“4月18日”与“4月18日14:00”则精度不同。
+
+身份比较的挑战有三项。候选对数量为两个来源记录数之积，需要\term{阻塞}（blocking）：
+按可靠编号、日期块或名称词项只比较落入同一块的记录，代价是可能漏掉别名与改期记录，
+候选覆盖要单独评价。字段格式异构，同一信息在两边可能分布在不同字段中。
+对应关系也未必一对一，一条全年汇总记录可能对应多次活动。
+方法谱系依次是：Fellegi--Sunter用概率模型给出无监督的决策规则；
+监督匹配用分类器学习字段交互，并以受约束分配保证一对一；
+基于预训练模型的匹配把记录序列化后直接判断，减少字段对齐与特征设计。
+
+\subsubsection{Fellegi--Sunter记录匹配}
+\label{sec:nlp-extraction-fellegi-sunter}
+
+Fellegi--Sunter把两条记录是否同指视作匹配$M$与非匹配$U$之间的判别，
+以比较向量在两种条件下出现的概率形成证据\scite{fellegi1969linkage}
+比较向量$\bm{\gamma}$由逐字段的比较结果构成，例如名称编辑距离的分档、地点与日期是否一致。
+核心量是似然比；若给定匹配状态时各字段的比较结果条件独立，对数似然比可以分项相加：
+\begin{equation}
+  \Lambda(\bm{\gamma})=
+  \frac{P(\bm{\gamma}\mid M)}{P(\bm{\gamma}\mid U)},
+  \qquad
+  \log\Lambda(\bm{\gamma})
+    =\sum_{f\in O}
+       \log\frac{m_f(\gamma_f)}{u_f(\gamma_f)}.
+  \label{eq:nlp-extraction-fellegi}
+\end{equation}
+$O$为可比较的字段，$m_f,u_f$可由已核验的记录对估计，也可在混合模型下用EM从未标数据估计。
+决策规则设两个阈值：高于上阈值接受，低于下阈值拒绝，其间交人工复核。
+名称与简称高度相关时，分项相加会重复计分。
+
+教学参数取名称相似的$m/u=0.9/0.1=9$，地点一致的$m/u=0.8/0.2=4$。
+比较“机器学习读书会”与别名表中的“ML读书会”，地点相同而日期缺失，
+缺失字段贡献1（假定缺失本身不携带身份信息），则$\Lambda=9\times4=36$。
+规定$\Lambda<3$拒绝、$\Lambda>20$接受，则36接受；若日期确实冲突，乘上日期不一致的似然比
+$0.05/0.95=1/19$，总比约1.89而拒绝。似然比不是后验概率：给定先验匹配率$\pi$，
+后验为$\pi\Lambda/(\pi\Lambda+1-\pi)$。改期不构成身份不同的证据，比较前应先判明是原定日期还是现改日期。
+
+\subsubsection{监督匹配与受约束分配}
+\label{sec:nlp-extraction-supervised-matching}
+
+Fellegi--Sunter的字段独立假设无法表达字段交互，例如“名称相近但学校不同”通常不是同一活动。
+监督分类器输入规范字段、缺失掩码与相似度特征$\bm{\phi}_{i,j}$，输出
+$p_{i,j}=\sigma(f_{\bm{\theta}}(\bm{\phi}_{i,j}))$，以已核验同指对与非同指对的二元交叉熵训练。
+负例既要有随机的不同记录，也要有同名、同场所的难负例；
+训练与测试按对象或时间划分，避免同一活动的不同转发跨集合泄漏。
+DeepMatcher等神经匹配器把每个对齐字段的取值编码为向量，逐字段比较后再汇总分类
+\scite{nlp-extraction-mudgal2018deepmatcher}
+它们省去了手工相似度特征，但仍要求两边字段先对齐。
+
+逐对概率还不够：若两个名单都“一条记录对应一次活动”，多条记录可能同时选中同一个目标。
+在候选边效用$s_{i,j}$（例如校准后的匹配对数几率减去接受成本）上求
+\begin{equation}
+  \max_{\bm{x}}\sum_{i,j}s_{i,j}x_{i,j},
+  \qquad
+  \sum_jx_{i,j}\leq1,\quad
+  \sum_ix_{i,j}\leq1,\quad
+  x_{i,j}\in\{0,1\},
+  \label{eq:nlp-extraction-assignment}
+\end{equation}
+未召回的边禁止选择，允许不匹配时加虚拟节点。这是二分图上的分配问题，
+可用匈牙利算法在多项式时间内精确求解\scite{nlp-extraction-kuhn1955hungarian}
+
+教学效用矩阵为
+$\bm{S}=\left(\begin{smallmatrix}0.90&0.80\\0.85&0.20\end{smallmatrix}\right)$，要求完整一对一分配。
+两行的局部首选都是第一列；对角分配总分1.10，交叉分配总分1.65。
+匈牙利算法把效用换成成本$\bm{C}=\bm{1}-\bm{S}$，逐行、逐列减去最小值，
+这不改变完整分配的最优解：
+\begin{equation}
+  \begin{pmatrix}0.10&0.20\\0.15&0.80\end{pmatrix}
+  \ \longrightarrow\
+  \begin{pmatrix}0&0.10\\0&0.65\end{pmatrix}
+  \ \longrightarrow\
+  \begin{pmatrix}0&0\\0&0.55\end{pmatrix}.
+  \label{eq:nlp-extraction-hungarian}
+\end{equation}
+此时可选不同行列的零位$(1,2),(2,1)$，即效用1.65的交叉分配。
+一般情形下零位不足以构成完整匹配时，算法用最少的行列覆盖零位、调整未覆盖元素后沿交替路径增广。
+汇总记录对应多期活动时，一对一假设不成立，不应强制分配。
+
+\subsubsection{基于预训练模型的实体匹配}
+\label{sec:nlp-extraction-ditto}
+
+前两种方法都依赖字段对齐，而真实来源的模式常常不一致：一边把时间写在“start”里，
+另一边写在描述文本中。\term{实体匹配}（entity matching）的预训练模型方法Ditto
+把记录对的判断改写为句对分类，由预训练编码器直接比较两条序列化后的记录
+\scite{nlp-extraction-li2020ditto}
+记录$e=\{(\mathrm{attr}_k,\mathrm{val}_k)\}_{k=1}^{K}$序列化为
+\begin{equation}
+  \begin{aligned}
+  \mathrm{ser}(e)&=\texttt{[COL]}\ \mathrm{attr}_1\ \texttt{[VAL]}\ \mathrm{val}_1\ \cdots\
+                  \texttt{[COL]}\ \mathrm{attr}_K\ \texttt{[VAL]}\ \mathrm{val}_K,\\
+  \mathrm{ser}(e,e')&=\texttt{[CLS]}\ \mathrm{ser}(e)\ \texttt{[SEP]}\ \mathrm{ser}(e')\ \texttt{[SEP]},
+  \end{aligned}
+  \label{eq:nlp-extraction-ditto-serialize}
+\end{equation}
+\texttt{[COL]}与\texttt{[VAL]}标记字段名和值的开始。拼接后的序列送入BERT类编码器，
+CLS位置的向量接全连接层做二分类，以交叉熵微调。
+两条记录的字段名不必相同、数量也不必相同，自注意力会在两段之间自行对齐相关的词元。
+教学记录A为“\texttt{[COL]}名称\texttt{[VAL]}机器学习读书会\texttt{[COL]}时间\texttt{[VAL]}2025-04-18 14:00
+\texttt{[COL]}地点\texttt{[VAL]}海棠楼201”，记录B为“\texttt{[COL]}title\texttt{[VAL]}ML读书会
+\texttt{[COL]}start\texttt{[VAL]}4月18日下午2点\texttt{[COL]}room\texttt{[VAL]}201”，
+二者无需先建立“时间—start”的映射即可拼成一个输入。
+
+Ditto在基本做法上加了三项技术。\emph{领域知识注入}有两种：
+跨度类型标注用命名实体识别或正则表达式找出产品编号、门牌号、电话末四位等关键片段，
+在两侧加上类型标记，提示模型对齐同类片段而不把门牌号与年份比较；
+跨度规范化把写法不同但等价的片段改写成同一字符串，例如把“下午2点”改写为“14:00”、
+把数字统一保留两位小数。\emph{长字段摘要}：编码器输入长度有限，直接截断会丢掉位于后部的关键信息，
+Ditto按TF-IDF只保留得分高的非停用词。\emph{数据增强}：对训练样本做删除或打乱一段词元、
+删除或打乱字段、交换两条记录的次序等操作，生成更难的样本；
+为避免操作改变标签（例如删掉了决定匹配的字段），Ditto不直接用增强样本，
+而采用MixDA在表示层插值：
+\begin{equation}
+  \lambda\sim\mathrm{Beta}(a,a),\qquad
+  \bm{h}''=\lambda\,\mathrm{Enc}(s)+(1-\lambda)\,\mathrm{Enc}(\mathrm{aug}(s)),
+  \label{eq:nlp-extraction-mixda}
+\end{equation}
+$\bm{h}''$代替原表示送入分类层，标签沿用原样本，原文取$a=0.8$。
+
+Ditto省去了字段对齐与手工特征，代价是每个候选对一次完整的编码器前向，只适合阻塞后的候选；
+领域知识规则仍需人工编写。表~\ref{tab:nlp-extraction-alignment-methods}对比三种方法。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{16mm} XXX@{}}
+    \toprule
+    方法 & 监督需求 & 字段对齐 & 主要局限\\
+    \midrule
+    Fellegi--Sunter & 可无监督（EM） & 需要 & 字段条件独立；相关字段重复计分 \\
+    监督匹配＋分配 & 已核验记录对 & 需要 & 特征工程；一对一假设 \\
+    Ditto & 已核验记录对 & 不需要 & 每对一次编码器前向；规则需人工 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{记录对齐方法对照。三者都只在阻塞后的候选对上运行，候选覆盖需另行评价。}
+  \label{tab:nlp-extraction-alignment-methods}
+\end{table}
+
+\subsection{记录合并与冲突处理}
+\label{sec:nlp-extraction-merge}
+
+对齐后，完全相同的事实按“身份、字段、值、条件、有效时间”的规范键去重，并合并来源列表；
+近似重复的记录先用受约束的凝聚聚类确认身份，再合并互补字段。
+并查集适合维护已确认的等价关系，却不适合对任意高相似边直接取闭包：
+“同名且同地点”可能串起多周的活动。
+
+冲突值不能总靠多数票解决。对同一对象、同一字段、同一适用条件下的类别值，
+来源加权投票为$\widehat{v}=\argmax_v\sum_jw_j\mathbb{I}[y_j=v]$，
+权重应由来源核验或开发集估计。转载同一通知的十个页面并非十次独立观察，需要记录依赖来源；
+日期更正则是时间上的状态改变，应先拆开适用期，而不是把新旧排期交给投票。
+
+当同类记录较多、来源有各自的系统误差时，可以用Dawid--Skene模型同时估计潜在真值与来源的
+混淆矩阵\scite{dawid1979observer}
+设记录$i$的潜在值$z_i\in\{1,\ldots,K\}$，先验$\pi_k$，来源$j$的观测为$y_{i,j}$，
+混淆矩阵$C^{(j)}_{k,\ell}=P(y_{i,j}=\ell\mid z_i=k)$。在给定真值后来源条件独立的假设下，
+EM的E步与M步为
+\begin{equation}
+  q_{i,k}=
+  \frac{\pi_k\prod_{j\in O_i}C^{(j)}_{k,y_{i,j}}}
+       {\sum_{k'}\pi_{k'}\prod_{j\in O_i}C^{(j)}_{k',y_{i,j}}},
+  \label{eq:nlp-extraction-ds-e}
+\end{equation}
+\begin{equation}
+  \pi_k^{\mathrm{new}}=\frac{1}{N}\sum_iq_{i,k},
+  \qquad
+  C^{(j),\mathrm{new}}_{k,\ell}=
+  \frac{\sum_{i:j\in O_i}q_{i,k}\mathbb{I}[y_{i,j}=\ell]}
+       {\sum_{i:j\in O_i}q_{i,k}},
+  \label{eq:nlp-extraction-ds-m}
+\end{equation}
+$O_i$只含实际给出观测的来源，缺失不当作反对票。
+该模型的可识别条件、类别置换与来源相关时的修正，可参考
+\BookChapterRef{chap:knowledge-fusion}{卷八的知识融合章}；这里只用到上面两步更新及其独立性前提。
+
+\begin{example}[一次来源后验]
+\label{ex:nlp-extraction-ds}
+两条二分类记录，先验各0.5，两个来源的对称准确率为0.9与0.8。记录1收到来源1的A与来源2的B，
+A、B的未归一化权重为$0.5\times0.9\times0.2=0.09$与$0.5\times0.1\times0.8=0.04$，
+故$q_{1,A}=9/13\approx0.692$。若只有这两条记录，M步会把只报过B的来源2的混淆矩阵推到0或1，
+实际应加Dirichlet平滑。
+\end{example}
+
+转载违反条件独立，此时后验会高估置信度；无法解释的冲突应并存保存并待核验。
+
+\subsection{知识图谱嵌入与补全}
+\label{sec:nlp-extraction-kge}
+
+合并后的记录可以写成\term{知识图谱}（knowledge graph）：实体集合$E$、关系集合$R$
+与三元组集合$\mathcal{G}\subseteq E\times R\times E$，三元组$(h,r,t)$表示头实体$h$与尾实体$t$
+之间有关系$r$。抽取得到的图总是不完整的：通知说了读书会在海棠楼201举行、海棠楼201属于海棠大学，
+却未必写出“读书会由海棠大学承办”。\term{知识图谱补全}（knowledge graph completion）
+根据已有三元组推测缺失的三元组，常用的任务形式是\term{链接预测}（link prediction）：
+给定$(h,r,?)$或$(?,r,t)$，对全部候选实体排序。
+
+\term{知识图谱嵌入}（knowledge graph embedding）把每个实体和关系表示为向量，
+用打分函数$f(h,r,t)$衡量三元组成立的可能性，分数越高越可能成立。
+补全的挑战来自关系的结构：一对多、多对一关系（一所大学有多栋楼）
+要求同一个$(h,r)$对应多个尾实体；关系还有对称（“同场举行”）、反对称（“先于”）、
+互逆（“承办”与“由……承办”）、组合（“位于”接“隶属”）等模式，
+不同的打分函数能表达的模式不同。下面先讲训练与评价的共同框架，
+再讲平移距离与双线性两类打分函数。
+
+训练只有正例，负例靠\term{负采样}（negative sampling）构造：对正例$(h,r,t)$，
+随机替换头或尾得到$(h',r,t)$或$(h,r,t')$。被替换出的三元组可能恰好是图中的另一个真三元组，
+这类假负例在一对多关系上尤其多。两种常用目标是\term{间隔排序损失}（margin ranking loss）
+与逻辑斯谛损失：
+\begin{equation}
+  \begin{aligned}
+  L_{\mathrm{margin}}&=\sum_{(h,r,t)\in\mathcal{G}}\ \sum_{(h',r,t')\in\mathcal{N}(h,r,t)}
+  \bigl[\gamma-f(h,r,t)+f(h',r,t')\bigr]_+,\\
+  L_{\mathrm{log}}&=\sum_{(h,r,t)}\log\bigl(1+\exp(-y_{h,r,t}\,f(h,r,t))\bigr),
+  \end{aligned}
+  \label{eq:nlp-extraction-kge-margin}
+\end{equation}
+其中$\mathcal{N}(h,r,t)$是该正例的负例集合，$[\cdot]_+=\max(0,\cdot)$，
+$\gamma>0$是间隔，$y\in\{+1,-1\}$标记正负例。间隔损失只要求正例比负例高出$\gamma$，
+超过之后不再产生梯度；逻辑斯谛损失则把每个三元组当作独立的二分类样本。
+
+评价按排名进行。对测试三元组$(h,r,t)$，用模型对所有$(h,r,e)$打分，
+记真实尾实体$t$的名次为$\mathrm{rank}$。\emph{过滤设定}在排序前删去训练、验证、测试集中
+其他已知为真的$(h,r,e)$，避免模型因把另一个正确答案排在前面而被扣分。
+在查询集合$Q$上，\term{平均倒数排名}（mean reciprocal rank, MRR）与Hits@$k$为
+\begin{equation}
+  \mathrm{MRR}=\frac{1}{|Q|}\sum_{q\in Q}\frac{1}{\mathrm{rank}_q},
+  \qquad
+  \mathrm{Hits@}k=\frac{1}{|Q|}\sum_{q\in Q}\mathbb{I}[\mathrm{rank}_q\leq k].
+  \label{eq:nlp-extraction-mrr}
+\end{equation}
+教学示例有三个查询，原始名次为1、4、12；第二个查询中排在前面的三个实体里有两个也是正确答案，
+过滤后名次为2。原始MRR为$(1+1/4+1/12)/3\approx0.444$，过滤MRR为$(1+1/2+1/12)/3\approx0.528$；
+Hits@3从$1/3$升为$2/3$。头实体与尾实体两个方向通常都要预测并取平均。
+数据集构造也会影响结论：FB15k中大量测试三元组的互逆三元组出现在训练集里，
+简单规则即可得高分，FB15k-237删去了这类互逆关系\scite{nlp-extraction-toutanova2015observed}
+
+\subsubsection{平移距离模型}
+\label{sec:nlp-extraction-translational}
+
+TransE把关系看作嵌入空间中的平移：若$(h,r,t)$成立，应有$\bm{h}+\bm{r}\approx\bm{t}$
+\scite{nlp-extraction-bordes2013transe}
+打分函数为
+\begin{equation}
+  f(h,r,t)=-\lVert\bm{h}+\bm{r}-\bm{t}\rVert_{p},\qquad p\in\{1,2\},
+  \label{eq:nlp-extraction-transe}
+\end{equation}
+$\bm{h},\bm{r},\bm{t}\in\mathbb{R}^{d}$。训练用式~\eqref{eq:nlp-extraction-kge-margin}的间隔损失，
+每个正例替换头或尾之一得到负例，并在每批更新前把实体向量归一化为单位长度，
+防止模型靠放大实体范数来降低损失，过程见算法~\ref{alg:nlp-extraction-transe}。
+每个实体和关系只有$d$个参数，模型规模随实体数与关系数线性增长。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[TransE的随机梯度训练]
+  \label{alg:nlp-extraction-transe}
+  \begin{algorithmic}[1]
+    \Require 三元组集合$\mathcal{G}$，实体集合$E$，关系集合$R$，维度$d$，间隔$\gamma$，学习率$\eta$
+    \Ensure 实体与关系嵌入
+    \State 对每个$r\in R$随机初始化$\bm{r}$并归一化；对每个$e\in E$随机初始化$\bm{e}$
+    \Repeat
+      \State 对每个$e\in E$：$\bm{e}\gets\bm{e}/\lVert\bm{e}\rVert_2$
+      \State 从$\mathcal{G}$采样一批正例$B$
+      \For{每个$(h,r,t)\in B$}
+        \State 以等概率替换$h$或$t$为随机实体，得到负例$(h',r,t')$
+        \State 累加损失$\bigl[\gamma+\lVert\bm{h}+\bm{r}-\bm{t}\rVert-\lVert\bm{h}'+\bm{r}-\bm{t}'\rVert\bigr]_+$
+      \EndFor
+      \State 对涉及的实体与关系嵌入做一步梯度下降，学习率$\eta$
+    \Until{验证集上的过滤MRR不再提高}
+  \end{algorithmic}
+\end{algorithm}
+
+二维教学示例：$\bm{h}=(0,0)$，$\bm{r}=(1,0)$，$\bm{t}=(1,0.2)$，正例距离为0.2。
+负例$\bm{t}'=(0,1)$的距离为$\lVert(1,-1)\rVert_2\approx1.414$，取$\gamma=1$时
+$[1+0.2-1.414]_+=0$，这个负例已足够远而不产生梯度；
+负例$\bm{t}''=(1,0.5)$的距离为0.5，损失为$1+0.2-0.5=0.7$，梯度把$\bm{t}''$推离$\bm{h}+\bm{r}$，
+同时把$\bm{t}$拉近。
+
+平移假设决定了TransE能表达什么。若$r$是一对多关系，$(h,r,t_1)$与$(h,r,t_2)$都完美成立，
+则$\bm{t}_1=\bm{h}+\bm{r}=\bm{t}_2$，两个不同的尾实体被迫重合；若$r$对称，
+由$\bm{h}+\bm{r}=\bm{t}$与$\bm{t}+\bm{r}=\bm{h}$得$\bm{r}=\bm{0}$且$\bm{h}=\bm{t}$。
+另一方面，互逆关系取$\bm{r}'=-\bm{r}$即可，组合关系满足$\bm{r}_3=\bm{r}_1+\bm{r}_2$，
+这两类模式TransE能自然表达。
+
+TransH让实体在每个关系上有不同的投影\scite{nlp-extraction-wang2014transh}
+每个关系有一个超平面法向量$\bm{w}_r$（$\lVert\bm{w}_r\rVert_2=1$）与平移向量$\bm{d}_r$，
+\begin{equation}
+  \bm{h}_{\perp}=\bm{h}-(\bm{w}_r^{\top}\bm{h})\bm{w}_r,\qquad
+  \bm{t}_{\perp}=\bm{t}-(\bm{w}_r^{\top}\bm{t})\bm{w}_r,\qquad
+  f(h,r,t)=-\lVert\bm{h}_{\perp}+\bm{d}_r-\bm{t}_{\perp}\rVert_2^2.
+  \label{eq:nlp-extraction-transh}
+\end{equation}
+一对多关系的多个尾实体只需投影重合，在法向量方向上仍可不同；
+TransH还按关系的“每头平均尾数”与“每尾平均头数”决定替换头或尾，以减少假负例。TransR进一步给每个关系一个投影矩阵
+$\bm{M}_r\in\mathbb{R}^{k\times d}$，在关系空间中平移\scite{nlp-extraction-lin2015transr}
+\begin{equation}
+  f(h,r,t)=-\lVert\bm{M}_r\bm{h}+\bm{r}-\bm{M}_r\bm{t}\rVert_2^2,\qquad \bm{r}\in\mathbb{R}^{k},
+  \label{eq:nlp-extraction-transr}
+\end{equation}
+每个关系的参数从$O(d)$增至$O(kd)$，表达力提高，关系多时训练代价也随之增加。
+RotatE把实体与关系放在复数空间，令$\bm{t}=\bm{h}\circ\bm{r}$且每个分量$|r_i|=1$，
+关系是逐分量的旋转\scite{nlp-extraction-sun2019rotate}
+旋转角取0或$\pi$时关系对称，取相反角得到互逆，角度相加得到组合，
+于是对称、反对称、互逆与组合都能表达；它还按当前模型对负例的打分加权负例，使训练集中于难负例。
+
+\subsubsection{双线性语义匹配模型}
+\label{sec:nlp-extraction-bilinear}
+
+平移模型比较距离，双线性模型比较语义相似度。RESCAL为每个关系配一个满矩阵
+\scite{nlp-extraction-nickel2011rescal}
+$f(h,r,t)=\bm{h}^{\top}\bm{M}_r\bm{t}$，$\bm{M}_r\in\mathbb{R}^{d\times d}$
+可以表达头尾每一对维度之间的交互，但每个关系需要$d^2$个参数，关系多时容易过拟合。
+DistMult把$\bm{M}_r$限制为对角矩阵\scite{nlp-extraction-yang2015distmult}
+\begin{equation}
+  f(h,r,t)=\bm{h}^{\top}\operatorname{diag}(\bm{r})\,\bm{t}=\sum_{i=1}^{d}h_ir_it_i,
+  \label{eq:nlp-extraction-distmult}
+\end{equation}
+参数降回$O(d)$，但三个向量的逐元素乘积对$h$与$t$对称，$f(h,r,t)=f(t,r,h)$，
+因此只能表示对称关系，无法区分“甲先于乙”与“乙先于甲”。
+ComplEx把嵌入放到复数域$\mathbb{C}^{d}$，对尾实体取共轭
+\scite{nlp-extraction-trouillon2016complex}
+\begin{equation}
+  f(h,r,t)=\operatorname{Re}\Bigl(\sum_{i=1}^{d}h_ir_i\overline{t_i}\Bigr),
+  \label{eq:nlp-extraction-complex}
+\end{equation}
+交换$h$与$t$后，$\operatorname{Re}(t_ir_i\overline{h_i})=\operatorname{Re}(h_i\overline{r_i}\,\overline{t_i})$，
+即交换头尾等价于把关系向量取共轭。因此关系向量的实部贡献对称部分、虚部贡献反对称部分，
+实部为零时$f(t,r,h)=-f(h,r,t)$。ComplEx用式~\eqref{eq:nlp-extraction-kge-margin}的逻辑斯谛损失
+加L2正则训练，参数量是DistMult的两倍。
+
+用最小的例子核对三者对互逆三元组的分数。RESCAL取$d=2$，
+$\bm{M}_r=\left(\begin{smallmatrix}0&1\\-1&0\end{smallmatrix}\right)$，
+$\bm{h}=(1,0)$，$\bm{t}=(0,1)$：$f(h,r,t)=\bm{h}^{\top}\bm{M}_r\bm{t}=1$，
+$f(t,r,h)=\bm{t}^{\top}\bm{M}_r\bm{h}=-1$，反对称矩阵表达了方向。
+DistMult无论取什么对角元素，都有$f(h,r,t)=f(t,r,h)$。
+ComplEx取$d=1$，$h=1$，$t=\mathrm{i}$，$r=\mathrm{i}$：
+$f(h,r,t)=\operatorname{Re}(1\cdot\mathrm{i}\cdot\overline{\mathrm{i}})=\operatorname{Re}(1)=1$，
+$f(t,r,h)=\operatorname{Re}(\mathrm{i}\cdot\mathrm{i}\cdot1)=-1$，
+只用$O(d)$个参数就恢复了RESCAL例子中的方向性。表~\ref{tab:nlp-extraction-kge-models}汇总各模型。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}p{38mm}>{\raggedright\arraybackslash}p{20mm}XXX@{}}
+    \toprule
+    模型 & 打分函数 & 每关系参数 & 对称 & 反对称与互逆 & 一对多 \\
+    \midrule
+    TransE & $-\lVert\bm{h}+\bm{r}-\bm{t}\rVert$ & $d$ & 否（需$\bm{r}=\bm{0}$） & 能 & 尾实体被迫重合 \\
+    TransH & 超平面投影后平移 & $2d$ & 否 & 能 & 投影重合即可 \\
+    TransR & 关系空间投影后平移 & $kd+k$ & 否 & 能 & 投影重合即可 \\
+    RotatE & $-\lVert\bm{h}\circ\bm{r}-\bm{t}\rVert$，$|r_i|=1$ & $d$（复数） & 能 & 能 & 仍受限 \\
+    RESCAL & $\bm{h}^{\top}\bm{M}_r\bm{t}$ & $d^2$ & 能 & 能 & 能 \\
+    DistMult & $\sum_ih_ir_it_i$ & $d$ & 能 & 否 & 能 \\
+    ComplEx & $\operatorname{Re}\sum_ih_ir_i\overline{t_i}$ & $d$（复数） & 能 & 能 & 能 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{知识图谱嵌入模型对照。“能”指打分函数存在参数取值表达该模式，不表示训练一定学到；
+  组合关系在平移与旋转模型中由向量相加或角度相加表达，双线性模型对此没有对应的简单结构。}
+  \label{tab:nlp-extraction-kge-models}
+\end{table*}
+
+补全给出的是带分数的候选：链接预测排名靠前的三元组应以“模型推测”为来源类型写成待核验主张，
+找到原文支持或人工确认后才转为事实。
+
+\subsection{记录核验与更新}
+\label{sec:nlp-extraction-update}
+
+每次写入前都要检查模式、原文支持、对象身份、限定条件与来源完整性，
+并区分两种时间。\term{有效时间}（valid time）是主张在所建模世界中适用的时间，
+\term{写入时间}（transaction time）是系统获知或写入这一版本的时间。
+结构检查复用第~\ref{sec:nlp-extraction-relation-records}节的JSON Schema与SHACL；
+支持模型判为蕴含后，数字、否定与身份仍要逐项比较，这类错误常只差一个词或一位数字。
+算法~\ref{alg:nlp-extraction-record-update}给出一份新材料到来时的处理流程。
+
+\Needspace{18\baselineskip}
+\begin{algorithm}[知识记录的核验与增量更新]
+  \label{alg:nlp-extraction-record-update}
+  \begin{algorithmic}[1]
+    \Require 新来源$d$及其版本与发布时间，已有记录库$\mathcal{K}$，模式$S$，
+      依赖图$D$（来源$\to$主张$\to$合并记录$\to$派生关系）
+    \Ensure 更新后的$\mathcal{K}$与操作日志
+    \State 从$d$抽取主张$c=(\text{身份},\text{字段},\text{值},\text{条件},\text{有效时间},\text{证据位置},\text{来源})$
+    \For{每个主张$c$}
+      \If{$c$不符合$S$，或证据位置与$d$的当前版本不对应}
+        \State 标记为待核验并记录原因；\textbf{continue}
+      \EndIf
+      \State 核对支持：证据蕴含$c$，且数字、否定、日期与原文逐项一致；否则待核验
+      \State 解析身份：可靠键直接匹配，否则按第~\ref{sec:nlp-extraction-alignment}节对齐；
+        有歧义则待核验
+      \State 取同一身份、字段、条件下的已有主张集合$P$
+      \If{$P=\varnothing$}
+        \State 新增$c$\Comment{补充}
+      \ElsIf{$c$与$P$中某主张值相同}
+        \State 合并来源列表，并检查新来源是否只是转载\Comment{重复}
+      \ElsIf{$d$明确更正$P$中的主张$p$}
+        \State 把$p$的有效期在更正生效时刻结束；新增$c$并连接“替代$p$”\Comment{修改}
+      \ElsIf{$d$明确否认$p$}
+        \State 把$p$标为撤回，保留历史\Comment{撤回}
+      \Else
+        \State 并存保存$c$与$P$，标记冲突待核验
+      \EndIf
+      \State 记录写入时间为当前时间，与$c$的有效时间分开保存
+    \EndFor
+    \If{$d$撤回了某个旧来源$d_0$}
+      \State 沿$D$找出依赖$d_0$的主张与派生记录，重算支持；
+        无独立支持者降级或撤回
+    \EndIf
+    \State 检查到期的有效期，将过期主张标为过期\Comment{过期}
+  \end{algorithmic}
+\end{algorithm}
+
+以图~\ref{fig:nlp-extraction-records}的教学通知为例：4月14日旧材料把\code{ML-0418}排在4月17日，
+4月15日更正为4月18日14:00。算法先按可靠活动编号确认是同一活动，再解析“原定”与“现改至”
+指向同一排期字段，于是走“修改”分支：在“更正自发布日生效”的约定下，
+旧排期的有效期为$[\text{4月14日},\text{4月15日})$，新排期为$[\text{4月15日},\text{尚未失效})$，
+并保留改期事件与两份原文证据；原通知没有给出旧时刻，不应反填14:00。
+活动开始时刻4月18日14:00是字段的值，不是主张有效期的起点。
+若系统到4月16日才读到更正，写入时间为4月16日，有效时间仍从4月15日起；
+4月17日才导入的旧通知走“并存待核验”分支，不会因写入较晚而恢复旧日期。
+
+新材料未提某字段不等于撤回该字段，因此只有明确否认才进入撤回分支；
+更正只涉及活动日期时，报名截止仍为4月16日18:00前，不自动顺延。
+评价应同时报告事实正确性、覆盖、重复率、未决冲突与证据位置正确性。

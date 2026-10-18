@@ -1,0 +1,69 @@
+% 第九卷 15.1.3 节：wav2vec 2.0 预训练结构（跨栏，约145 mm宽）。
+% 蓝色：输入与潜表示；灰色：被遮蔽的步；白底黄描边：模型部件；红色：损失。
+\begin{tikzpicture}[
+  x=1mm,y=1mm,
+  figure picture,
+  inp/.style={figure node,draw=FigureInput,fill=FigureInputFill,
+    minimum height=7mm,minimum width=90mm,inner xsep=2pt,inner ysep=2pt,
+    font=\figurefont\scriptsize},
+  mod/.style={figure node,draw=FigureModel,fill=FigureModelFill,
+    minimum height=7mm,minimum width=90mm,inner xsep=2pt,inner ysep=2pt,
+    font=\figurefont\scriptsize},
+  qmod/.style={figure node,draw=FigureModel,fill=FigureModelFill,
+    minimum height=11mm,minimum width=40mm,inner xsep=2pt,inner ysep=2pt,
+    font=\figurefont\scriptsize},
+  cell/.style={rectangle,rounded corners=.6mm,draw=FigureInput,
+    fill=FigureInputFill,line width=.6pt,minimum size=6.5mm,inner sep=0pt,
+    font=\figurefont\scriptsize},
+  mcell/.style={cell,draw=FigureMuted,fill=FigureGrid},
+  ccell/.style={cell,draw=FigureModel,fill=FigureCream},
+  loss/.style={figure node,draw=FigureOutput,fill=FigureOutputFill,
+    minimum height=8mm,minimum width=74mm,inner xsep=2pt,inner ysep=2pt,
+    font=\figurefont\scriptsize},
+  note/.style={font=\figurefont\scriptsize,text=FigureMuted,align=center},
+  fl/.style={figure flow},
+  thin/.style={figure flow,line width=.6pt}
+]
+  \node[inp] (x) at (43,0) {波形$\bm x$（16\,kHz）};
+  \node[mod] (f) at (43,12) {卷积特征编码器$f$：7层一维卷积，总步长320（20\,ms）};
+  \draw[fl] (x) -- (f);
+
+  % 潜表示 z：第3--5步被遮蔽（从0计）
+  \foreach \i in {0,...,7}{
+    \pgfmathtruncatemacro{\t}{\i+1}
+    \ifnum\i>2 \ifnum\i<6
+      \node[mcell] (z\i) at (4+11*\i,25) {$\bm m$};
+    \else
+      \node[cell] (z\i) at (4+11*\i,25) {$\bm z_{\t}$};
+    \fi\else
+      \node[cell] (z\i) at (4+11*\i,25) {$\bm z_{\t}$};
+    \fi
+    \draw[thin] (4+11*\i,15.5) -- (z\i.south);
+  }
+  \node[note,anchor=east] at (-2,25) {遮蔽后};
+
+  \node[mod] (g) at (43,39) {Transformer上下文网络$g$（卷积相对位置编码）};
+  \foreach \i in {0,...,7}{\draw[thin] (z\i.north) -- (4+11*\i,35.5);}
+
+  \foreach \i in {0,...,7}{
+    \pgfmathtruncatemacro{\t}{\i+1}
+    \node[ccell] (c\i) at (4+11*\i,53) {$\bm c_{\t}$};
+    \draw[thin] (4+11*\i,42.5) -- (c\i.south);
+  }
+
+  % 量化支路：读取遮蔽前的 Z
+  \node[qmod] (q) at (122,25) {乘积量化：$G=2$个码本\\各$V=320$个码字，Gumbel-softmax};
+  \draw[fl] (f.east) -| node[pos=.25,above,note]{遮蔽前的$\bm Z$} (q.south);
+  \node[cell] (qt) at (110,45) {$\bm q_{5}$};
+  \node[cell] (qa) at (122,45) {$\tilde{\bm q}$};
+  \node[cell] (qb) at (134,45) {$\tilde{\bm q}$};
+  \foreach \n in {qt,qa,qb}{\draw[thin] (q.north) -- (\n.south);}
+  \node[note] at (122,53) {本位置目标与$K$个干扰项};
+
+  % 损失
+  \node[loss] (l) at (78,68) {对比损失$L_m$：$\operatorname{sim}(\bm c_5,\bm q_5)$高于干扰项；总目标$L_m+\alpha L_d$};
+  \draw[fl] (c4.north) -- (c4.north |- l.south);
+  \draw[fl] (qt.north) -- (qt.north |- l.south);
+  \draw[figure link,dash pattern=on 1.5pt off 1.5pt] (q.east) -- ++(4,0) |- (l.east)
+    node[pos=.25,right,note]{多样性\\损失$L_d$};
+\end{tikzpicture}

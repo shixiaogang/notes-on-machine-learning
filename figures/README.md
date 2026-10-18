@@ -16,7 +16,8 @@
 - `08-knowledge-learning/`：对应正文分部的TikZ图源及记录。
 - `10-image-and-multimodal-processing/`：图像、视频和多模态三部分的31份历史 TikZ 图源，分别位于对应部分的 `tikz/`；迁移保留原图的科学内容与绘制方式，样式仍沿用历史内联接口。
 - `11-recommendation-search-advertising/`：理解、决策、搜索和广告十章使用的 TikZ 图源，按三个正文部分归档。
-- 卷九和卷十二尚无独立图像；新增时按实际章节建立目录。
+- `09-natural-language-processing/`：2026-10-18起按部分归档新图，均为TikZ图源，位于各部分的`tikz/`。`01-language-models/`收第2至8章的图（前缀`classical-`、`llm-`、`sft-`、`align-`、`infer-`、`reason-`、`eval-`）；`02-text-analysis-and-organization/`收第9至11章的图（前缀`analysis-`、`extraction-`、`classification-`）；`03-text-generation-and-interaction/`收第12至14章的图（前缀`generation-`、`dialogue-`、`execution-`）；`04-speech-processing/`收第15章的图（前缀`speech-`）。卷九较早的图仍位于`figures/`根目录的`nlp-*`文件，迁移前保持原路径。
+- 卷十二尚无独立图像；新增时按实际章节建立目录。
 - `00-shared/mathematical-generators/` 与 `00-shared/model-generators/`：跨卷共用生成器与图组记录。
 
 ## 使用与追溯

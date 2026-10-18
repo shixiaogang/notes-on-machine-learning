@@ -1,0 +1,226 @@
+\section{主张与回答核验}
+\label{sec:nlp-dialogue-verification}
+
+上一节的系统根据问题寻找证据并形成答案；本节反过来，把一段已经写成的回答当作待查对象，逐项判断其中的陈述有无依据。这项工作称为\term{事实核验}（fact verification）：给定待查文本、允许使用的知识源和时点，找出相关证据，判断每条陈述被支持、被反驳还是信息不足，再据此修订回答。第\ref{sec:nlp-generation-faithfulness}小节检查的是生成结果与给定输入是否一致，本节的证据则需要自行检索，而且回答中的陈述可能超出任何单份输入。
+
+核验面临四个挑战。其一，主张粒度难定：一句话常同时包含日期、地点和人数，整句判断会让一处错误掩盖其余正确内容，切得过细又会丢失命题之间的绑定。其二，证据需要检索：资料库大，一个主张的证据可能分散在几份文档的几个句子里。其三，反驳与信息不足要区分：找不到证据不等于主张为假。其四，修订不能引入新错误：改正一处时，应尽量保留原回答中已获支持的部分。
+
+针对这些挑战，方法沿三条线发展。FEVER数据集\cite{nlp-intro-thorne2018}确立了“文档检索—句子选择—三分类推断”的流水线，解决主张级别的证据定位与判定；FActScore和SAFE把长回答拆成原子事实，分别对照固定知识源和网络搜索逐条判定，解决长回答的粒度问题；RARR和CoVe则在核验之后修订回答，前者依靠外部检索做最小编辑，后者依靠模型自己提出并独立回答验证问题。本节沿用章首通知，并另设一份教学签到统计S：“ML-0418实际到场人数为120人，统计时点为活动结束后。”待查回答为“读书会4月18日在海棠楼201举行，现场有150人”。
+
+\subsection{主张拆解与证据定位}
+\label{sec:nlp-dialogue-claims}
+
+待查回答中的日期和地点可由通知核对，人数却需要另一份资料。若把整句作为一个单位，就只能得出“部分正确”这样无法操作的结论。拆解的目标是得到可以分别检索、分别判断的命题，并保持对象、否定、数量词和时间条件不变；例如“至少150人”不能拆成“150人”，“不是所有校外来宾都可直接参加”也不能变成“所有校外来宾都不可参加”。句式稳定的业务文本可以复用第\ref{chap:nlp-information-extraction}章的事件抽取，先得到$(\text{ML-0418},\text{日期}=4/18,\text{地点}=\text{海棠楼201},\text{人数}=150)$这样的记录，再把每个字段还原为一个命题；开放文本则要依靠语言模型拆解。拆出命题之后，第二步是为每个命题找到证据文档并选出证据句。
+
+\subsubsection{FActScore原子事实分解}
+\label{sec:nlp-dialogue-factscore}
+
+长回答的事实性很难用一个“对”或“错”概括：一篇人物传记可能九成内容正确，只错了出生年份。FActScore的做法是先把回答分解为\term{原子事实}（atomic fact），即每条只承载一个可独立检查的信息点的短句，再统计其中被指定知识源支持的比例\scite{min-etal-2023-factscore}。设模型$M$对输入$x$的回答为$y=M_x$，$A_y$是$y$的原子事实集合，$C$是规定的知识源，则
+\begin{equation}
+ f(y)=\frac{1}{|A_y|}\sum_{a\in A_y}\mathbb{I}[C\text{支持}a],\qquad
+ \operatorname{FActScore}(M)=\mathbb{E}_{x}\bigl[f(M_x)\mid M_x\text{作答}\bigr].
+ \label{eq:nlp-dialogue-factscore}
+\end{equation}
+期望只对作答的样本计算，因此原文同时报告作答比例和每个回答的平均事实数。原研究以人物传记为任务、英文维基百科为知识源；自动估计器先用语言模型按少样本提示拆出原子事实，再针对每条事实从知识源检索若干相关段落，提示语言模型判断该事实是否为真。
+
+对本节的待查回答，先把“读书会”绑定\code{ML-0418}，补出年份2025，得到三条原子事实：活动在4月18日举行；活动地点为海棠楼201；现场人数为150人。若知识源只有通知，前两条获得支持，第三条未获支持；若知识源包括签到统计S，第三条被反驳。两种情形下$f(y)=2/3$，但原因不同：前者是缺少资料，后者是资料矛盾。FActScore只区分“支持”与“未获支持”，这一差别要留到第\ref{sec:nlp-dialogue-evidence-relation}小节的三分类中处理。
+
+这一比例依赖拆解质量。分解器漏掉人数条目，分数虚升为$2/2$；把“林宁主持活动，他来自甲校”的“他”错绑到另一人，会对错误对象检索出支持。回答越短、越含糊，越容易得到高分，所以公开的评估工具还提供长度惩罚：事实数少于阈值$\gamma$时把$f(y)$乘以$\exp(1-\gamma/|A_y|)$。FActScore衡量的是精确性，即说出的内容有多少有据，不衡量回答是否完整。
+
+\subsubsection{证据文档检索与句子选择}
+\label{sec:nlp-dialogue-evidence-selection}
+
+FActScore默认每条事实对应一个已知条目，可以直接到该条目下找证据。一般的核验没有这个便利：主张可能涉及任意实体，证据分散在大规模文集中。FEVER把这一问题拆成两步检索：先找可能相关的文档，再在文档中选出证据句。两步的划分是出于计算考虑：文档级检索可以用倒排索引快速完成，逐句打分代价高，只能在少量候选文档内进行。
+
+文档检索有两种常见做法。词汇检索把主张$c$与文档$d$表示为一元与二元词的TF-IDF向量$\bm{\phi}(c),\bm{\phi}(d)$，按余弦相似度
+\begin{equation}
+ \operatorname{score}_{\mathrm{doc}}(c,d)=
+ \frac{\bm{\phi}(c)^\top\bm{\phi}(d)}{\lVert\bm{\phi}(c)\rVert_2\lVert\bm{\phi}(d)\rVert_2}
+ \label{eq:nlp-dialogue-doc-retrieval}
+\end{equation}
+取前$k$篇，记为$D_k$；FEVER基线即用此法，取$k=5$。另一种做法利用维基百科类资料“一个实体一篇文档”的结构：从主张中抽取名词短语或实体提及，按第\ref{sec:nlp-extraction-linking}节的实体链接把它们映射到文档标题，直接取回对应文档。实体链接对专名准确，但主张提到的实体若在资料中没有独立条目，就会漏检；两种方法常合并候选。
+
+句子选择对$D_k$中每个句子$x$计算与主张的相关分$s_{\bm\theta}(c,x)$，取前$l$句作为证据集合：
+\begin{equation}
+ \hat E=\operatorname*{top\text{-}l}_{x\in\mathcal{S}(D_k)}\ s_{\bm\theta}(c,x),
+ \label{eq:nlp-dialogue-sentence-selection}
+\end{equation}
+$\mathcal{S}(D_k)$是候选文档中的全部句子。最简单的$s$同样是TF-IDF余弦；学习式打分器把主张与句子成对输入句对模型（ESIM或BERT交叉编码器，结构见第\ref{sec:nlp-classification-nli}小节），输出一个实数分。训练标签来自标注的证据句：对同一主张，令$x^+$为证据句，$x^-$为同批候选中的非证据句，以间隔为$m$的排序损失
+\begin{equation}
+ L_{\mathrm{sel}}=\sum_{x^+}\sum_{x^-}
+ \max\bigl(0,\ m-s_{\bm\theta}(c,x^+)+s_{\bm\theta}(c,x^-)\bigr)
+ \label{eq:nlp-dialogue-selection-loss}
+\end{equation}
+要求证据句比非证据句至少高出$m$分\scite{nlp-dialogue-hanselowski2018ukp}。也可以把每句当作独立的二分类样本，用二元交叉熵训练；排序损失只关心相对次序，正好对应“取前$l$句”的用法。
+
+选句的好坏要用召回评价，因为漏掉的证据后面无法补回。FEVER为每个可判定主张标注若干组证据，每组是一个足以作出判断的句子集合$G$，有些组只含一句，有些需要多句联合。设$\mathcal{G}_c$为主张$c$的证据组，证据召回率定义为
+\begin{equation}
+ R_{\mathrm{ev}}=\frac{1}{|\mathcal{C}|}\sum_{c\in\mathcal{C}}
+ \mathbb{I}\bigl[\exists G\in\mathcal{G}_c:\ G\subseteq\hat E_c\bigr],
+ \label{eq:nlp-dialogue-evidence-recall}
+\end{equation}
+$\mathcal{C}$为支持或反驳类主张的集合。端到端评价使用FEVER共享任务定义的FEVER分数：只有标签正确，且对支持、反驳类主张至少有一组完整证据落在预测的前五句中，该主张才计为正确\scite{nlp-dialogue-thorne2018shared}
+
+以主张“读书会4月18日在海棠楼201举行”为例。设检索取回通知与一份检修公告，候选句为：$x_1$“原定于4月17日举行，现改至4月18日（周五）14:00”；$x_2$“地点为海棠楼201”；$x_3$“校内师生可直接参加”；$x_4$“海棠楼201正在检修”。教学打分为$s(x_1)=2.1$、$s(x_2)=1.6$、$s(x_4)=1.2$、$s(x_3)=-0.5$。日期与地点需要$x_1,x_2$两句联合支持，证据组为$G=\{x_1,x_2\}$。取$l=2$时$\hat E=\{x_1,x_2\}\supseteq G$，召回成功；取$l=1$时只剩$x_1$，召回失败，后续判定只能得到信息不足。若$m=1$，句对$(x_2,x_4)$的损失为$\max(0,1-1.6+1.2)=0.6$：$x_2$虽然排在前面，但领先不足一个间隔，仍会受到推动。
+
+流水线的主要缺点是错误单向传递：文档检索漏掉的证据，选句无法恢复；选句漏掉的证据，判定阶段只能看到信息不足。实体链接与TF-IDF合并、适当放大$k$与$l$，是用后续阶段的计算换取召回。
+
+\subsection{支持、反驳与信息不足}
+\label{sec:nlp-dialogue-evidence-relation}
+
+取得证据后，判定采用三类标签：“支持”表示证据能推出主张，“反驳”表示证据推出与主张不相容的内容，“信息不足”表示现有证据不足以作出前两种判断。三分类与第\ref{sec:nlp-classification-nli}小节的自然语言推断相对应，蕴含、矛盾、中立分别对应支持、反驳和信息不足；核验在此之外增加了证据是否取到、来源是否适用的问题。无关段落不是反证，同一句话被多次转载也不构成独立支持。判定方法有三条路线：学习式句对推断适合语言变化多的证据；规则与结构化比较适合日期、数值等可规范化字段；检索增强的逐事实判定把检索与判断交给语言模型，适合开放领域的长回答。
+
+\subsubsection{可分解注意力的证据判定}
+\label{sec:nlp-dialogue-decomposable}
+
+FEVER基线把选出的证据句拼接为前提、主张作为假设，交给第\ref{sec:nlp-classification-decomposable}小节的可分解注意力模型三分类：
+\begin{equation}
+ p(r\mid c,\hat E)=f_{\mathrm{DA}}\bigl(x_{(1)}\oplus x_{(2)}\oplus\cdots\oplus x_{(l)},\ c\bigr),\qquad
+ r\in\{\text{支持},\text{反驳},\text{信息不足}\},
+ \label{eq:nlp-dialogue-decomposable}
+\end{equation}
+$\oplus$表示按选句顺序拼接，$f_{\mathrm{DA}}$内部依次做软对齐、比较与求和聚合。拼接让模型能够把$x_1$中的日期和$x_2$中的地点同时对齐到主张，处理多句证据组。
+
+训练时有一个核验特有的问题：信息不足类主张没有标注证据，但模型推断时总会拿到某些句子。FEVER为这类样本构造输入证据，比较了两种取法：从检索到的最近文档中取句子，或从全部资料中随机取句子\scite{nlp-intro-thorne2018}。基线流水线最终采用前者，因为它更接近测试时“检索到了相关但不充分的句子”的情形；后者过于容易，模型可能只学会“句子与主张无关就判信息不足”，遇到检索失败时行为与训练不一致。
+
+拼接也有代价：句子边界和来源信息被抹平，模型无法报告是哪一句支持了主张。另一种做法先对每句与主张分别做推断，再用注意力加权汇总各句结论，既保留逐句依据，也能联合多句\scite{nlp-dialogue-hanselowski2018ukp}。设模型对三类证据给出教学概率：通知中的改期句对“当前读书会在4月18日举行”为$(0.90,0.04,0.06)$；一份假设的权威更新“当前活动改为4月19日”为$(0.05,0.90,0.05)$；检修公告为$(0.15,0.10,0.75)$。按最大值恢复支持、反驳与信息不足。可分解注意力参数少、可并行，但基础版本不含词序，“甲通知乙”与“乙通知甲”难以区分；后续系统多用BERT类交叉编码器替换判定部件，输入协议不变。
+
+\subsubsection{规则与结构化事实核验}
+\label{sec:nlp-dialogue-structured-check}
+
+日期、数值和明确字段可以先规范化再比较，不必交给学习模型。规则的输入是带对象标识、属性、时间和单位的主张记录，以及通过只读查询取得的证据记录。只有主体、属性和适用范围一致时才比较值：相同输出匹配，不相容输出冲突，缺字段或范围未对齐输出信息不足，并附上原因。
+
+主张“报名可以在4月16日18:00提交”经规范化得到提交时刻$t$为2025-04-16 18:00，通知条件为$t<t_{\mathrm{deadline}}$，代入边界时刻为假，因此判为冲突。“到场人数为0.12千人”与S中的“120人”换算到同一单位后匹配；“120组”缺少每组人数，判为信息不足，不能只比较数字120。“原定4月17日”与“现改4月18日”分属原计划日期和当前日期两个属性，保留属性后不冲突；若抽取时只留下两个日期再任选其一，就会把时间更新误判为来源矛盾。
+
+规则精确、可解释，但只覆盖已经编码的比较。“人数增长是因为改到了周五”增加了因果主张，日期和人数分别正确也不能推出它；规则应返回“不在覆盖范围内”，交给有相应证据的其他判定方法。
+
+\subsubsection{检索增强的逐事实判定}
+\label{sec:nlp-dialogue-safe}
+
+FActScore对照的是固定知识源，适用于人物传记这类有对应条目的任务；开放问题的长回答涉及的事实没有现成条目，FEVER流水线又需要为每个领域训练检索与判定模型。SAFE（search-augmented factuality evaluator）把整个过程交给语言模型执行：模型拆出事实，为每条事实自己生成搜索查询，读取搜索结果后判断是否被支持\scite{nlp-dialogue-wei2024safe}。它是FActScore的扩展：判定单位仍是原子事实，证据来源从固定知识源换成多步网络搜索。
+
+SAFE的步骤如算法\ref{alg:nlp-dialogue-safe}。拆分之后先做自足化改写，把代词和省略替换为明确对象，使每条事实脱离原回答也能被检索；再判断每条事实与原问题是否相关，无关事实不计入后续统计。检索是多步的：每一步的查询由语言模型根据事实和此前已取得的结果生成，因此第二个查询可以针对第一次结果中缺少的部分。
+
+\begin{algorithm}[SAFE检索增强的逐事实判定]
+  \label{alg:nlp-dialogue-safe}
+  \begin{algorithmic}[1]
+    \Require 问题$x$，长回答$y$，语言模型$\mathrm{LM}$，搜索接口$\mathrm{Search}$，每条事实的查询上限$J$
+    \Ensure 支持数$S$，未获支持数$N$，无关数$I$
+    \State $A\gets\mathrm{LM}_{\mathrm{split}}(y)$\Comment{拆成单个事实}
+    \State $S,N,I\gets0$
+    \For{$a\in A$}
+      \State $a\gets\mathrm{LM}_{\mathrm{revise}}(a,y)$\Comment{替换代词与省略，使事实自足}
+      \If{$\mathrm{LM}_{\mathrm{relevant}}(a,x)$为假}
+        \State $I\gets I+1$；\textbf{continue}
+      \EndIf
+      \State $R\gets\varnothing$
+      \For{$j=1,\ldots,J$}
+        \State $q_j\gets\mathrm{LM}_{\mathrm{query}}(a,R)$；$R\gets R\cup\mathrm{Search}(q_j)$
+      \EndFor
+      \If{$\mathrm{LM}_{\mathrm{judge}}(a,R)=\text{支持}$}
+        \State $S\gets S+1$
+      \Else
+        \State $N\gets N+1$
+      \EndIf
+    \EndFor
+    \State \Return $S,N,I$
+  \end{algorithmic}
+\end{algorithm}
+
+与SAFE同时提出的指标还考虑了回答是否说得够多。精确率$P=S/(S+N)$衡量说出的事实有多少有据；用户期望的事实数记为超参数$K$，召回率$R_K=\min(S/K,1)$衡量有据事实是否达到期望数量，二者合成
+\begin{equation}
+ F_1@K=
+ \begin{cases}
+ \dfrac{2P\,R_K}{P+R_K}, & S>0,\\[1ex]
+ 0, & S=0.
+ \end{cases}
+ \label{eq:nlp-dialogue-safe-f1}
+\end{equation}
+它补上了FActScore鼓励少说的缺口：只说一句正确事实的回答精确率为1，但$R_K$很低。例如某回答有$S=8$、$N=2$，则$P=0.8$；取$K=10$时$R_K=0.8$，$F_1@10=0.8$；取$K=5$时$R_K=1$，$F_1@5=2\times0.8/1.8\approx0.889$。$K$表达的是对回答长度的偏好，比较模型时必须固定。
+
+SAFE的优点是领域开放、无需训练专门模型；原文在约一万六千条事实上与众包标注的一致率为72\%。代价同样明显：每条事实需要多次搜索与模型调用，搜索结果随时间变化，同一回答隔月重评可能得到不同结论，复现时应保存查询与结果快照。它的判定只有“支持”与“未获支持”两类，反驳与信息不足没有区分，与FActScore相同。
+
+\subsection{回答修订与回答边界}
+\label{sec:nlp-dialogue-answer-boundary}
+
+核验得到逐条结论后，还要把它们变成可以交付的回答：保留被支持的部分，对信息不足的部分局部弃答，对被反驳的部分按来源修订，再重新核验新增的陈述。对本节的待查回答，整句弃答会丢掉已获支持的日期和地点；局部弃答可得“通知说明活动于4月18日在海棠楼201举行，但未给出到场人数”；若已取得S，则修订为“签到统计记录为120人”，并引用S而不是通知。
+
+是否接受模型的判定，需要在独立开发样本上选阈值，并同时报告覆盖率与接受风险。设四条教学主张的支持置信为$0.95,0.85,0.75,0.40$，独立核验结果依次为对、错、对、错。阈值$0.8$接受两条，覆盖率$2/4$，接受样本的错误率$1/2$；阈值$0.9$只接受一条，覆盖率$1/4$，错误率为0。后一数字只描述这四个样本，阈值选择与最终测试须使用不同数据。
+
+修订本身也可以自动化。RARR依靠外部检索，先查证再做最小编辑；CoVe不访问外部资料，让模型提出验证问题并独立回答，借自我一致性发现错误。两者都以“初稿已经存在”为前提，与第\ref{chap:nlp-text-generation}章先规划再生成的方法互补。
+
+\subsubsection{检索–核验–最小修订}
+\label{sec:nlp-dialogue-rarr}
+
+语言模型的回答多数内容通常可用，只有少数片段有误。若为改正一个数字而重写整段，既浪费已有内容，也可能引入新错误。RARR（retrofit attribution using research and revision）的目标因此有两个：修订后的文本要能归因到检索到的证据，同时尽量保留原文\scite{nlp-dialogue-gao2023rarr}。它不需要训练，各模块均由少样本提示的语言模型实现，可以接在任何生成模型之后。
+
+RARR分为研究阶段和修订阶段（算法\ref{alg:nlp-dialogue-rarr}）。研究阶段让模型针对原文$x$提出一组覆盖其各方面内容的核验问题，例如“ML-0418在哪天举行”“ML-0418现场有多少人”；对每个问题调用搜索引擎，把结果切成段落，按与问题的相关性排序，保留前几段作为证据。修订阶段逐一处理问题—证据对：一致性模型判断当前文本在该问题上是否与证据相符，不相符时编辑模型只改写相关片段，其余部分原样保留。最后从全部证据中选出至多$M$段组成\term{归因报告}（attribution report），选择准则是使每个核验问题都有尽量相关的证据覆盖。
+
+\begin{algorithm}[RARR检索–核验–最小修订]
+  \label{alg:nlp-dialogue-rarr}
+  \begin{algorithmic}[1]
+    \Require 原文$x$，语言模型$\mathrm{LM}$，搜索接口$\mathrm{Search}$，归因报告上限$M$
+    \Ensure 修订文本$y$，归因报告$\mathcal{A}$
+    \State $Q\gets\mathrm{LM}_{\mathrm{question}}(x)$\Comment{研究阶段：生成核验问题}
+    \For{$q\in Q$}
+      \State $E_q\gets$按与$q$的相关性排序$\mathrm{Search}(q)$中的段落，保留前若干段
+    \EndFor
+    \State $y\gets x$
+    \For{$q\in Q$，$e\in E_q$}\Comment{修订阶段}
+      \If{$\mathrm{LM}_{\mathrm{agree}}(y,q,e)$判为不一致}
+        \State $y\gets\mathrm{LM}_{\mathrm{edit}}(y,q,e)$\Comment{只改与$q$相关的片段}
+      \EndIf
+    \EndFor
+    \State $\mathcal{A}\gets$从$\bigcup_qE_q$中选至多$M$段，使各$q$的最大相关分之和最大
+    \State \Return $y,\mathcal{A}$
+  \end{algorithmic}
+\end{algorithm}
+
+评价同样分两项。归因度检查修订文本$y$中的陈述能否由报告$\mathcal{A}$支持，可由人工判断，也可用自然语言推断模型自动估计。\term{保持度}（preservation）检查改动是否克制：人工判断原意是否保留，记为$\operatorname{Pres}_{\mathrm{intent}}\in\{0,1\}$；字符层面用编辑距离计算
+\begin{equation}
+ \operatorname{Pres}_{\mathrm{Lev}}(x,y)=\max\Bigl(1-\frac{\operatorname{Lev}(x,y)}{|x|},\ 0\Bigr),\qquad
+ \operatorname{Pres}=\operatorname{Pres}_{\mathrm{intent}}\cdot\operatorname{Pres}_{\mathrm{Lev}},
+ \label{eq:nlp-dialogue-rarr-preservation}
+\end{equation}
+$\operatorname{Lev}$是字符级编辑距离，$|x|$是原文长度。两项指标此消彼长：整段重写可以让归因度很高而保持度很低，什么都不改则相反，所以原文用二者的调和平均作为综合分。
+
+对待查回答，核验问题“现场有多少人”检索到S，一致性模型判为不一致，编辑模型把“150”改为“120”，其余不动。原文共25个字符，编辑距离为1，$\operatorname{Pres}_{\mathrm{Lev}}=1-1/25=0.96$；若改写为“签到记录显示ML-0418当日到场120人，活动在海棠楼201举行”，日期信息丢失，编辑距离也大得多。RARR的局限在于它只会编辑、不会删除：如果没有S，搜索找不到人数证据，“150人”会原样保留而缺少归因，这时需要本小节开头的局部弃答规则补充。
+
+\subsubsection{验证问题链}
+\label{sec:nlp-dialogue-cove}
+
+外部检索并非总是可用。\term{验证问题链}（chain-of-verification, CoVe）观察到，模型在长回答中编造的细节，单独作为短问题提问时往往答得更准；利用这种不一致，不访问外部资料也能发现部分错误\scite{nlp-dialogue-dhuliawala2024cove}。其流程分四步：
+\begin{equation}
+ \begin{aligned}
+ r_0&=\mathrm{LM}(x), &
+ \{v_1,\ldots,v_m\}&=\mathrm{LM}_{\mathrm{plan}}(x,r_0),\\
+ a_j&=\mathrm{LM}(v_j),\quad j=1,\ldots,m, &
+ r&=\mathrm{LM}_{\mathrm{final}}\bigl(x,r_0,\{(v_j,a_j)\}_{j=1}^m\bigr).
+ \end{aligned}
+ \label{eq:nlp-dialogue-cove}
+\end{equation}
+先起草初稿$r_0$；再根据问题和初稿规划一组验证问题$v_j$，每个问题针对初稿中的一处事实；然后独立回答每个问题；最后把初稿与问答对一起交给模型，删去或改正与验证答案矛盾的内容，生成终稿$r$。
+
+关键在第三步“独立”二字。若回答验证问题时初稿仍在上下文中，模型倾向于复述初稿，错误被原样确认。原文比较了几种执行方式：联合式在同一次生成中规划并回答问题，答案受初稿影响最大；两步式把规划与回答分开，回答时不看初稿；分解式进一步让每个问题单独调用一次模型，问题之间也互不干扰；分解加修订式再增加一步，显式比较每个答案与初稿是否一致。从联合式到分解式，答案受初稿的影响逐步减小，调用次数随之增加。
+
+设初稿为“读书会4月18日在海棠楼201举行，主讲人为林宁”。规划出验证问题“ML-0418的主讲人是谁”，模型在不看初稿时若回答“材料未给出主讲人”，终稿删去主讲人一句。CoVe的边界也由此可见：验证答案仍出自同一模型的参数知识，模型若在短问题上同样确信错误事实，验证无法发现；它也不产生可供引用的外部证据。因此CoVe适合在无检索条件下降低编造，需要可归因结论时应与RARR类检索方法结合。
+
+表\ref{tab:nlp-dialogue-verification-methods}汇总本节方法。从左到右的变化是：判定单位从整条主张变为原子事实，证据来源从固定文集扩展到网络搜索乃至模型自身，输出从判定标签扩展到修订后的回答。
+
+\begin{table*}[htbp]
+\centering
+\small
+\begin{tabular}{p{18mm}p{30mm}p{28mm}p{32mm}p{36mm}}
+\toprule
+方法 & 解决的问题 & 证据来源 & 核心机制 & 新增代价 \\
+\midrule
+FEVER流水线 & 大文集中的证据定位与三分类 & 固定文集 & 文档检索、句子打分选择、句对推断 & 错误逐级传递；需训练各阶段 \\
+FActScore & 长回答的整体判断过粗 & 固定知识源 & 原子事实分解、逐条判支持 & 依赖分解质量；鼓励少说 \\
+SAFE & 开放领域无现成条目 & 网络搜索 & 自足化改写、多步查询、逐事实判定、$F_1@K$ & 调用多；结果随时间变化 \\
+RARR & 修订时整段重写引入新错 & 网络搜索 & 核验问题、一致性判断、最小编辑、归因报告 & 只编辑不删除；多轮调用 \\
+CoVe & 无检索时发现编造 & 模型自身 & 规划验证问题、独立回答、据答案修订 & 无外部证据；共享模型盲点 \\
+\bottomrule
+\end{tabular}
+\caption{主张与回答核验方法对照。FEVER流水线输出主张级标签，FActScore与SAFE输出逐事实统计，RARR与CoVe输出修订后的回答；三分类只在FEVER流水线中完整保留。}
+\label{tab:nlp-dialogue-verification-methods}
+\end{table*}

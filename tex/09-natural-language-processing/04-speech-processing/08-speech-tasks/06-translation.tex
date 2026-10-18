@@ -1,0 +1,141 @@
+\section{语音翻译}
+\label{sec:nlp-speech-translation}
+
+\term{语音翻译}（speech translation）把源语言声音转换为目标语言文字或声音，核心约束仍是第\ref{chap:nlp-text-generation}章讨论的意义保持。描述一个语音翻译系统要分开三个维度：级联或直接是实现路线，目标文字或目标声音是交付对象，整段或流式是可见信息与时间条件。三者可以自由组合，例如直接模型也可以流式输出文字，级联系统也可以交付声音。
+
+这一任务的挑战来自声音与翻译两方面。第一，识别错误会传进翻译，翻译器通常无法从错误转写中恢复源语原意。第二，世界上相当多的语言没有通行的书面形式，以源语转写为中间表示的路线对它们不可用。第三，“源声音—目标声音”的成对数据远少于平行文本和转写录音。第四，同一译文可以用许多种时长与韵律读出，直接回归目标频谱会把这些读法平均成模糊的声音。第五，流式译出必须在源句未完时决定等待还是提交。方法从级联转换出发：一最佳级联最简单，多候选传递缓解错误传播，增量级联处理时间条件。直接转换随后依次改变中间表示：Translatotron直接回归目标频谱；S2UT改为预测离散声音单位；UnitY先生成目标文字再生成单位，SeamlessM4T据此构建多语模型；SeamlessStreaming再加入单调注意力，形成流式直接翻译。表\ref{tab:nlp-speech-translation-routes}在节末对照这些路线。
+
+\subsection{级联转换}
+\label{sec:nlp-speech-cascade}
+
+级联把识别、文本翻译与合成三个已有部件接起来，各部件可以分别利用大规模转写录音、平行文本与合成语料训练，中间文字也便于人工检查。代价同样来自串联：错误逐级传播，语气与情绪等副语言信息在文字接口处丢失，三段延迟相加。CoVoST 2提供多语种的声音—转写—译文三元组，可以同时监督识别、翻译与声音条件的翻译，常用来比较级联与直接路线\scite{nlp-intro-wang2021covost}
+
+\subsubsection{一最佳识别–翻译–合成}
+\label{sec:nlp-speech-one-best}
+
+设源声音为$\bm{X}$，源语文字为$x$，译文为$y$。一最佳级联依次求
+\[
+ \hat x=\argmax_x p_{\mathrm{asr}}(x\mid\bm{X}),
+ \qquad
+ \hat y=\argmax_y p_{\mathrm{mt}}(y\mid\hat x),
+\]
+再把$\hat y$连同目标语言和音色条件交给第\ref{sec:nlp-speech-tts}节的合成器。两次$\argmax$都由束搜索近似。三个部件分别用转写录音、平行文本和目标语言的文字—声音配对训练，接口需要约定语言标记、分段、标点与专名写法。
+
+通知中“改至四月十八日下午两点”应译为“rescheduled to April 18 at 2 p.m.”。若识别输出“四月十七日”，翻译器忠实译成“April 17”，翻译部件本身没有出错，端到端结果却错了。把人工正确转写与识别转写分别送进同一个翻译器，就能把误差归到识别还是翻译；合成器若把“2 p.m.”读成上午两点，则归为目标声音内容错误。三类错误的定位方法不同，验收时须分别检查译文和听者实际听到的声音。
+
+\subsubsection{识别多候选传递与重排}
+\label{sec:nlp-speech-nbest-translation}
+
+一最佳传递在识别阶段就丢掉了其他解释。若声学上“十七”与“十八”都可能，可以保留识别的$n$个候选，每个候选各自翻译，再按识别分数、翻译分数与可核验约束的加权和重排：
+\begin{equation}
+ S(x,y)=\lambda_a\log p_{\mathrm{asr}}(x\mid\bm{X})
+        +\lambda_m\log p_{\mathrm{mt}}(y\mid x)+r(x,y).
+ \label{eq:nlp-speech-nbest}
+\end{equation}
+$r(x,y)$检查日期、实体与格式在源文和译文间是否一致，权重$\lambda_a,\lambda_m$在开发集上按相同的候选预算调定。也可以传递词格，让翻译器在更多候选上搜索。
+
+完整的概率处理是对源语转写边缘化，$p(y\mid\bm{X})=\sum_xp_{\mathrm{mt}}(y\mid x)p_{\mathrm{asr}}(x\mid\bm{X})$。$n$最佳列表只覆盖少数$x$，而式\eqref{eq:nlp-speech-nbest}对每个$(x,y)$对单独打分，近似的是联合最大化而不是边缘化；两个源候选译成同一译文时，二者的分数并不相加。教学例子：“十八日”与“十七日”的识别概率为$0.55,0.45$，各自最佳译文的条件概率为$0.60,0.90$。取$\lambda_a=\lambda_m=1$、$r=0$时，乘积分别为$0.33$与$0.405$，后者获胜。翻译模型对某一说法的偏好压过了较好的声学证据；规范值检查可以拒绝源译不一致的组合，却无法判断哪个日期确实被说出。
+
+\subsubsection{增量级联与等待策略}
+\label{sec:nlp-speech-incremental-cascade}
+
+用户尚未说完时，级联的每一环都只能看到前缀。识别器的输出分为已提交的稳定前缀和仍会改写的暂定尾部（第\ref{sec:nlp-speech-whisper-streaming}小节）；只有稳定前缀可以支撑不可撤回的译出，暂定文字只用于预计算。文本端的读写策略沿用第\ref{sec:nlp-generation-wait-k}小节：wait-$k$固定落后$k$个源词，第\ref{sec:nlp-generation-adaptive-policy}小节的自适应策略按已读内容决定读或写。在语音级联中，“读一个源词”要等识别器提交这个词，所以源词数不能直接换算成固定毫秒。
+
+例如用户说“校外来宾可以直接参加……吗？不，须先报名”。过早译出并播放“可以直接参加”，就把尚未完成的询问当成了许可；问句标记和否定都在后面才到。翻译部件可以用前缀到前缀的数据训练，也可以在整句模型外加提交策略。目标文字未展示前可以重算，已播放的声音只能追加更正。
+
+延迟须分段记账。设用户在墙钟3.0\,s说完，最终源文3.4\,s提交，译文3.7\,s确定，首段目标声音4.0\,s开始播放。用户结束到首段播放为1.0\,s，其中翻译只占0.3\,s，其余是识别等待和合成排队。这是计时演算，不是系统实测。
+
+\subsection{直接转换}
+\label{sec:nlp-speech-direct-translation}
+
+直接转换用一个模型从源声音生成目标输出，不调用外部识别器取得源语转写。它要解决级联的三个问题：识别错误的传播，副语言信息的丢失，以及无书面形式的语言无法转写。新的困难是端到端配对数据少，目标声音又难以直接回归。下面四个模型依次改变目标表示与生成顺序：Translatotron直接预测频谱；S2UT把目标声音换成离散单位；UnitY在单位之前先生成目标文字；SeamlessStreaming加入单调读写决策。与级联比较时，须固定语言方向、训练资源、可见上下文和计算预算。
+
+\subsubsection{直接语音到语音翻译：Translatotron与离散单位翻译}
+\label{sec:nlp-speech-translatotron}
+
+\term{直接语音到语音翻译}（direct speech-to-speech translation, S2ST）的第一个完整模型是Translatotron\scite{nlp-speech-jia2019translatotron}。它把第\ref{sec:nlp-speech-tacotron}小节的Tacotron 2从“文字到频谱”改成“源频谱到目标频谱”。输入是80维log-Mel帧，相邻3帧堆叠后送入8层双向LSTM编码器；解码器沿用Tacotron 2的预网络、自回归LSTM栈与后处理网络，用4头加性注意力读取编码器输出，每步预测2帧1025维对数线性频谱，最后由声码器（实验中主要用Griffin-Lim，听感评价用WaveRNN）恢复波形。可选的说话者编码器从源录音提取音色嵌入，使译文声音保留原说话者的音色。
+
+只用频谱回归误差训练时，注意力很难学会对齐：源频谱与目标频谱属于两种语言，相邻帧之间没有单调对应。Translatotron因此在编码器中间层上接两个辅助解码器（各为2层LSTM与单头加性注意力），分别预测源语音素与目标音素序列，总损失为
+\begin{equation}
+ \mathcal L_{\mathrm{Tr}}=\mathcal L_{\mathrm{spec}}
+ +\lambda_{\mathrm{src}}\mathcal L_{\mathrm{CE}}(\text{源音素})
+ +\lambda_{\mathrm{tgt}}\mathcal L_{\mathrm{CE}}(\text{目标音素}),
+ \label{eq:nlp-speech-translatotron}
+\end{equation}
+$\mathcal L_{\mathrm{spec}}$是预测频谱与目标频谱的回归误差。辅助解码器读取的层是超参数：在较小的Fisher西英数据上，源音素接第4层、目标音素接第6层，使较低层编码源语内容、较高层承担翻译；在较大的会话数据上两者都接最后一层。辅助解码器只在训练时使用。原文在西班牙语—英语会话数据上报告，不加辅助损失时BLEU只有0.4，加入两项辅助损失后为42.7，同条件的语音翻译加合成级联为48.7。直接模型可行，但仍落后于级联，并且训练依赖音素标注。
+
+频谱回归的根本困难在于目标的多样性。同一译文可以快读、慢读或在不同位置停顿，回归误差的最优解是这些读法的条件均值，生成的频谱因而发糊；自回归频谱解码器还会出现跳读与重复。Lee等人的\term{语音到单位翻译}（speech-to-unit translation, S2UT）把目标换成离散符号，以分类代替回归\scite{nlp-speech-lee2022s2ut}。目标单位沿用第\ref{sec:nlp-speech-hubert}小节HuBERT构造伪标签的办法：用在LibriSpeech上预训练的HuBERT Base提取目标英语录音第6层的帧表示$\bm h_t$（每20\,ms一帧），做$K=100$的K均值聚类，每帧的单位就是最近中心的编号$z_t=\argmin_{c}\lVert\bm h_t-\bm\mu_c\rVert_2$。相邻帧常落在同一类，S2UT的“去重”做法把连续重复的单位合并为一个，例如帧单位序列$17,17,17,52,52,8$变为$17,52,8$，并记下时长$(3,2,1)$。去重序列更短，也不再携带时长，时长交给声码器预测。
+
+S2UT模型是改造的Transformer翻译模型。编码器前是两层一维卷积（核宽5、1024通道、每层步长2并接GLU），把10\,ms一帧的源特征降采样4倍；其后是12层Transformer编码器（$d=256$，4头），6层Transformer解码器自回归预测去重单位，用带标签平滑的交叉熵训练：
+\begin{equation}
+ \mathcal L_{\mathrm{s2u}}=-\sum_{i=1}^{L}\log p(u_i\mid\bm X,u_{<i}).
+ \label{eq:nlp-speech-s2ut}
+\end{equation}
+有目标文字时，可在单位解码器第3层上接CTC（第\ref{sec:nlp-speech-ctc}小节）预测目标子词，同一次解码同时得到单位与文字；源、目标音素或字符辅助任务沿用Translatotron的接法。单位声码器沿用Polyak等人改造的HiFi-GAN（第\ref{sec:nlp-speech-hifigan}小节）：输入单位嵌入序列，前置一个FastSpeech 2式时长预测器（两层一维卷积加线性层），在对数域上以均方误差拟合每个单位的真实帧数，并与HiFi-GAN的对抗损失联合训练\cite{nlp-speech-polyak2021resynthesis}。合成时先预测时长，把单位按时长展开，再生成波形。
+
+与Translatotron相比，S2UT改动了两处。目标分布由连续回归变为每步$K$类的分类，类别分布可以多峰，不会把不同读法平均掉；时长与韵律的细节交给声码器，翻译模型只需决定说什么。单位由自监督模型从无标注录音得到，因此S2UT在完全不用目标文字的条件下也能训练，原文报告这时的效果与使用文字监督的频谱模型相当。代价是单位只保留语言内容，原说话者的音色与情绪基本丢失；单位声码器为每种目标语言或音色单独训练，单位序列的质量也受聚类数与所选层的限制。
+
+\subsubsection{文本与声音单位生成：SeamlessM4T}
+\label{sec:nlp-speech-seamless}
+
+S2UT的单个解码器要同时完成翻译与发音，单位序列又比文字长得多，翻译的长距离依赖被摊在几百步上。Translatotron 2先生成音素再合成频谱，提出了两遍解码的思路\cite{nlp-speech-jia2022translatotron2}；UnitY把第一遍改为生成目标子词，把第二遍改为生成离散单位\scite{nlp-speech-inaguma2023unity}。UnitY由四个模块组成。Conformer语音编码器（第\ref{sec:nlp-speech-encoder}小节）把源声音编码为$\bm H$。第一遍文本解码器以交叉注意力读取$\bm H$，自回归生成目标子词$Y=(y_1,\ldots,y_M)$，其第$i$步输出投影前的状态为$\bm d^{\mathrm{text}}_i=\mathrm{TDec}(\bm H,y_{<i})\in\mathbb R^{d}$。双向的文字到单位编码器把这些状态改写为$\bm Z=\mathrm{T2UEnc}(\bm D^{\mathrm{text}})\in\mathbb R^{M\times d}$，长度不变，用来弥合文字与单位两种表示之间的差距。第二遍单位解码器只读取$\bm Z$，不再读取$\bm H$，自回归生成单位$U=(u_1,\ldots,u_L)$。训练目标为两遍交叉熵的加权和：
+\begin{equation}
+ \begin{aligned}
+ \mathcal L_{\mathrm{UnitY}}
+ &=\mathcal L_{\mathrm{s2u}}(U\mid\bm X,Y)+w_{\mathrm{s2t}}\mathcal L_{\mathrm{s2t}}(Y\mid\bm X),\\
+ \mathcal L_{\mathrm{s2t}}&=-\frac1M\sum_{i=1}^{M}\log p(y_i\mid\bm d^{\mathrm{text}}_i),\\
+ \mathcal L_{\mathrm{s2u}}&=-\frac1L\sum_{i=1}^{L}\log p(u_i\mid\mathrm{UDec}(\bm Z,u_{<i})).
+ \end{aligned}
+ \label{eq:nlp-speech-unity}
+\end{equation}
+训练时第一遍用真实译文作教师强制，第二遍读取的是真实译文对应的解码器状态。推断做两次束搜索：先以较宽的束得到最佳译文$\hat Y$，把其解码器状态送入文字到单位编码器，再以较窄的束（原文默认取1）生成单位，最后由单位声码器合成。第二遍只看$\bm Z$，使声音单位与已经输出的译文保持同步，代价是第二遍无法修正第一遍的翻译错误。
+
+两遍结构的好处有三点。翻译在短的子词序列上完成，可以用无标注文本预训练第一遍解码器（UnitY用多语去噪自编码预训练的mBART初始化它）；单位解码器只做“已知译文怎样发音”，任务接近合成；第一遍的文字本身就是可读的译文。原文在相同数据上报告，UnitY比单遍S2UT高2.5至4.2个ASR-BLEU，解码快2.83倍。
+
+SeamlessM4T用多任务的UnitY构建覆盖近百种语言的模型\scite{nlp-intro-seamless2023}。语音编码器是24层Conformer的w2v-BERT 2.0，约6亿参数，在约100万小时无标注录音上自监督预训练；文本编码器与第一遍解码器来自NLLB文本翻译模型，使语音输入与文字输入共享同一个译文解码器。目标单位取自XLS-R-1B第35层的50\,Hz表示，K均值聚类（$K=10000$）；多语单位声码器是加入语言嵌入与时长预测器的HiFi-GAN。成对的“源声音—目标单位”数据不足时，先由文本翻译数据的译文经文字到单位模型生成伪单位标签，再训练第二遍。各部分的监督来源因此不同：编码器来自无标注录音，翻译能力来自平行文本与声音—译文对，单位来自目标录音的聚类，声码器来自单位与真实波形的配对。
+
+两遍输出需要分别核对。对“海棠楼201”，第一遍可在既定译名表下输出“Haitang Building, Room 201”；若第二遍把数字读成210，只看文字的评价会漏掉这个错误。ASR-BLEU先用识别器转写目标声音再算BLEU，它能发现读错的数字，但同时混入了评价识别器自身的错误。
+
+\subsubsection{单调推进与流式译出：SeamlessStreaming}
+\label{sec:nlp-speech-seamless-streaming}
+
+SeamlessM4T等整句到齐后才开始解码。SeamlessStreaming在SeamlessM4T v2上加入\term{高效单调多头注意力}（efficient monotonic multihead attention, EMMA），让文字解码器边读源声音边决定何时写；生成的文字再交给非自回归的UnitY2文字到单位部件，按块产生声音单位\cite{nlp-speech-seamless2023streaming,nlp-speech-ma2023emma}。
+
+EMMA沿用第\ref{sec:nlp-generation-adaptive-policy}小节的单调注意力与单调多头注意力：每个头对目标位置$i$和源位置$j$估计停止概率$p_{i,j}$，期望对齐$\alpha_{i,j}$满足式\eqref{eq:nlp-generation-monotonic-attention}的递推。递推原有的并行闭式解要除以$\prod_{\ell}(1-p_{i,\ell})$的累积乘积，源序列较长时这个乘积趋于零，训练中出现数值不稳定和对齐消失。语音的源序列比文字长得多，问题更突出。EMMA把递推改写为不含除法的矩阵形式：
+\begin{equation}
+ \begin{gathered}
+ \bm\alpha_{i,:}=\bm p_{i,:}\odot\bigl(\bm\alpha_{i-1,:}\bm T^{(i)}\bigr),\\
+ T^{(i)}_{m,n}=\begin{cases}\prod_{\ell=m}^{n-1}(1-p_{i,\ell}),&m<n,\\1,&m=n,\\0,&m>n.\end{cases}
+ \end{gathered}
+ \label{eq:nlp-speech-emma}
+\end{equation}
+$\bm\alpha_{i,:}\in\mathbb R^{S}$是第$i$个目标单位在$S$个源位置上的对齐分布，$T^{(i)}_{m,n}$是“上一步停在$m$、本步从$m$一路不停走到$n$”的概率。上三角矩阵$\bm T^{(i)}$可由$1-p_{i,:}$的累积乘积直接构造，各目标位置可以并行计算。
+
+训练目标在翻译负对数似然上加两项正则。期望延迟$\bar d_i=\sum_j j\,\alpha_{i,j}$与对齐方差$\bar v_i=\sum_j j^2\alpha_{i,j}-\bar d_i^{\,2}$都可微，
+\begin{equation}
+ \mathcal L_{\mathrm{EMMA}}=-\log p(Y\mid\bm X)+\lambda_{\mathrm{lat}}\,\mathcal C(\bar d_1,\ldots,\bar d_M)+\lambda_{\mathrm{var}}\sum_{i}\bar v_i,
+ \label{eq:nlp-speech-emma-loss}
+\end{equation}
+$\mathcal C$是某种延迟指标的可微形式。延迟项与第\ref{sec:nlp-generation-adaptive-policy}小节MILk的延迟损失作用相同，防止模型退化为等全部声音到齐再写；方差项让对齐集中，使推断时的确定性读写决策与训练时的期望对齐接近。
+
+推断时，每当一块新声音到达，模型重算已见声音的编码，对所有头求停止概率，取其中的最小值与阈值比较：最小值超过阈值才写出一个目标词元，否则继续读。教学设定三个头的概率为$(0.7,0.6,0.3)$、阈值0.5，最小值0.3，模型等待；更多声音到达后变为$(0.8,0.7,0.6)$，才写出。最保守的头决定推进，这与单调多头注意力“所有头都停止才写”的规则一致。
+
+写出文字不等于立即播放。新文字经文字到单位部件变成单位，单位块达到最小长度才送入声码器。延迟因此要分两种口径：以“写出第$i$个目标词元时已读入多少秒源声音”计的滞后，描述信息等待；以墙钟测得的首段播放与播放结束偏移，还包含编码重算、单位生成、网络与队列时间。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{29mm}>{\raggedright\arraybackslash}p{26mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    路线 & 中间表示 & 监督来源 & 延迟来源 & 可检查性\\
+    \midrule
+    一最佳级联 & 源语转写、译文文字 & 转写录音、平行文本、合成语料分别训练 & 三段串联相加；流式时还要等识别提交 & 两处文字接口都可检查，错误可逐段归因\\
+    多候选级联 & $n$最佳列表或词格 & 同上，另需开发集调权重 & 每个候选各翻译一次 & 可查看候选与重排分数\\
+    Translatotron & 无显式中间表示，直接回归频谱 & 源—目标声音对，辅助音素标注 & 整句编码后自回归逐帧生成 & 只能借辅助解码器观察内部\\
+    S2UT & 去重的HuBERT聚类单位 & 声音对；单位由无标注录音聚类得到，可不用文字 & 单位序列长，声码器另需时长预测 & 单位不可读；有文字时可加CTC输出\\
+    UnitY与SeamlessM4T & 目标子词，再接声音单位 & 预训练编码器、平行文本、伪单位标签 & 两遍束搜索，第二遍可窄束 & 第一遍译文可读，声音需另行转写核对\\
+    SeamlessStreaming & 同上，加单调对齐 & 同上，再加延迟与方差正则 & 由阈值和最保守的头决定读写；单位块需达到最小长度 & 读写时刻可记录，已播声音不可撤回\\
+    \bottomrule
+  \end{tabularx}
+  \caption{语音翻译路线的对照。从上到下，中间表示由显式源语文字逐步变为目标文字加离散单位，监督也从各部件分别训练变为预训练表示与联合目标。表中延迟一列只列结构上的等待来源，不是实测数值。}
+  \label{tab:nlp-speech-translation-routes}
+\end{table*}

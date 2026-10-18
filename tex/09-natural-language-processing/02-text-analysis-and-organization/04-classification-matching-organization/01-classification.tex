@@ -1,0 +1,502 @@
+\section{文本分类与属性判定}
+\label{sec:nlp-classification-attributes}
+
+给一段文字贴标签之前，应先问标签在描述什么。“报名说明”描述内容，“通知”描述体裁，“提醒”描述用途；“不满”描述情绪，“支持改期”描述对指定方案的立场。它们可以同时成立，把所有名称放进同一个互斥类别表，会把本来可以并存的属性强迫成竞争关系。分类单位也须固定：一句表达不满的话，不一定代表整篇通知的语气，更不能代表转发者的态度。
+
+本节先以内容类别展开分类模型的谱系，再处理多标签与极端多标签；情感、立场与文本来源三类属性各需一个额外条件：评价对象、目标主张，或可访问的来源模型。
+
+\subsection{内容类别与用途判定}
+\label{sec:nlp-classification-content}
+
+\term{单标签分类}（single-label classification）要求一个样本只选一个类别；\term{多标签分类}（multi-label classification）允许多个属性同时为真。\term{层次分类}（hierarchical classification）再加上类别之间的包含关系，例如“活动通知”之下再分“时间安排”和“报名说明”；这种包含属于标注规范，不由词义近似自动推出。业务还应约定“其他”“未知”和“证据不足”：它们分别表示已知的剩余类别、超出类别表的输入，以及当前文本不足以判定，三者不宜合并。
+
+设训练样本为$(x_i,\bm y_i)$，$x_i$是文档，$\bm y_i\in\{0,1\}^{K}$记录$K$个标签。文档表示$\bm h_i\in\mathbb R^d$经过$\bm z_i=\bm W\bm h_i+\bm b$得到标签得分。互斥类别使用
+\begin{equation}
+  \label{eq:nlp-classification-softmax}
+  p(y=k\mid x)=\operatorname{softmax}(\bm z)_k
+  =\frac{\exp(z_k)}{\sum_{\ell=1}^{K}\exp(z_\ell)},
+\end{equation}
+分母遍历全部候选类别，提高一类的得分会压低其他类的概率。多标签改用逐标签的sigmoid与二元交叉熵：
+\begin{equation}
+  \label{eq:nlp-classification-sigmoid}
+  \begin{aligned}
+    p_k&=\sigma(z_k)=\frac{1}{1+\exp(-z_k)},\\
+    L(x,\bm y)&=-\sum_{k=1}^{K}
+    \left[y_k\log p_k+(1-y_k)\log(1-p_k)\right].
+  \end{aligned}
+\end{equation}
+每个$p_k$估计“标签$k$存在”的条件概率，彼此不要求加和为1。生成式与判别式分类的一般理论，包括朴素贝叶斯、逻辑回归与支持向量机的定义、学习准则和求解，可参考\BookChapterRef{chap:classification}{卷四的分类章}；本节只写文本带来的特殊问题：特征怎样从词序列中构造，以及长度、词序和标签规模怎样影响模型设计。
+
+文本分类的挑战可以归为四项。词特征稀疏而高维，一个类别的证据分散在成千上万个词上；词序与局部短语（“无需报名”与“需要报名”）改变含义；长文档里关键信息只占少数句子，截断或平均都会稀释它；标注不足，类别表还会新增标签。表~\ref{tab:nlp-classification-content-methods}按这四项列出本小节的方法谱系。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}
+    >{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价或局限 \\
+    \midrule
+    多项式朴素贝叶斯 & 样本少时给出可检查的基线 & 类内词分布与平滑计数，按后验选类 & 条件独立过强，重复词造成过度自信 \\
+    逻辑回归、SVM & 直接学判别边界，容许相关特征 & TF-IDF与$n$-gram稀疏特征上的线性得分 & 特征工程依赖人工，同义词不共享统计 \\
+    fastText & 让相似词与短语共享参数且保持线性速度 & 词与哈希$n$-gram嵌入平均后接线性头 & 平均丢失长距离结构，哈希碰撞 \\
+    TextCNN & 学习不必枚举的局部短语模式 & 多宽度卷积与时间维最大池化 & 只看窗口内，跨句条件难以组合 \\
+    层次注意力网络 & 长文档中关键句被平均或截断 & 词级与句级两层双向GRU加注意力汇聚 & 顺序计算慢，注意力权重不等于证据 \\
+    BERT类编码器 & 否定、对象和条件的上下文交互 & 预训练双向编码与任务头微调 & 输入长度受限，每任务需标注与微调 \\
+    大语言模型提示 & 无标注或新标签时仍需分类 & 标签词条件概率或受约束生成 & 每次调用成本高，对提示与示例敏感 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{内容分类方法谱系。自上而下，前一行的局限大致是后一行的动机；代价一栏说明每一步换来的新问题，不表示后面的方法在所有数据上都更好。}
+  \label{tab:nlp-classification-content-methods}
+\end{table*}
+
+\subsubsection{多项式朴素贝叶斯文本分类}
+\label{sec:nlp-classification-naive-bayes}
+
+监督样本不多、又希望检查每个词怎样影响判断时，可以从类内词频建立生成式基线。文本特有的第一个选择是\emph{事件模型}：把文档看成从词表中有放回地抽出的一串词（多项式模型），还是看成每个词“出现或不出现”的一组二元事件（伯努利模型）\scite{mccallum1998event}。固定训练词表$V$，令$x_v$为文档中词$v$的出现次数，$c_{k,v}$为类别$k$训练文档中$v$的总计数，$n_k$为该类文档数。\term{多项式朴素贝叶斯}（multinomial naive Bayes）用加性平滑估计
+\[
+  \widehat\pi_k=\frac{n_k}{n},\qquad
+  \widehat\phi_{k,v}
+  =\frac{c_{k,v}+\lambda}{\sum_{u\in V}c_{k,u}+\lambda|V|},
+  \quad \lambda>0,
+\]
+并按$s_k=\log\widehat\pi_k+\sum_vx_v\log\widehat\phi_{k,v}$选类；对所有类别相同的多项式系数已约去。条件独立假设作用于给定类别后的词项事件，训练只需保存先验和类内词分布。
+
+考虑区分“活动通知”和“其他材料”的教学词表$\{\text{读书会},\text{报名},\text{比赛}\}$。两类训练文档数为3、2，词计数分别为$(4,3,1)$、$(1,1,6)$。取$\lambda=1$，通知类词概率为$(5,4,2)/11$，其他类为$(2,2,7)/11$。待分类通知的计数为$(1,2,0)$，
+\[
+  \begin{aligned}
+    s_{\text{通知}}&=\log0.6+\log\tfrac{5}{11}+2\log\tfrac{4}{11}\approx-3.3225,\\
+    s_{\text{其他}}&=\log0.4+3\log\tfrac{2}{11}\approx-6.0305,
+  \end{aligned}
+\]
+通知类领先约2.708，两类归一化后的后验约为0.9375。
+
+伯努利模型改记“含有$v$的文档数”。设通知类3篇中含三词的篇数为$(3,2,1)$，其他类2篇中为$(1,1,2)$，平滑后出现概率为$(\tfrac45,\tfrac35,\tfrac25)$与$(\tfrac24,\tfrac24,\tfrac34)$。同一通知的出现向量为$(1,1,0)$，似然还要乘上“比赛未出现”的概率：通知类为$0.6\times0.8\times0.6\times0.6=0.1728$，其他类为$0.4\times0.5\times0.5\times0.25=0.025$，后验约0.8736。两种模型的差别正落在文本特征上：多项式模型让重复两次的“报名”贡献两次证据，伯努利模型只记出现一次，却把缺席词也当作证据。短文本、词表较小时伯努利模型往往够用；长文档里词频携带信息，多项式模型更常用。
+
+平滑使已在词表中、但训练时未在某类出现的词仍有正概率；词表之外的词须预先约定忽略或映射到未知词项。重复模板会让多项式模型累积过强的置信；词袋也无法表达否定范围，“无需报名”和“需要报名”只差一个计数。
+
+\subsubsection{线性文本分类：逻辑回归与SVM}
+\label{sec:nlp-classification-linear}
+
+朴素贝叶斯要求词在类内独立，而“报名”与“截止”这类常同现的词会被重复计权。判别式线性模型不再为词建模，直接学习哪些特征区分类别，相关特征之间的权重由训练自动分配。文本上的工作主要在特征：词与相邻词对的$n$-gram计数，经词频—逆文档频率（term frequency–inverse document frequency, TF-IDF）加权。本章采用$\operatorname{idf}_v=\log((n+1)/(\operatorname{df}_v+1))+1$，$\operatorname{df}_v$为训练语料中含$v$的文档数，词频乘该权重后作$L_2$归一化。词表、低频过滤和IDF只在训练语料上拟合，验证文档不参与这些统计。
+
+保留“读书会、报名、比赛”三维，通知向量为$\bm x=(0.6,0.8,0)^\top$。逻辑回归头取$\bm w=(1,1,-1)^\top$、$b=-0.5$，得分0.9，通知概率$\sigma(0.9)\approx0.7109$，参考标签为1时损失$-\log0.7109\approx0.3412$。线性SVM取$\bm w=(0.5,1,-1)^\top$、$b=-0.2$，得分也为0.9，对$y=+1$的铰链损失$\max(0,1-ys)=0.1$。两个0.9都决定了边界的同一侧，但SVM得分是到边界的带符号间隔，需要另拟合校准映射才能当概率用。
+
+稀疏表示使得分只需累加非零特征，训练与预测都与文档中不同词的个数成正比。$L_1$正则化可以令多数$n$-gram权重为零，起特征选择作用；正类稀少时，可对损失加类别权重，阈值仍在符合目标分布的验证集上确定。这类模型在主题分类上至今是很强的基线，它的局限也来自特征：“报名”与“登记”是两个互不相关的维度，未在训练集出现的短语没有权重。
+
+\subsubsection{fastText：词与n-gram表示聚合}
+\label{sec:nlp-classification-fasttext}
+
+让同义词共享统计的直接办法，是给每个词和短语一个可学习的低维向量。fastText分类器把文档的特征多重集$F(x)$（词与词$n$-gram）中的向量取平均，再接线性分类：
+\[
+  \bm h(x)=\frac{1}{|F(x)|}\sum_{f\in F(x)}\bm e_f\in\mathbb R^{d},\qquad
+  \bm z=\bm W\bm h+\bm b.
+\]
+交叉熵梯度同时更新特征嵌入表与分类矩阵。原方法有两处为速度而设：$n$-gram数量随语料膨胀，便用哈希函数把它们映射到固定数目的桶中共享向量；类别很多时，输出层改用第~\ref{sec:nlp-classical-hierarchical-softmax}小节的层次softmax，把每个样本的输出计算从$O(Kd)$降到$O(d\log K)$\scite{nlp-joulin2017fasttext}。
+
+fastText可以看作低秩的逻辑回归：嵌入维度$d$较小时，它把逻辑回归的稀疏权重分解为“特征嵌入$\times$分类矩阵”，相似的词通过相近的嵌入共享统计；去掉$n$-gram，它就是词袋的平均嵌入分类器。
+
+$n$-gram特征的作用可以用两句话检验：“先／报名／再／参加”与“先／参加／再／报名”。只用词特征时两份特征多重集相同，任何参数下得分都相同。加入相邻二元短语后，第一句多出“先报名、报名再、再参加”，第二句多出“先参加、参加再、再报名”，两份多重集大小都为7。设共同四个词向量之和为$(2,1)$，第一句三个短语向量之和为$(2,0)$，第二句为$(0,2)$，均值表示分别为$(4/7,1/7)$与$(2/7,3/7)$；若“报名先行”标签头为$\bm w=(2,-1)$、$b=0$，两句得分为1与$1/7$，sigmoid约为0.7311与0.5357，顺序信息由短语特征带入。这里的向量是为说明信息路径而给定的教学数值。
+
+$n$-gram只保留窗口内的顺序，平均仍会抹掉长距离结构，哈希碰撞也可能把无关短语混在同一向量里；换来的是速度，训练和预测只需查表、求和与一次矩阵乘法。
+
+\subsubsection{TextCNN：局部模式与池化}
+\label{sec:nlp-classification-textcnn}
+
+$n$-gram表需要枚举短语，近义表达“提交报名”“递交登记”仍是不同的条目。TextCNN让滤波器在连续词向量窗口上学习局部模式，相近的短语因词向量相近而得到相近的响应\scite{nlp-kim2014textcnn}。设输入矩阵$\bm X\in\mathbb R^{n\times d}$的第$j$行是词向量$\bm e_j$，宽为$r$的一个滤波器$\bm w\in\mathbb R^{rd}$在每个位置计算
+\[
+  a_j=f\!\left(\bm w^\top
+  [\bm e_j;\ldots;\bm e_{j+r-1}]+b\right),\quad j=1,\ldots,n-r+1,\qquad
+  h=\max_j a_j.
+\]
+分号表示拼接，$f$为ReLU。时间维最大池化把长度不一的响应序列变成一个数，并让梯度只流回被选中的窗口。原文取宽度3、4、5各100个滤波器，池化后拼成300维向量，经dropout接softmax；张量形状依次为$n\times d\to(n-r+1)\times100$（每种宽度）$\to300\to K$。它还比较了两种词向量通道：静态通道固定预训练词向量，非静态通道随任务微调，双通道则同时保留二者，使微调不至于把预训练的相似结构完全改掉。卷积与池化的通用原理可参考\BookChapterRef{chap:convolutional-networks}{卷五的卷积神经网络章}。
+
+把“来宾须提交报名信息”切成五个教学词元，暂用一维词向量$(0,0.5,1,1,0)$。宽2滤波器取$\bm w=(1,1)$、$b=-0.5$，四个响应为$(0,1,1.5,0.5)$，最大响应1.5来自“提交／报名”；若报名头为$z=2h-1$，则$z=2$，概率0.8808。原文改为“无需提交报名信息”时，触发窗口仍在，否定词若落在窗口外，最大池化保留的仍是错误线索。
+
+TextCNN相对fastText增加了可学习的局部组合，视野仍是固定宽度的窗口：“校内无需报名；校外须提交信息”需要按对象组织两条规则，跨句条件也超出窗口；长文档整篇卷积后取全局最大，每个滤波器只留下最强的一处响应。
+
+\subsubsection{层次注意力网络：长文档分类}
+\label{sec:nlp-classification-han}
+
+长文档带来两个问题。其一，类别证据往往集中在少数句子里，一篇几百词的评论可能只有两句决定评分，平均嵌入把它们稀释在其余句子中，截断又可能把它们丢掉。其二，文档有“词组成句、句组成篇”的层次，平铺的词序列模型看不到句子边界。\term{层次注意力网络}（hierarchical attention network, HAN）按这两层结构分别编码与汇聚：先在每个句子内部用注意力挑出重要的词得到句向量，再在句子之间用注意力挑出重要的句子得到文档向量\scite{nlp-yang2016han}。整体结构见图~\ref{fig:nlp-classification-han}。
+
+\begin{figure*}[tbp]
+  \centering
+  \input{figures/09-natural-language-processing/02-text-analysis-and-organization/tikz/classification-ch11a-han.tex}
+  \caption{层次注意力网络。下半部分在每个句子内部运算：词级双向GRU给出$\bm h_{i,t}$，以可学习查询$\bm u_w$计算词注意力$\alpha_{i,t}$，加权得句向量$\bm s_i$；上半部分在句子序列上重复同一模式，以查询$\bm u_s$计算句注意力$\beta_i$，汇聚为文档向量$\bm v$后分类。}
+  \label{fig:nlp-classification-han}
+\end{figure*}
+
+设文档有$L$个句子，第$i$句有$T_i$个词，词向量为$\bm x_{i,t}\in\mathbb R^{d_e}$。词级编码用\term{门控循环单元}（gated recurrent unit, GRU）分别从左到右、从右到左读句子，拼接两方向的隐状态\cite{cho2014}；GRU用更新门决定保留多少旧状态，结构与LSTM相近而门更少。词注意力先把每个词表示投影成“重要性键”，再与一个全局可学习的查询向量比较：
+\begin{equation}
+  \label{eq:nlp-classification-han-word}
+  \begin{aligned}
+    \bm h_{i,t}&=\bigl[\overrightarrow{\mathrm{GRU}}(\bm x_{i,t});\ \overleftarrow{\mathrm{GRU}}(\bm x_{i,t})\bigr]\in\mathbb R^{2d_h},\\
+    \bm u_{i,t}&=\tanh(\bm W_w\bm h_{i,t}+\bm b_w),\\
+    \alpha_{i,t}&=\frac{\exp(\bm u_{i,t}^\top\bm u_w)}{\sum_{t'=1}^{T_i}\exp(\bm u_{i,t'}^\top\bm u_w)},\qquad
+    \bm s_i=\sum_{t=1}^{T_i}\alpha_{i,t}\bm h_{i,t}.
+  \end{aligned}
+\end{equation}
+句级编码在句向量序列$\bm s_1,\ldots,\bm s_L$上重复同一模式：
+\begin{equation}
+  \label{eq:nlp-classification-han-sentence}
+  \begin{aligned}
+    \bm g_i&=\bigl[\overrightarrow{\mathrm{GRU}}(\bm s_i);\ \overleftarrow{\mathrm{GRU}}(\bm s_i)\bigr],\qquad
+    \bm u_i=\tanh(\bm W_s\bm g_i+\bm b_s),\\
+    \beta_i&=\frac{\exp(\bm u_i^\top\bm u_s)}{\sum_{i'=1}^{L}\exp(\bm u_{i'}^\top\bm u_s)},\qquad
+    \bm v=\sum_{i=1}^{L}\beta_i\bm g_i,\\
+    p(y\mid x)&=\operatorname{softmax}(\bm W_c\bm v+\bm b_c).
+  \end{aligned}
+\end{equation}
+查询$\bm u_w,\bm u_s$与其余参数一起由文档级交叉熵训练，没有词或句的重要性标注。原文取词向量200维、每方向GRU 50维，于是一个批次的张量形状依次为：输入$B\times L\times T\times200$，词级编码$B\times L\times T\times100$，词注意力汇聚后$B\times L\times100$，句级编码仍为$B\times L\times100$，句注意力汇聚后$B\times100$，输出$B\times K$。实现时把同批文档补齐到相同的$L$和$T$，补齐位置在softmax前置为$-\infty$。
+
+用一个句级的教学数值看注意力怎样改变汇聚。设三句的句级表示为$\bm g_1=(1,0)$、$\bm g_2=(0,1)$、$\bm g_3=(1,1)$，投影后的键$\bm u_i$为$(0.2,0.1)$、$(0.9,0.8)$、$(0.1,-0.1)$，查询$\bm u_s=(1,1)$。打分为$(0.3,1.7,0)$，softmax得$\bm\beta\approx(0.173,0.700,0.128)$，文档向量$\bm v\approx(0.300,0.828)$；平均汇聚则得$(0.667,0.667)$。若第二句是“校外来宾须提前报名”，句注意力让它主导文档表示，而平均把它与另外两句等量混合。
+
+把两层注意力换成平均，HAN退化为层次平均编码；把整篇当作一句，它就是带注意力的BiGRU。它的收益来自句子边界这一结构先验，以及不增加标注就学到的句子权重。代价是循环网络按顺序计算，长文档训练较慢；注意力权重只是汇聚系数，可帮助定位关键句，却未必是判断的充分原因。超过编码器长度上限的文档仍可沿用这种“段内编码、段间注意力汇聚”的层次思路（第~\ref{sec:nlp-classification-bert}小节）。
+
+\subsubsection{BERT类模型：上下文编码与分类头}
+\label{sec:nlp-classification-bert}
+
+前面的模型从零学习或只用静态词向量，否定、对象和条件的相互作用要靠有限的任务标注学出。BERT类模型先在大规模无标注文本上预训练双向编码器，再取\code{[CLS]}位置的表示$\bm h_{\mathrm C}\in\mathbb R^{H}$接线性头，用式~\eqref{eq:nlp-classification-softmax}或式~\eqref{eq:nlp-classification-sigmoid}微调全部参数。分类头的结构与微调流程见第~\ref{sec:nlp-classical-bert}小节，这里不再重复，只讨论文本分类落地时的三个问题：多标签阈值、层次一致与长文档。
+
+多标签训练与阈值选择需要分开计算。只考察“时间安排、报名说明”两个标签，通知参考值为$\bm y=(1,1)$。取$\bm h=(1,2)^\top$、$\bm b=\bm0$，分类矩阵两行为$(\log4,0)$与$(\log1.5,0)$，则$\bm p=(0.8,0.6)$，单样本损失$L=-\log0.8-\log0.6=0.7340$，$\partial L/\partial\bm z=\bm p-\bm y=(-0.2,-0.4)^\top$。冻结编码器和偏置，以学习率0.1更新$\bm W^{(1)}=\bm W^{(0)}-0.1(\bm p-\bm y)\bm h^\top$，两行分别增加$(0.02,0.04)$和$(0.04,0.08)$，概率变为约$(0.8155,0.6469)$。这一步只用训练标签，没有选择阈值。
+
+阈值要在冻结模型后另取的验证集上选择。表~\ref{tab:nlp-classification-thresholds}给出四篇验证文档，候选阈值取0.4、0.5、0.6三档，$p_k\geq t_k$即输出标签$k$。报名标签在阈值0.4下有两次真阳性、一次假阳性、零次假阴性，F1为$0.8$；阈值0.5的F1为0.5，0.6为$2/3$，故选0.4。时间标签在0.5与0.6下都完全正确，按事先约定的“并列取较小阈值”选0.5。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}ccccc@{}}
+    \toprule
+    验证文档 & 时间得分 & 报名得分 & 时间参考 & 报名参考 \\
+    \midrule
+    A & 0.80 & 0.60 & 1 & 1 \\
+    B & 0.70 & 0.55 & 1 & 0 \\
+    C & 0.40 & 0.45 & 0 & 1 \\
+    D & 0.30 & 0.35 & 0 & 0 \\
+    \bottomrule
+  \end{tabular}
+  \caption{用于选择阈值的教学验证集，与训练样本分开。B只有时间安排却获得偏高的报名分数，C的报名说明得分偏低，使两个标签需要不同的阈值。}
+  \label{tab:nlp-classification-thresholds}
+\end{table}
+
+逐标签阈值$(0.5,0.4)$下，宏F1为$(1+0.8)/2=0.9$；两个标签的计数相加得$\mathrm{TP}=4,\mathrm{FP}=1,\mathrm{FN}=0$，微F1为$8/9$。宏平均给每个标签相同权重，罕见标签的错误因而更显眼；微平均给每次标签判定相同权重，由常见标签主导。若只许一个全局阈值，0.4、0.5、0.6的宏F1分别为0.8、0.75、$5/6$，按宏F1选0.6。小验证集上的最优阈值不稳定，罕见标签应报告支持数，必要时退回共享阈值。
+
+层次标签要求输出合法：细标签“报名说明”入选而父标签“活动通知”未入选时，可按规范补入祖先，也可在训练和解码中显式约束子标签概率不超过父标签。长文档超过编码器的输入上限（BERT为512个词元）时，先按重叠窗口分段编码，再对段表示做平均、最大池化或上一小节的注意力汇聚：平均可能稀释短的报名条款，最大池化可能忽略它的适用对象，注意力汇聚需要额外训练段级参数。
+
+固定的$K$维分类头只在已知类别之间分配概率，最高分不能说明“所有类别都不适用”。未知拒绝需要独立条件，例如最大概率低于在含未知样本的开发集上确定的门槛时输出“未知”，并单独报告未知样本的召回与误拒。类别表需要扩展时，固定分类头就要重建，这是下一小节提示式分类的出发点。
+
+\subsubsection{大语言模型的零样本与少样本分类}
+\label{sec:nlp-classification-llm}
+
+微调分类器需要每个任务的标注数据和一次训练；类别表一变，输出层就要重建。大语言模型提供另一条路：把类别写成自然语言，让模型在条件分布中比较各标签的可能性，不训练任何分类头。
+
+最常用的打分方式是\term{标签词}（verbalizer）：为每个类别$k$指定一个词或短语$v_k$，例如“时间安排”“报名”“其他”，把输入包进模板$\operatorname{prompt}(x)$——“通知：$x$。这则通知的主要内容是：”——再比较各标签词作为续写的条件概率\cite{nlp-schick2021pet}：
+\begin{equation}
+  \label{eq:nlp-classification-verbalizer}
+  s_k(x)=\frac{1}{|v_k|}\sum_{j=1}^{|v_k|}\log p_{\bm\theta}\bigl(v_{k,j}\mid \operatorname{prompt}(x),v_{k,<j}\bigr),\qquad
+  \hat y=\arg\max_k s_k(x).
+\end{equation}
+标签词可能被切成多个词元，求和会偏向短标签，因此这里按词元数平均；也可以把类别编成选项字母“A/B/C”，只比较一个词元的概率。另一种做法让模型自由生成标签名，再用受约束解码把输出限定在合法类别内，或解析后映射。打分式只需一次前向，就能得到全部类别的相对分数，便于设阈值和拒绝；生成式可以附带理由，但非法输出要单独计数，不能静默映射到最近的类别。
+
+\term{零样本提示}（zero-shot prompting）只给任务说明和当前输入；\term{少样本提示}（few-shot prompting）在说明后附$k$个带标签的示例，二者都属于第~\ref{sec:nlp-inference-icl-shots}小节的上下文学习，参数不变，只改条件序列。示例主要约束标签空间与输出格式，也带来系统偏差：模型可能偏爱示例中多数的标签、最后一个示例的标签，或预训练中常见的标签词。
+
+第~\ref{sec:nlp-inference-icl-sensitivity}小节的上下文校准正是针对这类标签偏好的修正：保持说明与示例不变，用“N/A”等无内容输入读出标签概率$\hat{\bm p}_{\mathrm{cf}}$，再按式~\eqref{eq:nlp-inference-calibration}以$\operatorname{diag}(\hat{\bm p}_{\mathrm{cf}})^{-1}$缩放真实输入的标签概率并重新归一化。例如三类“时间安排、报名、其他”的$\hat{\bm p}_{\mathrm{cf}}=(0.5,0.3,0.2)$时，原始概率$(0.45,0.35,0.20)$校准为约$(0.293,0.380,0.326)$，预测由“时间安排”改为“报名”。校准只需一次额外前向，但它假设偏置是与输入无关的逐类缩放。
+
+另一条零样本路线把分类改写为自然语言推断：以文档为前提，以“这段文字关于报名”为假设，用推断模型的蕴含概率作为标签分数\scite{nlp-yin2019zeroshot}。它与标签词打分的区别在于模型类型：前者借用为推断而微调的编码器，后者直接使用生成模型的条件概率。立场检测中的标签描述匹配（第~\ref{sec:nlp-classification-stance-nli}小节）是同一思路。
+
+与微调分类器相比，提示式分类不需要训练、能即时接纳新类别；代价是每次调用都要处理说明与示例，大规模在线分类的计算远高于一次BERT前向，结果又对模板、标签词和示例顺序敏感，须在开发集上固定渲染序列并确定阈值。有足够标注且类别稳定时，微调小编码器通常更省也更稳；标注稀少、类别常变或需要先产生银标数据时，提示式分类更合适。
+
+\subsection{多标签与极端多标签分类}
+\label{sec:nlp-classification-multilabel}
+
+上一小节已用逐标签sigmoid处理两个标签。标签多起来以后，两个新问题浮现：标签之间有依赖，逐标签独立判断可能给出不合理的组合；标签数达到数万乃至数百万（商品类目、维基百科分类、学科主题词）时，输出层本身的计算与存储成为瓶颈，绝大多数标签又只有寥寥几个正例。
+
+\paragraph{二元相关与标签依赖。}式~\eqref{eq:nlp-classification-sigmoid}把$K$个标签拆成$K$个独立的二分类，称为\term{二元相关}（binary relevance）。它的训练与预测都按标签并行，代价是忽略标签之间的依赖：用逐标签阈值组合出的向量，可能并不是最可能的标签组合。\term{分类器链}（classifier chain）按固定顺序把前面标签的预测作为后面标签的输入，即按链式法则分解联合分布\cite{nlp-read2011classifierchains}：
+\[
+  p(\bm y\mid x)=\prod_{k=1}^{K}p(y_k\mid x,y_1,\ldots,y_{k-1}).
+\]
+
+一个教学数值说明二者的差别。设“线下参加”$y_1$与“线上参加”$y_2$通常二选一：$p(y_1=1\mid x)=0.55$，$p(y_2=1\mid x,y_1=1)=0.15$，$p(y_2=1\mid x,y_1=0)=0.98$。四种组合的联合概率为$(1,0):0.4675$、$(0,1):0.441$、$(1,1):0.0825$、$(0,0):0.009$。二元相关只看边缘概率$p(y_1=1)=0.55$与$p(y_2=1)=0.55\times0.15+0.45\times0.98=0.5235$，阈值0.5下输出$(1,1)$，它的联合概率只有0.0825；链式贪心先取$y_1=1$，再在条件下取$y_2=0$，得到联合众数$(1,0)$。代价是链的顺序须预先选定，前面的错误会传给后面，训练时用真实标签、预测时用预测标签也带来不一致。标签数很大时，链式方法难以扩展，极端多标签方法转而利用标签之间的层次或聚类结构。
+
+\paragraph{极端多标签的挑战。}\term{极端多标签分类}（extreme multi-label classification, XMC）指标签数$L$达到$10^4$到$10^6$以上的多标签任务。设文档表示为$d$维，输出层权重为$L\times d$：$L=670{,}091$（一个商品数据集的标签数）、$d=1536$时约有$1.03\times10^9$个参数，每个样本的前向就要计算全部$L$个得分。另一个困难是长尾：大多数标签的正例只有几个，单独训练的逐标签分类器几乎学不到东西。
+
+\paragraph{XML-CNN。}XML-CNN在TextCNN上做了三处修改，分别针对表示太粗、输出层太大和多标签损失\scite{nlp-liu2017xmlcnn}。第一，\term{动态最大池化}（dynamic max pooling）把每个滤波器的响应序列等分为$p$段，每段各取最大值，一个滤波器输出$p$个数而非一个，保留“关键词出现在文档前部还是后部”的粗粒度位置信息，长文档的多个主题不必挤进同一个最大值。第二，在池化层和输出层之间插入一个较窄的隐藏层（瓶颈层），先把池化特征压到$h$维再映射到$L$个标签。第三，用逐标签二元交叉熵代替softmax，使多个标签可以同时取高概率。
+
+瓶颈层的作用可以直接算参数。取3种宽度、每种128个滤波器、$p=4$，池化特征为1536维；直接接输出层需要$1536L\approx1.03\times10^9$个参数。插入$h=512$的瓶颈后，参数为$1536\times512+512L\approx3.44\times10^8$，降到约三分之一，且瓶颈层由所有标签共享，长尾标签可以借用常见标签学到的表示。代价是所有标签必须通过同一个512维表示，标签再多时这一层仍是信息瓶颈，输出层也仍需对全部标签打分。
+
+\paragraph{AttentionXML。}XML-CNN对所有标签使用同一个文档向量，可是与“机器学习”相关的段落和与“活动场地”相关的段落未必相同。AttentionXML为每个标签计算专属的注意力，并用标签树避免对全部标签打分\scite{nlp-you2019attentionxml}。
+
+模型部分用双向LSTM编码词序列得$\hat{\bm h}_1,\ldots,\hat{\bm h}_T\in\mathbb R^{2N}$，第$j$个标签有自己的注意力参数$\hat{\bm w}_j\in\mathbb R^{2N}$：
+\begin{equation}
+  \label{eq:nlp-classification-label-attention}
+  \alpha_{t,j}=\frac{\exp(\hat{\bm h}_t^\top\hat{\bm w}_j)}{\sum_{t'=1}^{T}\exp(\hat{\bm h}_{t'}^\top\hat{\bm w}_j)},\qquad
+  \hat{\bm m}_j=\sum_{t=1}^{T}\alpha_{t,j}\hat{\bm h}_t.
+\end{equation}
+每个标签得到一个以它为查询的文档表示$\hat{\bm m}_j$，再经所有标签共享的全连接层和输出层得到该标签的概率，损失仍为逐标签二元交叉熵。与HAN的单一查询相比，这里有$L$个查询，同一文档对不同标签呈现不同的“重点”；共享全连接层则控制参数量。
+
+$L$个注意力的时间与存储都与$L$成正比，标签树负责把每个样本需要计算的标签数降下来。AttentionXML使用\term{概率标签树}（probabilistic label tree, PLT）：每个叶子是一个原始标签，内部节点$n$对应一组相似标签，二元变量$z_n$表示“该子树中至少有一个相关标签”。叶子标签的概率按链式法则写成路径上条件概率之积：
+\[
+  P(z_n=1\mid x)=\prod_{i\in\operatorname{Path}(n)}P\bigl(z_i=1\mid z_{\operatorname{Pa}(i)}=1,x\bigr).
+\]
+建树时，每个标签用“标注了它的训练文本的词袋特征之和”归一化表示，自顶向下以平衡$k$均值（$k=2$）递归二分，直到每簇标签数不超过$M$；再把这棵深而窄的树压缩成高度为$H$、每个内部节点不超过$K$个子节点的浅而宽的树。训练按层进行，每层一个AttentionXML模型：第一层直接对根的所有子节点训练；第$d$层只对候选节点训练，候选是上一层得分最高的$C$个节点的子节点，因此每层只需$C\times K$个节点的注意力。预测时按同样方式逐层保留前$C$个节点，相当于宽为$C$的束搜索。
+
+以$L=4096$、$K=8$、$H=3$、$C=4$为例：第一层有$4096/8^3=8$个节点，此后每层只计算$4\times8=32$个候选，一个样本共算$8+32\times3=104$个节点，而不是4096个标签。若某叶子路径上的四个条件概率为$0.9,0.8,0.7,0.6$，它的得分为$0.3024$。树的作用与第~\ref{sec:nlp-classical-hierarchical-softmax}小节的层次softmax相似，都是用树结构把对$L$个输出的计算降到近似对数规模；区别在于层次softmax的叶子互斥、概率加和为1，概率标签树的各叶子可以同时为真，每个节点各做一次二分类。代价有两处：层间的错误不可回退，第一层漏掉的子树其下所有标签都不会出现；训练需要$H+1$个模型，原文还用三棵树集成来降低建树随机性的影响。
+
+\paragraph{评价指标。}极端多标签任务通常只关心排在前面的少数标签，评价改用排序指标。设$\bm y\in\{0,1\}^L$为参考标签，$\operatorname{rank}_k(\hat{\bm y})$为得分最高的$k$个标签，
+\begin{equation}
+  \label{eq:nlp-classification-xml-metrics}
+  \begin{aligned}
+    \mathrm{P@}k&=\frac1k\sum_{l\in\operatorname{rank}_k(\hat{\bm y})}y_l,\qquad
+    \mathrm{DCG@}k=\sum_{r=1}^{k}\frac{y_{(r)}}{\log_2(r+1)},\\
+    \mathrm{nDCG@}k&=\mathrm{DCG@}k\Big/\sum_{r=1}^{\min(k,\lVert\bm y\rVert_0)}\frac{1}{\log_2(r+1)},
+  \end{aligned}
+\end{equation}
+$y_{(r)}$是排第$r$位的标签是否相关。nDCG@$k$的分母是理想排序下的DCG，使不同文档之间可比，并对排在前面的命中给更高权重。设参考标签为$\{a,c,e\}$，模型排序为$a,b,c,d,e$：P@1$=1$，P@3$=2/3$，P@5$=3/5$；DCG@3$=1+1/\log_24=1.5$，理想值为$1+1/\log_23+1/\log_24\approx2.131$，nDCG@3$\approx0.704$。这两个指标都偏向常见标签，长尾表现可以另用按标签倾向性加权的版本单独报告。
+
+\subsection{情感与情绪}
+\label{sec:nlp-classification-sentiment}
+
+内容分类说明文本在谈什么，评论分析还要说明作者怎样评价所谈对象。\term{情感极性}（sentiment polarity）表示对指定对象的正面、负面或中性评价；\term{情绪}（emotion）表示文本表达的愤怒、喜悦、担忧等状态，可以并存，也可以带强度，二者都不能由正负极性唯一恢复。“服务不错，但价格太高”包含两个方向相反的评价，整篇一个“中性”标签只是相互抵消。
+
+情感分析的挑战有四项：否定与程度修饰改变极性和强度；同一句话对不同目标的评价不同；方面可能是隐含的（“太贵了”评价价格，却没写“价格”）；观点词需要与它评价的方面正确配对。方法依次为：情感词典加否定规则，可解释但覆盖有限；目标条件分类，把评价对象作为输入；方面级情感分析，从给定方面判极性的注意力模型走到一并抽出方面、观点与极性的统一模型。标注还应说明意见持有者，区分作者意见与引述意见；SemEval-2017 Task 4分别设置整条推文情感、目标条件情感与语料级分布估计，说明不同输入粒度要分别定义\scite{nlp-rosenthal2017sentiment}。
+
+\subsubsection{情感词典与否定规则}
+\label{sec:nlp-classification-sentiment-lexicon}
+
+可检查的词典基线由极性词得分、程度权重和否定范围构成。对目标$a$的意见词集合$O_a$，一种教学规则是
+\[
+  S(a)=\sum_{j\in O_a}v_jm_jr_j,
+\]
+$v_j$是领域词典极性，$m_j$是程度权重，$r_j$是由句法或局部规则确定的否定修正。转折前后、引号内外和不同目标先分组，再汇总。
+
+对“价格不算高，但服务很差”，在价格语境中取“高”的$v=-1$，“不算”修正为$r=-1,m=0.5$，价格得分$+0.5$；“差”取$v=-2$，“很”的$m=1.5$，服务得分$-3$。价格略正面、服务负面；整句求和为$-2.5$，只在业务确实需要整体评价时使用。规则保留了命中词、修正范围和目标，错误容易追查；它的局限也在这里：“服务真好，等了两个小时也没人理”的反讽、“并非不高”的多重否定、“高”在价格与性能中的相反极性，都需要再写规则。
+
+\subsubsection{目标条件情感分类}
+\label{sec:nlp-classification-sentiment-bert}
+
+词典规则要人工为每个目标划分意见词。目标条件分类把“评价谁”直接放进模型输入，例如\code{[CLS]}目标\code{[SEP]}评论\code{[SEP]}，训练样本是$(x,a,y)$，同一评论可对应多条目标不同的样本，分类头按极性标签作softmax。
+
+对“服务不错，但价格太高”，标签次序为正面、负面、中性。以“服务”为目标时，教学logits为$(2,0,-1)$，概率约$(0.844,0.114,0.042)$；目标换成“价格”，logits为$(0,2,-1)$，正负两项交换，两条样本的交叉熵都约为0.170。固定文本、只换目标，是检查目标是否真正进入判定的最小测试；若输出不变，模型只利用了整体语气。指定目标不在原文中出现时（“这次安排很周到”对地点并无评价），应允许输出“无评价”，而不是强制选一个极性。
+
+\subsubsection{方面级情感分析：从注意力模型到统一抽取}
+\label{sec:nlp-classification-aspect-opinion}
+
+\term{方面级情感分析}（aspect-based sentiment analysis, ABSA）把评论拆成若干方面（服务、价格、场地）及其极性。它包含一组子任务：抽取方面词、抽取观点词、给定方面判极性、抽取方面—观点对，以及一次抽出\term{方面情感三元组}（aspect sentiment triplet）“方面—观点—极性”。下面四类方法依次回答前一类留下的问题。
+
+\paragraph{注意力模型：ATAE-LSTM与IAN。}在LSTM上直接做句子分类，同一句话对“服务”和“价格”只有一个表示。ATAE-LSTM让方面参与两处计算\cite{nlp-wang2016atae}：输入层把方面嵌入$\bm v_a\in\mathbb R^{d_a}$拼接到每个词向量后；输出层以方面为条件做注意力。设LSTM隐状态矩阵$\bm H\in\mathbb R^{d\times N}$，$\bm e_N$为全1向量，
+\[
+  \begin{aligned}
+    \bm M&=\tanh\!\begin{bmatrix}\bm W_h\bm H\\ \bm W_v\bm v_a\bm e_N^\top\end{bmatrix},\qquad
+    \bm\alpha=\operatorname{softmax}(\bm w^\top\bm M),\\
+    \bm r&=\bm H\bm\alpha^\top,\qquad
+    \bm h^*=\tanh(\bm W_p\bm r+\bm W_x\bm h_N),
+  \end{aligned}
+\]
+$\bm h^*$接softmax输出极性。同一句话换一个方面，$\bm\alpha$随之改变，“不错”与“太高”的权重此消彼长。ATAE-LSTM里方面只是一个向量，多词方面（“服务态度”）被平均成一个嵌入，方面内部哪个词重要无从区分。IAN让方面与上下文各用一个LSTM编码并相互注意\cite{nlp-ma2017ian}：以方面隐状态的平均$\bar{\bm t}$为查询，对上下文词打分$\gamma_i=\tanh(\bm h^{c\top}_i\bm W_a\bar{\bm t}+b_a)$，归一化后加权得$\bm c_r$；反过来以上下文平均$\bar{\bm c}$为查询对方面词注意得$\bm t_r$，拼接$[\bm t_r;\bm c_r]$分类。
+
+\paragraph{辅助句构造：BERT-pair。}注意力模型从零学习方面与上下文的交互，训练数据又小。Sun等把方面写成一个辅助句，与评论组成句对输入BERT，用句对分类头判断，借用预训练中学到的句间交互\scite{nlp-sun2019bertpair}。辅助句有四种写法：问句式“你觉得服务怎么样？”；推断式只写方面“服务”；以及两种二元式，对每个候选极性各造一句“服务的评价是正面的”，判断是否成立，一个方面、三种极性就是三条二分类样本。这一步把方面级分类改写为句对分类，与第~\ref{sec:nlp-classification-stance-nli}小节立场的标签描述匹配是同一思路。它和注意力模型一样要求方面事先给定，不能回答“评论里提到了哪些方面”。
+
+\paragraph{统一抽取：BARTABSA、Span-ASTE与GTS。}实际评论的方面和观点都需要从原文中找出来。流水线先抽方面、再抽观点、最后配对判极性，前一步的错误会传给后一步，各子任务还要各自建模。三种统一方法对应第~\ref{sec:nlp-analysis-paradigms}节的三种结构预测范式。
+
+BARTABSA采用约束生成范式，把所有子任务都写成“指针索引与极性类别”组成的序列，用一个带指针的BART编码器—解码器生成\scite{nlp-yan2021bartabsa}。将“服务／不错／但／价格／太高”编号为1至5，三元组任务的目标序列是“1 1 2 2 POS 4 4 5 5 NEG”，每五个记号依次为方面起止、观点起止和极性。解码器每一步的输出空间是“原文位置$\cup$极性类别”：位置的分数由解码器状态与编码器各位置表示的内积给出，类别的分数由解码器状态与类别嵌入的内积给出，这是式~\eqref{eq:nlp-analysis-copy}复制机制只指向原文位置的特例。改变目标序列的格式，同一模型就能完成抽方面、方面—极性、三元组等七个子任务。
+
+Span-ASTE采用跨度范式，直接在方面跨度与观点跨度之间建模，避免逐词元标签无法表达多词方面与多词观点之间的整体配对\scite{nlp-xu2021spanaste}。它枚举宽度不超过$W$的所有跨度，用式~\eqref{eq:nlp-analysis-span-representation}一类的端点拼接加宽度嵌入得到跨度表示，先把每个跨度分为方面、观点或无效；再按两个通道分别保留方面得分与观点得分最高的若干跨度，最后对每个“方面跨度—观点跨度”对拼接两者表示与距离嵌入，分为正面、负面、中性或无关系。剪枝在这里决定可行性：5个词、宽度不超过2时有9个跨度，全部配对为81对；每个通道只留3个，就只需判9对。
+
+GTS采用网格标注，把三元组写进一张词对表\scite{nlp-wu2020gts}。对$i\leq j$的上三角词对$(i,j)$标注六种标签之一：A表示两词属于同一方面，O表示属于同一观点，Pos、Neg、Neu表示一词在方面中、另一词在观点中且二者构成该极性的配对，N表示无关系；对角格$(i,i)$标出单词本身属于方面还是观点。上面的例子中，$(1,1)=\mathrm A$、$(2,2)=\mathrm O$、$(4,4)=\mathrm A$、$(5,5)=\mathrm O$、$(1,2)=\mathrm{Pos}$、$(4,5)=\mathrm{Neg}$，其余为N。解码时先由对角线上连续的A与O恢复方面和观点跨度，再对每个方面—观点对取它们之间各格中出现最多的极性标签。词对表示为两词编码的拼接，原文还让每格的预测迭代读取同行其他格的预测，使方面判断与配对判断互相提示。这种表格思路与第~\ref{sec:nlp-extraction-tplinker}小节关系抽取的TPLinker相同，都把配对关系放到词元对上。
+
+表~\ref{tab:nlp-classification-absa}按子任务覆盖比较这些方法。注意力模型解决“同一句话对不同方面只有一个表示”，辅助句借用预训练交互缓解训练数据小，统一抽取解决“方面须事先给定”和流水线误差传播；三种统一方法分别要付出解析合法序列、枚举跨度对和$O(n^2)$词对表的代价。评价时应分别报告方面与观点的边界F1和完整三元组F1，给定方面后的极性准确率不能代替端到端质量。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}
+    >{\raggedright\arraybackslash}p{24mm}>{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 输入是否需给定方面 & 输出与核心机制 & 解决的问题与新代价 \\
+    \midrule
+    ATAE-LSTM、IAN & 需要 & 方面极性；方面条件注意力 & 区分同句不同方面；方面须预先给定，从零学交互 \\
+    BERT-pair & 需要 & 方面极性；辅助句与句对分类 & 借用预训练句间交互；仍不抽方面，二元式样本数乘以极性数 \\
+    BARTABSA & 不需要 & 全部子任务；指针索引序列生成 & 一个模型覆盖七个子任务；需解析非法序列，解码逐步进行 \\
+    Span-ASTE & 不需要 & 三元组；跨度枚举、双通道剪枝、跨度对分类 & 多词方面与观点整体配对；候选数随最大宽度增长 \\
+    GTS & 不需要 & 三元组；上三角词对网格标注 & 一张表同时表示跨度与配对；$O(n^2)$词对，边界依赖对角连续性 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{方面级情感分析方法的子任务覆盖。前两行假定方面已知；后三行同时找出方面、观点与极性，分别对应约束生成、跨度和词对表三种结构预测方式。}
+  \label{tab:nlp-classification-absa}
+\end{table*}
+
+\subsection{目标立场}
+\label{sec:nlp-classification-stance}
+
+“改期真让人头疼，不过为了让校外来宾赶上，我支持推迟一天。”语气消极，却对“推迟一天”明确赞成。\term{立场检测}（stance detection）判断文本对指定对象或主张的支持、反对或其他约定关系，输入必须包括目标。情感回答“评价感觉怎样”，立场回答“对这个主张站在哪一边”，证据不同。
+
+立场检测的挑战有三项：目标可能不在文本中出现（评论只谈“来宾赶不上”，却针对“推迟一天”表态）；立场常以隐含方式表达，需要推理才能对上目标；实际应用中的目标不断变化，训练时未见过的新目标没有标注。谱系相应地分三步：目标条件分类直接学习“目标—文本”到立场的映射，需要每个目标都有训练数据；自然语言推断式匹配把立场写成假设，借用推断模型的迁移能力；未见目标方法则专门学习可以跨目标迁移的表示。Bi-STANCE把中英文、名词短语与主张两类目标、未见目标及跨域条件区分开，可用于分别验收这些设定\scite{nlp-zhao2025bistance}。
+
+\subsubsection{BERT目标条件立场分类}
+\label{sec:nlp-classification-stance-bert}
+
+将目标和文本组成有序句对，分类头输出支持、反对、中立、无关等任务定义的类别。对上面的评论，以“应推迟一天”为目标，教学logits为$(2,0,-1,-2)$，支持概率约0.831；目标换成“应维持原定日期”，logits变为$(0,2,-1,-2)$，反对概率约0.831。softmax只在同一目标的四个标签内归一化。
+
+这种做法与目标条件情感分类结构相同，难点在数据：目标名称可能泄露训练集的标签偏好（某目标的样本大多是反对），模型会学会只看目标。按目标划分训练与测试，并用目标替换和引述观点（“有人支持推迟，但我没有表态”）的成组样本检查，才能看出模型是否读了文本。
+
+\subsubsection{自然语言推断式标签描述匹配}
+\label{sec:nlp-classification-stance-nli}
+
+类别数少而目标常变化时，可以把标签改写成假设：“作者支持将读书会推迟一天”“作者反对将读书会推迟一天”。原文作为前提，用自然语言推断模型（第~\ref{sec:nlp-classification-nli}小节）取得每条假设的蕴含概率。这与第~\ref{sec:nlp-classification-llm}小节的推断式零样本分类是同一机制，模板把固定标签变成可输入的文字。
+
+设支持、反对、中立三条假设的蕴含概率为$(0.75,0.08,0.12)$，它们来自三次独立的推断，不必相加为1。在开发集上确定接受门槛0.6与领先差0.2：最大值0.75超过门槛且领先0.63，输出“支持”；得分为$(0.31,0.29,0.28)$时虽有最大项，却应输出未定。模板措辞、目标中的否定和领域变化都会改变蕴含分数，仍需在立场开发集上校验。
+
+\subsubsection{未见目标的立场检测}
+\label{sec:nlp-classification-stance-zeroshot}
+
+推断式匹配依赖通用推断模型，并没有利用已有的立场标注。未见目标立场检测要求在一组目标上训练、在训练中从未出现的目标上测试，问题是怎样让已标注目标的知识迁移到新目标。两种思路分别从“借相近目标”和“去掉目标特有信息”入手。
+
+TGA-Net的思路是：新目标虽未见过，训练集中常有语义相近的目标，可以借用它们\scite{nlp-allaway2020vast}。作者为此构建了VAST数据集：评论来自新闻评论区，目标是数千个不同的名词短语，标签为支持、反对、中立；测试集分零样本目标（训练中未出现）与少样本目标（训练中出现过少量样本）两种设定。模型分三步。第一，把目标与文档作为句对联合输入BERT，得到条件化的目标词元表示$\bm t^{(1)},\ldots,\bm t^{(m)}$与文档词元表示。第二，计算\emph{广义主题表示}：另把文档和目标单独编码并取加权平均得$\bm v_d$、$\bm v_t$，对训练集所有样本的$[\bm v_d;\bm v_t]$做层次聚类；每个样本取最近簇的中心$\bm r_{dt}\in\mathbb R^{2E}$，代表“与它相近的一类目标与文档”。第三，以$\bm r_{dt}$为查询，对目标词元做缩放点积注意力：
+\[
+  s_i=\operatorname{softmax}_i\bigl(\lambda\,\bm t^{(i)\top}\bm W_a\bm r_{dt}\bigr),\qquad
+  \bm c_{dt}=\sum_i s_i\bm t^{(i)},\qquad \lambda=1/\sqrt E,
+\]
+再把文档词元平均$\tilde{\bm d}$与$\bm c_{dt}$拼接，经两层前馈网络输出三类概率。新目标落入哪个簇，就借用该簇训练样本学到的注意力模式。代价是聚类在训练集上一次完成，簇数需要在开发集上选择，与所有训练簇都不相近的目标得不到帮助。
+
+TOAD从另一侧入手：既然新目标的知识无法预先获得，就让立场表示尽量不含目标特有的信息\scite{nlp-allaway2021toad}。它用BiLSTM以目标为条件编码推文，得到文档向量后经一个线性变换层，再分别送入立场分类器和目标判别器；判别器试图从变换后的表示中认出样本属于哪个目标，训练通过\term{梯度反转}（gradient reversal）让编码器与变换层最大化判别器的损失，同时最小化立场损失。学习目标为
+\[
+  \mathcal L=\mathcal L_{\mathrm{stance}}-\rho\,\mathcal L_{\mathrm{topic}}
+  +\lambda_{\mathrm{rec}}\mathcal L_{\mathrm{rec}}+\lambda_{\mathrm{tr}}\mathcal L_{\mathrm{tr}},
+\]
+其中$\rho$随训练逐渐增大，重构损失$\mathcal L_{\mathrm{rec}}$防止对抗把编码器的信息全部抹掉，$\mathcal L_{\mathrm{tr}}$把变换层约束在恒等映射附近。判别器还使用新目标的无标注推文，这与领域自适应中“源域有标注、目标域只有无标注数据”的设定相同。评价在SemEval-2016 Task 6的推特数据上逐个留出目标：用其余五个目标训练，在留出目标上测试。
+
+TGA-Net假设新目标与某些训练目标相近，适合目标多、覆盖广的数据；TOAD假设立场表达可以与目标无关地迁移，并需要新目标的无标注文本。二者都难以处理需要背景知识的隐含立场；以目标描述为提示的大语言模型零样本判别是另一种选择，同样须在留出目标上验收。
+
+\subsection{文本来源与生成参与判定}
+\label{sec:nlp-classification-origin}
+
+一份流畅的通知可能由人工撰写、模型生成，也可能先由人工写草稿再让模型润色。\term{生成参与判定}（generation involvement detection）估计文本形成过程中模型参与的类别；作者归属则在规定的候选作者之间判断来源，二者不是同一任务。Li等的创作者—编辑者研究区分纯人工、纯模型、模型润色人工文本和经人工化编辑的模型文本\cite{nlp-li2026creator}；实际数据还可能有多轮交替编辑，应按可获得的过程记录标注，必要时增加“混合但过程未知”。
+
+这一任务的挑战比内容分类更尖锐：大模型生成的文本在词汇和句法统计上与人类文本接近；改写可以抹去表面统计特征；检测器换一个生成模型或换一个领域，准确率常明显下降；统计判断也不能当作身份或违规的证明。下面的方法按“需要什么”排列：文体监督分类需要各来源的标注样本；困惑度、DetectGPT与Fast-DetectGPT不训练检测器，但要能访问某个语言模型的概率，后两者以越来越低的调用成本比较原文与其邻近替代文本；水印则要求生成方在生成时主动嵌入信号，换来有统计保证的检测。
+
+\subsubsection{文体特征与来源监督分类}
+\label{sec:nlp-classification-origin-style}
+
+可复核的基线从字符$n$-gram、功能词比例、标点频率和句长统计形成向量，标准化后训练线性分类器。作者归属样本需要已知作者、采样时间及题材；生成参与样本还要记录生成系统、提示、编辑方式与程度，标签来自来源记录，而不是另一个检测器的猜测。
+
+取感叹号比例、功能词比例与归一化句长三个特征，某通知的向量为$(0.02,0.30,0.50)$。甲、乙两个候选作者的教学logit为$2x_1-x_2+x_3=0.24$与$-x_1+x_2=0.28$，softmax约$(0.490,0.510)$，低于接受阈值0.8，应输出“未能归属”。上下文编码器可以替换手工特征，但更容易利用题材、平台模板或生成系统专属格式这类捷径，按主题、作者或生成系统留出测试能分别暴露它们。
+
+\subsubsection{困惑度与词元概率检测}
+\label{sec:nlp-classification-origin-perplexity}
+
+监督分类需要每个生成系统的样本。若能访问某个语言模型的词元概率，可以不训练检测器，只检查文本是否符合该模型的分布。给定词元序列$w_{1:T}$，平均对数概率与困惑度为
+\[
+  \bar\ell(x)=\frac1T\sum_{t=1}^{T}\log p(w_t\mid w_{<t}),
+  \qquad \operatorname{PPL}(x)=\exp(-\bar\ell(x)).
+\]
+模型给三个词元的概率为$(0.5,0.25,0.125)$时，平均负对数概率为$\log4$，困惑度为4。模型生成的文本倾向于由高概率词元组成，困惑度偏低。统计前须固定模型、词元化、截断和起止符是否计分，不同词元表下的困惑度不能直接比较。
+
+这个信号混入了题材的影响：常见模板和公式化的人工文本也容易预测，罕见专名则抬高困惑度而不改变来源。困惑度只拿原文与“所有文本”的平均水平比较，下面两种方法改为比较原文与它附近的替代文本。
+
+\subsubsection{DetectGPT：扰动与概率曲率信号}
+\label{sec:nlp-classification-detectgpt}
+
+DetectGPT的出发点是：模型生成的文本往往落在模型对数概率的局部高点附近，对它做小幅改写，概率几乎总会下降；人写的文本没有这种倾向，改写后概率可升可降\scite{nlp-mitchell2023detectgpt}。于是用扰动模型$q(\widetilde x\mid x)$（原文用T5）遮住若干跨度并补写，得到$m$份扰动文本，再用待检验的来源模型$p$评分。令$\ell(x)=\log p(x)$，$\bar\ell=m^{-1}\sum_j\ell(\widetilde x_j)$，检测量为
+\begin{equation}
+  \label{eq:nlp-classification-detectgpt}
+  d(x)=\frac{\ell(x)-\bar\ell}
+  {\sqrt{\frac{1}{m-1}\sum_{j=1}^{m}
+  [\ell(\widetilde x_j)-\bar\ell]^2}}.
+\end{equation}
+分子近似对数概率在$x$处沿扰动方向的负曲率，分母用扰动分数的标准差归一化，使不同文本之间可比。取四份等长教学改写，原文总对数概率为$-10$，扰动为$(-12,-11,-13,-12)$：均值$-12$，样本方差$2/3$，$d=2/\sqrt{2/3}\approx2.449$，在开发集固定的阈值2.0下判为偏向模型生成。分母为零时应拒绝该次估计。
+
+与困惑度相比，DetectGPT用同一篇文本的邻域作参照，题材和常用程度的影响在分子中大体抵消。代价是计算：每篇文本要调用扰动模型生成数十到上百份改写，再逐份送入来源模型评分；它还假设改写大致保持语义，扰动质量差时信号变弱。
+
+\subsubsection{Fast-DetectGPT：条件概率曲率}
+\label{sec:nlp-classification-fast-detectgpt}
+
+DetectGPT的成本来自“整段改写”：每份扰动都是一段新文本，必须分别生成、分别评分。Fast-DetectGPT把扰动换成逐位置的替代词元：在原文前缀固定的条件下，每个位置独立地从采样模型$q_\phi(\cdot\mid x_{<j})$抽一个替代词元，组成样本$\widetilde x$\scite{nlp-bao2024fastdetectgpt}。比较的问题也随之改变：原文在每个位置上选的词元，相对于“同一语境下模型可能选的词元”，是否系统地偏向高概率。其\term{条件概率曲率}（conditional probability curvature）定义为
+\begin{equation}
+  \label{eq:nlp-classification-fast-detectgpt}
+  \begin{aligned}
+    d(x)&=\frac{\log p_\theta(x\mid x)-\tilde\mu}{\tilde\sigma},\qquad
+    \tilde\mu=\mathbb E_{\widetilde x\sim q_\phi(\cdot\mid x)}\bigl[\log p_\theta(\widetilde x\mid x)\bigr],\\
+    \tilde\sigma^2&=\mathbb E_{\widetilde x\sim q_\phi(\cdot\mid x)}\bigl[(\log p_\theta(\widetilde x\mid x)-\tilde\mu)^2\bigr],
+  \end{aligned}
+\end{equation}
+其中$\log p_\theta(\widetilde x\mid x)=\sum_j\log p_\theta(\widetilde x_j\mid x_{<j})$，条件始终是原文前缀，打分模型$p_\theta$与采样模型$q_\phi$可以相同，也可以不同。
+
+去掉扰动成本的关键在于条件独立。各位置的替代词元互不依赖，$\log p_\theta(\widetilde x\mid x)$是独立随机变量之和，均值和方差都按位置分解：
+\[
+  \begin{aligned}
+    \tilde\mu&=\sum_j\tilde\mu_j,\qquad
+    \tilde\mu_j=\sum_{v\in V}q_\phi(v\mid x_{<j})\log p_\theta(v\mid x_{<j}),\\
+    \tilde\sigma^2&=\sum_j\Bigl[\sum_{v\in V}q_\phi(v\mid x_{<j})\log^2p_\theta(v\mid x_{<j})-\tilde\mu_j^2\Bigr],
+  \end{aligned}
+\]
+$\tilde\mu_j$是第$j$个位置替代词元的期望对数概率。所有位置的分布$q_\phi(\cdot\mid x_{<j})$与$p_\theta(\cdot\mid x_{<j})$都由原文的一次前向计算同时得到，求和遍历词表即可精确计算，不需要真的采样。采样模型与打分模型相同时只需一次前向；分子此时等于原文对数似然加上各位置熵之和，正是两个经典零样本基线的组合。
+
+用一个两位置、三候选词元的教学例走通。设$q_\phi=p_\theta$，第1位置分布为$(0.6,0.3,0.1)$，原文选了第一个；第2位置为$(0.5,0.4,0.1)$，原文选了第二个。逐位置计算得$\tilde\mu_1\approx-0.898$、方差约0.315，$\tilde\mu_2\approx-0.943$、方差约0.216，故$\tilde\mu\approx-1.841$，$\tilde\sigma\approx0.729$。原文$\log p=\log0.6+\log0.4\approx-1.427$，$d\approx0.568$。若第2位置也选了最高概率的词元，$\log p\approx-1.204$，$d\approx0.874$。每个位置都选高概率词元的文本曲率更大，更像模型生成。
+
+与DetectGPT相比，Fast-DetectGPT把“整段扰动加逐份评分”换成“逐位置替代加解析期望”，模型调用从上百次降到一两次，原文报告检测速度提高约340倍，在其测试集上检测效果也更好。它仍然继承了这类方法的共同前提：需要一个与真实来源模型足够接近的打分模型，经过大幅改写或人机共同编辑的文本，信号会被削弱。
+
+\subsubsection{生成水印的嵌入与检测}
+\label{sec:nlp-classification-watermark}
+
+前面的方法都在事后猜测来源，信号来自模型自然留下的统计痕迹。若生成方愿意配合，可以在生成时主动嵌入一个只有知道密钥才能检出的信号，这就是\term{文本水印}（text watermarking）。Kirchenbauer等的方法在第~\ref{sec:nlp-generation-sampling}小节的采样流程中只插入一步，修改每一步的logits\cite{nlp-kirchenbauer2023watermark}：以前一个词元$w_{t-1}$与密钥的哈希为随机种子，把词表$V$随机划分为大小$\gamma|V|$的\term{绿名单}（green list）$G_t$和其余的红名单，再给绿名单词元的logits加上常数$\delta>0$：
+\[
+  \tilde p_t(v)\propto\exp\bigl(l_v+\delta\,\mathbb 1[v\in G_t]\bigr),
+\]
+$l_v$为原logits，归一化在整个词表上进行。若原分布在绿名单上的总概率为$P_G$，加偏置后变为
+\[
+  \tilde P_G=\frac{e^\delta P_G}{e^\delta P_G+1-P_G}.
+\]取$\gamma=0.25$、$\delta=2$，一个绿名单恰好占四分之一概率的位置，绿词元概率从0.25升到约0.711。检测方只需要密钥和词元化器，不需要语言模型：重算每个位置的绿名单，数出文本中绿词元的个数$|s|_G$。没有水印的文本与密钥无关，每个词元落入绿名单的概率为$\gamma$，$T$个词元中绿词元数近似服从二项分布$\mathrm{Bin}(T,\gamma)$，于是用单侧$z$检验：
+\begin{equation}
+  \label{eq:nlp-classification-watermark-z}
+  z=\frac{|s|_G-\gamma T}{\sqrt{T\gamma(1-\gamma)}}.
+\end{equation}
+完整流程见算法~\ref{alg:nlp-classification-watermark}。
+
+\begin{algorithm}[绿名单水印的生成与检测]
+  \label{alg:nlp-classification-watermark}
+  \begin{algorithmic}[1]
+    \Require 语言模型logits函数$l(\cdot)$，词表$V$，密钥$\kappa$，哈希函数$H$，绿名单比例$\gamma$，偏置$\delta$，检测阈值$z_0$
+    \Procedure{Generate}{$c$}\Comment{$c$为提示}
+      \For{$t=1,2,\ldots$直到结束符或长度上限}
+        \State 以$H(\kappa,w_{t-1})$为种子，把$V$随机划分为绿名单$G_t$（$\gamma|V|$个）与红名单
+        \State 计算$\bm l=l(c,w_{<t})$，对$v\in G_t$令$l_v\gets l_v+\delta$
+        \State 按原有解码规则（采样或束搜索）从$\operatorname{softmax}(\bm l)$选出$w_t$
+      \EndFor
+    \EndProcedure
+    \Procedure{Detect}{$w_{1:T}$}
+      \State $|s|_G\gets0$
+      \For{$t=1$到$T$}
+        \State 以$H(\kappa,w_{t-1})$重建$G_t$；若$w_t\in G_t$，则$|s|_G\gets|s|_G+1$
+      \EndFor
+      \State 按式~\eqref{eq:nlp-classification-watermark-z}计算$z$；$z>z_0$时判为含水印
+    \EndProcedure
+  \end{algorithmic}
+\end{algorithm}
+
+取$T=200$、$\gamma=0.25$，无水印时绿词元的期望为50，标准差$\sqrt{37.5}\approx6.12$。一段含水印的文本若有100个绿词元，$z\approx8.16$；一段人写文本有56个，$z\approx0.98$。阈值$z_0=4$对应的单侧误报率约$3\times10^{-5}$，这个误报率来自零假设下的二项分布，不需要人类文本的训练样本，这是水印与前面所有检测器的根本区别。
+
+水印的强度取决于每一步可供偏移的概率质量。低熵位置几乎无法变绿：模型以0.99的概率选红名单词元时，$\delta=2$只把绿名单总概率从0.01抬到约0.069，代码、固定格式和短答案大量由这类位置组成，同样长度下$z$值较低。改写则逐处抹去信号：种子只依赖前一个词元，替换一个词元最多改变它自身和下一个位置的归属。上例若有40处替换，最多影响80个位置；受影响位置原约一半为绿、改写后按比例$\gamma$变绿时，绿词元约从100降到80，$z\approx4.90$，仍可检出；整段复述则使绿词元比例退回$\gamma$。水印只对配合的生成方有效，$\delta$越大越难抹去，也越可能改变生成质量。
+
+表~\ref{tab:nlp-classification-origin-methods}汇总五种来源判定方法的前提、信号与局限。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}
+    >{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 前提 & 核心信号与计算 & 主要局限 \\
+    \midrule
+    文体监督分类 & 各来源的标注样本 & 字符$n$-gram、功能词等特征上的分类器 & 跨题材、跨生成系统易利用捷径 \\
+    困惑度 & 可访问某个语言模型 & 平均对数概率，一次前向 & 混入题材与常见程度，模板文本误报 \\
+    DetectGPT & 来源模型与扰动模型 & 原文与整段扰动的对数概率差，数十到上百次调用 & 计算昂贵，依赖扰动保持语义 \\
+    Fast-DetectGPT & 打分模型（可另有采样模型） & 逐位置替代词元的解析期望与方差，一两次前向 & 打分模型须接近来源，改写削弱信号 \\
+    绿名单水印 & 生成方嵌入，检测方持有密钥 & 绿词元计数的$z$检验，无需语言模型 & 低熵文本信号弱，大量改写可抹去 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{文本来源判定方法对照。前四种在生成之后被动检测，阈值依赖开发集；水印在生成时主动嵌入信号，误报率由零假设下的二项分布给出。输出都是统计判断，不构成作者身份的证明。}
+  \label{tab:nlp-classification-origin-methods}
+\end{table*}

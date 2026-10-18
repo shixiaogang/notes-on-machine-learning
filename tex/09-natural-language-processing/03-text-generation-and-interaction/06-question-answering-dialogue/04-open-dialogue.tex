@@ -1,0 +1,226 @@
+\section{开放对话}
+\label{sec:nlp-dialogue-open}
+
+任务型对话有一张待填写的业务表，成败由状态和服务结果判断。\term{开放对话}（open-domain dialogue）没有这样的目标：用户可能延续一个知识话题、聊自己的兴趣，或说出一次不顺利的经历，系统要做的是给出与上文相关、信息充分而又得体的回复。这一任务的挑战可以归为五项：回复要贴合上文并带有具体内容，避免“好的”“我不知道”一类放在哪里都成立的话；用到知识时不编造；保持指定人物设定和对真实用户记忆的一致；识别用户的情绪与求助目的并给出合适的支持；评价时把事实、连贯性和用途分开，而不是压成一个分数。
+
+本节先在第\ref{sec:nlp-dialogue-open-lineage}小节沿方法演进处理第一项挑战，并说明大规模模型和对齐训练怎样改变开放对话；其后三小节分别以知识、人物与情绪为条件，处理其余挑战。多方会话还需保留说话者与回应对象：“我第一次参加”属于当前发言人，不一定属于群聊中上一位同名成员。下面各方法都假定历史范围和身份绑定已经给定。
+
+\subsection{开放对话的挑战与模型谱系}
+\label{sec:nlp-dialogue-open-lineage}
+
+开放对话的模型演进可以按“前一步留下的主要缺陷”串起来。检索式回复从候选库中挑选人写的句子，流畅但受限于库内已有的说法；生成式回复逐词产生新句子，却偏好高频的通用回复；互信息重排把“回复是否特定于上文”加入打分，抑制通用回复；大规模预训练对话模型用更多数据和参数提高相关性与知识量，并开始把知识、人物和共情技能混合训练；指令微调与偏好对齐再让模型遵循用户要求、减少有害回复，形成今天的通用聊天模型。表\ref{tab:nlp-dialogue-open-lineage}按同一口径列出这些方法，以及后三小节的条件化方法。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \setlength{\tabcolsep}{3pt}
+  \renewcommand{\tabularxcolumn}[1]{>{\raggedright\arraybackslash}p{#1}}
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{30mm}XXX@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价或遗留问题\\
+    \midrule
+    检索式回复 & 生成句子不通顺 & 编码上文与候选回复，按匹配分选人写回复 & 无法说出库外内容；候选库需维护\\
+    \addlinespace
+    序列到序列生成 & 候选库覆盖不足 & 编码器—解码器以最大似然拟合上文到回复 & 偏好通用回复，前后不一致\\
+    \addlinespace
+    互信息目标与重排 & 通用回复 & 惩罚无条件高概率回复，或用反向模型$p(S\mid T)$重排 & 需要反向模型与候选列表；反语言模型解码易不合语法\\
+    \addlinespace
+    DialoGPT、Meena & 小语料下相关性与知识不足 & 在大规模社交对话上训练大模型，Meena以SSA做人工评价 & 事实错误、重复与人物矛盾仍在\\
+    \addlinespace
+    BlenderBot & 单一语料只练一种技能 & 预训练后在知识、人物、共情混合数据上微调，可接检索 & 解码需长度与重复控制；知识仍可能编造\\
+    \addlinespace
+    指令微调与对齐的聊天模型 & 不遵循指令、内容不安全 & 多轮示范的有监督微调，再用偏好与安全反馈对齐 & 标注与评判成本；过度拒答与奖励偏离\\
+    \addlinespace
+    Transformer Memory Network & 回复缺少知识依据 & 检索知识句并注意，排序或生成回复 & 只用一句知识；选择错误向后传播\\
+    \addlinespace
+    Profile Memory Network与用户记忆 & 人物与偏好前后不一致 & 人物条目作为独立记忆注意；用户记忆按身份与有效期筛选 & 资料来源、许可与过期需另行规定\\
+    \addlinespace
+    MoEL、ESConv & 不辨情绪与求助目的 & 情绪专家混合，或先预测支持策略再生成 & 情绪与策略标注成本；不等于专业帮助\\
+    \bottomrule
+  \end{tabularx}
+  \caption{开放对话的方法谱系。前六行沿“检索—生成—互信息—大规模预训练—对齐”的演进，每行解决上一行的主要缺陷；后三行是第\ref{sec:nlp-dialogue-knowledge}至\ref{sec:nlp-dialogue-empathy}小节以知识、人物和情绪为条件的方法。}
+  \label{tab:nlp-dialogue-open-lineage}
+\end{table*}
+
+\subsubsection{检索式与生成式回复}
+\label{sec:nlp-dialogue-retrieval-generation}
+
+最直接的做法是不写新句子，而从人写的回复中挑一句。\term{检索式回复}（retrieval-based response selection）预先收集候选回复库$\mathcal{R}$，对上文$c$和每个候选$r\in\mathcal{R}$打匹配分，输出分数最高者。Lowe等人在Ubuntu技术支持聊天记录上给出的双编码器基线是这一路线的标准形式\scite{nlp-dialogue-lowe2015ubuntu}：两个LSTM分别读入上文与候选，取末步隐状态$\bm{c},\bm{r}\in\mathbb{R}^{d}$，候选是正确回复的概率为
+\begin{equation}
+ p(\text{正确}\mid c,r)=\sigma\bigl(\bm{c}^{\top}\bm{M}\bm{r}+b\bigr),
+ \label{eq:nlp-dialogue-dual-encoder}
+\end{equation}
+其中$\bm{M}\in\mathbb{R}^{d\times d}$和$b$是可学习参数。$\bm{M}\bm{r}$可以理解为由候选“预测”出的上文表示，再与真实上文做内积。训练时把真实下一轮作为正例，从语料中随机抽取的其他回复作为负例，用二元交叉熵训练；评价常用$R_{10}@1$，即在1个正确回复与9个随机回复中把正确者排第一的比例。
+
+式\eqref{eq:nlp-dialogue-dual-encoder}属于第\ref{sec:nlp-classification-matching-architectures}小节的表示型匹配：候选向量与上文无关，可以离线算好并建索引，所以库很大时仍然快。把上文与候选拼接后联合编码的交叉编码器更准确，但每个候选都要重算；Poly-encoder用若干个上文“代码”向量与候选向量做一次注意，在两者之间折中\scite{nlp-matching-humeau2020polyencoder}。无论用哪种打分器，检索式回复的句子都来自人写语料，因而流畅；它的根本限制是只能复述库中已有的说法，用户提到库外的新组合时只能找一句“差不多”的回复。
+
+\term{生成式回复}（generative response）去掉候选库，直接把上文当作源序列、回复当作目标序列，用第\ref{sec:nlp-generation-encoder-decoder}小节的编码器—解码器建模
+\begin{equation}
+ p(T\mid S)=\prod_{i=1}^{|T|}p(t_i\mid S,t_{<i}),
+ \label{eq:nlp-dialogue-seq2seq}
+\end{equation}
+其中$S$是上文词元序列，$T=(t_1,\ldots,t_{|T|})$是回复。训练对每个（上文，回复）对最小化$-\log p(T\mid S)$，推断时用束搜索取高概率回复。Shang等人在微博短文本对话上、Vinyals与Le在技术支持记录和电影字幕上最早展示了这条路线：模型能够生成语料中没有原样出现过的回复\cite{nlp-dialogue-shang2015,nlp-dialogue-vinyals2015}。这条路线随后暴露出两个缺陷：回复常常是与上文关系不大的通用句；Vinyals与Le也指出，对“你多大了”“你是哪里人”之类的问题，换一种问法就给出互相矛盾的回答，因为模型只拟合每一对上文与回复，没有一致的“说话者”。第一个缺陷由下一小节处理，第二个缺陷在第\ref{sec:nlp-dialogue-personalization}小节处理。
+
+\subsubsection{通用回复问题与互信息重排}
+\label{sec:nlp-dialogue-mmi}
+
+为什么最大似然训练会偏好通用回复？语料中“哈哈，是的”“我不知道”这类句子能接在许多不同的上文之后，因而在几乎任何$S$下都有不低的$p(T\mid S)$；与上文紧密相关的具体回复只适合少数上文，每一种具体说法分到的概率都较小。束搜索取最高概率的回复，就系统地落到通用句上。问题不在于模型没学会，而在于目标$\log p(T\mid S)$本身不区分“在这个上文下合适”与“在所有上文下都合适”。
+
+Li等人把选择准则改为上文与回复之间的点互信息\scite{nlp-dialogue-li2016mmi}。\term{最大互信息目标}（maximum mutual information objective, MMI）要求回复在给定上文时的概率明显高于它不看上文时的概率：$\log\frac{p(S,T)}{p(S)p(T)}=\log p(T\mid S)-\log p(T)$。引入权重$\lambda$控制对无条件概率的惩罚强度，得到
+\begin{equation}
+ \hat T=\argmax_{T}\bigl\{\log p(T\mid S)-\lambda\log p(T)\bigr\}.
+ \label{eq:nlp-dialogue-mmi-antilm}
+\end{equation}
+$p(T)$由一个只看回复的语言模型估计，所以这一形式称为MMI-antiLM：通用回复的$p(T)$大，被扣分多。用贝叶斯公式$\log p(T\mid S)=\log p(S\mid T)+\log p(T)-\log p(S)$代入，$\log p(S)$与$T$无关，可以去掉：
+\begin{equation}
+ \hat T=\argmax_{T}\bigl\{(1-\lambda)\log p(T\mid S)+\lambda\log p(S\mid T)\bigr\}.
+ \label{eq:nlp-dialogue-mmi-bidi}
+\end{equation}
+这一形式称为MMI-bidi。$p(S\mid T)$由一个反向的序列到序列模型估计，它问的是“看到这句回复，能否猜回原来的上文”；“哈哈，是的”几乎猜不出任何上文，具体回复则能。两式在$\lambda$相同时选出同一个回复，差别在于计算上怎样近似。
+
+用一个教学数例看重排效果。上文$S$为“我这周第一次去读书会，讨论的是注意力机制”，候选$T_1$为“哈哈，是的”，$T_2$为“注意力那一章的推导你跟上了吗”。假设正向模型给出$p(T_1\mid S)=0.05$、$p(T_2\mid S)=0.02$，回复语言模型给出$p(T_1)=0.04$、$p(T_2)=0.0005$。按最大似然，$T_1$胜出。取$\lambda=0.5$代入式\eqref{eq:nlp-dialogue-mmi-antilm}：$T_1$的分数为$\ln0.05-0.5\ln0.04=-2.996+1.609=-1.386$，$T_2$为$\ln0.02-0.5\ln0.0005=-3.912+3.800=-0.112$，$T_2$胜出。$T_1$之所以落败，是因为它在给定上文时的概率只比无条件概率高25\%，而$T_2$高40倍。
+
+两种形式各有实现困难。MMI-antiLM可以在束搜索中逐词计算，但惩罚整个$\log p(T)$会偏向语言模型认为不像话的序列，也就是不合语法的回复。原文观察到上文对解码的影响主要体现在开头几个词元，之后解码器更多依赖自己已生成的前缀，于是只惩罚前$\gamma$个位置：把$p(T)$换成$U(T)=\prod_{k=1}^{|T|}p(t_k\mid t_{<k})^{g(k)}$，其中$g(k)=1$当$k\le\gamma$，否则为0。MMI-bidi则无法直接解码，因为$p(S\mid T)$要在整句$T$生成完后才能计算。实际做法是先用正向模型生成候选列表，再重排，如算法\ref{alg:nlp-dialogue-mmi-rerank}。重排分数中额外加入长度项$\eta|T|$：对数概率逐词累加，短句天然占优，长度项给每个词元一份固定奖励来抵消这一偏向。$\lambda$与$\eta$在开发集上调节。
+
+\begin{algorithm}[MMI-bidi候选重排]
+  \label{alg:nlp-dialogue-mmi-rerank}
+  \begin{algorithmic}[1]
+    \Require 上文$S$；正向模型$p(T\mid S)$；反向模型$p(S\mid T)$；候选数$N$；权重$\lambda,\eta$
+    \Ensure 回复$\hat T$
+    \State 用正向模型做束宽为$N$的束搜索，得到候选$T^{(1)},\ldots,T^{(N)}$及$\log p(T^{(n)}\mid S)$
+    \For{$n=1,\ldots,N$}
+      \State 用反向模型对固定的$S$做一次教师强制前向，得到$\log p(S\mid T^{(n)})$
+      \State $\mathrm{score}_n\gets\log p(T^{(n)}\mid S)+\lambda\log p(S\mid T^{(n)})+\eta\,|T^{(n)}|$
+    \EndFor
+    \State \Return $\hat T=T^{(n^*)}$，$n^*=\argmax_n\mathrm{score}_n$
+  \end{algorithmic}
+\end{algorithm}
+
+算法中的重排分数把式\eqref{eq:nlp-dialogue-mmi-bidi}的$(1-\lambda)$系数吸收进了$\lambda$的取值，排序不受影响。它是第\ref{sec:nlp-inference-reranking}节候选重排的一个特例：打分器不是独立训练的质量模型，而是同一语料上反向训练的生成模型，与统计机器翻译中的噪声信道模型同构。评价多样性时常用distinct-$n$，即生成结果中不同的$n$元组数目除以生成词元总数；原文报告MMI解码在BLEU与distinct-1、distinct-2上都优于最大似然基线。
+
+互信息重排的代价有三项：要另训一个与正向模型同规模的反向模型；重排要对$N$个候选各做一次反向前向；束搜索的候选彼此相近，若列表里根本没有具体回复，重排也选不出来，所以后来的工作常改用采样产生更分散的候选。它也只处理“与上文的特定性”，不检查回复中的事实是否正确，后者需要第\ref{sec:nlp-dialogue-knowledge}小节的知识条件。
+
+\subsubsection{大规模预训练对话模型}
+\label{sec:nlp-dialogue-pretrained}
+
+互信息重排修正的是选择准则，模型本身仍在几百万对话对上训练，知识量与表达方式都有限。第\ref{chap:nlp-large-language-models}章的预训练经验提示了另一条路：在规模大得多的对话语料上训练大模型，让相关、具体的回复本身获得更高概率。
+
+DialoGPT沿用GPT-2的因果Transformer解码器，在从Reddit讨论串中抽取的约1.47亿段对话交流上训练\scite{nlp-dialogue-zhang2020dialogpt}。它不区分编码器和解码器：一段多轮会话$x_1,\ldots,x_N$的各轮依次拼接，每轮末尾加结束标记，整体当作一条长文本。若前$m$个词元构成上文$S$、其余构成回复$T$，目标为
+\begin{equation}
+ p(T\mid S)=\prod_{n=m+1}^{N}p(x_n\mid x_1,\ldots,x_{n-1}).
+ \label{eq:nlp-dialogue-dialogpt}
+\end{equation}
+对多轮会话，第2轮到第$K$轮回复的联合概率分解为各轮在全部前文条件下的概率之积，一条会话因而为每一轮回复都提供监督。与式\eqref{eq:nlp-dialogue-seq2seq}相比，上文与回复共享同一组参数和同一个注意力栈，上文中的每个位置也能通过因果掩码被后续所有位置读取。DialoGPT发布了1.17亿、3.45亿和7.62亿参数三种规模，解码时先用top-$k$采样生成一组候选，再用反向模型$p(S\mid T)$按算法\ref{alg:nlp-dialogue-mmi-rerank}的思路重排，可见互信息重排在大模型上仍被沿用。
+
+Meena进一步把规模推到26亿参数，使用1个编码器块和13个解码器块的Evolved Transformer序列到序列结构，上文最多取前7轮，训练语料是约341GB的公开社交媒体对话，目标仍是最小化回复的困惑度\scite{nlp-dialogue-adiwardana2020meena}。它的另一项贡献是人工评价协议。\term{敏感性与具体性平均}（sensibleness and specificity average, SSA）让评审对每条回复回答两个是非问题：在上文中是否说得通（敏感性），是否特定于这个上文（具体性）；不敏感的回复直接记为不具体，SSA是两项比例的平均。“我喜欢网球”后接“那挺好”说得通但不具体，接“我也是，费德勒的比赛我每场都看”两项都满足。具体性一项正是针对通用回复设计的。Meena报告困惑度与SSA高度相关，完整版本的SSA为79\%，人类对话为86\%。解码采用“采样再排序”：基础版本以温度0.88独立采样20条回复，取对数概率最高的一条，SSA为72\%；79\%的完整版本改用$k=40$的top-$k$采样，并加入检测跨轮重复的规则。
+
+BlenderBot指出规模之外还要有技能\scite{nlp-dialogue-roller2021blender}。它先在约15亿条Reddit评论上预训练Transformer序列到序列模型（9000万、27亿与94亿参数），再在混合技能数据上微调：Persona-Chat练人物一致性，Wizard of Wikipedia练使用知识，EmpatheticDialogues练共情\cite{nlp-intro-zhang2018persona,nlp-intro-dinan2019,nlp-dialogue-rashkin2019empathetic}，Blended Skill Talk则在同一段对话中要求三种技能交替出现\scite{nlp-dialogue-smith2020bst}。BlenderBot比较了三类结构：Poly-encoder检索式模型、生成式模型，以及\term{检索后精炼}（retrieve and refine）模型——先检索一条回复或一句知识，把它拼接到上文后面再交给生成器。原文的人工比较发现解码设置影响很大：默认束搜索倾向过短的通用回复，强制最短20个词元后回复明显更受评审偏好；屏蔽重复三元组也有改善，但差异不显著。最终设置为束宽10、最短20词元加三元组屏蔽。后续工作研究了跨会话的长期记忆与互联网检索，分别对应第\ref{sec:nlp-dialogue-user-memory}与第\ref{sec:nlp-dialogue-knowledge}小节的问题\cite{nlp-dialogue-xu2022goldfish,nlp-dialogue-komeili2022internet}。
+
+三者的关系可以这样概括：DialoGPT和Meena说明规模能显著提高相关性与具体性，BlenderBot说明混合技能数据和解码约束同样重要。它们共同的缺陷也在原文中被明确列出：模型仍会编造事实、自相矛盾、在长对话中重复，并模仿论坛语料中的冒犯性内容。前两项需要外部知识与记忆，后一项需要下一小节的对齐训练。
+
+\subsubsection{聊天模型的指令微调与对齐}
+\label{sec:nlp-dialogue-chat-alignment}
+
+预训练对话模型学到的是“论坛里的人接下来会说什么”，这与“助手应当怎样回应用户”不同：前者可以跑题、挖苦或给出未经核实的说法，也不会按用户指令改变篇幅或格式。今天的通用聊天模型由预训练语言模型出发，先在人写的指令示范上做有监督微调，再用成对偏好训练奖励模型并做强化学习，或用直接偏好方法对齐\scite{ouyang2022instructgpt}。示范数据、损失构造与对齐算法分别在第\ref{chap:nlp-supervised-finetuning}章与第\ref{chap:nlp-preference-alignment}章展开，此处只写开放对话特有的三处变化。
+
+第一处是多轮数据的监督位置。一条训练样本是按第\ref{sec:nlp-sft-context}小节对话模板拼接的完整会话，设第$k$轮助手回复的词元位置集合为$A_k$，损失只覆盖助手位置：
+\begin{equation}
+ L=-\sum_{k=1}^{K}\sum_{t\in A_k}\log p_{\theta}(x_t\mid x_{<t}),
+ \label{eq:nlp-dialogue-multiturn-sft}
+\end{equation}
+这正是第\ref{sec:nlp-sft-masked-loss}小节的掩码损失在多轮上的写法。一条$K$轮会话因而同时监督$K$次回复，每次都以全部前文为条件，模型能学到延续前面约定的行为。它带来的困难是长会话中早期约束容易被遗忘。Llama~2-Chat为此提出Ghost Attention：构造训练数据时把系统指令（如“始终用一句话回答”）附加到每一轮用户消息后生成回复，训练时只在第一轮保留该指令，并把前面各轮的损失置零，使模型学会在后续轮次中仍遵守只出现过一次的指令\scite{nlp-align-touvron2023llama2}。
+
+第二处是偏好反馈的单位。对话中的比较通常以“同一段历史下的两个候选回复”为单位收集，奖励模型以完整历史为条件给回复打分，比较关系按第\ref{sec:nlp-align-bradley-terry}小节的Bradley--Terry模型转为训练目标。Llama~2-Chat分别训练帮助性与安全性两个奖励模型：提示被标为安全相关，或安全奖励低于0.15时，取安全奖励；否则取帮助奖励\scite{nlp-align-touvron2023llama2}这样做的原因是两项要求常常冲突，一个分数难以同时刻画。
+
+第三处是安全约束。开放对话没有业务接口来限定输出范围，用户也可能在多轮中逐步诱导模型。LaMDA的做法有代表性：在人工标注的安全与质量数据上微调同一个模型，使其能给候选回复输出安全分$s_{\mathrm{safe}}(y)$和质量分$q(y)$（原文取$3P(\text{合理})+P(\text{具体})+P(\text{有趣})$），推断时先采样若干候选，再按
+\begin{equation}
+ y^{*}=\argmax_{y\in\mathcal{Y},\ s_{\mathrm{safe}}(y)\ge\tau}q(y)
+ \label{eq:nlp-dialogue-safety-filter}
+\end{equation}
+选择回复，其中$\mathcal{Y}$为候选集合、$\tau$为安全阈值；涉及事实时调用检索工具，把查到的内容放入上下文后再生成\scite{nlp-dialogue-thoppilan2022lamda}。更普遍的做法是把有害请求和多轮诱导样本纳入示范与偏好数据，或按第\ref{sec:nlp-align-cai}小节的原则批评生成AI反馈，再用对抗性的多轮测试检查遗漏。
+
+与前面几代模型相比，对齐后的聊天模型能按指令改变回复方式，有害输出也更少；代价是示范、偏好与安全标注的成本，以及对齐目标本身带来的问题：评审偏爱长而自信的回复会让奖励被利用，安全约束过强会让模型拒答无害请求。事实依据、人物一致性与情绪支持也不会因对齐自动解决，仍需下面三小节的条件与检查。
+
+\subsection{知识支持的交流}
+\label{sec:nlp-dialogue-knowledge}
+
+用户追问时，回复应当用上正确的知识。这里有两个子问题：从知识库中选出与当前话题相关的知识句；在回复中准确使用它，不添加没有来源的内容。Wizard of Wikipedia让一名“向导”在交流中检索维基百科并标出所用的知识句，为两个子问题分别提供了监督\scite{nlp-intro-dinan2019}。与知识配套提出的两种Transformer Memory Network分别对应第\ref{sec:nlp-dialogue-retrieval-generation}小节的检索式与生成式两条路线。以下用共同通知构造教学例子：用户先问活动时间，下一轮问“那地点呢”，第二轮应沿用同一活动而切换待答属性，不重复时间。
+
+\subsubsection{检索式Transformer Memory Network}
+\label{sec:nlp-dialogue-retrieval-memory}
+
+检索式版本先用信息检索取得知识句，再据知识和历史给候选回复排序。Wizard of Wikipedia的各模型共用同一检索步骤：以话题及最近两轮为查询检索百科条目的首段，把它们拆成附带标题的知识句；召回器也可换成第\ref{sec:nlp-dialogue-dpr}小节的稠密检索。共享Transformer把历史编码为$\bm{q}$，把第$j$句知识编码为$\bm{m}_j$，对知识做注意并与历史相加：
+\begin{equation}
+ \alpha_j=\frac{\exp(\bm{q}^{\top}\bm{m}_j)}
+                  {\sum_k\exp(\bm{q}^{\top}\bm{m}_k)},
+ \qquad
+ \bm{v}=\bm{q}+\sum_j\alpha_j\bm{m}_j.
+ \label{eq:nlp-dialogue-retrieval-memory}
+\end{equation}
+另一Transformer把候选回复编码为$\bm{r}_l$，按$\cos(\bm{v},\bm{r}_l)$取最高者。训练以正确回复为正例、批内其他回复为负例做交叉熵；知识注意权重在回复目标下间接学习。
+
+取知识$K_1$为“活动4月18日14:00举行”，$K_2$为“地点海棠楼201”，教学向量$\bm{m}_1=(1,0)$、$\bm{m}_2=(0,1)$。第一轮问时间，$\bm{q}=(1,0)$，知识权重为$(0.731,0.269)$，$\bm{v}=(1.731,0.269)$；时间回复与地点回复的向量取$(1,0)$与$(0,1)$，余弦分数约为0.988与0.154，选择时间回复。下一轮若历史被正确编码为$(0,1)$，权重与得分对调，选出地点回复。真实模型的错误可能出在召回错活动、选错属性或候选回复空泛，三者应分别计算知识召回、知识选择和回复选择；最高注意权重便于检查模型偏向，但不是逐句引用。
+
+\subsubsection{生成式Transformer Memory Network}
+\label{sec:nlp-dialogue-generative-memory}
+
+检索式版本只能从候选回复中选，不能把知识组织成新的措辞。生成式版本逐词生成回复，有两种变体。两阶段版本单独训练知识选择器，取最高分知识句，与历史拼接后交给另一个编码器，再训练解码器预测参考回复；两个模型可分别改进，但第一阶段选错会向后传播。端到端版本共享历史与知识的编码器，计算知识注意分布后仍取最高分的一句，把它的词元表示与历史表示拼接供解码器交叉注意，并加一项知识选择的辅助损失：
+\begin{equation}
+ L=(1-\lambda)L_{\mathrm{response}}+\lambda L_{\mathrm{knowledge}}.
+ \label{eq:nlp-dialogue-generative-memory}
+\end{equation}
+$L_{\mathrm{response}}$是参考回复的词元负对数似然，$L_{\mathrm{knowledge}}$是人类所选知识句的交叉熵。由于最终只取一句，这一版本不是对全部知识句的软加权生成；辅助损失直接监督知识注意，解码损失训练实际采用的表示。
+
+上例第二轮中，设选择器给地点句的概率为0.8，人类标签也是地点句，则知识损失为$-\log0.8=0.223$。生成器据该句输出“地点是海棠楼201”。若输出为“海棠楼201，现场免费提供资料”，前半句有依据，后半句没有，知识选择正确并不使整句通过。两种变体都只用一句知识，需要组合多个片段时可改用第\ref{sec:nlp-dialogue-evidence}节的RAG或FiD接口。
+
+\subsection{社交与个性化交流}
+\label{sec:nlp-dialogue-personalization}
+
+第\ref{sec:nlp-dialogue-retrieval-generation}小节提到，生成模型对同一问题的不同问法会给出互相矛盾的个人信息。人物条件为模型指定一个主体，使同一问题在不同主体下有不同而各自一致的回答。Persona-Chat给交流双方各指定几条人物资料，比较带资料与不带资料的回复\scite{nlp-intro-zhang2018persona}；它评价的是与指定人物的一致性，不涉及资料在现实中是否为真。用于真实用户时，问题变为长期记忆：哪些资料允许使用、从何而来、何时失效。
+
+\subsubsection{Profile Memory Network人物条件回复}
+\label{sec:nlp-dialogue-profile-memory}
+
+Profile Memory Network把人物条目作为独立记忆，而不是与历史无区别地拼成一句长文本。排序式版本把历史表示$\bm{q}$与每条人物资料$\bm{p}_j$做相似度softmax得到权重，形成$\bm{q}^{+}=\bm{q}+\sum_j\alpha_j\bm{p}_j$，再按与候选回复的相似度排序，以正确回复和负回复的排序损失训练。生成式版本用LSTM编码历史并初始化解码器，人物条目的词向量按逆词频权重$1/(1+\log(1+\mathrm{tf}))$加权求和为向量后组成矩阵$\bm{P}$；解码第$i$步按$\operatorname{softmax}(\bm{P}\bm{W}_a\bm{h}_i)$对人物条目注意，所得摘要与词元输入结合预测下一词。与把全部资料直接前置的序列到序列基线相比，区别在于模型可以按当前话题选择资料条目。
+
+教学角色甲的资料为“喜欢机器学习”“去年做过读书会志愿者”，角色乙为“喜欢机器学习”“这次第一次参加读书会”。对“以前来过吗”，兴趣条目权重应低，经历条目决定回答：甲两条权重若为$(0.2,0.8)$，回复“我去年做过志愿者”；乙则回复“这是我第一次参加”。注意必须先绑定当前扮演的角色，只在该角色的资料上计算，不能把甲乙资料合在一起。资料只说做过志愿者，就不支持“我去年主持了活动”；人物一致性、话题相关性和现实真实性应分开评分。
+
+\subsubsection{用户记忆检索与规则更新}
+\label{sec:nlp-dialogue-user-memory}
+
+对真实用户，人物资料变成跨会话积累的记忆。Xu等构造了多会话对话数据，把此前各次会话摘要成记忆条目，下次对话时检索相关条目作为条件\scite{nlp-dialogue-xu2022goldfish}；这解决了“记得住”，但没有规定记忆的身份、来源和有效期。这里采用本书的教学协议：每条记忆保存主体标识、属性、值、来源轮次、确认时点、有效范围和使用许可；用户明确陈述的内容才进入候选写入，推测保留为未确认。语义编码器提供相关性分数，其参数可来自第\ref{chap:nlp-classification-matching-organization}章的匹配训练；身份、有效期和更新优先级由规则决定。
+
+假设两位同名“林宁”的标识为U17、U28。记录M1为U17在4月10日确认“默认先给简短回复”，M2为U28偏好“完整推导”，M3为U17在4月17日说“这次请详细解释”。当前请求来自U17。即使M2的语义相似度0.95高于M1的0.80，也因主体不同被过滤；M3只对本次任务有效，优先于长期默认M1但不删除它，下一次请求仍用M1。若U17说“以后都改成详细解释”，确认后把M1标为失效并写入新的长期记录；只说“这个回答太短”不足以推出所有未来任务都要详细。同一时点相互矛盾的明确指令保留冲突并询问，不以向量相似度裁决。评价可在同名、过期、更正和临时覆盖样本上分别检查命中、误用和错误写入。
+
+\subsection{共情与支持性交流}
+\label{sec:nlp-dialogue-empathy}
+
+“我没赶上报名”可能表达失落，也可能只是请求核对截止时间。系统需要同时辨认情绪线索与交流目的，而不是看见负面词就统一安慰。合适的回应承认已表达的处境，不添造经历或诊断；用户要信息时给有依据的信息，要倾听时不急着替对方作决定。方法路线是先识别情绪或支持策略，再以其为条件生成。这里研究的是普通支持性交谈，评审的主观感受不能当作专业疗效的证据。
+
+\subsubsection{情绪条件生成与MoEL}
+\label{sec:nlp-dialogue-moel}
+
+基线先从历史预测情绪标签$e$，再以$(C,e)$生成回复，分别用分类交叉熵和词元负对数似然训练。硬选一个标签会丢失混合感受；测试时若直接提供真实标签，又会高估实际的情绪识别能力。
+
+MoEL把硬选择换成软组合\scite{nlp-dialogue-lin2019}。它由情绪跟踪器、多个情绪回应专家和一个汇总解码器组成。Transformer编码器用词、位置与说话者角色嵌入读取历史，查询表示$\bm{q}$对各情绪键$\bm{k}_e$做softmax得到分布$p_e$。每个专家是一个独立的Transformer解码层，在同一历史与回复前缀上输出$\bm{V}_e$；另有一个共享专家输出$\bm{V}_0$。组合与训练目标为
+\begin{equation}
+ \bm{V}_{\mathrm{mix}}=\bm{V}_0+\sum_e p_e\bm{V}_e,
+ \qquad
+ L=\alpha[-\log p_{e^*}]+\beta[-\log p(y^*\mid C)],
+ \label{eq:nlp-dialogue-moel}
+\end{equation}
+其中$e^*$是标注情绪，$y^*$是参考回复，汇总解码器再变换$\bm{V}_{\mathrm{mix}}$并输出词元分布。混合发生在隐表示上，不是对多条完整回复或词元概率做加权平均。
+
+“我第一次参加读书会，很期待”与“我第一次参加读书会，怕听不懂”事件相同而情绪不同。压缩成期待、焦虑两个教学专家，两句的情绪权重分别取$(0.8,0.2)$与$(0.2,0.8)$。若某步$\bm{V}_0=(0.5,0.5)$、$\bm{V}_{\text{期待}}=(1,0)$、$\bm{V}_{\text{焦虑}}=(0,1)$，两次混合分别为$(1.3,0.7)$与$(0.7,1.3)$，汇总层据此生成不同回应：前者可以问感兴趣的话题，后者可以承认担心并询问最担心哪类内容。若用户接着说“先别安慰，我只想知道地点”，情绪分布可能仍偏焦虑，但当前目的要求回答地点；情绪识别准确率、回复相关性与人工感受到的理解程度应分别比较。
+
+\subsubsection{ESConv支持策略条件生成}
+\label{sec:nlp-dialogue-esconv}
+
+情绪标签说明用户怎样感受，却没有说明系统接下来该做什么。ESConv把支持行为标成更接近回复职责的策略，如提问、复述、反映感受、肯定与安抚、提供建议或信息，标注者依据指南选择策略并组织回应\scite{nlp-dialogue-liu2021}。原文以预训练对话模型为骨干，把策略特殊词元放在参考回复之前，以展平的历史为条件训练
+\begin{equation}
+ p(s,y\mid C)=p(s\mid C)\prod_i p(y_i\mid C,s,y_{<i}),
+ \label{eq:nlp-dialogue-esconv}
+\end{equation}
+其中$s$为策略、$y$为回复。联合版本先预测策略再生成回复；给定正确策略的版本衡量表达能力，随机策略版本检查策略选择的贡献。三者输入信息不同，报告时应分开。
+
+同一事件可对应三种目的。“错过报名让我很失落，只想说说”宜先反映感受；“报名什么时候截止”宜提供通知中的精确信息；“能帮我想想怎样避免下次再错过吗”才适合给建议。假设后一句的策略分布在反映感受、信息、建议上为$(0.2,0.1,0.7)$，选建议后生成“可以在确认下一次截止时间后设一个提前提醒”。检查时既看策略标签，也看文字是否真的执行了该策略。策略中的“自我披露”不授权普通助手虚构亲身经历；原研究的参与者评价也不能推广为临床或专业建议的有效性。

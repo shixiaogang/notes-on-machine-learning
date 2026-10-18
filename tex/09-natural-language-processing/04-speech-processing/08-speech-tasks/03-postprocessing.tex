@@ -1,0 +1,109 @@
+\section{识别结果的解码、分段与整理}
+\label{sec:nlp-speech-postprocessing}
+
+识别器输出的字符串还不能直接交付。声音含混时，需要借助大量文本中的语言知识在候选之间选择；字幕和数据清洗需要每个词的时间位置；会议录音要分清哪段话是谁说的；书面使用又需要标点和规范的数字写法。本节依次处理这四项，说明各自的输入、监督来源与评价口径。四项整理都可能引入新的错误，评价时应与识别本身的错误分开报告。
+
+\subsection{语言模型浅层融合与候选重排}
+\label{sec:nlp-speech-fusion}
+
+端到端识别器只从配对数据中学到语言规律。一千小时转写大约只有一千万字的文本，而纯文本语料可以多出几个数量级，独立训练的语言模型能补充大量词汇与搭配知识，例如在“海棠楼”与发音相近的候选之间作出选择。\term{浅层融合}（shallow fusion）在解码搜索中把识别分数与语言模型分数相加\scite{nlp-speech-kannan2018}：
+\begin{equation}
+ S(y)=\log p_{\mathrm{asr}}(y\mid\bm{X})
+       +\lambda\log p_{\mathrm{lm}}(y)+\gamma |y|.
+ \label{eq:nlp-speech-fusion}
+\end{equation}
+$\lambda$为语言模型权重，$\gamma$为长度奖励，用来抵消语言模型偏好短文本的倾向；两者在独立开发集上按识别错误率选定。对逐字生成的AED与RNN-T，这一分数在束搜索中逐步累加：每输出一个非空白符号$y_u$，就加上$\log p_{\mathrm{asr}}(y_u\mid\cdot)+\lambda\log p_{\mathrm{lm}}(y_u\mid y_{<u})+\gamma$。CTC中多条路径对应同一文本，要先按概率合并同文本路径，再对该文本计一次语言模型分数；第\ref{sec:nlp-speech-ctc-decoding}小节已经给出在前缀束搜索中实现这一点的位置。
+
+教学候选甲、乙的识别对数分数为$-2.0$与$-2.4$，语言模型对数分数为$-3.0$与$-1.0$，长度相同。取$\lambda=0.3$时总分分别为$-2.9$与$-2.7$，乙胜出。语言先验改变了选择，但它只说明乙在文本中更常见，并不能证明录音中说的就是乙。专业词表也可以用受控的加分或词典约束接入，代价是可能把发音相近的其他词吸附到常用专名上。
+
+识别模型自身也学到了一个语言先验，浅层融合会把它与外部语言模型的先验重复计入。这一问题在RNN-T中尤为明显，因为预测网络本身就是一个文字模型。\term{内部语言模型估计}（internal language model estimation）先估计识别模型在去掉声学输入时给出的文字概率$p_{\mathrm{ilm}}(y)$，融合时减去它：$S(y)=\log p_{\mathrm{asr}}-\mu\log p_{\mathrm{ilm}}+\lambda\log p_{\mathrm{lm}}$，在识别器训练领域与目标领域不同时尤其有用\scite{nlp-speech-meng2021}。深度融合等方法则把语言模型的隐藏状态接入解码器再联合训练，不在本节展开。
+
+候选重排把搜索分为两遍：第一遍用识别器和较小的语言模型产生$n$个完整候选，HMM系统则输出词格；第二遍用更大的语言模型对这些候选重新打分，再按式\eqref{eq:nlp-speech-fusion}的同类组合选出结果。第二遍可以使用计算量大的神经语言模型，因为只需对有限个候选打分；第\ref{sec:nlp-inference-reranking}小节的一般重排方法同样适用。限制在于它只能在已有集合中选择：若“海棠楼”在第一遍已被剪掉，第二遍的语言模型再强也找不回来。比较两种方法时应固定候选数量，并区分错误是候选中缺少正确答案，还是有正确答案却选错了。
+
+\subsection{给定文本的CTC与HMM强制对齐}
+\label{sec:nlp-speech-forced-alignment}
+
+字幕制作、语音数据清洗和发音分析都需要知道已知文本中的每个字或词在录音中的位置。\term{强制对齐}（forced alignment）固定文本，只搜索它与声音的最佳对应，不需要重新训练声学模型。
+
+CTC对齐复用第\ref{sec:nlp-speech-ctc-forward-backward}小节的扩展标签。把式\eqref{eq:nlp-speech-ctc-forward}中的求和换成取最大，并记录取得最大值的前驱：
+\begin{equation}
+ v_{t,s}=q_t(z_s)\max\{v_{t-1,s},\ v_{t-1,s-1},\ \delta_sv_{t-1,s-2}\},
+ \label{eq:nlp-speech-ctc-viterbi}
+\end{equation}
+在两个合法终态$2U$与$2U+1$中取较大者回溯，就得到每一步所处的扩展标签位置。HMM对齐则按词典把给定词序列展开成音素HMM的串联，词间插入可选的静音状态，在这张图上运行式\eqref{eq:nlp-speech-hmm-viterbi}的Viterbi算法。蒙特利尔强制对齐器就是基于Kaldi的HMM--GMM对齐工具\scite{nlp-speech-mcauliffe2017}。
+
+从路径到时间还需要换算。设编码步间隔为40\,ms、起点偏移为0，回溯路径为$(\varnothing,a,a,\varnothing,b,b)$。若约定以占用网格单元的外边界表示区间，可报告$a:[0.04,0.12)$秒、$b:[0.16,0.24)$秒；若改用窗口中心，或把相邻空白分配给左右的字，会得到不同的边界。特征窗长、卷积感受野和降采样带来的偏移也要计入换算。
+
+两条路线的边界性质不同。CTC训练后的尖峰现象（第\ref{sec:nlp-speech-ctc-gradient}小节）使每个字通常只占一两个编码步，其余时间归给空白，所以CTC对齐得到的更接近“在何时确认了这个字”，而不是这个音从哪里开始到哪里结束；单向模型的尖峰还可能整体滞后。HMM的状态要覆盖音素的全部帧，边界通常更贴近发音，分辨率也是10\,ms的特征帧而非降采样后的编码步。目标含重复字符时，CTC对齐必须保留中间空白；停顿则由空白或HMM静音状态吸收。
+
+强制对齐总会给出一条路径，即使文本本身有错。给错的文字可能对上一条分数较低的近似路径，因此对齐成功不能证明转写正确。数据清洗中常按归一化后的路径分数和异常时长筛出可疑样本，再人工核对。
+
+\subsection{说话者嵌入与聚类：x-vector}
+\label{sec:nlp-speech-xvector}
+
+会议转写要回答“谁在何时说话”，说话者验证要判断两段声音是否出自同一人。两者都需要把变长的声音片段映射为便于比较的固定长度向量，即\term{说话者嵌入}（speaker embedding），希望同一说话者的片段彼此接近、不同说话者的片段相距较远。x-vector用说话者分类任务学习这种嵌入\scite{nlp-speech-snyder2018}。
+
+帧级部分采用\term{时延神经网络}（time-delay neural network, TDNN）。一个TDNN层在每个时刻$t$读取下层若干个偏移位置的输出，拼接后做仿射变换：
+\begin{equation}
+ \bm{h}^{(l)}_t=\operatorname{ReLU}\bigl(\bm{W}^{(l)}[\bm{h}^{(l-1)}_{t+o_1};\ldots;\bm{h}^{(l-1)}_{t+o_K}]+\bm{b}^{(l)}\bigr),
+ \label{eq:nlp-speech-tdnn}
+\end{equation}
+其中$o_1,\ldots,o_K$是该层的时间偏移。它等价于一维扩张卷积：偏移集合$\{-2,0,2\}$即卷积核宽3、扩张2。逐层叠加后，上层每个输出覆盖的帧数不断扩大。表\ref{tab:nlp-speech-xvector}列出原文的结构：输入为24维滤波器组特征，前三层把上下文扩大到15帧，后两层逐帧变换，第五层输出1500维。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}llrr@{}}
+    \toprule
+    层 & 时间偏移 & 累计上下文 & 输入$\times$输出\\
+    \midrule
+    帧层1 & $\{-2,\ldots,2\}$ & 5 & $120\times512$\\
+    帧层2 & $\{-2,0,2\}$ & 9 & $1536\times512$\\
+    帧层3 & $\{-3,0,3\}$ & 15 & $1536\times512$\\
+    帧层4、5 & $\{0\}$ & 15 & $512\times512$，$512\times1500$\\
+    统计池化 & 全部$T$帧 & $T$ & $1500T\times3000$\\
+    片段层6、7 & --- & $T$ & $3000\times512$，$512\times512$\\
+    softmax & --- & $T$ & $512\times N$\\
+    \bottomrule
+  \end{tabular}
+  \caption{x-vector网络结构，按Snyder等的原文整理。$T$为片段帧数，$N$为训练说话者数。帧层1的输入是5帧24维特征的拼接；x-vector取自片段层6的仿射输出。}
+  \label{tab:nlp-speech-xvector}
+\end{table}
+
+\term{统计池化}（statistics pooling）把变长的帧级输出$\bm{h}_1,\ldots,\bm{h}_T\in\mathbb{R}^{1500}$汇总为固定长度：
+\begin{equation}
+ \bm{\mu}=\frac1T\sum_{t=1}^{T}\bm{h}_t,\qquad
+ \bm{\sigma}=\Bigl(\frac1T\sum_{t=1}^{T}\bm{h}_t\odot\bm{h}_t-\bm{\mu}\odot\bm{\mu}\Bigr)^{\odot1/2},\qquad
+ \bm{s}=[\bm{\mu};\bm{\sigma}]\in\mathbb{R}^{3000}.
+ \label{eq:nlp-speech-stats-pooling}
+\end{equation}
+均值描述该说话者帧特征的平均位置，标准差描述它们的变化范围；两者都与片段长度无关。$\bm{s}$经两个片段级层后，对训练集中的$N$个说话者做softmax分类，损失为交叉熵。训练时还向录音中加入噪声与混响，这是原文提升鲁棒性的关键做法之一。使用时丢弃分类层，取片段层6的仿射输出作为嵌入；测试说话者不必出现在训练集中，因为比较的是嵌入而不是类别。后续的ECAPA-TDNN在同一框架下加入通道注意力、多层特征聚合和注意力加权的统计池化\scite{nlp-speech-desplanques2020}。
+
+比较两个嵌入$\bm{e}_1,\bm{e}_2$最简单的方法是余弦相似度。更常用的是\term{概率线性判别分析}（probabilistic linear discriminant analysis, PLDA）\scite{nlp-speech-prince2007}。它把（经中心化、降维和长度归一化的）嵌入写成$\bm{e}=\bm{m}+\bm{\Phi}\bm{\beta}+\bm{\epsilon}$：$\bm{\beta}\sim\mathcal{N}(\bm{0},\bm{I})$是说话者共享的隐变量，$\bm{\epsilon}\sim\mathcal{N}(\bm{0},\bm{\Sigma}_w)$是同一说话者不同片段之间的变化。记说话者间协方差$\bm{\Sigma}_b=\bm{\Phi}\bm{\Phi}^{\top}$、总协方差$\bm{\Sigma}_t=\bm{\Sigma}_b+\bm{\Sigma}_w$。两段来自同一人时共享$\bm{\beta}$，来自不同人时独立，于是评分取对数似然比
+\begin{equation}
+ \mathrm{LLR}=\log\mathcal{N}\!\left(\begin{bmatrix}\bm{e}_1\\\bm{e}_2\end{bmatrix};
+   \begin{bmatrix}\bm{m}\\\bm{m}\end{bmatrix},
+   \begin{bmatrix}\bm{\Sigma}_t&\bm{\Sigma}_b\\\bm{\Sigma}_b&\bm{\Sigma}_t\end{bmatrix}\right)
+ -\log\mathcal{N}\!\left(\begin{bmatrix}\bm{e}_1\\\bm{e}_2\end{bmatrix};
+   \begin{bmatrix}\bm{m}\\\bm{m}\end{bmatrix},
+   \begin{bmatrix}\bm{\Sigma}_t&\bm{0}\\\bm{0}&\bm{\Sigma}_t\end{bmatrix}\right).
+ \label{eq:nlp-speech-plda}
+\end{equation}
+参数用带说话者标签的训练嵌入通过EM估计。与余弦相比，PLDA区分了“说话者之间的差异”与“同一人内部的变化”两种方向，后者在打分时被打折扣。
+
+说话者验证用\term{等错误率}（equal error rate, EER）评价。给定阈值$\theta$，误接受率是不同人的配对中得分不低于$\theta$的比例，误拒绝率是同一人的配对中得分低于$\theta$的比例；阈值升高时前者下降、后者上升，两者相等时的值即EER。教学例子中，同一人配对的得分为$0.9,0.8,0.6,0.4$，不同人配对为$0.7,0.3,0.2,0.1$。取$\theta=0.5$，误拒绝只有$0.4$一项，误接受只有$0.7$一项，两者都是25\%，EER为25\%。
+
+\term{说话者日志}（speaker diarization）把这些部件串起来。先由语音活动检测取得有声片段，再按固定长度（例如1.5秒、重叠一半）切成小段，提取并归一化嵌入，用凝聚层次聚类分组：从每段一组开始，反复合并相似度最高的两组，相似度低于开发集选定的阈值或达到已知人数时停止。设三段的相似度为$s_{1,2}=0.91$、$s_{1,3}=0.18$、$s_{2,3}=0.22$，用组间平均相似度、阈值$0.7$：先合并1、2，合并组与3的相似度为$(0.18+0.22)/2=0.20$，低于阈值，最终得到两组。把各组映射回起止时刻，就得到匿名的说话者A、B。评价用日志错误率$\mathrm{DER}=(T_{\mathrm{miss}}+T_{\mathrm{fa}}+T_{\mathrm{conf}})/T_{\mathrm{ref}}$，三项依次是漏检、虚警与身份混淆的时长，计算前须先求匿名标签与参考身份的最佳匹配，并约定交叠语音与边界容差的口径。
+
+这条流水线的局限主要有三点。片段太短时统计池化不稳定，嵌入噪声大；两人同时说话时一个嵌入混合了两种身份，聚类无法给出重叠标签，需要额外的分离或重分段机制；聚类只给出匿名分组，要把A对应到某位真实用户，还需要已登记的声纹或其他证据。
+
+\subsection{标点恢复与反向文本规范化}
+\label{sec:nlp-speech-itn}
+
+识别输出通常没有标点，数字也以口头形式出现，例如“明天可以吗不可以后天”。整理文字需要两步：恢复标点和句界，把口头形式改写为书面形式。
+
+\term{标点恢复}（punctuation restoration）最常见的做法是逐词元标注：对识别输出的每个词元预测其后应接的标点，标签集如$\{$无，逗号，句号，问号$\}$。训练数据很容易构造，只需把带标点的书面文本去掉标点作为输入，原标点的位置与类别作为标签。早期模型用双向循环网络加注意力\scite{nlp-speech-tilk2016}；现在多用BERT类编码器加逐词元分类头（第\ref{sec:nlp-classical-bert-heads}小节），损失为逐位置交叉熵，因“无”类远多于其他类，常对标点类加权。是否加标点在很大程度上取决于后文：“明天可以吗不可以后天”既可以是“明天可以吗？不可以，后天。”，也可以是“明天可以吗？不，可以后天。”，句界改变了语义。在线场景只能看到有限的后文，通常规定右侧上下文$r$个词元，位置$i$的标点要等到第$i+r$个词元出现后才确定；只见当前前缀的在线模型不能与看见全文的离线模型直接比较。
+
+\term{反向文本规范化}（inverse text normalization, ITN）把读出的形式改写为规定的书面形式，如“四月十八号下午两点”改为“4月18日14:00”。传统做法用WFST规则文法分两步完成：标注器先找出日期、时间、数量、金额等类型的片段并解析出字段，例如把上句解析为$\texttt{date}\{\texttt{month}{:}4,\texttt{day}{:}18\}$与$\texttt{time}\{\texttt{hour}{:}14,\texttt{minute}{:}00\}$；输出器再按规定格式把字段写成书面形式。两步都是第\ref{sec:nlp-speech-hybrid}小节意义下的加权转导器，规则可以审查，输出可控\scite{nlp-speech-zhang2021itn}。神经做法把ITN看作序列转换：一种是给每个口头词元预测一个改写操作，再由少量规则执行\scite{nlp-speech-pusateri2017}；另一种是用编码器—解码器直接生成书面形式。神经模型覆盖面更广，但可能生成规则不允许的格式，因此常用规则文法检查或约束其输出。
+
+类型判断决定了逆映射。“二零一”可能是房间号201，也可能是一串编号，不能无条件按数量处理；“四月十六日十八点前”中的“前”改变了时间条件，必须保留。ITN通常不是一一可逆的：同一口头形式可能对应不同的简称、大小写或格式，需要上下文和规定的输出风格。它与第\ref{sec:nlp-speech-tts}节语音合成文本前端中的正向规范化方向相反，但两者并不对称：正向规范化把一种书面形式展开为一种读法，反向规范化要从口头形式中判断原本是哪一种书面形式。整理只改变允许的书面形式，不应凭语言流畅性把听成的“十七日”改为“十八日”。评价时既保留统一规范下的识别错误，也单独统计整理后的数量、单位、句界和格式错误，以免规范化掩盖内容差异。

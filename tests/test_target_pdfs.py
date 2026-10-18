@@ -103,14 +103,14 @@ class TargetPdfTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "不完整"):
             self.run_command("check")
 
-    def test_rejects_over_800_pages(self):
+    def test_rejects_over_1000_pages(self):
         path = self.root / "target/vol1-first.pdf"
         document = fitz.open()
-        for _ in range(801):
+        for _ in range(1001):
             document.new_page()
         document.save(path)
         document.close()
-        with self.assertRaisesRegex(ValueError, "超过800页"):
+        with self.assertRaisesRegex(ValueError, "超过1000页"):
             MODULE.pdf_record(MODULE.volumes(self.root)[0])
 
     def test_lfs_checks_hash_size_and_attribute(self):

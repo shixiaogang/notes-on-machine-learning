@@ -1,0 +1,642 @@
+\section{机器翻译}
+\label{sec:nlp-generation-translation}
+
+\term{机器翻译}（machine translation, MT）把源语言句子$x=(x_1,\ldots,x_S)$变成目标语言句子$y=(y_1,\ldots,y_T)$，要求传达同样的意思，允许语序调整、词数变化和句子拆合。共同通知的第二句“校外来宾须在4月16日18:00前提交报名信息”译成英文时，“须”要变成must，“18:00前”要变成before 18:00并移到句末，“校外来宾”是两个汉语词对应一个名词短语external guests。这一句已经包含了翻译的大部分困难。把整个研究问题展开，可以列出七类挑战：
+\begin{enumerate}
+  \item \emph{词序与对齐}：源词与目标词之间是一对多、多对一或无对应的关系，平行句子又不标明谁对应谁；中文状语前置、英文后置，日语动词在句末，局部和长距离的重排都需要建模。
+  \item \emph{罕见词与开放词表}：人名、机构名、术语和形态变化使词表无法封闭，按词建模时总有训练中没见过的词。
+  \item \emph{定长瓶颈}：神经模型若把整句源文压成一个固定维数的向量，长句中的信息难以完整保留。
+  \item \emph{平行数据稀缺}：只有少数语向拥有上千万句对，多数语向只有几万句或没有平行数据，单语文本却多得多。
+  \item \emph{多语言}：几百个语向各训练一个模型不现实，共享一个模型又带来容量竞争和输出语言控制问题。
+  \item \emph{实时性}：同声传译在源句读完之前就要输出，后到的否定词或动词可能推翻已经说出的译文。
+  \item \emph{篇章一致性}：逐句翻译看不到前文，跨句的指代、省略和术语统一会出错。
+\end{enumerate}
+
+各类方法大致按这些挑战依次出现。统计机器翻译用隐变量模型估计词对齐，在对齐上抽取短语、组合多种特征并搜索译文，处理了词序与对齐，但组件多、各自优化；神经机器翻译用一个条件模型端到端替代这些组件，并逐步去掉定长瓶颈与循环依赖、处理开放词表；回译、多语模型和无监督翻译依次放宽对平行数据的要求；大语言模型把翻译变成按指令生成，再借助质量估计和最小贝叶斯风险解码从候选中选择译文；同声传译与篇章翻译改变了模型能看到的条件，前者只见源前缀，后者要读当前句之外的上下文。表~\ref{tab:nlp-generation-translation-methods}按这条谱系列出各方法解决的问题与引入的新代价，后文逐项展开。
+
+\begin{table*}[htbp]
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{32mm}>{\raggedright\arraybackslash}p{31mm}>{\raggedright\arraybackslash}p{44mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价\\
+    \midrule
+    IBM词对齐 & 平行句子不标词对应 & 对齐作隐变量，EM估计词翻译表 & 不建模语序，只能用作对齐\\
+    短语统计翻译 & 逐词替换缺少局部语序，特征难以组合 & 对称化对齐抽取短语，对数线性打分，栈解码，MERT调权 & 组件多且分别优化；长距离重排弱\\
+    循环编码器—解码器 & 特征工程与组件拼接 & 端到端条件语言模型 & 源句压成定长向量\\
+    加性注意力 & 定长瓶颈 & 每步对全部源状态加权求和 & 循环串行，训练难以并行\\
+    Transformer & 循环依赖 & 自注意力、交叉注意力，训练时目标位置并行 & 注意力代价随长度平方增长\\
+    子词与标签平滑 & 开放词表；过度自信 & 联合BPE与共享词表；软化的目标分布 & 切分可能违背词义；困惑度变差\\
+    长度与覆盖惩罚 & 束搜索偏短、漏译 & 长度项除对数概率，覆盖项惩罚未被注意的源词 & 两个超参数；依赖注意力权重\\
+    回译 & 平行数据少 & 反向模型把目标语单语译成合成源句 & 合成源句的噪声\\
+    多语模型 & 语向多、低资源语向 & 共享参数，目标语言标记指定输出 & 容量竞争；译成错误语言\\
+    无监督翻译 & 没有平行数据 & 跨语言初始化、去噪自编码、在线回译 & 远距离语对效果差\\
+    大语言模型翻译 & 领域知识与指令要求 & 提示、少样本示例、两阶段微调 & 低资源语向弱；推断成本高\\
+    质量估计重排与MBR & 最大概率译文未必最好 & 用学习型度量在候选中选择 & $N$或$N^2$次度量计算；放大度量偏好\\
+    wait-$k$ & 实时输出 & 固定读写节奏，前缀到前缀训练 & 不随语序差异调整等待\\
+    MILk与MMA & 固定节奏等待过多或过早 & 单调注意力学习何时读、何时写 & 训练复杂，延迟有波动\\
+    上下文翻译 & 跨句指代、省略与术语 & 拼接前文或单独编码上下文 & 输入变长；未必真用到上下文\\
+    DocRepair & 篇章级平行数据少 & 用目标语单语往返翻译训练修订模型 & 看不到源文\\
+    \bottomrule
+  \end{tabularx}
+  \caption{机器翻译方法的对照。各行依次分为统计翻译、神经翻译、数据条件和大语言模型四组，最后四行处理实时与篇章两种新增条件。“新代价”列出方法本身引入的成本或局限，它们往往就是下一行方法的出发点。}
+  \label{tab:nlp-generation-translation-methods}
+\end{table*}
+
+\subsection{统计机器翻译}
+\label{sec:nlp-generation-smt}
+
+\term{统计机器翻译}（statistical machine translation, SMT）从\term{噪声信道模型}（noisy channel model）出发：把源句看作目标句经过一条“信道”变形后的观测，翻译就是反推最可能的目标句，
+\begin{equation}
+  \hat y=\argmax_{y}\,p(y\mid x)=\argmax_{y}\,p(x\mid y)\,p_{\mathrm{LM}}(y).
+  \label{eq:nlp-generation-noisy-channel}
+\end{equation}
+第二个等号用了贝叶斯公式并丢掉与$y$无关的$p(x)$。这样分解的好处是两部分可以分开估计：翻译模型$p(x\mid y)$只需负责“意思对不对得上”，可以从平行句对估计；语言模型$p_{\mathrm{LM}}(y)$负责“目标语是否通顺”，可以从大量单语文本估计。要把这一分解变成可用的系统，还需回答三个问题：怎样从不标对应关系的平行句子估计词对齐，怎样在对齐上构造短语翻译模型并组合更多特征，怎样在指数大的候选空间里搜索译文并调节特征权重。
+
+\subsubsection{IBM词对齐}
+\label{sec:nlp-generation-ibm}
+
+平行语料只告诉我们哪两句互为翻译，不告诉哪个源词对应哪个目标词。\term{词对齐}（word alignment）就是这种对应关系。IBM Model 1把它作为隐变量，用词翻译概率解释观察到的目标句，再依据当前模型推断对应关系并更新概率\scite{brown-etal-1993-mathematics}。按噪声信道的方向，翻译模型应写作$p(x\mid y)$；IBM模型可以在任一方向上训练，下面为了与后文记号一致写成从$x$生成$y$，实际系统两个方向都训练，后面的对称化要用到这两份结果。为了不把句长模型与对齐计算混在一起，这里固定两句的长度。
+
+在源句前增加$x_0=\mathrm{NULL}$，表示目标词没有显式的源词对应。隐变量$a_j\in\{0,\ldots,S\}$表示目标词$y_j$对齐的源位置，$t(v\mid u)$为源词$u$生成目标词$v$的概率，满足$\sum_v t(v\mid u)=1$。Model 1假定每个目标位置独立、均匀地选择源位置，于是
+\begin{align}
+  p(y,\bm{a}\mid x)
+    &=\frac{1}{(S+1)^T}\prod_{j=1}^{T}t(y_j\mid x_{a_j}),\\
+  p(y\mid x)
+    &=\frac{1}{(S+1)^T}\prod_{j=1}^{T}
+       \sum_{i=0}^{S}t(y_j\mid x_i).
+  \label{eq:nlp-generation-ibm-likelihood}
+\end{align}
+第二式对所有$(S+1)^T$种对齐求和；由于每个目标位置独立选择源位置，求和可以逐位置分解成$T$个长为$S+1$的和。这也暴露了Model 1的限制：打乱源词次序，句子概率不变，它完全不知道语序。
+
+参数估计用期望最大化（EM）算法。E步用当前$t$计算对齐后验
+\begin{equation}
+  \gamma_{j,i}
+  =p(a_j=i\mid x,y)
+  =\frac{t(y_j\mid x_i)}{\sum_{\ell=0}^{S}t(y_j\mid x_\ell)}.
+  \label{eq:nlp-generation-ibm-posterior}
+\end{equation}
+同一个源词重复出现时，每个位置都进入分母和计数。把全语料中源词$u$与目标词$v$的后验相加，得到期望计数$c(u,v)$。M步在每个源词下归一化，$t_{\mathrm{new}}(v\mid u)=c(u,v)/\sum_{v'}c(u,v')$；未在语料中出现的源词分母为零，需要另定平滑或保留规则。EM每轮不降低训练语料的似然，其一般推导（以对数似然的下界交替优化）可参考\BookChapterRef{chap:pgm-parameter-learning}{卷六参数学习章}。Model 1还有一个特别的性质：对数似然关于$t$是凹函数，EM找到的是全局最大值点之一（不一定唯一），因此它常被用来给更复杂的对齐模型提供初值。
+
+\Needspace{12\baselineskip}
+\begin{example}[含空词的一轮EM]
+  \label{ex:nlp-generation-em}
+  教学语料只有两对句子：第一对为“我／走”与“I／go”；第二对为“我”与“I”。目标词表仅有I和go，初始概率及累计期望计数如下：
+  \begin{center}
+    \begin{tabular}{@{}lrrrr@{}}
+      \toprule
+      源词 & $t(\mathrm{I}\mid u)$ & $t(\mathrm{go}\mid u)$
+        & $c(u,\mathrm{I})$ & $c(u,\mathrm{go})$\\
+      \midrule
+      NULL & $1/2$ & $1/2$ & $28/39$ & $1/3$\\
+      我 & $4/5$ & $1/5$ & $224/195$ & $2/15$\\
+      走 & $1/5$ & $4/5$ & $2/15$ & $8/15$\\
+      \bottomrule
+    \end{tabular}
+  \end{center}
+  第一对中，I的分母为$1/2+4/5+1/5=3/2$，在NULL、我、走上的后验为$(1/3,8/15,2/15)$；go的分母也为$3/2$，后验为$(1/3,2/15,8/15)$。第二对只有NULL和我，I的分母为$1/2+4/5=13/10$，后验为$(5/13,8/13)$。因此NULL到I累计$1/3+5/13=28/39$，我到I累计$8/15+8/13=224/195$，其余计数直接来自第一对。
+
+  三个源词的计数总量分别为$41/39,50/39,2/3$，相加为3，正好等于全语料三个目标位置。M步得到
+  \[
+    \begin{array}{c|cc}
+      &t_{\mathrm{new}}(\mathrm{I}\mid u)&t_{\mathrm{new}}(\mathrm{go}\mid u)\\
+      \hline
+      \mathrm{NULL}&28/41&13/41\\
+      \text{我}&112/125&13/125\\
+      \text{走}&1/5&4/5
+    \end{array}
+  \]
+  “我”生成I的概率从0.8增加到0.896，因为第二对额外提供了对应证据。固定句长的语料似然从$0.25\times0.65=0.1625$变为约0.19054。第一对各目标词取最高后验时，I对齐“我”，go对齐“走”；NULL仍保留计数，下一轮EM继续参与竞争。
+\end{example}
+
+Model 1不知道语序，后续模型逐步补上位置信息。IBM Model 2增加对齐位置分布$a(i\mid j,S,T)$，使目标位置$j$更可能对齐到相对位置相近的源位置。HMM对齐模型进一步让$a_j$依赖前一个对齐$a_{j-1}$，转移概率只取决于跳跃宽度$a_j-a_{j-1}$，从而偏好“相邻目标词对齐到相邻源词”的单调片段\cite{nlp-gen-vogel1996hmm}；这是一个以源位置为状态的隐马尔可夫模型，E步用前向后向算法计算期望计数，算法细节可参考\BookChapterRef{chap:pgm-dynamic}{卷六动态有向模型章}。IBM Model 3至5再加入繁衍数（一个源词生成几个目标词）等成分。这些模型的产物是对齐，不是译文：对齐准确只说明词对应找得对，整句翻译还需要下面的短语模型和搜索。
+
+\subsubsection{短语翻译的对数线性模型}
+\label{sec:nlp-generation-phrase-loglinear}
+
+逐词替换有两个缺陷：它不能表达“校外来宾”到external guests这种多词对一词的对应，也不能利用局部固定的语序变化。短语翻译以连续词块为翻译单位，这里的“短语”只指连续词块，不必是句法短语\scite{nlp-intro-koehn2003}。要抽取短语，先要有一份尽量好的对齐；要组合短语翻译、语言模型和重排等多种证据，又需要比式\eqref{eq:nlp-generation-noisy-channel}的两项乘积更灵活的打分形式。下面按这两个需要展开。
+
+\paragraph{对齐对称化。}IBM模型规定每个目标词只对齐一个源词，因此单向对齐不能表示一个源词对多个目标词。两个方向各训练一次，得到$A_{x\to y}$与$A_{y\to x}$：交集精确率高但稀疏，并集召回高但含错误点。\term{对齐对称化}（alignment symmetrization）从交集出发，有选择地加入并集中的点。常用的grow-diag-final启发式如算法~\ref{alg:nlp-generation-grow-diag-final}所示\cite{nlp-gen-och2003systematic}：生长阶段只加入与已有点相邻（含对角相邻）、且至少一端尚未对齐的点；最后阶段再把并集中至少一端尚未对齐的剩余点补进来。
+
+\Needspace{14\baselineskip}
+\begin{algorithm}[grow-diag-final对齐对称化]
+  \label{alg:nlp-generation-grow-diag-final}
+  \begin{algorithmic}[1]
+    \Require 两个方向的对齐点集$A_{x\to y}$、$A_{y\to x}$
+    \Ensure 对称化对齐$A$
+    \State $A\gets A_{x\to y}\cap A_{y\to x}$；$U\gets A_{x\to y}\cup A_{y\to x}$
+    \Repeat\Comment{grow-diag：沿邻域生长}
+      \For{每个$(i,j)\in A$及其八个邻点$(i',j')$}
+        \If{$(i',j')\in U\setminus A$，且源位置$i'$或目标位置$j'$在$A$中尚未对齐}
+          \State $A\gets A\cup\{(i',j')\}$
+        \EndIf
+      \EndFor
+    \Until{$A$不再变化}
+    \For{每个$(i,j)\in U\setminus A$}\Comment{final：补充孤立点}
+      \If{源位置$i$或目标位置$j$在$A$中尚未对齐}
+        \State $A\gets A\cup\{(i,j)\}$
+      \EndIf
+    \EndFor
+    \State \Return $A$
+  \end{algorithmic}
+\end{algorithm}
+
+以教学句对“我／今天／出发”与“I／set／off／today”为例。目标到源方向（每个目标词选一个源词）给出I--我、set--出发、off--出发、today--今天；源到目标方向（每个源词选一个目标词）给出我--I、今天--today、出发--set。交集是三个一对一的点，并集多出出发--off。生长阶段检查出发--set的邻点，出发--off在并集中且off尚未对齐，于是被加入。对称化结果同时含有“出发”对set与off，两个单向对齐都无法单独表示这个一对多的对应。
+
+\paragraph{短语抽取与计数估计。}给定对齐$A$，源片段$\bar x=x_{i_1:i_2}$与目标片段$\bar y=y_{j_1:j_2}$与对齐一致（consistent with the alignment），当且仅当
+\begin{equation}
+  \forall (i,j)\in A:\ \bigl(i_1\le i\le i_2\iff j_1\le j\le j_2\bigr),
+  \qquad
+  \exists (i,j)\in A:\ i_1\le i\le i_2.
+  \label{eq:nlp-generation-phrase-consistency}
+\end{equation}
+第一个条件要求片段内的词不能对齐到对方片段之外，第二个条件要求片段至少含一个对齐点。仍用上例，与对齐一致的短语对有（我，I）、（今天，today）、（出发，set off）、（今天／出发，set off today）和整句；（我／今天，I set off today）不一致，因为目标片段中的set对齐到源片段之外的“出发”；（出发，set）也不一致，因为off对齐到“出发”却落在目标片段之外。短语对（今天／出发，set off today）在一个单位里完成了“今天”从前到后的移动，逐词替换本身没有这种次序信息。片段两端未对齐的词可以并入也可以不并入，抽取时会枚举这些扩展，并限制短语最大长度（常取7）。
+
+从全语料抽取的短语对构成短语表。双向短语翻译概率用相对频率估计，
+\begin{equation}
+  \phi(\bar y\mid\bar x)=\frac{c(\bar x,\bar y)}{\sum_{\bar y'}c(\bar x,\bar y')},\qquad
+  \phi(\bar x\mid\bar y)=\frac{c(\bar x,\bar y)}{\sum_{\bar x'}c(\bar x',\bar y)},
+  \label{eq:nlp-generation-phrase-prob}
+\end{equation}
+其中$c(\bar x,\bar y)$是短语对被抽取的次数。只出现过一次的长短语对会得到$\phi=1$，这样的估计并不可靠。\term{词汇加权}（lexical weighting）用词级翻译概率给短语对另打一个分：先由对称化对齐按相对频率估计词翻译表$w(y\mid x)$，再对目标短语中每个词取其所对齐源词的平均概率并连乘，
+\begin{equation}
+  \operatorname{lex}(\bar y\mid\bar x,A)
+  =\prod_{j=1}^{|\bar y|}\frac{1}{|\{i:(i,j)\in A\}|}\sum_{(i,j)\in A}w(\bar y_j\mid\bar x_i),
+  \label{eq:nlp-generation-lexical-weighting}
+\end{equation}
+未对齐的目标词改用$w(\bar y_j\mid\mathrm{NULL})$。例如（出发，set off）在语料中只出现一次，$\phi(\text{set off}\mid\text{出发})=1$；若$w(\text{set}\mid\text{出发})=0.3$、$w(\text{off}\mid\text{出发})=0.2$（教学数值），词汇权重为$0.06$，提醒系统这对短语的词级证据并不强。词汇加权同样双向计算。
+
+\paragraph{对数线性打分。}有了多种证据，式\eqref{eq:nlp-generation-noisy-channel}只允许两个概率相乘，难以再加入其他特征。\term{对数线性模型}（log-linear model）把句子得分写成特征函数的加权和\cite{nlp-gen-och2002loglinear}：
+\begin{equation}
+  \hat y=\argmax_{y}\max_{d\in D(x,y)}\sum_{k=1}^{K}\lambda_k h_k(x,y,d).
+  \label{eq:nlp-generation-loglinear}
+\end{equation}
+其中$d$是一个\emph{推导}：把源句切成若干短语、为每个短语选一个译文并决定它们在目标句中的顺序；$D(x,y)$是能产生$y$的所有推导，$\max_d$用最好推导近似对推导求和。当$K=2$、$h_1=\log p(x\mid y)$、$h_2=\log p_{\mathrm{LM}}(y)$、$\lambda_1=\lambda_2=1$时，式\eqref{eq:nlp-generation-loglinear}退化为噪声信道模型，因此对数线性模型是它的推广。典型的特征包括：两个方向的短语翻译对数概率$\sum\log\phi$与两个方向的词汇加权$\sum\log\operatorname{lex}$，共四项；目标语言模型$\log p_{\mathrm{LM}}(y)$；\term{扭曲代价}（distortion cost）
+\begin{equation}
+  h_{\mathrm{dist}}(d)=-\sum_{r=1}^{R}\bigl|\mathrm{start}_r-\mathrm{end}_{r-1}-1\bigr|,
+  \label{eq:nlp-generation-distortion}
+\end{equation}
+其中$\mathrm{start}_r$与$\mathrm{end}_{r-1}$分别是第$r$个被翻译的源短语的起点和前一个源短语的终点，$\mathrm{end}_0=0$，源短语按顺序接续时代价为零；以及词数惩罚$h=T$和短语数惩罚$h=R$，二者的权重用来调节译文长短和切分粗细。
+
+用“我／今天／出发”比较两个推导。推导甲逐词翻译并在目标端重排：依次翻译“我”（源位置1）、“出发”（位置3）、“今天”（位置2），三次跳跃代价为$|1-0-1|+|3-1-1|+|2-3-1|=0+1+2=3$。推导乙用短语（今天／出发，set off today），依次覆盖位置1和位置2至3，跳跃代价为0。两个推导产生同一个译文，乙的重排藏在短语内部，扭曲代价更低。这正是短语模型的优势：局部的语序变化由短语表免费提供，扭曲代价只负责短语之间的移动。反过来，扭曲代价只看跳跃距离，不看跳的是什么词，长距离重排（如日语句末动词提到英语主语之后）只能靠语言模型勉强补救，这是短语模型的主要弱点之一。
+
+\subsubsection{栈解码与MERT调参}
+\label{sec:nlp-generation-stack-mert}
+
+即使只考虑单词级的重排，在式\eqref{eq:nlp-generation-loglinear}下精确求最优译文也是NP难的\cite{nlp-gen-knight1999decoding}，实际系统采用近似搜索。\term{栈解码}（stack decoding）的思路是从左到右逐步生成目标句，每一步选一个尚未翻译的源短语并给出译文；部分译文称为\emph{假设}，记录已覆盖的源位置集合、已生成的目标词和累计得分。假设按已覆盖的源词数放入$S+1$个栈，第$s$个栈只比较覆盖了$s$个源词的假设，以免把刚开始的假设与快要完成的假设放在一起比较。
+
+只按累计得分在同一栈内比较仍不公平：覆盖相同词数的两个假设，可能一个先翻译了容易的词，一个先翻译了难的词，前者的累计得分高只是因为难的部分还没算。\term{未来代价}（future cost）为每个假设估计“剩余源词至少还要付出多少得分”，比较时用累计得分加未来代价。估计时忽略扭曲代价与语言模型的上下文，对每个源区间$[i,j]$取能覆盖它的最好短语选项的得分，再用动态规划允许把区间切成两段，
+\begin{equation}
+  \mathrm{fc}(i,j)=\max\Bigl\{\max_{\text{覆盖}[i,j]\text{的短语选项}}\mathrm{score},\ \max_{i\le k<j}\bigl[\mathrm{fc}(i,k)+\mathrm{fc}(k+1,j)\bigr]\Bigr\}.
+  \label{eq:nlp-generation-future-cost}
+\end{equation}
+一个假设的未来代价是其所有未覆盖的极大连续区间的$\mathrm{fc}$之和。这张表对每个源句只需算一次。教学例子：两个假设都在第1个栈里，假设甲先翻译了容易的“出发”，累计$-0.4$，剩下“我／今天”，未来代价$-2.0$；假设乙翻译了“我”，累计$-1.0$，剩下“今天／出发”，未来代价$-0.8$。只看累计得分会保留甲；加上未来代价后乙为$-1.8$，优于甲的$-2.4$，乙其实是更有希望的部分译文。未覆盖部分不连续时，例如只覆盖了中间的“今天”，未来代价取“我”与“出发”两个区间的$\mathrm{fc}$之和。
+
+除剪枝外，栈解码还做\term{假设重组}（hypothesis recombination）：两个假设若覆盖集合相同、最后$n-1$个目标词相同（$n$为语言模型阶数）、最后一个源短语的终点相同，它们此后的所有扩展得分完全相同，只保留得分高的一个不会丢掉最优推导。算法~\ref{alg:nlp-generation-stack-decoding}汇总全过程\scite{nlp-gen-koehn2010smt}。
+
+\Needspace{16\baselineskip}
+\begin{algorithm}[短语翻译的栈解码]
+  \label{alg:nlp-generation-stack-decoding}
+  \begin{algorithmic}[1]
+    \Require 源句$x$，短语表，特征权重$\bm\lambda$，栈容量$b$，扭曲上限$\delta$
+    \Ensure 得分最高的完整译文
+    \State 按式\eqref{eq:nlp-generation-future-cost}计算所有区间的未来代价表$\mathrm{fc}$
+    \State 栈$\mathcal S_0\gets\{$空假设$\}$；$\mathcal S_1,\ldots,\mathcal S_S\gets\varnothing$
+    \For{$s=0,\ldots,S-1$}
+      \State 把$\mathcal S_s$中的假设按“累计得分$+$未来代价”排序，只保留前$b$个
+      \For{每个假设$h\in\mathcal S_s$}
+        \For{每个与$h$的覆盖不相交、跳跃距离不超过$\delta$的源区间及其短语选项$o$}
+          \State $h'\gets$扩展$h$：并入覆盖，追加译文，按式\eqref{eq:nlp-generation-loglinear}累加特征得分
+          \State 记$|h'|$为$h'$已覆盖的源词数；若$\mathcal S_{|h'|}$中已有可与$h'$重组的假设，只保留得分较高者，否则把$h'$加入$\mathcal S_{|h'|}$
+        \EndFor
+      \EndFor
+    \EndFor
+    \State \Return $\mathcal S_S$中累计得分最高的假设所对应的译文
+  \end{algorithmic}
+\end{algorithm}
+
+每个栈至多$b$个假设，每个假设的扩展数受扭曲上限和短语选项数限制，因此解码代价约为$O(S\cdot b\cdot S\delta\cdot o_{\max})$，其中$o_{\max}$是每个源区间保留的短语选项数。栈容量和扭曲上限越小越快，搜索错误也越多。
+
+特征权重$\bm\lambda$还需要确定。最终评价看的是BLEU（定义见第~\ref{sec:nlp-generation-overlap}小节）等译文质量指标，而不是似然，所以希望直接选使开发集BLEU最高的权重。困难在于BLEU作为$\bm\lambda$的函数是分段常数：权重小幅变化时，每句选出的最优译文不变，BLEU也不变，梯度处处为零或不存在。\term{最小错误率训练}（minimum error rate training, MERT）利用这一结构做精确的线搜索\scite{nlp-gen-och2003mert}。固定当前权重$\bm\lambda$和搜索方向$\bm d$，对开发集每句的$n$-best列表，候选$e$在直线$\bm\lambda+\gamma\bm d$上的得分是$\gamma$的一次函数
+\begin{equation}
+  s_e(\gamma)=\underbrace{\bm\lambda^{\top}\bm h(e)}_{a_e}+\gamma\,\underbrace{\bm d^{\top}\bm h(e)}_{b_e}.
+  \label{eq:nlp-generation-mert-line}
+\end{equation}
+每句被选中的候选是这些直线的上包络，随$\gamma$变化只在包络的交点处切换。把所有句子的切换点合并排序，相邻切换点之间每句的选择都不变，BLEU的充分统计量（各阶n元的匹配数与长度）可以逐区间增量更新，于是能精确找到这条直线上BLEU最高的区间，取区间中点作为新的$\gamma$。
+
+教学例子：某句有三个候选，$(a_e,b_e)$分别为$(-2.0,0)$、$(-2.5,1)$、$(-4.0,2)$，句级错误（教学中以$1-$句级质量代替）分别为$0.6,0.2,0.4$。第一、二条直线在$\gamma=0.5$相交，第二、三条在$\gamma=1.5$相交，第一、三条在$\gamma=1$相交但此时第二条更高。上包络因此为：$\gamma<0.5$选候选一，$0.5<\gamma<1.5$选候选二，$\gamma>1.5$选候选三。错误最低的区间是$(0.5,1.5)$，取$\gamma=1$。真实MERT对整个开发集的语料级BLEU做同样的合并。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[最小错误率训练]
+  \label{alg:nlp-generation-mert}
+  \begin{algorithmic}[1]
+    \Require 开发集，初始权重$\bm\lambda$，解码器
+    \Ensure 调好的权重$\bm\lambda$
+    \State 用$\bm\lambda$解码开发集，得到各句$n$-best列表$C$
+    \Repeat
+      \For{若干方向$\bm d$（各坐标方向及随机方向）}
+        \State 对每句候选按式\eqref{eq:nlp-generation-mert-line}计算$(a_e,b_e)$，求上包络的切换点
+        \State 合并全部切换点，逐区间更新BLEU统计量，取BLEU最高区间的中点$\gamma^\ast$
+        \State $\bm\lambda\gets\bm\lambda+\gamma^\ast\bm d$
+      \EndFor
+      \State 用新$\bm\lambda$重新解码，把新的$n$-best候选并入$C$
+    \Until{$C$不再增加新候选}
+    \State \Return $\bm\lambda$
+  \end{algorithmic}
+\end{algorithm}
+
+外层循环必不可少：$n$-best列表只是全部候选的一个样本，权重变了，解码器会找到列表外的新候选。MERT的目标函数非凸、分段常数，只适合十几到几十个稠密特征；特征多到上千时，常改用成对排序（PRO）或在线大间隔方法（MIRA）。
+
+回看整套系统：对齐、短语抽取、各概率表、语言模型、扭曲模型分别训练，只有十几个权重在最终指标上联合调节；某一环节的错误（例如对齐错导致短语表错）后面无法纠正，长距离重排也只能由距离代价和$n$元语言模型间接处理。神经翻译要解决的正是这种分别优化的问题。
+
+\subsection{神经机器翻译}
+\label{sec:nlp-generation-neural-translation}
+
+\term{神经机器翻译}（neural machine translation, NMT）直接建模条件分布
+\begin{equation}
+  p_{\bm\theta}(y\mid x)=\prod_{t=1}^{T}p_{\bm\theta}(y_t\mid y_{<t},x),
+  \label{eq:nlp-generation-nmt}
+\end{equation}
+用一个网络同时承担短语表、重排模型和语言模型的作用，所有参数在平行语料上按最大似然联合训练，训练时以参考前缀为条件逐位置计算交叉熵（教师强制，掩码损失的写法见第~\ref{sec:nlp-sft-masked-loss}小节）。这正好回应了统计翻译分别优化的问题。编码器—解码器与交叉注意力的一般计算、批张量形状和键值缓存已在第~\ref{sec:nlp-generation-encoder-decoder}小节给出，下面按结构演进只写翻译模型特有的选择，以及每一步解决了前一步的哪个问题。
+
+\subsubsection{循环编码器—解码器与注意力}
+\label{sec:nlp-generation-rnn-attention-mt}
+
+最早的端到端翻译模型用两个循环网络：编码器逐词读入源句，把最后的隐状态当作整句的表示；解码器以这个表示为初始条件，逐词生成目标句\cite{sutskever2014seq2seq,cho2014}。设源词嵌入$\bm e_s=\bm E_{\mathrm{src}}[x_s]\in\mathbb R^{d_e}$，编码器与解码器的隐状态维数为$d$，
+\begin{equation}
+  \begin{gathered}
+  \bm h_s=f_{\mathrm{enc}}(\bm h_{s-1},\bm e_s),\qquad \bm c=\bm h_S,\\
+  \bm s_t=f_{\mathrm{dec}}\bigl(\bm s_{t-1},\bm E_{\mathrm{tgt}}[y_{t-1}],\bm c\bigr),\qquad
+  p(y_t\mid y_{<t},x)=\operatorname{softmax}(\bm W_o\bm s_t+\bm b_o),
+  \end{gathered}
+  \label{eq:nlp-generation-rnn-seq2seq}
+\end{equation}
+其中$f_{\mathrm{enc}},f_{\mathrm{dec}}$是LSTM或GRU单元，$\bm W_o\in\mathbb R^{V\times d}$把状态映射到目标词表的$V$个得分，$y_0$为起始标记BOS。
+
+这个模型的问题在$\bm c$：无论源句有5个词还是50个词，解码器能用的源信息都只有一个$d$维向量，即第~\ref{sec:nlp-generation-encoder-decoder}小节所说的\term{定长瓶颈}（fixed-length bottleneck）。Sutskever等发现把源句倒序输入能明显提升效果，倒序后句首词离解码起点更近；这个技巧有效，本身就说明信息在长距离传递中衰减。
+
+加性注意力（additive attention）让解码器每一步重新读取全部源位置，而不是只读$\bm c$。第~\ref{sec:nlp-generation-encoder-decoder}小节式\eqref{eq:nlp-generation-bahdanau}给出了它的一般形式，这里写出Bahdanau等原始翻译模型的完整计算\scite{bahdanau2015}。编码器改为双向循环网络，第$i$个位置的表示$\bm h_i=[\overrightarrow{\bm h}_i;\overleftarrow{\bm h}_i]\in\mathbb R^{2d}$同时含左右上下文。生成第$t$个目标词时，先用上一步的解码状态$\bm s_{t-1}$给每个源位置打分，归一化为权重，再加权求和得到本步的\term{上下文向量}（context vector）：
+\begin{equation}
+  \begin{gathered}
+  e_{t,i}=\bm v_a^{\top}\tanh\bigl(\bm W_a\bm s_{t-1}+\bm U_a\bm h_i\bigr),\qquad
+  \alpha_{t,i}=\frac{\exp(e_{t,i})}{\sum_{k=1}^{S}\exp(e_{t,k})},\\
+  \bm c_t=\sum_{i=1}^{S}\alpha_{t,i}\bm h_i,\qquad
+  \bm s_t=f_{\mathrm{dec}}\bigl(\bm s_{t-1},\bm E_{\mathrm{tgt}}[y_{t-1}],\bm c_t\bigr),\\
+  p(y_t\mid y_{<t},x)=g\bigl(\bm s_t,\bm E_{\mathrm{tgt}}[y_{t-1}],\bm c_t\bigr).
+  \end{gathered}
+  \label{eq:nlp-generation-bahdanau-mt}
+\end{equation}
+其中$\bm W_a\in\mathbb R^{d_a\times d}$、$\bm U_a\in\mathbb R^{d_a\times 2d}$把解码状态与源表示投到同一个$d_a$维打分空间，$\bm v_a\in\mathbb R^{d_a}$把它压成标量；$g$是含线性层与softmax的输出网络。与式\eqref{eq:nlp-generation-rnn-seq2seq}相比，唯一的改变是固定的$\bm c$换成了每步不同的$\bm c_t$。与一般形式相比，原始模型有两处具体选择：查询用上一步状态$\bm s_{t-1}$，因此可以先算出$\bm c_t$再更新状态，计算次序不会互相等待；$\bm c_t$既进入状态更新，也直接进入输出层。
+
+按批大小$B$写出一步的形状：源表示$\bm H\in\mathbb R^{B\times S\times 2d}$，投影$\bm H\bm U_a^{\top}\in\mathbb R^{B\times S\times d_a}$与解码步无关，对每句只算一次；每步只需计算$\bm W_a\bm s_{t-1}\in\mathbb R^{B\times d_a}$，广播到$S$个位置相加后过$\tanh$并与$\bm v_a$内积，得到$B\times S$的得分和权重，再与$\bm H$相乘得到$B\times 2d$的$\bm c_t$。每步代价$O(Sd_a)$，整句$O(STd_a)$，换来的是解码器在每一步都能直接访问每个源位置。
+
+权重$\alpha_{t,\cdot}$构成一个$T\times S$的矩阵，第$t$行说明生成$y_t$时主要读了哪些源词，可视化后常与词对齐大体吻合，因此也称\emph{软对齐}。与IBM模型对比：IBM的对齐是离散隐变量，单独训练后交给短语抽取；注意力权重是连续的，与翻译目标一起训练，不需要对齐标注，但也不受“必须是对齐”的约束，个别词上可能偏移一两个位置。Luong等把打分函数换成点积或双线性形式$\bm s_t^{\top}\bm W\bm h_i$，并用当前状态$\bm s_t$而非$\bm s_{t-1}$做查询，计算更简单\scite{luong2015}。
+
+注意力解决了瓶颈，循环结构的另一个代价仍在：编码第$s$个位置必须等第$s-1$个位置算完，解码训练时也要按$t=1,\ldots,T$顺序展开。一个句对的前向需要约$S+T$个串行步骤，句内无法并行，长语料上的训练时间因此很长。
+
+\subsubsection{Transformer翻译模型}
+\label{sec:nlp-generation-transformer-mt}
+
+Transformer去掉循环，把“读取其他位置”全部交给注意力\scite{vaswani2017}。它最初正是一个翻译模型：编码器与解码器各$L$层，编码器层由自注意力和前馈网络组成，解码器层由因果自注意力、交叉注意力和前馈网络组成，每个子层带残差连接与层归一化（LayerNorm, LN）。图~\ref{fig:nlp-generation-transformer-mt}画出整体结构，下面逐层写出计算。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/03-text-generation-and-interaction/tikz/generation-ch12c-transformer-mt.tex}
+  \caption{Transformer翻译模型。左列为编码器，读入完整源句，各位置可以双向互相注意；右列为解码器，输入右移一位的目标前缀，因果自注意力只看已生成的位置，交叉注意力以解码器状态为查询、以编码器最终输出为键和值。两列中的大框各重复$L$层。灰字为省略批维后的张量形状，$S$与$T$分别为源、目标长度；输出层与两端嵌入共享同一矩阵$\bm E$。}
+  \label{fig:nlp-generation-transformer-mt}
+\end{figure}
+
+\paragraph{编码器。}源词元经嵌入并乘以$\sqrt d$，加上正弦位置编码$\bm P$，得到$\bm H^{(0)}=\sqrt d\,\bm E[x]+\bm P_{1:S}\in\mathbb R^{S\times d}$。第$\ell$层（原始论文的后置归一化写法）为
+\begin{equation}
+  \begin{aligned}
+  \bm U^{(\ell)}&=\operatorname{LN}\bigl(\bm H^{(\ell)}+\operatorname{MHA}(\bm H^{(\ell)},\bm H^{(\ell)};\bm M_{\mathrm{src}})\bigr),\\
+  \bm H^{(\ell+1)}&=\operatorname{LN}\bigl(\bm U^{(\ell)}+\operatorname{FFN}(\bm U^{(\ell)})\bigr),
+  \end{aligned}
+  \label{eq:nlp-generation-transformer-encoder}
+\end{equation}
+其中$\operatorname{MHA}(\bm Z,\bm C;\bm M)$表示以$\bm Z$产生查询、以$\bm C$产生键和值、在得分上加掩码$\bm M$的多头注意力：每个头按式\eqref{eq:nlp-llm-cross-attention}用$\bm W_Q^a,\bm W_K^a,\bm W_V^a\in\mathbb R^{d\times d_h}$计算缩放点积注意力，$h$个头的输出按式\eqref{eq:nlp-llm-mha}拼接后乘$\bm W_O\in\mathbb R^{hd_h\times d}$；$\bm Z=\bm C$时就是自注意力。前馈网络$\operatorname{FFN}(\bm u)=\bm W_2\operatorname{ReLU}(\bm W_1\bm u+\bm b_1)+\bm b_2$逐位置作用，$\bm W_1\in\mathbb R^{d_{\mathrm{ff}}\times d}$。编码器的掩码$\bm M_{\mathrm{src}}$只把批内填充位置所在的列置为$-\infty$，其余为0，因此每个源位置可以看到整句的左右两侧。$L$层之后的输出记为$\bm H_{\mathrm{enc}}=\bm H^{(L)}$。
+
+\paragraph{解码器。}目标端输入是右移一位的参考$(\mathrm{BOS},y_1,\ldots,y_{T-1})$，同样嵌入并加位置编码得$\bm G^{(0)}\in\mathbb R^{T\times d}$。第$\ell$层依次计算
+\begin{equation}
+  \begin{aligned}
+    \bm A^{(\ell)}&=\operatorname{LN}\bigl(\bm G^{(\ell)}+\operatorname{MHA}(\bm G^{(\ell)},\bm G^{(\ell)};\bm M_{\mathrm{causal}})\bigr),\\
+    \bm B^{(\ell)}&=\operatorname{LN}\bigl(\bm A^{(\ell)}+\operatorname{MHA}(\bm A^{(\ell)},\bm H_{\mathrm{enc}};\bm M_{\mathrm{src}})\bigr),\\
+    \bm G^{(\ell+1)}&=\operatorname{LN}\bigl(\bm B^{(\ell)}+\operatorname{FFN}(\bm B^{(\ell)})\bigr).
+  \end{aligned}
+  \label{eq:nlp-generation-transformer-decoder}
+\end{equation}
+第一行的因果掩码$(\bm M_{\mathrm{causal}})_{t,j}=-\infty\ (j>t)$保证位置$t$只看自己和之前的目标词；第二行是交叉注意力，查询来自解码器的$\bm A^{(\ell)}$，键和值来自编码器输出$\bm H_{\mathrm{enc}}$，每个解码层都读一次同一个$\bm H_{\mathrm{enc}}$。最后一层输出经线性层和softmax给出下一词分布，
+\begin{equation}
+  p(y_t\mid y_{<t},x)=\operatorname{softmax}\bigl(\bm G^{(L)}_{t,:}\bm E^{\top}\bigr),
+  \label{eq:nlp-generation-transformer-output}
+\end{equation}
+这里输出投影直接用嵌入矩阵$\bm E\in\mathbb R^{V\times d}$的转置；原论文在源、目标共享子词词表时让源嵌入、目标嵌入与输出投影三处共用同一矩阵。
+
+\paragraph{参数量。}批张量形状见图~\ref{fig:nlp-generation-transformer-mt}与第~\ref{sec:nlp-generation-encoder-decoder}小节，编码器自注意力权重另为$B\times h\times S\times S$。这里用原论文的基础配置核算参数量：$L=6$，$d=512$，$h=8$，$d_h=64$，$d_{\mathrm{ff}}=2048$，英德任务共享约37000个子词。共享的嵌入矩阵约$37000\times512\approx1.89\times10^7$个参数；一个注意力子层有$\bm W_Q,\bm W_K,\bm W_V,\bm W_O$四个$512\times512$矩阵，约$1.05\times10^6$；一个前馈子层有两个$512\times2048$矩阵，约$2.10\times10^6$。编码器层含一个注意力和一个前馈，约$3.15\times10^6$，6层共$1.89\times10^7$；解码器层多一个交叉注意力，约$4.19\times10^6$，6层共$2.52\times10^7$。三项相加约$6.3\times10^7$，偏置与归一化参数只再增加十万个左右，与原论文报告的约6500万相近。其中嵌入占近三成，这也说明共享嵌入矩阵能省下可观的参数。
+
+\paragraph{训练与推断。}训练时目标句整句已知，式\eqref{eq:nlp-generation-transformer-decoder}对全部$T$个位置一次算完，因果掩码保证每个位置的预测只依赖它之前的参考词；所有位置的交叉熵相加即为损失。与循环模型的$S+T$个串行步骤相比，句内全部并行。推断时解码器仍逐词生成，编码器只运行一次，交叉注意力的键值可缓存复用。现在的实现多把层归一化移到子层之前（前置归一化），深层训练更稳定；式\eqref{eq:nlp-generation-transformer-decoder}与式\eqref{eq:nlp-generation-decoder-layer}的区别只在归一化的位置。
+
+与加性注意力相比，Transformer的交叉注意力有三处变化：打分从加性网络换成缩放点积，便于批量矩阵乘；单头变成$h$头，各头可以关注不同的源位置；每个解码层都有一次交叉注意力，而不是整个解码器只有一次。代价是每层注意力的计算与显存分别随$S^2$、$T^2$和$ST$增长，长文档翻译时这一项会成为主要开销；同时模型不再有循环带来的语序偏置，位置信息完全依赖位置编码。
+
+\subsubsection{子词词表与标签平滑}
+\label{sec:nlp-generation-subword-label-smoothing}
+
+前面的模型都假定词表封闭。按词建模时，词表通常截断到三五万个高频词，其余词替换为未知词标记UNK；人名、机构名、数字串和形态变化词恰好多在截断之外，而这些正是翻译最不能错的地方。Sennrich等把字节对编码（BPE）引入翻译，反复合并语料中最常见的相邻符号对得到子词词表，高频词成为单个子词，罕见词被拆成几个较常见的片段，任何词都能被表示\scite{nlp-llm-sennrich2016bpe}。合并算法与词表大小的选择见第~\ref{sec:nlp-llm-bpe}小节。
+
+翻译场景多出一个选择：分别为源语和目标语学两套BPE，还是在两种语言拼接后的语料上学一套。\term{联合BPE}（joint BPE）采用后者，使同一个人名、数字或代码在两侧被切成相同的片段。例如活动编号\code{ML-0418}在中文源句和英文译文中原样出现，联合切分后两侧的子词序列完全一致，模型只需学会逐片段复制，而不必为两套不同的切分学一个映射。联合BPE得到的\term{共享词表}（shared vocabulary）还允许源嵌入、目标嵌入和输出投影共用一个矩阵（式\eqref{eq:nlp-generation-transformer-output}），参数更少；输出投影与输入嵌入共享权重的做法最早在语言模型中提出\scite{nlp-llm-press2017tying}。对中英这种文字不重叠的语对，共享词表的收益主要来自数字、拉丁字母专名和代码，代价是两种语言分享一个容量固定的词表，每种语言分到的子词变少。
+
+第二个问题出在训练目标上。逐词交叉熵的目标分布是独热的：只有参考词概率为1。最小化它会把参考词的概率推向1，使模型输出过度自信，而翻译中同一位置常有多个合理的词。\term{标签平滑}（label smoothing）把目标分布换成独热分布与均匀分布的混合\cite{nlp-gen-szegedy2016inception}：
+\begin{equation}
+  \begin{gathered}
+  q_\varepsilon(v)=(1-\varepsilon)\,\mathbb 1[v=y_t]+\frac{\varepsilon}{V},\\
+  \mathcal L_{\mathrm{LS}}=-\sum_{v=1}^{V}q_\varepsilon(v)\log p(v)
+  =(1-\varepsilon)\bigl(-\log p(y_t)\bigr)+\varepsilon\cdot\frac1V\sum_{v=1}^{V}\bigl(-\log p(v)\bigr).
+  \end{gathered}
+  \label{eq:nlp-generation-label-smoothing}
+\end{equation}
+第一项是原来的交叉熵，第二项是均匀分布对模型分布的交叉熵，它等于均匀分布的熵加上$\mathrm{KL}(u\,\|\,p)$，惩罚离均匀分布太远的输出。交叉熵在$p=q_\varepsilon$时取最小，因此参考词的最优概率是$1-\varepsilon+\varepsilon/V$而不是1。教学数值：$V=4$、$\varepsilon=0.1$时，最优分布为$(0.925,0.025,0.025,0.025)$，此时$\mathcal L_{\mathrm{LS}}\approx0.349$。若模型输出$(0.97,0.01,0.01,0.01)$，普通交叉熵为$0.030$，比最优分布的$-\log0.925\approx0.078$更低；平滑后的损失却升到$0.374$，高于$0.349$。标签平滑因此使模型停在更不自信的位置。
+
+Transformer翻译取$\varepsilon=0.1$，原论文报告这使困惑度变差（模型不再追求参考词概率最大），BLEU却提高\scite{vaswani2017}。Müller等的分析表明，标签平滑改善了概率校准，并使同一类别的倒数第二层表示聚得更紧；后一点也有代价，用平滑训练的模型当知识蒸馏的教师时，传给学生的类间相似信息变少\scite{nlp-gen-muller2019labelsmoothing}。
+
+\subsubsection{束搜索的长度与覆盖惩罚}
+\label{sec:nlp-generation-mt-beam-penalty}
+
+训练好的模型仍需解码。翻译通常用束搜索（第~\ref{sec:nlp-generation-beam}小节）近似求式\eqref{eq:nlp-generation-nmt}的最大概率译文，第~\ref{sec:nlp-inference-length-penalty}小节已说明对数概率逐词相加使它偏好短句。翻译中这一偏差随束宽放大：Koehn与Knowles观察到，束宽超过一定大小后BLEU反而下降，译文明显变短\scite{nlp-inference-koehn2017six}。翻译还有第二种偏差，即漏译：模型可能流畅地跳过一个源词，尤其是否定词、数量词这类短词，而漏掉它的候选概率并不一定低。
+
+GNMT的排序分数式\eqref{eq:nlp-inference-gnmt}同时处理这两点\cite{nlp-inference-wu2016gnmt}：累计对数概率$\ell(y)$除以长度项$\mathrm{lp}(y)=((5+|y|)/6)^{\alpha}$，再加覆盖项$\mathrm{cp}(x;y)=\beta\sum_i\log\min(\sum_ja_{i,j},1)$。覆盖项中$\sum_ja_{i,j}$是整条译文对第$i$个源词的累计注意力，正好利用了编码器—解码器的交叉注意力：累计达到1的源词不扣分，从未被注意的源词使对数项趋向$-\infty$。在Transformer中注意力有多层多头，需要约定取哪一层、哪些头的平均作为$a_{i,j}$。
+
+教学例子：源句“他／不／参加／会议”，两个完成候选为A“He will attend the meeting EOS”（6个词元，漏译“不”）和B“He will not attend the meeting EOS”（7个词元），长度按第~\ref{sec:nlp-inference-length-penalty}小节的约定计入EOS。设累计对数概率$\ell_A=-2.0$、$\ell_B=-2.4$，四个源词得到的累计注意力在A中为$(1.1,0.3,1.2,1.4)$，在B中为$(1.0,0.9,1.1,1.0)$，取$\alpha=0.6$、$\beta=0.2$（均为教学数值）。
+\begin{center}
+  \begin{tabular}{@{}lrrrrr@{}}
+    \toprule
+    候选 & $\ell$ & $\mathrm{lp}$ & $\ell/\mathrm{lp}$ & $\mathrm{cp}$ & 总分\\
+    \midrule
+    A（漏译） & $-2.000$ & $1.439$ & $-1.390$ & $-0.241$ & $-1.631$\\
+    B（完整） & $-2.400$ & $1.516$ & $-1.583$ & $-0.021$ & $-1.604$\\
+    \bottomrule
+  \end{tabular}
+\end{center}
+其中$\mathrm{cp}_A=0.2\log0.3$，$\mathrm{cp}_B=0.2\log0.9$。只按$\ell$或只加长度惩罚，A都胜出；加入覆盖惩罚后B以微弱优势胜出。这个例子也说明了覆盖惩罚的局限：它依赖注意力权重确实反映“翻译了哪个词”，而注意力只是软对齐；$\beta$过大时覆盖项会压过模型概率，偏好把注意力摊到每个源词上的候选，即使它们译得并不好。$\alpha,\beta$都要在开发集上调节。
+
+\subsection{低资源与多语翻译}
+\label{sec:nlp-generation-low-resource-mt}
+
+上面的神经模型需要几百万句对才能训练好，而世界上多数语向的平行数据只有几万句甚至没有。NLLB项目为200种语言构建数据、模型和评测集，WMT每年的通用翻译评测则覆盖高、中、低资源的若干语向，二者是这一问题的数据与评测入口\cite{nlp-intro-nllb2022,nlp-intro-kocmi2024}。回译、多语模型与无监督翻译依次放宽数据要求，代价分别是合成数据的噪声、语言间的容量竞争，以及对两种语言单语数据可比性的依赖。
+
+\subsubsection{回译及其变体}
+\label{sec:nlp-generation-back-translation}
+
+平行语料不足而目标语单语较多时，\term{回译}（back-translation）用反向模型构造额外的训练对\scite{sennrich-etal-2016-improving}。先用已有平行数据$\mathcal D_{\mathrm{par}}$训练反向模型$q_{\bm\phi}(x\mid y)$，把目标语单语集合$\mathcal M_y$中的每句$y$译成合成源句$\tilde x$，再与真实数据一起训练正向模型：
+\begin{equation}
+  \mathcal L(\bm\theta)=\sum_{(x,y)\in\mathcal D_{\mathrm{par}}}-\log p_{\bm\theta}(y\mid x)
+  +\lambda\sum_{y\in\mathcal M_y,\ \tilde x\sim q_{\bm\phi}(\cdot\mid y)}-\log p_{\bm\theta}(y\mid\tilde x).
+  \label{eq:nlp-generation-back-translation}
+\end{equation}
+关键在于目标端$y$是真实的人写文本，噪声只在源端。正向模型学习的是“从可能有误的源句生成通顺的目标句”，解码器得到了大量真实目标语的训练，这与统计翻译中单独训练目标语言模型的作用相近。$\lambda$或真实与合成数据的采样比例在开发集上确定。例如英文单语“Do not modify the 12 records”经反向模型得到“不要修改12份记录”，正向训练仍以原英文为目标。
+
+合成源句怎样生成影响很大。用束搜索或贪心生成$\tilde x$，得到的是反向模型的高概率输出，句式规整、彼此相似，对正向模型而言太容易预测。Edunov等比较了几种生成方式\cite{nlp-gen-edunov2018bt}：从$q_{\bm\phi}$中\emph{采样}，或对束搜索输出\emph{加噪}（以0.1的概率删词、以0.1的概率把词替换为占位符、在3个位置的范围内打乱词序），在大规模英德实验中都明显优于束搜索与贪心；他们的解释是，采样和加噪让合成源句更多样、更难预测，提供了更强的训练信号。这一结论有条件：在只用约8万句平行数据的模拟低资源设置中，反向模型本身较差，采样产生的噪声过大，束搜索反而更好。
+
+Caswell等提出另一种解释\cite{nlp-gen-caswell2019tagged}：加噪之所以有效，主要是让模型能区分合成数据与真实数据。\term{带标记回译}（tagged back-translation）不加噪，只在每个合成源句前加一个保留标记\code{<BT>}，模型据此知道这对数据的源端不可靠；推断时输入不带标记。他们的实验中，带标记的束搜索回译与加噪回译效果相当甚至更好。
+
+反向模型越好，合成数据越好；而正向模型变好后又能为反向模型合成数据。\term{迭代回译}（iterative back-translation）利用这一点交替改进两个方向\cite{nlp-gen-hoang2018iterative}，如算法~\ref{alg:nlp-generation-iterative-bt}所示。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[迭代回译]
+  \label{alg:nlp-generation-iterative-bt}
+  \begin{algorithmic}[1]
+    \Require 平行数据$\mathcal D_{\mathrm{par}}$，源语单语$\mathcal M_x$，目标语单语$\mathcal M_y$，轮数$R$
+    \Ensure 正向模型$p_{\bm\theta}(y\mid x)$与反向模型$q_{\bm\phi}(x\mid y)$
+    \State 在$\mathcal D_{\mathrm{par}}$上分别训练$p_{\bm\theta}$与$q_{\bm\phi}$
+    \For{$r=1,\ldots,R$}
+      \State 用$q_{\bm\phi}$把$\mathcal M_y$译成$\{(\tilde x,y)\}$，在$\mathcal D_{\mathrm{par}}\cup\{(\tilde x,y)\}$上重训$p_{\bm\theta}$
+      \State 用$p_{\bm\theta}$把$\mathcal M_x$译成$\{(x,\tilde y)\}$，在$\mathcal D_{\mathrm{par}}\cup\{(\tilde y,x)\}$上重训$q_{\bm\phi}$
+    \EndFor
+    \State \Return $p_{\bm\theta},q_{\bm\phi}$
+  \end{algorithmic}
+\end{algorithm}
+
+回译的风险在合成源句的错误。若反向模型漏掉“不”，得到的训练对就把肯定的源句与否定的目标句配在一起；这类错误需要用质量估计分数筛选或降权来控制，筛选器不能使用测试集参考。回译也要与运行时的\term{枢轴翻译}（pivot translation）区分：后者在推断时经第三种语言两步翻译，例如把“不要修改12份记录”先译成英语再译成德语。回译的噪声通过训练数据影响参数，枢轴的错误则沿两步推断直接传播，第一步漏掉的否定，第二步没有依据恢复。
+
+\subsubsection{多语模型与目标语言标记}
+\label{sec:nlp-generation-multilingual-mt}
+
+为每个语向训练一个模型，$n$种语言就需要$n(n-1)$个模型，低资源语向的模型也无法借用其他语向的数据。Johnson等让所有语向共享同一个编码器—解码器和同一份子词词表，只在源句前加一个\term{目标语言标记}（target language token），例如\code{<2es>}表示“译成西班牙语”\scite{nlp-gen-johnson2017multilingual}。模型结构、损失和解码都不变，训练数据是所有语向句对的混合。高低资源语向的数据量相差几个数量级，直接混合会让低资源语向几乎采样不到，通常用温度采样调节各语向的比例，公式与权衡见第~\ref{sec:nlp-llm-temperature-sampling}小节。
+
+共享参数带来两种效果。一是迁移：编码器被迫把不同语言的句子映射到可共用的表示上，低资源语向得益于高资源语向学到的结构。Johnson等报告，多对一（多种源语言译成同一目标语言）的设置中多语模型普遍持平或优于单语向模型；一对多的设置收益较小，个别语向（如WMT英法）明显下降，他们推测原因是解码器要在一个共享词表中生成多种目标语言。二是\term{零样本翻译}（zero-shot translation）：只用葡萄牙语—英语与英语—西班牙语训练，推断时给葡萄牙语源句加\code{<2es>}，模型能直接输出西班牙语，尽管训练中从未见过葡萄牙语—西班牙语句对。在他们的实验中，零样本译文的质量低于先译成英语再译成西班牙语的枢轴翻译，但证明了共享表示确有跨语言的成分。
+
+这一做法的问题也来自共享。所有语向分享固定容量，语言越多，每种语言分到的容量越少，高资源语向的质量可能下降；目标语言只由一个标记指定，零样本语向和低资源语向常出现\term{偏离目标语言}（off-target）的输出，即译成了英语或源语言本身。后续工作通过加大模型、加入语言特定的参数，以及增加非英语中心的平行数据来缓解，NLLB的模型就沿这一方向扩展到200种语言。
+
+\subsubsection{无监督机器翻译}
+\label{sec:nlp-generation-unsupervised-mt}
+
+若两种语言之间完全没有平行数据，回译的反向模型无从训练。\term{无监督机器翻译}（unsupervised machine translation）只用两种语言各自的单语语料$\mathcal M_1,\mathcal M_2$，依靠三个要素\cite{nlp-gen-lample2018unsupervised,nlp-gen-artetxe2018unsupervised,nlp-gen-lample2018phrase}：一个让两种语言起步就处在共同表示空间中的初始化；一个让模型学会生成每种语言的去噪目标；一个把单语数据变成伪平行数据的在线回译。
+
+\paragraph{跨语言初始化。}一种做法是先学\term{跨语言词嵌入}（cross-lingual word embedding）。两种语言的单语词向量空间形状相似，可以用一个正交矩阵近似对齐。给定一份种子词典$\{(x_k,y_k)\}$，把对应词向量按列排成$\bm X,\bm Y\in\mathbb R^{d\times n}$，正交普鲁克问题
+\begin{equation}
+  \bm W^\ast=\argmin_{\bm W^{\top}\bm W=\bm I}\bigl\|\bm W\bm X-\bm Y\bigr\|_F
+  =\bm U\bm V^{\top},\qquad \bm U\bm\Sigma\bm V^{\top}=\operatorname{SVD}(\bm Y\bm X^{\top})
+  \label{eq:nlp-generation-procrustes}
+\end{equation}
+有闭式解。没有种子词典时，Conneau等先用对抗训练得到初始映射，再取映射后互为最近邻的词对作为词典，反复用式\eqref{eq:nlp-generation-procrustes}精化\scite{nlp-gen-conneau2018muse}。对齐后的词嵌入用来初始化共享编码器—解码器的嵌入层。另一种更强的做法是在两种语言的拼接语料上用共享子词词表做掩码语言模型预训练，用得到的跨语言模型初始化整个编码器与解码器\scite{nlp-gen-conneau2019xlm}。
+
+\paragraph{去噪自编码与在线回译。}模型以语言标记区分输出语言。去噪目标让模型从加噪的句子恢复原句，
+\begin{equation}
+  \mathcal L_{\mathrm{dae}}=\sum_{\ell\in\{1,2\}}\mathbb E_{z\sim\mathcal M_\ell}\bigl[-\log p_{\bm\theta}(z\mid C(z),\ell)\bigr],
+  \label{eq:nlp-generation-unsup-dae}
+\end{equation}
+其中加噪函数$C$以一定概率删去每个词，并在小窗口内（例如不超过3个位置）打乱词序。单纯复制输入无法完成这个任务，模型必须学会该语言的词序与搭配，这使解码器成为两种语言各自的语言模型。在线回译用当前模型把单语句子译到另一种语言，再要求模型从这个合成译文恢复原句，
+\begin{equation}
+  \mathcal L_{\mathrm{bt}}=\mathbb E_{x\sim\mathcal M_1}\bigl[-\log p_{\bm\theta}(x\mid\hat y(x),1)\bigr]
+  +\mathbb E_{y\sim\mathcal M_2}\bigl[-\log p_{\bm\theta}(y\mid\hat x(y),2)\bigr],
+  \label{eq:nlp-generation-unsup-bt}
+\end{equation}
+$\hat y(x)$由当前模型贪心或束搜索生成，不对生成过程求梯度。这正是式\eqref{eq:nlp-generation-back-translation}的回译，只是反向模型就是同一个模型、且每一步都在改进。算法~\ref{alg:nlp-generation-unsupervised-mt}给出训练循环。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[无监督机器翻译的训练循环]
+  \label{alg:nlp-generation-unsupervised-mt}
+  \begin{algorithmic}[1]
+    \Require 单语语料$\mathcal M_1,\mathcal M_2$，共享子词词表，加噪函数$C$
+    \Ensure 双向翻译模型$p_{\bm\theta}$
+    \State 用跨语言词嵌入或跨语言预训练模型初始化$\bm\theta$
+    \Repeat
+      \State 从$\mathcal M_1,\mathcal M_2$各取一批句子，按式\eqref{eq:nlp-generation-unsup-dae}计算去噪损失
+      \State 用当前$\bm\theta$把两批句子分别译到另一种语言，得到伪平行对（不回传梯度）
+      \State 按式\eqref{eq:nlp-generation-unsup-bt}计算回译损失，对两项损失之和更新$\bm\theta$
+    \Until{开发集上的往返重构或无监督选择准则不再改善}
+    \State \Return $p_{\bm\theta}$
+  \end{algorithmic}
+\end{algorithm}
+
+三个要素缺一不可：没有好的初始化，第一轮回译的输出与原句几乎无关，回译损失学不到对应；没有去噪目标，模型只靠回译容易学会把输入原样复制或输出退化句子；没有回译，去噪只训练了单语重构，从未要求跨语言生成。Lample等的第一版方法还在编码器输出上加了一个判别器，用对抗损失让两种语言的编码难以区分，同一作者的后续版本去掉了这一项，效果并未变差。
+
+无监督翻译的效果高度依赖两种语言的相近程度和单语语料的可比性。报告较好结果的多是英法、英德这类语言相近、新闻领域语料充足的语对；当语言差异大、单语数据少或领域不匹配时，效果明显下降，甚至不如用少量平行数据训练的有监督模型\scite{nlp-gen-kim2020unsupervised}。因此在实际低资源场景中，它更多作为初始化或与回译、多语模型结合使用。
+
+\subsection{大语言模型翻译}
+\label{sec:nlp-generation-llm-translation}
+
+大语言模型在多语文本上预训练后，按指令就能翻译。与专用的编码器—解码器翻译模型相比，它的优势在于能读入长上下文和自然语言要求（术语表、语体、目标读者），对高资源语向和需要领域知识的文本表现突出；不足在于预训练数据以英语为主，低资源语向较弱，也容易出现漏译、添加解释性内容、译成错误语言等问题。WMT24的通用翻译评测中，表现最好的系统多基于大语言模型，但评测报告的标题本身就强调了翻译问题并未解决\scite{nlp-intro-kocmi2024}。下面先讲如何形成翻译能力，再讲如何从多个候选中选出译文。
+
+\subsubsection{提示翻译与翻译微调}
+\label{sec:nlp-generation-llm-mt-prompt-ft}
+
+最直接的用法是提示。零样本提示只给指令和源句，例如“将下面的中文译成英文。中文：$x$ 英文：”；少样本提示在前面附上$k$个示例句对，模型按
+\begin{equation}
+  p_{\bm\theta}\bigl(y\mid I,(x^{(1)},y^{(1)}),\ldots,(x^{(k)},y^{(k)}),x\bigr)
+  \label{eq:nlp-generation-llm-mt-prompt}
+\end{equation}
+生成，$I$为指令。示例的作用是指定语向、格式与语体，也可以示范术语的译法。示例选择的一般方法（按与输入的相似度检索、兼顾多样性）见第~\ref{sec:nlp-inference-icl-shots}小节。在翻译上，Vilar等对PaLM的系统比较发现，示例本身的翻译质量是影响最大的因素，与源句语义相似的示例带来的额外收益并不稳定\scite{nlp-gen-vilar2023palm}。因此示例池应先保证质量，再考虑相似度；术语要求直接写进指令（例如“海棠楼译为Haitang Building”）往往比指望示例中恰好出现更可靠。
+
+提示不改变参数，模型在低资源语言上的能力上限仍由预训练决定。用大量平行数据直接微调大模型，又可能冲淡它在预训练中获得的通用能力。Xu等的ALMA把翻译微调分成两个阶段\scite{nlp-gen-xu2024alma}。第一阶段在所涉及语言的单语文本上继续做下一词元预测，
+\begin{equation}
+  \mathcal L_1=-\sum_{z\in\mathcal M}\sum_{t}\log p_{\bm\theta}(z_t\mid z_{<t}),
+  \label{eq:nlp-generation-alma-stage1}
+\end{equation}
+补强模型对非英语语言的掌握；第二阶段只用少量（数万句对量级）高质量的人工翻译，把句对写成翻译提示，只对译文部分计算损失，
+\begin{equation}
+  \mathcal L_2=-\sum_{(x,y)}\sum_{t=1}^{|y|}\log p_{\bm\theta}\bigl(y_t\mid \operatorname{prompt}(x),y_{<t}\bigr).
+  \label{eq:nlp-generation-alma-stage2}
+\end{equation}
+第二阶段的损失掩码与第~\ref{sec:nlp-sft-masked-loss}小节的有监督微调相同。ALMA的核心判断是：大模型的翻译能力主要受限于对目标语言本身的掌握，而不是缺少海量平行数据；用单语数据补语言能力、用少而精的平行数据教会翻译格式，比用大量质量参差的平行数据微调更有效。原文报告，基于7B与13B参数LLaMA-2的模型在其评测语向上超过了此前更大的专用翻译模型。
+
+与专用神经翻译相比，提示翻译不需要训练，但每次推断都要处理更长的输入，且难以覆盖低资源语向；翻译微调的大模型质量高，但推断成本远高于几亿参数的编码器—解码器模型，对语向覆盖也仍受预训练语料限制。实际系统常把二者结合：用专用模型处理大批量的常规文本，用大模型处理需要上下文与指令的文本。
+
+\subsubsection{质量估计重排与MBR解码}
+\label{sec:nlp-generation-qe-mbr}
+
+无论用哪种模型，按模型概率选出的译文未必是质量最好的译文。第~\ref{sec:nlp-inference-reranking}小节的重排与第~\ref{sec:nlp-inference-mbr}小节的最小贝叶斯风险解码提供了两种从候选中选择的方式，翻译是它们最成熟的应用，因为这里有与人工判断较一致的学习型度量（COMET等，见第~\ref{sec:nlp-generation-comet}小节）。
+
+先生成$N$个候选$\mathcal C=\{y_1,\ldots,y_N\}$，可以是束搜索的$N$-best，也可以是采样结果（采样更多样，通常更适合后续选择）。\term{质量估计}（quality estimation, QE）模型只读源句与候选、不需要参考译文，直接预测人工质量分，重排取
+\begin{equation}
+  \hat y_{\mathrm{QE}}=\argmax_{y\in\mathcal C}\operatorname{QE}(x,y).
+  \label{eq:nlp-generation-qe-rerank}
+\end{equation}
+MBR解码则把其余候选当作伪参考，以COMET为效用，取与其他候选平均效用最高的那个：
+\begin{equation}
+  \hat y_{\mathrm{MBR}}=\argmax_{y_i\in\mathcal C}\frac{1}{N}\sum_{j=1}^{N}\operatorname{COMET}(x,y_i,y_j),
+  \label{eq:nlp-generation-comet-mbr}
+\end{equation}
+这是式\eqref{eq:nlp-inference-mbr-sample}在效用$u(y_i,y_j)=\operatorname{COMET}(x,y_i,y_j)$下的特例。直观上，QE重排相信一个外部评审对单个候选的打分；MBR选的是候选集合中的“共识”译文，与多数候选在意思上最接近，因此不容易选到偶然出错的离群候选。Freitag等的人工评价显示，以神经度量为效用的MBR优于束搜索\cite{nlp-inference-freitag2022mbr}；Fernandes等系统比较了重排、MBR及二者的组合，其中一种两阶段做法先用QE把候选筛到前$k$个，再在其中做MBR，把$N^2$次效用计算降为$k^2$次\scite{nlp-gen-fernandes2022quality}。
+
+两种方法的代价不同。QE重排需要$N$次度量计算；MBR需要$N^2$次，$N=64$时约4000次。对按句分别编码源句、候选和参考的COMET模型，编码器的前向只需对$N$个候选各做一次并缓存句向量，$N^2$次计算只落在其后的小型前馈网络上，实际开销远低于$N^2$次完整前向。更值得注意的是度量偏好的放大：选择本身是在优化某个度量，Fernandes等发现，用于选择的度量上的提升明显大于其他度量上的提升。评价这类系统时，应换用未参与解码的度量，并以人工评价为准；评价方法的讨论见第~\ref{sec:nlp-generation-evaluation}节与第~\ref{chap:nlp-evaluation}章。
+
+\subsection{同声传译}
+\label{sec:nlp-generation-simultaneous}
+
+\term{同声传译}（simultaneous translation）要求在源句尚未读完时就开始输出。模型每一步在两个动作之间选择：READ读入一个源词，WRITE写出一个目标词。记$g(t)$为写出第$t$个目标词时已读入的源词数，读写策略就由$g$描述。挑战在于：只能看到源前缀；等待越久质量越好、延迟越高；语序差异大时（如日语、德语动词在句末），模型可能被迫在关键信息到达之前作出承诺。方法谱系从固定策略到自适应策略：wait-$k$按固定节奏读写，简单且延迟可预期；单调注意力类方法让模型按内容决定何时读、何时写。评价必须同时报告质量与延迟。声音输入输出时的语音识别与合成环节见第~\ref{chap:nlp-speech-tasks}章。
+
+\subsubsection{STACL与wait-k前缀翻译}
+\label{sec:nlp-generation-wait-k}
+
+STACL的wait-$k$策略先读$k$个源词，此后每写一个词读一个词，源句读完后连续写到结束\cite{nlp-intro-ma2019stacl}：
+\begin{equation}
+  g(t)=\min(k+t-1,S),\qquad
+  p(y\mid x)=\prod_{t=1}^{T}p(y_t\mid x_{1:g(t)},y_{<t}).
+  \label{eq:nlp-generation-wait-k}
+\end{equation}
+关键是训练也服从同样的可见性限制，即\term{前缀到前缀}（prefix-to-prefix）训练：模型学的是从源前缀预测目标前缀，因此会学到一定的预测能力，例如在看到动词之前，根据主语和宾语猜测可能的动作。若用整句训练的普通模型只在测试时按wait-$k$读写，模型从未见过这种残缺输入，效果明显更差。
+
+在Transformer中，前缀到前缀训练用掩码实现，仍然可以一次算完所有目标位置。解码器交叉注意力的掩码为
+\begin{equation}
+  (\bm M_k)_{t,i}=\begin{cases}0,&i\le g(t),\\-\infty,&i>g(t),\end{cases}
+  \label{eq:nlp-generation-wait-k-mask}
+\end{equation}
+它替代式\eqref{eq:nlp-generation-transformer-decoder}第二行中的$\bm M_{\mathrm{src}}$。编码器有两种选择。若用双向自注意力，源位置$i$的表示会读到$i$之后的词，第$t$个目标位置应看到的是“只编码了前$g(t)$个词”的表示，不同$t$需要不同的编码，训练代价成倍增加。若把编码器自注意力也改为因果掩码（单向编码），每个源位置的表示只依赖它之前的词，新词到来时旧表示不变，训练时一次编码即可满足所有$t$的可见性，推断时也能增量计算；代价是每个位置失去右侧上下文。STACL原文的训练实现就采用这种单向编码器。无论哪种实现，都不能让编码器读到后缀而只在交叉注意力上遮挡，否则训练时的信息会多于推断。
+
+延迟需要一个能比较不同策略的指标。\term{平均滞后}（average lagging, AL）把策略与一个“理想的同步译员”比较：后者按长度比$r=T/S$匀速前进，写第$t$个词时已读$(t-1)/r$个源词。AL对源句读完之前的各步平均滞后量，
+\begin{equation}
+  \mathrm{AL}=\frac{1}{\tau}\sum_{t=1}^{\tau}\Bigl[g(t)-\frac{t-1}{r}\Bigr],\qquad
+  \tau=\min\{t:g(t)=S\}.
+  \label{eq:nlp-generation-average-lagging}
+\end{equation}
+只算到$\tau$为止，是因为源句读完后的输出已不存在等待，计入它们会让长译文显得延迟更低。当$r=1$时，wait-$k$的每一项都是$k$，$\mathrm{AL}=k$，指标的单位就是“落后多少个源词”。
+
+用日语教学源句“彼は／会議に／参加／し／ない”说明。五个源词块依次表示“他、会议、参加、做、否定”，完整句意是“He will not attend the meeting”，$T=6$，$r=6/5$。设$k=2$，每步只保留一个候选：
+\begin{center}
+  \begin{tabular}{@{}cllcl@{}}
+    \toprule
+    目标步$t$ & 新READ内容 & 已读$g(t)$ & $g(t)-\frac{t-1}{r}$ & WRITE\\
+    \midrule
+    1 & 彼は、会議に & 2 & 2.000 & He\\
+    2 & 参加 & 3 & 2.167 & will\\
+    3 & し & 4 & 2.333 & attend\\
+    4 & ない & 5 & 2.500 & the\\
+    5 & 无 & 5 & — & meeting\\
+    6 & 无 & 5 & — & EOS\\
+    \bottomrule
+  \end{tabular}
+\end{center}
+$\tau=4$，$\mathrm{AL}=(2+2.167+2.333+2.5)/4=2.25$。第3步写出attend时还没有看到否定；第4步虽然读到ない，在只能追加词元的接口中已无法把not插回will与attend之间，这条轨迹漏译了否定。改为$k=5$时，第一次写出之前已读完整句，$g(t)\equiv5$，$\tau=1$，$\mathrm{AL}=5$，可以完整译出“He will not attend the meeting”。两种设置分别代表低延迟与高质量的两端：句末否定这类语序差异，正是固定策略难以兼顾的情形。真实系统的延迟还取决于模型计算时间和输入粒度，报告时不能只给$k$。
+
+\subsubsection{自适应读写策略}
+\label{sec:nlp-generation-adaptive-policy}
+
+wait-$k$对所有句子用同样的节奏：语序一致的句子它等得太久，动词在句末的句子它又写得太早。自适应策略让模型根据已读内容决定READ还是WRITE。直接把读写决策当作离散动作，可以用强化学习训练，但奖励稀疏、方差大。单调注意力类方法把决策嵌入注意力，使它可以用可微的期望形式训练。
+
+\term{单调注意力}（monotonic attention）的推断过程是：生成第$t$个目标词时，从上一步停下的源位置开始向右扫描，在每个位置$i$计算停止概率$p_{t,i}=\sigma\bigl(\mathrm{Energy}(\bm s_{t-1},\bm h_i)\bigr)$；若停下，就只注意$\bm h_i$并写出$y_t$，否则READ下一个源词\scite{nlp-gen-raffel2017monotonic}。停止位置随$t$单调不减，这正是同传所需的“只向前读”。离散的停止决策不能求导，训练时改用停止位置的期望分布，它满足递推
+\begin{equation}
+  \alpha_{t,i}=p_{t,i}\sum_{k=1}^{i}\Bigl(\alpha_{t-1,k}\prod_{l=k}^{i-1}(1-p_{t,l})\Bigr),
+  \label{eq:nlp-generation-monotonic-attention}
+\end{equation}
+含义是：上一步停在$k$的概率，乘以本步从$k$起一路不停直到$i$才停的概率，对所有$k\le i$求和。这个递推可以用累积乘积并行计算，复杂度为每句$O(ST)$。
+
+只注意停止位置一个源词，信息太少，质量明显低于普通注意力。Arivazhagan等的\term{单调无限回看注意力}（monotonic infinite lookback attention, MILk）保留单调的停止机制决定“读到哪里”，停下后对已读的全部源词$\bm h_1,\ldots,\bm h_{g(t)}$做普通软注意力\scite{nlp-gen-arivazhagan2019milk}。训练时把式\eqref{eq:nlp-generation-monotonic-attention}的停止分布与软注意力组合，得到期望注意力权重；期望延迟$\mathbb E[g(t)]=\sum_i i\,\alpha_{t,i}$也可微，于是在似然之外加入延迟损失，
+\begin{equation}
+  \mathcal L=-\log p(y\mid x)+\lambda\,\mathcal C\bigl(\mathbb E[g(1)],\ldots,\mathbb E[g(T)]\bigr),
+  \label{eq:nlp-generation-milk-loss}
+\end{equation}
+$\mathcal C$取平均滞后的可微版本，$\lambda$控制质量与延迟的折中。$\lambda=0$时模型倾向于读完整句再写，$\lambda$越大，模型越早开始写。
+
+Ma等的\term{单调多头注意力}（monotonic multihead attention, MMA）把这一机制搬到Transformer\cite{nlp-gen-ma2020mma}：解码器每层交叉注意力的每个头各自做单调注意力（只看停止位置，或像MILk那样无限回看），各有自己的停止位置。只有当所有头都决定停止时才写出下一个词，因此实际的$g(t)$由读得最远的头决定。为了不让个别头一直读到句末、拖高整体延迟，训练损失中除平均延迟项外，还加入各头期望延迟的方差项，约束各头的读取进度相近。
+
+与wait-$k$相比，自适应策略在相同平均延迟下通常质量更高，因为它在语序一致处少等、在需要等待的地方多等；代价是训练要计算期望注意力的递推、要调延迟权重，且单句的延迟随内容波动，不如wait-$k$可预期。对需要保证最长等待的应用，有时仍选用固定策略。
+
+\subsection{篇章翻译}
+\label{sec:nlp-generation-document-translation}
+
+前面的方法都逐句翻译。逐句看似正确的译文放在一起，仍可能指代不明、主语缺失或术语前后不一致：前句的“海棠研究所”在后句写成“该所”，英文要决定用the institute还是it；中文省略的主语，英文必须补出；同一个术语在一篇文档中应保持同一个译名。这些都需要当前句之外的信息。解决思路有两条：翻译时把上下文作为额外条件；或者先逐句翻译，再只在目标语端修订篇章一致性。评价需要专门的对比测试集，因为这类错误在整篇中只占少数词元，语料级BLEU几乎不受影响。
+
+\subsubsection{上下文拼接与多编码器翻译}
+\label{sec:nlp-generation-context-translation}
+
+最简单的做法不改模型，只改数据。Tiedemann与Scherrer的\emph{2-to-2}拼接把前一句与当前句用分隔标记连起来作为输入，目标端同样拼接前一句与当前句的译文\cite{nlp-gen-tiedemann2017context}：
+\[
+  x_{k-1}\ \langle\mathrm{BRK}\rangle\ x_k\ \longrightarrow\ y_{k-1}\ \langle\mathrm{BRK}\rangle\ y_k .
+\]
+推断时只保留最后一个分隔标记之后的部分作为当前句译文。另一种\emph{2-to-1}设置只在源端加上下文、目标端只输出$y_k$。拼接法的好处是任何句级模型都能直接用；代价是输入长度加倍，上下文与当前句在注意力中地位相同，模型需要自己学会区分。
+
+多编码器方法为上下文单独编码，再与当前句的表示融合。Voita等的上下文感知Transformer让上下文编码器与源句编码器共享前$L-1$层，在源句编码器的最后一层中，每个位置除自注意力外再对上下文编码做一次注意力，二者用门控融合\cite{nlp-gen-voita2018anaphora}：
+\begin{equation}
+  \bm g_i=\sigma\bigl(\bm W_g[\bm c^{(s)}_i;\bm c^{(c)}_i]+\bm b_g\bigr),\qquad
+  \bm c_i=\bm g_i\odot\bm c^{(s)}_i+(1-\bm g_i)\odot\bm c^{(c)}_i,
+  \label{eq:nlp-generation-context-gate}
+\end{equation}
+其中$\bm c^{(s)}_i$是源句自注意力的输出，$\bm c^{(c)}_i$是对上下文注意力的输出，门$\bm g_i\in(0,1)^d$逐维决定当前位置取多少上下文信息。他们分析注意力权重发现，模型学会了让代词更多地注意上下文中的先行词，即在没有显式监督的情况下学到了部分指代消解。与拼接法相比，多编码器把“当前句”和“上下文”分开，门控值可以检查；代价是要修改结构，且通常只用前一两句上下文。
+
+怎样知道模型真的用了上下文？\term{对比测试集}（contrastive test set）为每个样本准备上下文、源句、正确译文$y^{+}$和一个只在篇章现象上出错的对比译文$y^{-}$（例如代词性别错、省略的动词形式错），检查模型是否给正确译文更高的概率：
+\begin{equation}
+  \mathrm{Acc}=\frac1N\sum_{n=1}^{N}\mathbb 1\Bigl[\log p\bigl(y^{+}_n\mid x_n,\mathrm{ctx}_n\bigr)>\log p\bigl(y^{-}_n\mid x_n,\mathrm{ctx}_n\bigr)\Bigr].
+  \label{eq:nlp-generation-contrastive-accuracy}
+\end{equation}
+它评的是打分而不是生成，因此能精确地隔离某一种现象。Bawden等为英法翻译构造了指代与衔接的对比集\cite{nlp-gen-bawden2018discourse}，Voita等为英俄翻译构造了指示、省略与词汇衔接的对比集\scite{nlp-gen-voita2019goodwrong}。这些集的正误译文只在篇章现象上不同，BLEU相近的模型在其上的准确率可以相差很大。
+
+用两个教学篇章说明这些现象。第一篇为“海棠研究所发布了新通知。该所还说明了报名规则。”，机构译名已确认为Haitang Institute。句级系统只读第二句，可能写出“It also explained the registration rules”，it指代不明；读取前句后可写成“The institute also explained the registration rules”。第二篇为“林岚提交了申请。随后收到了确认。”，第二句省略的接收者应由前句恢复为林岚。只看第二句的译文“An acknowledgement was received”保留了事件，却丢了人物；上下文模型可以写成“Lin Lan then received an acknowledgement”。对比测试集正是把这类成对的译文放在一起比较概率。
+
+\subsubsection{DocRepair目标语篇章修订}
+\label{sec:nlp-generation-docrepair}
+
+上下文模型需要篇章级平行数据训练，而这类数据远少于句级平行数据。Voita等的DocRepair换了一个角度：句级翻译的篇章错误主要表现为目标语篇章读起来不连贯，那么可以只在目标语端学一个修订模型，把不一致的逐句译文改成一致的篇章\scite{voita-etal-2019-context}。这个模型只需要目标语的单语文档。
+
+训练数据这样构造：取目标语单语文档中连续的$K$句$Y=(y_1,\ldots,y_K)$（原文取$K=4$），把每句独立地往返翻译一次，
+\begin{equation}
+  \tilde y_k=\operatorname{MT}_{x\to y}\bigl(\operatorname{MT}_{y\to x}(y_k)\bigr),\qquad k=1,\ldots,K,
+  \label{eq:nlp-generation-docrepair-roundtrip}
+\end{equation}
+逐句往返会丢掉跨句线索，人为制造出句级翻译特有的指代与衔接错误。修订模型$q_{\bm\psi}$是一个普通的编码器—解码器，输入为$\tilde Y=(\tilde y_1,\ldots,\tilde y_K)$拼接成的序列，输出为原文档$Y$，按条件最大似然$\mathcal L=-\log q_{\bm\psi}(Y\mid\tilde Y)$训练。推断时，先用句级模型逐句翻译源文档得到$\hat y_k=\operatorname{MT}_{x\to y}(x_k)$，再取
+\begin{equation}
+  \hat Y=\argmax_{Y}\,q_{\bm\psi}\bigl(Y\mid\hat y_1,\ldots,\hat y_K\bigr).
+  \label{eq:nlp-generation-docrepair}
+\end{equation}
+
+教学输入为“Haitang Institute issued a new notice. Begonia Institute said he would update it.”第二句的机构名与代词都与前句不一致，修订候选为“Haitang Institute issued a new notice. The institute said it would update the notice.”
+
+DocRepair的优点是只用单语数据、可以接在任何句级系统之后；局限也来自它看不到源文。若第二句原文确实指另一个机构，修订模型按“连贯”的标准统一名称就会改错；往返翻译制造的错误与真实系统的错误分布也不完全相同。因此它适合修正衔接与一致性，源意是否保留仍需对照源文另行核验。

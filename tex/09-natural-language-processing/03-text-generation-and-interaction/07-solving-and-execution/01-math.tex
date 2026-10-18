@@ -1,0 +1,358 @@
+\section{数学与逻辑问题求解}
+\label{sec:nlp-execution-solving}
+
+“算一个金额”“找一组满足排班规则的取值”和“证明一个命题”交付的是三种不同的产物：一个数、一组赋值、一个证明。它们的成功判断也各不相同：金额可以代回原题复算，赋值可以逐条检查约束，证明却无法用数值核对，只能由检查器验证推理的每一步。这类任务的输入是固定的题目，求解不改变外部状态，候选可以反复构造和检查，因此适合先研究“生成—执行—核验”这一组机制。
+
+本节要处理四项挑战。第一，语言条件可能被误读：折扣施加给了错误的对象，或“恰好一人”被读成“至少一人”。第二，即使关系写对，长计算中的算术也会出错。第三，答案正确不代表过程正确，碰巧得到的答案无法支持解释。第四，证明不能用数值核对，自然语言写成的证明又难以逐步检查。方法谱系沿这四项挑战展开：把题目转成表达式树或约束，交给确定的算法或求解器（第\ref{sec:nlp-execution-formalization}小节）；让模型写程序并由解释器执行，再让文本推理与代码执行交替进行（第\ref{sec:nlp-execution-program-aided}小节）；用回代、规则和奖励模型检查答案与过程（第\ref{sec:nlp-execution-verification}小节）；把命题形式化后在证明助手中搜索并检查证明（第\ref{sec:nlp-execution-theorem-proving}小节）。节末表~\ref{tab:nlp-execution-solving-methods}对照各方法解决的问题与新增的代价。
+
+\subsection{从语言到形式对象}
+\label{sec:nlp-execution-formalization}
+
+语言中的量、对象和条件需要成为计算能够读取的输入。第\ref{chap:nlp-text-analysis}章讨论的数量识别、指代、语义关系和时间规范化在这里提供映射依据，本章还要记录每个形式对象来自哪一项条件。这样就能区分三类失败：缺少单价属于信息不足；把“不打折”读成“打折”属于解析错误；在已正确建立的约束上没有找到解，才属于求解问题。形式对象一旦建立，计算就可以交给确定的算法，错误便集中到形式化这一步。下面依次讨论表达式树、有限域约束和模理论约束三种对象，它们能表达的问题依次扩大：表达式树只描述一条计算，有限域约束描述一组离散取值须同时满足的条件，模理论约束再加入整数、实数等数域上的运算与逻辑组合。
+
+\subsubsection{表达式树与目标驱动树解码}
+\label{sec:nlp-execution-expression}
+
+考虑一道数量题：“购买3本书，每本25元；另买5支笔，每支4元。书打八折，笔不打折，不收其他费用。应付多少元？”一个可检查的表示应同时保存数值、单位和修饰范围。设书的单价为$p_{\mathrm{b}}=25$元/本、数量为$n_{\mathrm{b}}=3$本，笔的单价为$p_{\mathrm{p}}=4$元/支、数量为$n_{\mathrm{p}}=5$支，书的支付比例为$r_{\mathrm{b}}=0.8$。比例没有单位，“八折”指支付原价的80\%，不是减去原价的80\%。
+
+\term{表达式树}（expression tree）把已知量作为叶，把运算作为内部节点，根节点给出待求的量。这里先分别计算书与笔的金额，只对书的分支乘折扣，再相加：
+\begin{equation}
+  a=(p_{\mathrm{b}}n_{\mathrm{b}})r_{\mathrm{b}}
+      +p_{\mathrm{p}}n_{\mathrm{p}}
+    =(25\times3)\times0.8+4\times5=80\text{元}.
+  \label{eq:nlp-execution-price}
+\end{equation}
+这棵树可写为$\operatorname{Add}(\operatorname{Mul}(\operatorname{Mul}(25,3),0.8),\operatorname{Mul}(4,5))$。树一旦确定，求值只是自底向上的四则运算；难点在于从题目文字得到这棵树。类型检查能排除$25\text{元/本}+3\text{本}$这类单位不相容的组合，却排除不了$(25\times3+4\times5)\times0.8=76$元：后一式单位完全正确，只是把折扣错误地施加给了笔。若将“另买5支”错绑定为“买3支”，还会得到72元。因此，恢复树以后还要逐项核对数量指代、折扣作用域和“无其他费用”这项封闭条件。
+
+\paragraph{序列到序列求解}
+最早的神经求解器把表达式当作词元序列来生成。Wang等的深度神经求解器先把题目中的数字替换为按出现顺序编号的占位词元$n_0,n_1,\ldots$，再用循环神经网络编码器—解码器把题目翻译成含占位词元的表达式，最后代回数值计算\scite{nlp-execution-wang2017dns}。本例中$n_0=3,n_1=25,n_2=5,n_3=4$；“八折”在数量规范化时转成$n_4=0.8$。目标序列可以是中缀式“$(n_1\times n_0)\times n_4+n_3\times n_2$”。这种做法不需要人工特征，能生成训练集中没有出现过的表达式，但有两个结构上的缺陷。其一，解码器逐个输出括号和符号，必须自己学会括号配对与运算元个数，可能生成“$((n_1\times n_0)\times n_4$”这样无法求值的序列。其二，解码器只看到线性前缀，不知道当前词元在树中处于哪个位置、在为哪个子量服务；同一棵树的不同线性化（中缀、后缀、交换律下的不同写法）又会给出互相冲突的监督。
+
+\paragraph{目标驱动树解码}
+\term{目标驱动树结构模型}（goal-driven tree-structured model, GTS）改为直接生成表达式树\scite{nlp-execution-xie2019gts}。它的出发点是人解题的方式：先明确要求的量是什么，再判断能否直接从已知数量得到；不能时，就把它拆成由一个运算符连接的两个子量，对每个子量重复这一过程，直到每个子量都能由题中的某个数量或常数直接给出。每个树节点因此关联三样东西：一个\term{目标向量}（goal vector）$\bm{q}\in\mathbb{R}^{d}$，表示“这棵子树要算出什么”；一个预测的词元$\hat y$；以及子树完成后的\term{子树嵌入}（subtree embedding）$\bm{t}\in\mathbb{R}^{d}$，表示“这棵子树实际算的是什么”。目标自顶向下分解，子树嵌入自底向上合成，信息在树上双向流动。
+
+先看输入与候选词元。设题目有$n$个词，编码器是双向门控循环单元（GRU），两个方向的隐藏状态相加得到$\bm{h}_s\in\mathbb{R}^{d}$，$s=1,\ldots,n$，原文取$d=512$。根目标$\bm{q}_0$取前向最后一个状态与后向第一个状态之和。解码词表因题而异：$V^{\mathrm{dec}}=V_{\mathrm{op}}\cup V_{\mathrm{con}}\cup N_P$，其中$V_{\mathrm{op}}$是运算符，$V_{\mathrm{con}}$是题中不出现但解答可能用到的常数（如1、$\pi$），$N_P$是本题的数量占位词元。词元$y$的嵌入$\bm{e}(y)\in\mathbb{R}^{d}$按类别取得：运算符与常数查各自的可训练嵌入矩阵，数量$n_k$则直接取它在题目中位置上的编码器状态。数量嵌入随题目上下文变化，模型“指向”题中的某个数而不是从固定词表中选数，这与式\eqref{eq:nlp-analysis-copy}的复制机制作用相同。
+
+在每个节点，模型用目标向量对题目做注意力，得到上下文向量$\bm{c}=\sum_s\alpha_s\bm{h}_s$，其中$\alpha_s\propto\exp\bigl(\bm{v}_{\mathrm{a}}^{\top}\tanh(\bm{W}_{\mathrm{a}}[\bm{q};\bm{h}_s])\bigr)$。随后对每个候选词元打分并归一化：
+\begin{equation}
+  \begin{aligned}
+  s(y\mid\bm{q},\bm{c})&=\bm{w}_{\mathrm{n}}^{\top}\tanh\bigl(\bm{W}_{\mathrm{s}}[\bm{q};\bm{c};\bm{e}(y)]\bigr),\\
+  p(y\mid\bm{q},\bm{c})&=\frac{\exp s(y\mid\bm{q},\bm{c})}{\sum_{y'\in V^{\mathrm{dec}}}\exp s(y'\mid\bm{q},\bm{c})},
+  \end{aligned}
+  \label{eq:nlp-execution-gts-score}
+\end{equation}
+其中$[\cdot;\cdot]$表示拼接，$\bm{W}_{\mathrm{s}}\in\mathbb{R}^{d\times3d}$，$\bm{w}_{\mathrm{n}}\in\mathbb{R}^{d}$。打分把“当前目标”“题中相关信息”和“候选词元”放在一起比较；由于数量词元的嵌入来自题目，同一套参数可以对不同题目的不同数量打分。预测出的词元决定这个目标怎样实现：若是数量或常数，目标由它直接实现，该节点成为叶；若是运算符，目标要分解为左、右两个子目标。
+
+左子目标只依赖父节点的信息。原文用两层带门控的前馈网络：
+\begin{equation}
+  \begin{aligned}
+  \bm{u}&=[\bm{q};\bm{c};\bm{e}(\hat y)],\\
+  \bm{h}_{\mathrm{l}}&=\sigma\bigl(\bm{W}_{\mathrm{ol}}\bm{u}\bigr)\odot\tanh\bigl(\bm{W}_{\mathrm{cl}}\bm{u}\bigr),\\
+  \bm{q}_{\mathrm{l}}&=\sigma\bigl(\bm{W}_{\mathrm{gl}}\bm{h}_{\mathrm{l}}\bigr)\odot\tanh\bigl(\bm{W}_{\mathrm{le}}\bm{h}_{\mathrm{l}}\bigr),
+  \end{aligned}
+  \label{eq:nlp-execution-gts-left}
+\end{equation}
+其中$\sigma$是逐元素的sigmoid，$\odot$是逐元素乘积，$\bm{W}_{\mathrm{ol}},\bm{W}_{\mathrm{cl}}\in\mathbb{R}^{d\times3d}$，$\bm{W}_{\mathrm{gl}},\bm{W}_{\mathrm{le}}\in\mathbb{R}^{d\times d}$。sigmoid一支决定保留父信息的哪些分量，tanh一支给出候选内容，两者相乘便是门控。
+
+右子目标要等左子树完全生成以后才计算，并额外读取左子树的嵌入$\bm{t}_{\mathrm{l}}$：
+\begin{equation}
+  \begin{aligned}
+  \bm{h}_{\mathrm{r}}&=\sigma\bigl(\bm{W}_{\mathrm{or}}\bm{u}\bigr)\odot\tanh\bigl(\bm{W}_{\mathrm{cr}}\bm{u}\bigr),\\
+  \bm{q}_{\mathrm{r}}&=\sigma\bigl(\bm{W}_{\mathrm{gr}}[\bm{h}_{\mathrm{r}};\bm{t}_{\mathrm{l}}]\bigr)\odot\tanh\bigl(\bm{W}_{\mathrm{re}}[\bm{h}_{\mathrm{r}};\bm{t}_{\mathrm{l}}]\bigr),
+  \end{aligned}
+  \label{eq:nlp-execution-gts-right}
+\end{equation}
+这里$\bm{W}_{\mathrm{gr}},\bm{W}_{\mathrm{re}}\in\mathbb{R}^{d\times2d}$。为什么右目标要看左子树？以加法为例，父目标“应付总额”分解出的两个子目标在父节点看来是对称的，若只用父信息生成，右目标可能与左目标几乎相同，模型会在两边生成同一个子量。读取$\bm{t}_{\mathrm{l}}$以后，右目标知道左边已经算出了“书的折后金额”，剩下的应该是“笔的金额”。
+
+子树嵌入用自底向上的递归组合计算：叶节点的嵌入就是其词元嵌入$\bm{e}(\hat y)$；运算符节点的左右子树都完成后，
+\begin{equation}
+  \bm{t}=\sigma\bigl(\bm{W}_{\mathrm{gt}}[\bm{t}_{\mathrm{l}};\bm{t}_{\mathrm{r}};\bm{e}(\hat y)]\bigr)\odot
+  \tanh\bigl(\bm{W}_{\mathrm{ct}}[\bm{t}_{\mathrm{l}};\bm{t}_{\mathrm{r}};\bm{e}(\hat y)]\bigr),
+  \label{eq:nlp-execution-gts-comb}
+\end{equation}
+其中$\bm{W}_{\mathrm{gt}},\bm{W}_{\mathrm{ct}}\in\mathbb{R}^{d\times3d}$。目标向量描述的是“打算算什么”，子树嵌入描述的是“已经算出了什么”；后者由实际生成的运算符与数量合成，比目标向量更贴近已完成的计算。
+
+生成顺序是树的前序遍历：先生成节点本身，再递归生成左子树，最后生成右子树。训练时使用标注的表达式树做教师强制，模型在前序的每个位置预测正确词元，目标函数是整棵树的负对数似然：
+\begin{equation}
+  \mathcal{L}_{\mathrm{GTS}}=-\sum_{(P,T)}\sum_{k=1}^{m}\log p\bigl(y_k\mid\bm{q}_k,\bm{c}_k\bigr),
+  \label{eq:nlp-execution-gts-loss}
+\end{equation}
+其中$m$是树$T$的节点数，$y_k$是前序第$k$个节点的标注词元，$\bm{q}_k$与$\bm{c}_k$是该节点的目标向量和上下文向量。教师强制在这里有一个树上的含义：右子目标用到的$\bm{t}_{\mathrm{l}}$由标注的左子树合成，而不是由模型自己的预测合成。题中同一个数出现两次时，两个位置算作不同的候选词元，原文取概率较高的那个作为训练目标。推断时用一个栈保存尚待实现的目标，算法~\ref{alg:nlp-execution-gts}给出贪心版本；原文实际使用宽度为5的束搜索，束中的每个候选各自维护一个栈。
+
+\begin{algorithm}[GTS目标驱动的表达式树解码（贪心版本）]
+  \label{alg:nlp-execution-gts}
+  \begin{algorithmic}[1]
+    \Require 题目$P$的编码器状态$\bm{h}_{1:n}$，根目标$\bm{q}_0$，解码词表$V^{\mathrm{dec}}$
+    \Ensure 表达式树$T$
+    \State 把根节点及其目标$\bm{q}_0$压入目标栈$S$
+    \While{$S$非空}
+      \State 弹出栈顶节点$v$及其目标$\bm{q}$；用$\bm{q}$对$\bm{h}_{1:n}$做注意力，得到$\bm{c}$
+      \State 按式\eqref{eq:nlp-execution-gts-score}选出$\hat y=\argmax_{y}p(y\mid\bm{q},\bm{c})$，令$v$的词元为$\hat y$
+      \If{$\hat y\in V_{\mathrm{op}}$}
+        \State 按式\eqref{eq:nlp-execution-gts-left}计算$\bm{q}_{\mathrm{l}}$；为$v$创建左、右子节点，右子节点标记“待左子树完成”
+        \State 把右子节点、左子节点（含$\bm{q}_{\mathrm{l}}$）依次压入$S$ \Comment{左子节点先出栈}
+      \Else
+        \State 令$\bm{t}_v\gets\bm{e}(\hat y)$；沿祖先向上，凡左右子树均已完成的运算符节点，按式\eqref{eq:nlp-execution-gts-comb}合成其$\bm{t}$
+        \State 若栈顶是左兄弟刚完成的右子节点，按式\eqref{eq:nlp-execution-gts-right}用该左兄弟的$\bm{t}_{\mathrm{l}}$计算其目标$\bm{q}_{\mathrm{r}}$
+      \EndIf
+    \EndWhile
+    \State \Return $T$（按前序记录的词元，可直接求值）
+  \end{algorithmic}
+\end{algorithm}
+
+图~\ref{fig:nlp-execution-gts}画出金额题的生成过程。第1步根目标预测出“$+$”，分解出左子目标；第2、3步左子目标继续预测出两个“$\times$”；第4、5步依次预测叶$n_1$与$n_0$，于是第3步的子树“$n_1\times n_0$”完成，它的嵌入$\bm{t}_{\mathrm{l}}$被用来生成第2步节点的右子目标；第6步该右子目标预测出$n_4$，第2步的子树“书的折后金额”完成，其嵌入再用来生成根的右子目标；第7至9步生成“$n_3\times n_2$”。九步之后栈空，前序序列为$+\ \times\ \times\ n_1\ n_0\ n_4\ \times\ n_3\ n_2$，代回数值即得式\eqref{eq:nlp-execution-price}的80元。整个过程中每个运算符恰好得到两个子节点，生成的序列总能还原成一棵合法的树，不存在括号失配。
+
+\begin{figure}[!t]
+  \centering
+  \input{figures/09-natural-language-processing/03-text-generation-and-interaction/tikz/execution-ch14a-gts-tree.tex}
+  \caption{GTS在金额题上的目标驱动解码。节点旁的数字是前序生成的步次；蓝色实线表示父目标向下分解为左、右子目标$\bm{q}_{\mathrm{l}},\bm{q}_{\mathrm{r}}$；红色虚线表示左子树完成后合成的子树嵌入$\bm{t}_{\mathrm{l}}$，它与父信息一起生成右兄弟的目标。数量按原文顺序编号，$n_4=0.8$由“八折”规范化得到。}
+  \label{fig:nlp-execution-gts}
+\end{figure}
+
+与序列到序列求解相比，GTS改变的是解码器的结构，编码器与训练数据都相同。它用树结构保证输出合法，用目标分解把“当前在为哪个子量服务”显式地传给每个节点，用子树嵌入让右侧的生成知道左侧已经算了什么。原文在Math23K数据集上做了一项对照：去掉子树嵌入、让右子目标与左子目标同样只依赖父信息时，五折交叉验证的答案正确率从74.3\%降到70.0\%，说明自底向上的信息对右子目标的生成确有作用。从更一般的角度看，GTS是第\ref{sec:nlp-inference-grammar}小节文法约束解码的一个特例：表达式的文法只有“运算符带两个子式”和“数量是叶”两条产生式，树解码器把这条文法写进了网络结构。它的局限也来自这一设定：只能生成单个表达式，不能表达方程组、多步赋值或需要循环的计算；数量必须先被正确识别为占位词元；答案正确率只核对数值，不同的树可能碰巧算出同一个数。后两类问题要由下文的程序执行与结果核验处理。
+
+\subsubsection{有限域约束与回溯求解}
+\label{sec:nlp-execution-csp}
+
+排班题不能总用一个算式直接算出答案。\term{约束满足问题}（constraint satisfaction problem, CSP）为每个变量指定有限的候选域，再要求这些变量的联合取值满足全部条件。构造一个两时段值班例子：甲、乙、丙各选时段1或2；甲乙不能同时值班，乙必须早于丙，丙只能选时段2。令变量$a,b,c$分别表示三人的时段，便得到
+\[
+ D_a=D_b=\{1,2\},\quad D_c=\{2\},\qquad a\ne b,\quad b<c.
+\]
+本题求所有可行赋值，没有额外的最小成本目标。语言到约束的映射要逐词核对：若用布尔变量$z_i$表示人员是否被选择，“至少一人”对应$\sum_i z_i\geq1$，“恰好一人”对应$\sum_i z_i=1$，“甲乙不能同时被选”对应$z_{\mathrm{a}}+z_{\mathrm{b}}\leq1$，三者限定的是不同的集合。
+
+\term{前向检查}（forward checking）是在每次赋值以后，删除尚未赋值变量中与当前赋值冲突的取值。固定变量顺序$a,b,c$，域内按升序尝试，并为每个分支保存一份域快照。令$a=1$后，$D_b$只剩$\{2\}$；再令$b=2$，约束$b<c$会把$D_c=\{2\}$删空。搜索回到$a$处，恢复原来的候选域，改试$a=2$，此时$D_b=\{1\}$，随后$b=1,c=2$满足全部条件。包括失败尝试在内，共进行了$a=1,b=2,a=2,b=1,c=2$五次赋值。更强的一致性传播可能更早发现$b=2$不可行，五次并不是这个问题的固有成本。
+
+三种结论需要三种证据。找到$(2,1,2)$只说明问题可行；继续枚举完所有分支才能确认它是唯一解；去掉$a\ne b$后$(1,1,2)$也会成为解，而增加$a<b$则无解，此时要用穷尽的搜索树说明每个分支都已失败。若只找到一个解便停止，只能报告“找到可行排班”。
+
+24点可以用类似的状态搜索，只是状态不再是人员取值。给定数字多重集$\{3,3,8,8\}$，每个数都须使用且只能使用一次，允许二元加、减、乘、除和括号。状态保存“剩余值、产生该值的表达式、已消耗的原始位置集合”。每次选两个不重叠的表达式合为一个值；减法与除法要保留两个顺序，零不能作除数。用有理数保存$8/3$，可以避免浮点误差把最终的$8/(3-8/3)=24$判成近似失败。
+
+\subsubsection{模理论约束与Z3接口}
+\label{sec:nlp-execution-z3}
+
+约束涉及整数或实数算术与布尔组合时，手写搜索很快变得繁琐。\term{可满足性模理论}（satisfiability modulo theories, SMT）求解器判断是否存在某种解释，同时满足逻辑连接词和所用数域的规则。Z3是这种求解器的一个实现。下面用官方指南的SMT-LIB命令表达同一个排班题：声明类型、加入断言、检查可满足性，再读取模型。
+
+\begin{codeblock}[label={code:nlp-execution-z3}]{排班约束的SMT-LIB表示}
+(declare-const a Int)
+(declare-const b Int)
+(declare-const c Int)
+(assert (and (<= 1 a) (<= a 2)))
+(assert (and (<= 1 b) (<= b 2)))
+(assert (= c 2))
+(assert (distinct a b))
+(assert (< b c))
+(check-sat)
+(get-model)
+\end{codeblock}
+
+这里\code{Int}限定整数，排除了1.5这样的中间时段。按前面的枚举，公式应为可满足，模型只能给出$a=2,b=1,c=2$。调用器只有在收到\code{sat}后才读取模型；\code{unsat}表示提交的公式没有模型，\code{unknown}表示这次检查未能作出决定，不能归为无解。要确认唯一性，可以加入$\lnot(a=2\land b=1\land c=2)$再检查一次，得到\code{unsat}即说明没有别的解；\code{push}/\code{pop}可以临时加入这类条件、检查后恢复原断言集。
+
+求解器只对收到的公式负责。代码~\ref{code:nlp-execution-z3}若遗漏\code{distinct}，求解器会允许甲乙同时值班，它没有办法替作者补上这条限制。因此即使返回\code{sat}，也应把模型重新代回原题的每一条语言条件；实际使用时还应固定Z3版本并保存完整输出。与有限域搜索相比，SMT把搜索与传播交给经过长期优化的求解器，能处理大得多的整数与实数约束；代价是映射到SMT-LIB的这一步仍由模型或作者完成，而这一步正是语言任务中最容易出错的地方。
+
+\subsection{程序辅助与工具集成推理}
+\label{sec:nlp-execution-program-aided}
+
+表达式树和约束都要求问题能写成某种固定的形式。更多题目需要多步计算、中间变量、循环或调用数学库，这时可以让语言模型直接写程序。纯文本推理在长计算中容易出算术错误，例如把$75\times0.8$算成65；程序辅助把算术交给解释器，解决的是计算的可靠性。但一次写完的程序无法根据中间结果调整：方程有两个根时该取哪个、数值解是否符合题意，都要看到执行结果后才能判断。工具集成推理让文本推理与代码执行交替进行，模型可以根据执行输出继续推理或改写代码。逐步写出推理文字的思维链、对多条路径投票的自一致性以及程序思维提示，已在第\ref{chap:nlp-reasoning}章讨论（第\ref{sec:nlp-execution-cot}、\ref{sec:nlp-execution-self-consistency}与\ref{sec:nlp-reasoning-program-aided}小节），本小节只展开程序执行怎样接入求解。
+
+\subsubsection{程序辅助求解：PAL}
+\label{sec:nlp-execution-pal}
+
+第\ref{sec:nlp-reasoning-program-aided}小节介绍了程序辅助语言模型（PAL）的思想：模型把题目的中间关系写成程序，数值运算交给解释器\scite{nlp-execution-gao2023pal}。这里补充它接入求解时的实现。PAL只需要少样本提示：每个示例由题目和对应的Python程序组成，变量名带有语义（如\code{book\_price}），推理说明写在注释中。模型为新题生成程序以后，系统执行一次，从约定的变量或标准输出提取答案。模型负责“把语言条件翻译成程序”，解释器负责“按程序计算”，两者的分工与表达式树求解相同，只是中间表示从固定文法的树换成了通用程序。
+
+代码~\ref{code:nlp-execution-pal}是按金额题构造的程序候选，已在本地Python 3解释器中实际执行，没有调用语言模型。它把折扣显式绑定到书的金额上，并用十进制定点数避免二进制浮点的显示误差。
+
+\begin{codeblock}[language=Python,label={code:nlp-execution-pal}]{金额题的程序候选}
+from decimal import Decimal
+
+book_price = Decimal("25")
+book_count = 3
+book_pay_ratio = Decimal("0.8")
+pen_price = Decimal("4")
+pen_count = 5
+book_payment = book_price * book_count * book_pay_ratio
+pen_payment = pen_price * pen_count
+answer = book_payment + pen_payment
+print(f"{answer:.2f}")
+\end{codeblock}
+
+实际标准输出为\code{80.00}。结果提取器检查程序正常结束、输出只有一个合法金额，再附上原题单位形成“应付80元”。执行异常、数量绑定错误与折扣作用域错误是三类不同的失败，后两类程序都正常结束；区分它们需要保存程序、解释器版本、退出码与输出，见第\ref{sec:nlp-reasoning-program-aided}小节。生成的代码还应在限制权限、时间与资源的隔离环境中执行。
+
+PAL消除了算术错误，却保留了两个局限。其一，程序在执行前一次写完，模型看不到任何中间结果；若题目需要先求出一个量、再根据它的取值决定下一步，单次程序只能把所有分支都预先写进去。其二，PAL把全部推理压进代码与注释，题意分析、分类讨论这类更适合用文字表达的步骤也被迫写成程序。
+
+\subsubsection{代码与文本交替的工具集成推理}
+\label{sec:nlp-execution-tora}
+
+\term{工具集成推理}（tool-integrated reasoning）让模型在自然语言推理与程序执行之间来回切换。ToRA是一个代表\scite{nlp-execution-gou2024tora}。它的轨迹由三类片段交替组成：
+\[
+  \tau=r_1\,a_1\,o_1\,r_2\,a_2\,o_2\cdots r_{n-1}\,a_{n-1}\,o_{n-1}\,r_n,
+\]
+其中$r_i$是自然语言推理，$a_i$是一段程序，$o_i$是工具执行$a_i$的输出，最后的$r_n$在约定位置（如\code{\textbackslash boxed\{\}}）给出答案。模型生成$r_i$与$a_i$，系统执行$a_i$得到$o_i$并写回上下文，模型再以全部历史为条件生成下一段推理。生成过程在两类标记处切换：程序块写完、模型输出代表“请给出执行结果”的标记（原文为Markdown风格的\code{output}代码块起始标记）时，系统暂停生成、执行程序、把输出接在后面；推理中出现答案标记时，整条轨迹结束。算法~\ref{alg:nlp-execution-tora}给出这一循环。
+
+\begin{algorithm}[工具集成推理的交替生成]
+  \label{alg:nlp-execution-tora}
+  \begin{algorithmic}[1]
+    \Require 题目$q$，模型$G$，提示$p$（微调后可为空），执行器$E$，停止判据$\operatorname{Stop}(\cdot)$，最大轮数$n$
+    \Ensure 轨迹$\tau$
+    \State $\tau_0\gets$空串
+    \For{$i=1,\ldots,n$}
+      \State $r_i\sim P_G(\cdot\mid p\oplus q\oplus\tau_{i-1})$ \Comment{自然语言推理}
+      \If{$\operatorname{Stop}(r_i)$} \Comment{$r_i$中已给出答案}
+        \State \Return $\tau_{i-1}\oplus r_i$
+      \EndIf
+      \State $a_i\sim P_G(\cdot\mid p\oplus q\oplus\tau_{i-1}\oplus r_i)$ \Comment{生成到执行标记为止}
+      \State $o_i\gets E(a_i)$ \Comment{执行程序，异常信息也作为输出}
+      \State $\tau_i\gets\tau_{i-1}\oplus r_i\oplus a_i\oplus o_i$
+    \EndFor
+    \State \Return $\tau_n$ \Comment{达到轮数上限，可能没有答案}
+  \end{algorithmic}
+\end{algorithm}
+
+用一道教学题说明交替的作用：“一个正数的平方比它的3倍大10，求这个数。”模型先写$r_1$：“设该数为$x$，则$x^2-3x-10=0$，用求根公式计算。”再写程序$a_1$，以\code{a, b, c = 1, -3, -10}求判别式$49$、整数平方根7，输出两根；该程序在本地Python 3中实际执行，输出$o_1$为\code{[-2, 5]}。接着模型读到两个根，写$r_2$：“题目要求正数，舍去$-2$，答案为$\boxed{5}$。”舍根这一步依赖执行结果，PAL只能把“取正根”预先写进程序，而且要事先知道会出现负根；工具集成推理则在看到$o_1$以后用文字处理它。程序报错时，错误信息同样作为$o_i$写回，模型可以在下一轮改写程序。
+
+训练分两步。第一步是模仿学习：用GPT-4在GSM8K与MATH的训练题上按算法~\ref{alg:nlp-execution-tora}生成轨迹（先贪心解码，失败的题再做核采样），只保留答案正确且没有工具错误的轨迹，构成约1.6万条的ToRA-Corpus。在这些轨迹上微调开源模型，目标函数为
+\begin{equation}
+  \mathcal{L}_{\mathrm{IL}}=-\sum_{(q,\tau)}\sum_{i=0}^{n-1}\log P_{M}\bigl(r_{i+1}\,a_{i+1}\mid q,\,r_1a_1o_1\cdots r_io_i\bigr),
+  \label{eq:nlp-execution-tora-loss}
+\end{equation}
+即只在模型自己要生成的推理与程序上计算损失；执行输出$o_i$只作为条件出现，不计入损失，因为它由解释器给出，模型不该学着“编造”执行结果。这与第\ref{sec:nlp-sft-masked-loss}小节对提示部分做损失掩码是同一种做法。
+
+第二步是\term{输出空间塑形}（output space shaping）。ToRA-Corpus中每道题大多只有一条有效轨迹，模仿学习得到的模型输出方式单一，测试时难以探索别的合理解法。塑形分三步进行。先用模仿学习后的模型对每道训练题核采样64条轨迹，保留答案正确、无工具错误的有效轨迹。再利用错误轨迹：错误的解答往往在中途才出错，前半段仍然合理。把错误轨迹按行写成$\tilde\tau=l_1\cdots l_m$，枚举前缀$\tilde\tau[:j]=l_1\cdots l_j$，让一个更强的教师模型（原文为在ToRA-Corpus上训练的CodeLLaMA-34B）从该前缀出发贪心续写，答案正确的续写便是一条“被纠正”的轨迹。最后每题至多随机取4条采样或纠正得到的轨迹，与ToRA-Corpus合并，重新训练模型。纠正轨迹教给模型的是“从一个看似合理但会出错的位置怎样走对”，这正是只看示范时学不到的。
+
+ToRA与前文方法的关系可以这样看。PAL是ToRA在一轮、且$r_1$为空时的特例；ToRA的“采样—按答案筛选—再训练”与第\ref{sec:nlp-reasoning-rft}小节的拒绝采样微调同属一类，区别在于轨迹中含有真实的执行输出，并多了从错误前缀出发的纠正；它的推理—行动—观察交替又与第\ref{sec:nlp-execution-environment}节的ReAct同构，只是工具固定为解释器，任务限于数学。ToRA的优点是计算可靠、能依据中间结果调整，并且训练后不再依赖长的少样本提示。代价是每一轮都要启动执行，推断延迟随轮数增加，原文把工具执行次数上限设为3；训练数据依赖强教师模型与带标准答案的题目；筛选只看最终答案，答案对而程序逻辑错的轨迹仍会进入训练集，这要由下一小节的核验处理。
+
+\subsection{结果验证与解释}
+\label{sec:nlp-execution-verification}
+
+候选形成后，需要分别检查最终答案、中间过程和解释三者是否成立并互相对应。一条解答可能碰巧给出80元，却包含错误等式；也可能程序算对了，随后的文字却把折扣对象说错。检查手段可按可靠性与覆盖面排列：独立规则回代最可靠，但只覆盖能写出规则的题；学习得到的奖励模型能给任意候选打分，用于在多个候选中选择或作为训练信号，但它的判断本身是预测。
+
+\subsubsection{计算回代与规则核验}
+\label{sec:nlp-execution-rule-check}
+
+规则核验器读取原题的变量表、允许运算与目标，独立重算候选。金额题可用以分为单位的整数关系交叉检查：书支付$2500\times3\times4/5=6000$分，笔支付$400\times5=2000$分，总计8000分。核验必须从原题重新绑定折扣范围，并比较书、笔两项明细；若与PAL程序共用同一段错误公式，只会重复同一个错误。
+
+24点的检查分成语法、数值与资源使用三项。解析器只允许整数叶与四则二元运算，从树中收集叶值及出现次数，检查是否恰为$\{3,3,8,8\}$，再以有理数递归求值并拒绝除零。表达式$8\times3+3-3$的值确实是24，却用了三个3、一个8，应被拒绝；直接提交常数24也没有消耗题给的数字。搜索器保存的位置集合便于构造，独立核验器则从最终表达式重建证据，不信任搜索过程中的状态记录。
+
+规则核验要预先约定数域、单位、舍入与容差，以及题目是否允许多个答案；否则“数值不同”可能只是表示不同，“数值相同”也可能掩盖对象不同。
+
+\subsubsection{结果与过程奖励模型的应用}
+\label{sec:nlp-execution-reward-models}
+
+许多自然语言解答不能完全转成规则检查，这时可以用学习的评分器帮助选择。结果奖励模型（ORM）读取题目与完整解答，预测该解答最终正确的概率；过程奖励模型（PRM）在每个推理步骤末尾预测这一步是否正确。二者的结构、训练目标（式\eqref{eq:nlp-reasoning-orm}与式\eqref{eq:nlp-reasoning-prm}）、人工步骤标注与蒙特卡洛自动标注以及步骤分数的聚合规则，已在第\ref{sec:nlp-reasoning-orm}至\ref{sec:nlp-reasoning-prm-aggregation}小节讲过。这里只说明在数学求解任务中怎样构造标签、怎样使用它们。
+
+数学题的优势是标签可以自动得到。ORM的标签来自最终答案：从解答中按约定位置提取答案，与标准答案做等价判断。等价判断本身就是一个规则核验器，其规范化要求见第\ref{sec:nlp-reasoning-rewards}小节。PRM的步骤标签可以用第\ref{sec:nlp-reasoning-prm-mc}小节的蒙特卡洛续写估计：从某一步的前缀出发续写多次，以到达正确答案的比例作为这一步的软标签。训练、调参与测试应按题目划分，并记录候选来自哪个生成器，否则验证器可能只是记住了训练题或熟悉的错误风格。
+
+在多候选选择中，两种模型解决的问题不同。设同一道金额题采样了六条解答，五条把笔也打了折、给出76元，一条给出80元。多数投票会选76元；若ORM学会了识别“折扣作用域错误”这类模式，它可以把正确的那一条排在首位。评价时应分开统计三个量：候选集合中是否有正确解，正确候选能否排在错误候选之前，以及最终选出的那一条是否正确。前一个量不足要改进生成，后两个量不足要改进评分器。
+
+ORM的标签只看答案，会把“步骤错误但末尾碰巧写对”的候选标成正例。构造三步候选：“书原价75元；$75\times0.8=65$元；加20元，合计80元”。它的答案正确，第二步乘法和第三步加法却都有错误，ORM的标签会把它当成正例。PRM在步骤上评分，若三步得分为$0.99,0.10,0.98$，按乘积聚合为$0.09702$；另一条正确的三步解答每步得0.9，乘积为$0.729$，排序便偏向后者（数值为手设的教学示例）。第一个低于阈值的步骤给出了复核位置，但确认$75\times0.8\ne65$仍应交给算术检查。PRM还可以放入搜索，在每一步只保留评分高的前缀，见第\ref{sec:nlp-reasoning-prm-beam}小节；这时每次前缀评分都要计入调用成本。两类模型都只是预测，它们在策略分布变化后可能失准，可以规则核验的部分仍应交给规则。
+
+\subsection{形式化定理证明}
+\label{sec:nlp-execution-theorem-proving}
+
+证明无法用数值回代检查，自然语言证明的每一步又可能含有不严密的跳跃。\term{证明助手}（proof assistant）把命题和证明都写成形式语言中的对象，由一个很小的可信内核逐步检查。只要内核本身正确，通过检查的证明在所用的公理系统内就是正确的，验证不再依赖评分器的判断。这把困难转移到了两处：把自然语言命题准确地写成形式命题，以及在巨大的证明空间中找到一个能通过检查的证明。本小节先说明Lean怎样检查证明，再讨论用语言模型自动形式化命题，最后讨论用语言模型生成证明步骤并配合搜索。
+
+\subsubsection{Lean证明对象检查}
+\label{sec:nlp-execution-lean}
+
+Lean 4把命题表示为类型，把证明表示为该类型的一个项：若能构造出类型为$P$的项，$P$就得到证明。检查证明于是变成检查项的类型，这由内核完成。下例只使用命题、函数应用和合取类型，不依赖额外的数学库。
+
+\begin{codeblock}[label={code:nlp-execution-lean}]{从已知前提构造证明项}
+theorem eligibility
+    (registered timely allowed : Prop)
+    (rule : And registered timely -> allowed)
+    (facts : And registered timely) : allowed :=
+  rule facts
+
+#print axioms eligibility
+\end{codeblock}
+
+\code{registered}表示已提交信息，\code{timely}表示在截止时刻前提交，\code{rule}是明确给出的前提“同时满足两条件则允许”。\code{rule}的类型是从合取到\code{allowed}的函数，把\code{facts}交给它，得到的项类型恰为\code{allowed}，于是证明完成。验收时要固定Lean版本与依赖库，排除\code{sorry}、\code{admit}等未完成占位，并审查\code{\#print axioms}列出的公理依赖；文件没有语法错误还不足以说明证明完成。
+
+直接写证明项对复杂命题并不现实，实际证明多用\term{证明策略}（tactic）书写。证明策略是一条改变证明目标的指令：系统维护当前的\term{证明状态}（proof state），即若干待证目标，每个目标由已知假设和一个待证结论组成；执行一条策略后，当前目标被关闭或被替换为新的子目标，所有目标都关闭时证明完成。同一定理用策略写成：
+\begin{codeblock}[label={code:nlp-execution-lean-tactic}]{用证明策略书写同一证明}
+theorem eligibility'
+    (registered timely allowed : Prop)
+    (rule : And registered timely -> allowed)
+    (facts : And registered timely) : allowed := by
+  apply rule
+  exact facts
+\end{codeblock}
+初始状态的目标是\code{allowed}；\code{apply rule}用\code{rule}的结论匹配目标，把目标换成它的前提\code{registered}$\land$\code{timely}；\code{exact facts}用已有假设关闭这个目标。策略程序最终仍被展开为证明项交给内核检查，因此策略本身写错只会导致检查失败，不会让错误的证明通过。两段代码只用到Lean 4核心库的定义与策略，正文未在本地编译，使用时应记录\code{lean --version}并保存检查器输出。证明策略的这种“状态—指令—新状态”结构，正是下文让语言模型逐步生成证明的基础。
+
+形式证明只对提交的命题负责。若把\code{timely}错误地定义为“4月16日当天”，证明仍会通过，却只证明了这个错误的定义，原通知中“4月16日18:00前”的要求没有被检查到。形式化映射与证明检查因此是两项独立的职责：前者对齐语言要求，后者确认在给定定义和前提下结论成立。
+
+\subsubsection{自然语言命题的自动形式化}
+\label{sec:nlp-execution-autoformalization}
+
+人工把数学题写成形式命题需要熟悉证明助手与数学库的专家，形式命题的数量因此远少于自然语言题目，这直接限制了证明模型的训练数据。\term{自动形式化}（autoformalization）用语言模型把自然语言命题翻译为形式命题。Wu等较早系统地研究了这件事：用少样本提示让代码语言模型把竞赛数学题译为Isabelle/HOL命题，人工检查发现约四分之一（25.3\%）的译文完全正确；把译出的命题用于专家迭代训练证明器，也提高了它在miniF2F基准上的证明率\scite{nlp-execution-wu2022autoformalization}。此后的工作多在Lean 4上以微调的翻译模型实现，形式与机器翻译相同：输入自然语言题目，输出一条以\code{sorry}占位证明的形式命题。
+
+自动形式化的难点是语义对齐。用一道教学题说明：“若实数$x$满足$x^2=4$且$x>0$，则$x=2$。”忠实的译文是\code{theorem t (x : Real) (h0 : x \textasciicircum{} 2 = 4) (h1 : 0 < x) : x = 2}（需要Mathlib中的实数）。常见的错误有三类。漏掉假设\code{h1}，命题变为假，证明搜索会失败，但失败本身不说明原因。把\code{Real}换成自然数\code{Nat}，命题仍然为真且容易证明，可它说的已是另一件事：在自然数中负根根本不存在，“$x>0$”这个条件被无声地吸收了；Lean中自然数的减法截断为零、除法向下取整，也常使译文与原意不符。第三类是假设互相矛盾，例如把条件误译为\code{h0 : x \textasciicircum{} 2 = 4}与\code{h1 : x < -3}，这时任何结论都能证明，证明成功反而毫无意义。
+
+针对这三类错误，筛选分几层进行。编译检查确认译文在固定版本的Lean与Mathlib中能通过类型检查，它排除语法与类型错误，却发现不了上述任何一类语义偏差。回译检查把形式命题再译回自然语言，与原题比较是否表达同一个命题；Lean Workbook用编译器与自然语言推断模型判断回译与原题是否一致，并把不一致的样例交给专家修正、加入训练集，迭代改进翻译模型\scite{nlp-execution-ying2024leanworkbook}。DeepSeek-Prover在模型评分之外加入\term{假设拒绝}（hypothesis rejection）：尝试从命题的假设证明\code{False}，若能证出，说明假设矛盾，该命题被丢弃；它还对命题与其否定同时搜索证明，若证出否定，说明译文为假\scite{nlp-execution-xin2024deepseekprover}。这些检查从不同方向补充了编译检查，但都不完备：回译模型可能把两处偏差同时“修正”回原意，自然数替换实数这样的错误也未必能被自然语言推断发现。形式定义本身错了，内核无从得知，最终仍要对代表性样本做人工审查。
+
+\subsubsection{证明策略生成与搜索}
+\label{sec:nlp-execution-proof-search}
+
+有了形式命题，下一步是找证明。证明策略的结构把证明变成一个搜索问题：状态是证明状态，动作是一条策略，Lean执行策略给出新状态或报错，所有目标关闭即到达终点。可选的策略及其参数组合极多，盲目枚举不可行；语言模型的作用是为当前状态提出少量有希望的策略。
+
+\paragraph{策略语言模型}
+GPT-f最早用语言模型生成证明步骤：把证明状态序列化为文本，训练模型在“目标$\to$下一步”的格式上做条件语言建模\scite{nlp-execution-polu2020gptf}。原文的训练样本形如\code{GOAL <目标> PROOFSTEP <步骤>}，推断时给出\code{GOAL <目标> PROOFSTEP}，让模型续写步骤。训练数据从已有的形式数学库中抽取：把库中每个证明逐步执行，记录每条策略执行前的状态，得到大量“状态—策略”对，目标函数是策略词元的负对数似然，只在策略部分计算损失。GPT-f针对Metamath，后续工作把同样的格式用于Lean。
+
+\paragraph{最佳优先搜索}
+单次采样的一条策略序列很可能中途失败，需要在多个分支间分配尝试。\term{最佳优先搜索}（best-first search）维护一个按优先级排序的待扩展状态队列，每次取出优先级最高的状态扩展。GPT-f使用累计对数概率作为优先级：
+\begin{equation}
+  \operatorname{prio}(s)=\sum_{j=1}^{J}\log p_{\bm\theta}(a_j\mid s_{j-1}),
+  \label{eq:nlp-execution-proof-priority}
+\end{equation}
+其中$s_0\xrightarrow{a_1}s_1\cdots\xrightarrow{a_J}s_J=s$是从初始状态到$s$的策略路径，$p_{\bm\theta}$是策略语言模型。优先级越高，表示模型越相信这条路径。由于每一步都加一个负数，较深的状态优先级往往较低，搜索因此带有广度优先的倾向。算法~\ref{alg:nlp-execution-best-first}以证明状态为节点给出完整过程。
+
+\begin{algorithm}[基于策略语言模型的最佳优先证明搜索]
+  \label{alg:nlp-execution-best-first}
+  \begin{algorithmic}[1]
+    \Require 形式命题对应的初始状态$s_0$，策略模型$p_{\bm\theta}$，每次扩展的采样数$e$，扩展次数上限$B$
+    \Ensure 证明（策略序列）或“未找到”
+    \State 优先队列$Q\gets\{(s_0,0)\}$；已访问集合$U\gets\{s_0\}$
+    \For{$k=1,\ldots,B$}
+      \If{$Q$为空} \Return 未找到 \EndIf
+      \State 取出$Q$中优先级最高的$(s,\pi)$
+      \State 由$p_{\bm\theta}(\cdot\mid s)$采样或束搜索得到$e$条不同的策略$a^{(1)},\ldots,a^{(e)}$
+      \For{每条策略$a$}
+        \State 在Lean中对$s$执行$a$；若报错或超时，丢弃
+        \State 得到新状态$s'$；若$s'$没有剩余目标，\Return 从$s_0$到$s'$的策略序列
+        \If{$s'\notin U$}
+          \State 把$(s',\pi+\log p_{\bm\theta}(a\mid s))$加入$Q$，$s'$加入$U$，并记录父指针
+        \EndIf
+      \EndFor
+    \EndFor
+    \State \Return 未找到 \Comment{预算耗尽，不能据此断言命题不可证}
+  \end{algorithmic}
+\end{algorithm}
+
+用代码~\ref{code:nlp-execution-lean-tactic}的定理走一遍（对数概率为教学假设，策略效果按Lean 4的语义给出）。第1次扩展取出初始状态$s_0$，目标为\code{allowed}，设模型提出三条策略：\code{apply rule}（$-0.4$）、\code{exact facts}（$-0.9$）、\code{constructor}（$-1.6$）。后两条在Lean中失败：\code{facts}的类型是合取而不是\code{allowed}，\code{constructor}要求目标是归纳类型。只有\code{apply rule}成功，得到状态$s_1$，目标为\code{registered}$\land$\code{timely}，优先级$-0.4$。第2次扩展取出$s_1$，设模型提出\code{exact facts}（$-0.1$）与\code{constructor}（$-0.7$）：前者关闭全部目标，搜索返回证明“\code{apply rule}；\code{exact facts}”，路径优先级为$-0.5$；后者会把状态拆成\code{registered}与\code{timely}两个目标，只是已不必再扩展。两次扩展、五次策略执行就找到了证明。真实问题中失败的分支远多于成功的分支，扩展上限$B$与采样数$e$决定了计算量。
+
+\paragraph{价值估计}
+累计对数概率只反映模型“多常这样写”，不反映“从这里还能不能证完”。GPT-f因此又训练了一个可证性函数：在搜索中访问过的目标，最终被证明的标为正，否则标为负，用同一个语言模型在\code{GOAL <目标> OUTCOME}之后预测\code{P}或\code{N}，以\code{P}的概率$f_{\mathrm{P}}(g)$作为目标$g$可证的估计。一条策略产生的子目标必须全部证明，所以目标的价值取同一策略产生的全部子目标（含$g$）的可证概率之积，$V(g)=\prod_{g'\in\operatorname{sib}(g)}f_{\mathrm{P}}(g')$；后续迭代用$V$代替累计对数概率作为优先级。这与第\ref{sec:nlp-reasoning-prm-mc}小节“从这一步出发还能做对的概率”是同一种价值，只是成功与否由证明助手判定。HTPS（HyperTree Proof Search）把这种“与”结构显式地写进搜索：它把搜索表示为超图，节点是单个目标，超边从一个目标指向策略产生的一组子目标，在其上做受AlphaZero启发、类似蒙特卡洛树搜索的选择与回传，并用评价模型估计目标可证的概率\scite{nlp-execution-lample2022htps}。语言状态上的蒙特卡洛树搜索见第\ref{sec:nlp-reasoning-mcts}小节；证明搜索的特殊之处在于“与”结构：父目标的价值取决于其全部子目标，而不是其中最好的一个。
+
+\paragraph{专家迭代式训练}
+搜索找到的证明可以反过来训练模型。Polu等在Lean上采用专家迭代：用当前模型对一批形式命题做证明搜索，把成功的证明拆成“状态—策略”对加入训练集，重新训练模型，再用新模型搜索，如此反复\scite{nlp-execution-polu2023curriculum}。搜索充当“专家”，模型充当“学徒”，这与第\ref{sec:nlp-reasoning-rft}小节推理轨迹上的专家迭代是同一框架，只是筛选器换成了证明检查，几乎没有假阳性。他们观察到，命题集合的难度分布足够分散时，迭代会自发形成课程：先证出的容易命题使模型变强，再证出稍难的命题。DeepSeek-Prover把这一循环与自动形式化结合：先把大量自然语言竞赛题自动形式化并筛选，再用模型生成证明，经Lean验证的证明加入训练集，更新后的模型再用于下一轮形式化与证明，迭代多轮\scite{nlp-execution-xin2024deepseekprover}。与逐条策略搜索不同，它让模型一次生成完整证明，再整体交给Lean检查；这样每次尝试只调用一次检查器，代价是失败时得不到中间状态的反馈，只能整体重采样。
+
+三种做法的取舍在于“每次调用证明助手得到多少信息”。逐策略搜索每一步都得到新状态，能及时剪掉失败分支，但与证明助手的交互次数多；整体生成交互最少，依赖模型一次写对；价值估计与超图搜索把交互花在更有希望的分支上，代价是要额外训练评价模型。三者共享同一项保证：只要命题形式化正确，找到的证明就是正确的，这是数值回代与奖励模型都给不出的。搜索失败则只说明在给定预算内没有找到证明，既不说明命题为假，也不说明形式化有误。
+
+\begin{table*}[t]
+  \centering
+  \small
+  \caption{数学与逻辑问题求解的方法对照。“新代价”指方法在解决前一问题时引入的成本或残留风险；各方法可以组合使用，如工具集成推理产生的候选再由规则核验或奖励模型选择。}
+  \label{tab:nlp-execution-solving-methods}
+  \begin{tabularx}{\linewidth}{@{}p{30mm}p{34mm}Xp{40mm}@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价\\
+    \midrule
+    序列到序列求解 & 不用人工特征生成表达式 & 数量占位，编码器—解码器生成表达式序列 & 括号失配；不知道当前在为哪个子量服务\\
+    GTS & 输出合法性与生成的结构信息 & 目标自顶向下分解，子树嵌入自底向上合成，前序生成 & 只能表达单个表达式；依赖数量识别\\
+    CSP与SMT & 多变量条件的联合满足 & 回溯与传播；交给求解器判定sat/unsat & 约束映射仍由人或模型完成\\
+    PAL & 长计算中的算术错误 & 生成程序，由解释器执行一次 & 看不到中间结果；需要隔离执行\\
+    ToRA & 需要依据中间结果调整的推理 & 推理、程序、执行输出交替；模仿学习与输出空间塑形 & 多轮执行的延迟；依赖强教师与带答案的题\\
+    规则回代 & 答案与资源使用的独立确认 & 从原题重建变量并重算 & 只覆盖能写出规则的题\\
+    ORM与PRM & 不可规则化候选的选择与定位 & 按答案或步骤标签训练评分器 & 预测会失准；PRM标签成本高\\
+    自动形式化 & 形式命题稀缺 & 翻译为Lean命题，编译、回译与假设拒绝筛选 & 语义偏差无法由内核发现\\
+    证明搜索 & 在巨大策略空间中找证明 & 策略语言模型提议，最佳优先或树搜索，专家迭代 & 与证明助手的大量交互；失败不说明不可证\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
