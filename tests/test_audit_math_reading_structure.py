@@ -48,6 +48,16 @@ class CurrentChapterStructureTests(unittest.TestCase):
         self.assertEqual([item["level"] for item in headings[8]], [1, 2, 3, 4, 5])
         self.assertEqual(headings[9][1]["number"], "9.1")
 
+    def test_outline_includes_unnumbered_paragraphs_at_their_actual_level(self):
+        headings = AUDIT.outline_headings(
+            "## 第2章 概率分布\n"
+            "### 2.1 信息量\n"
+            "#### 2.1.1 连续记录\n"
+            "###### 段：微分熵\n"
+        )
+        self.assertEqual(headings[2][-1]["level"], 5)
+        self.assertEqual(headings[2][-1]["title"], "微分熵")
+
     def test_chapter_map_rejects_duplicate_current_numbers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -59,6 +69,15 @@ class CurrentChapterStructureTests(unittest.TestCase):
             (root / AUDIT.CONTRACT).write_text("\n".join(rows))
             with self.assertRaisesRegex(ValueError, "current numbers"):
                 AUDIT.assignments(root)
+
+
+    def test_chapter_map_accepts_new_chapters_without_renumbering_retirement_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / AUDIT.CONTRACT).parent.mkdir(parents=True)
+            rows = [f"| {n} | 章节{n} | part/chapter{n}.tex |" for n in range(1, 20)]
+            (root / AUDIT.CONTRACT).write_text("\n".join(rows))
+            self.assertEqual([row["chapter"] for row in AUDIT.assignments(root)], list(range(1, 20)))
 
 
 class Chapter17RetirementTests(unittest.TestCase):

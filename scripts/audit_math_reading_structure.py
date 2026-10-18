@@ -91,11 +91,11 @@ def assignments(root: Path) -> list[dict]:
             "chapter": int(number),
             "title": title.strip(), "path": path.strip() if path.strip().startswith("tex/") else str(VOLUME / path.strip()),
         })
-    if len(rows) != 17:
-        raise ValueError(f"Expected 17 assignments, found {len(rows)}")
-    if [row["chapter"] for row in rows] != list(range(1, 18)):
-        raise ValueError("Chapter assignments must use current numbers 1 through 17 in order")
-    if len({row["path"] for row in rows}) != 17:
+    if not rows:
+        raise ValueError("Expected at least one chapter assignment")
+    if [row["chapter"] for row in rows] != list(range(1, len(rows) + 1)):
+        raise ValueError("Chapter assignments must use consecutive current numbers in order")
+    if len({row["path"] for row in rows}) != len(rows):
         raise ValueError("Chapter assignments must have unique source paths")
     return rows
 
@@ -118,6 +118,14 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
         if line.startswith("## "):
             current = None
         if current is None:
+            continue
+        paragraph = re.match(r"(#{3,7}) (?:段|paragraph)[：:](.+)$", line)
+        if paragraph:
+            result[current].append({
+                "number": f"{current}.paragraph-{line_no}",
+                "level": len(paragraph[1]) - 1,
+                "title": paragraph[2], "outline_line": line_no,
+            })
             continue
         match = re.match(r"#{3,7} (\d+(?:\.\d+)+) (.+)", line)
         if not match:
@@ -522,7 +530,10 @@ def main() -> int:
                 "path": str(path), "line": body.count("\n", 0, match.start()) + 1,
             })
     duplicate = {key: value for key, value in all_locations.items() if len(value) > 1}
-    chapter17_source = next(row["path"] for row in rows if row["chapter"] == 17)
+    chapter17_source = next(
+        row["path"] for row in rows
+        if Path(row["path"]).name.endswith("mathematics-and-future-research.tex")
+    )
     retirements = audit_retired_chapter17_labels(
         root, baseline_revision, baseline_labels, chapter17_source,
         all_locations, body_sources,
