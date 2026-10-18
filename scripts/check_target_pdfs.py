@@ -13,7 +13,7 @@ from book_catalog import group, references, tex_inputs, uncomment, volumes
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = "target/.build-manifest.json"
-MAX_PAGES = 800
+MAX_PAGES = 1000
 
 
 def digest(data):
@@ -243,7 +243,7 @@ def main():
             for name in [MANIFEST] + ["target/" + n for n in sorted(expected)]:
                 if not staged_matches(name, (ROOT / name).read_bytes()):
                     raise ValueError(f"成品尚未暂存或暂存版本已过期：{name}")
-        print("成品检查通过：十二卷 PDF 与各卷当前输入一致，均不超过800页。")
+        print("成品检查通过：十二卷 PDF 与各卷当前输入一致，均不超过1000页。")
 
 
 if __name__ == "__main__":

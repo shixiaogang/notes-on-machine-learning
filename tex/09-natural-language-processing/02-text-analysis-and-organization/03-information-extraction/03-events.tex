@@ -1,0 +1,456 @@
+\section{事件抽取}
+\label{sec:nlp-extraction-events}
+
+“海棠大学主办读书会”给出一条关系，“读书会从4月17日改至4月18日”则描述了一次改变。
+\term{事件}（event）是本体要求记录的一次发生、计划或状态变化；
+\term{事件提及}（event mention）是文中对它的一次表达。
+同一事件可以被多句重复提及，同一类型的事件也可以在不同日期多次发生。
+事件本体规定类型及每类的角色，例如“改期”带有活动、原时间、新时间等角色；
+第~\ref{sec:nlp-analysis-srl}节的语义角色标注则描述任意谓词及其参与者。
+两者的目标和角色集合不同：语义角色结构可以作特征，但事件角色仍需按本体标注与验收。
+
+事件抽取的挑战按输出层次排列：触发词多义、多词或多类型，长尾类型样本稀少；
+论元依赖事件类型，一个角色可有多个论元，论元可能跨句；流水线中触发错误传给论元，
+局部分类器无法表达跨任务约束；文档中论元散布多句，多个同类事件共享部分论元；
+多次提及要合并为同一事件，同类而不同次的事件又不能合并。
+方法谱系沿“流水线$\to$联合$\to$生成”展开：流水线先检测触发、再以事件为条件填充论元；
+联合方法在一个模型中同时预测并用全局特征约束组合；生成方法把事件结构写成目标序列。
+表~\ref{tab:nlp-extraction-event-methods}汇总各方法解决的问题与新增代价。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm} XXX@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新的代价或局限\\
+    \midrule
+    触发BIO/跨度 & 定位触发并分类 & 序列标注或跨度枚举（第9章范式） & 多类型需改为多标签；不含论元 \\
+    DMCNN & 整句池化混淆多个事件 & 按候选位置分段最大池化 & 仍需枚举候选；固定窗口卷积 \\
+    查询式检测 & 类型以整数编号，难以扩展 & 类型定义作查询，逐位置边界判别 & 每个类型一次编码；依赖定义质量 \\
+    论元跨度分类 & 论元依赖事件 & 事件--候选交互表示上的角色分类 & 依赖候选覆盖 \\
+    EEQA & 需要实体候选；角色语义未利用 & 角色问题＋阅读理解起止预测 & 每个角色一次编码；阈值需调 \\
+    JRNN/OneIE & 流水线误差传播，跨任务约束缺失 & 共享编码＋全局特征＋束搜索联合解码 & 全局特征需人工设计模板 \\
+    Text2Event & 分阶段标注与多个任务头 & 事件树线性化＋前缀树约束解码 & 生成片段需回对齐原文 \\
+    BART-Gen/DEGREE & 文档级论元、少样本 & 模板条件生成＋受限复制 & 每个事件一次生成；解析回跨度 \\
+    Doc2EDAG & 论元分散、多事件共享论元 & 按角色顺序扩展有向无环图 & 依赖角色顺序与实体抽取 \\
+    事件共指 & 多次提及合并为实例 & 提及对或提及排序＋簇级约束 & 改期等合法差异需单独处理 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{事件抽取方法对照。前三行检测触发，第四、五行填充论元，其后依次为联合解码、
+  生成、文档级多事件与实例合并。}
+  \label{tab:nlp-extraction-event-methods}
+\end{table*}
+
+\subsection{事件提及与类型识别}
+\label{sec:nlp-extraction-event-detection}
+
+\term{触发词}（trigger）是用于定位事件提及的词或短语。
+在本节教学本体中，“会议延期”的“延期”触发改期事件；
+“拟延期”中的触发仍是“延期”，但状态是计划，不是已确认发生。
+事实性可以用发生、否定、假设、计划等属性表达，它与事件类型是两个独立的输出字段。
+
+类型识别的困难首先来自覆盖范围。ACE 2005定义了33个事件子类型，
+MAVEN从维基百科构造了168个事件类型\scite{wang2020maven}
+类型越细，长尾样本越少，近义类型的边界也越模糊。下面三种方法依次改变候选的表示：
+标注与跨度方法复用第9章的范式，DMCNN让表示随候选位置变化，查询式检测把类型定义放进输入。
+
+\subsubsection{触发词BIO标注与事件跨度分类}
+\label{sec:nlp-extraction-trigger-tagging}
+
+平面触发结构可以把实体BIO标签换成事件类型标签，
+沿用第~\ref{sec:nlp-analysis-paradigm-tagging}节的发射分数、合法转移掩码
+（式~\eqref{eq:nlp-analysis-legal-mask}）与CRF负对数似然；解码后还原触发跨度及类型。
+跨度方法枚举$(i,j)$，以式~\eqref{eq:nlp-analysis-span-representation}的跨度表示
+在“事件类型或非触发”之间分类，多词触发因而不必拆成B、I两步。
+训练时未标注的候选充当负例，这要求语料对目标类型充分标注。
+
+教学句“会议／拟／延期”中，第三词元标为\code{B-RESCHEDULE}，恢复字符区间$[3,5)$；
+“拟”的区间$[2,3)$提供计划状态证据。状态属性可以用一个附加头预测：
+设触发表示与周围上下文汇聚为$\bm{g}\in\mathbb{R}^{d}$，
+$\bm{p}_{\mathrm{status}}=\operatorname{softmax}(\bm{W}_{f}\bm{g}+\bm{b}_f)$，
+$\bm{W}_f\in\mathbb{R}^{4\times d}$对应发生、否定、假设、计划四类，
+在有状态标注的样本上加入交叉熵。
+同一跨度若允许属于多个类型，单一BIO类别或跨度softmax无法表达，
+此时为每个类型设独立的sigmoid并以多热标签训练。
+
+\subsubsection{DMCNN动态多池化触发分类}
+\label{sec:nlp-extraction-dmcnn}
+
+同一句话可能包含几个事件。若对整句卷积特征取一次最大池化，
+句中最强的特征无论属于哪个候选都会进入表示，模型难以判断它与当前候选的关系。
+DMCNN在卷积之后按候选位置划分池化区域，使“特征出现在候选哪一侧”进入表示\scite{chen2015dmcnn}
+设第$i$个词的词向量与相对候选位置嵌入拼为$\bm{x}_i\in\mathbb{R}^{d_x}$，
+宽$w$的卷积核组$\bm{W}_c\in\mathbb{R}^{F\times wd_x}$产生
+$\bm{c}_i=f(\bm{W}_c[\bm{x}_{i};\ldots;\bm{x}_{i+w-1}]+\bm{b}_c)\in\mathbb{R}^{F}$，
+整句得到$F\times n$的特征图。触发分类只有一个锚点$t$，沿它分成两段逐通道池化：
+\begin{equation}
+  [\bm{p}_{L}(t)]_u=\max_{i\leq t}[\bm{c}_i]_u,\qquad
+  [\bm{p}_{R}(t)]_u=\max_{i>t}[\bm{c}_i]_u,\qquad u=1,\ldots,F.
+  \label{eq:nlp-extraction-dmcnn}
+\end{equation}
+两段拼成$2F$维的句子级特征，再与词汇级特征（候选词及左右各一词的词向量）拼接，
+经线性层和softmax在事件类型与NONE之间分类，以交叉熵训练。
+当$t=n$使右段为空时，教学实现约定$\bm{p}_R(t)=\bm{0}$，填充位置不参与比较。
+论元分类阶段有触发$t$和候选论元$a$两个锚点，按两者位置把特征图分为三段池化，
+得到$3F$维特征；这与第~\ref{sec:nlp-extraction-relations}节关系分类中PCNN按两个实体
+分三段池化是同一构造，区别只在锚点是触发与论元还是两个实体。
+
+教学句为“会议／延期／后／报名／暂停／一天”，设某一卷积通道在六个位置的响应为$(1,4,2,3,5,0)$。
+候选“延期”（$t=2$）两段池化得$(4,5)$，候选“暂停”（$t=5$）得$(5,0)$；
+整句最大池化对两者都只给出5。DMCNN的代价是每个候选重做一次池化并需要大量NONE样本；
+预训练编码器后来取代了固定窗口卷积，“表示随候选变化”的思想保留在以触发为条件的论元模型中。
+
+\subsubsection{查询式事件检测}
+\label{sec:nlp-extraction-event-query}
+
+前两种方法把事件类型当作输出层的一个整数编号，新增类型就要改输出层并重新标注。
+查询式检测把类型的名称与定义写成查询，例如“哪些词表达了活动时间的更改”，
+与原文一起输入编码器，预测触发的起止位置；换成“哪些词表达了活动取消”，
+对章首通知应输出空集。
+
+设查询$q_k$与原文联合编码得到$\bm{H}^{(k)}\in\mathbb{R}^{n\times d}$，
+按第~\ref{sec:nlp-extraction-mrc-ner}节MRC式实体识别的做法，
+对每个位置分别做起点、终点二分类，再用配对头判断哪些起止对构成一个触发。
+没有该类型的查询全部标负；逐位置二分类允许一个查询返回多个触发。
+收益是类型语义进入编码，相近类型可共享定义中的线索；代价是$K$个类型要编码$K$次，
+且检测质量依赖定义与示例的写法。
+
+\subsection{事件论元填充}
+\label{sec:nlp-extraction-arguments}
+
+确定一次事件后，才能问它的时间、地点和参与者是什么。
+\term{事件论元}（event argument）是以特定角色参与该事件的对象或表达，
+角色集合由本体定义，不由句法位置直接决定。为检查绑定，补充构造一份通知：
+“4月18日14:00，机器学习读书会在海棠楼201举行。4月19日10:00，
+数据讨论会在松柏楼102举行。两场活动均由海棠大学组织。”
+两场活动可以共享组织者“海棠大学”，却不能共享日期或地点。
+
+跨度分类以事件为条件直接给候选判角色；EEQA把每个角色写成问题，
+利用阅读理解的预训练并自然支持“无答案”。
+
+\subsubsection{事件--论元跨度分类}
+\label{sec:nlp-extraction-argument-spans}
+
+给定事件$e$，从实体提及或一般文本跨度形成候选集合$C_e$；
+后者可覆盖“4月18日14:00”这类未被实体识别列出的表达。
+设事件表示$\bm{t}_e$与候选跨度表示$\bm{a}_{i,j}$均为$d$维
+（跨度表示沿用式~\eqref{eq:nlp-analysis-span-representation}），
+事件类型、句距等附加嵌入为$\bm{u}_{e,i,j}\in\mathbb{R}^{k}$。分类头为
+\begin{equation}
+  \bm{z}_{e,i,j}
+  =\bm{W}[\bm{t}_e;\bm{a}_{i,j};
+             \bm{t}_e\odot\bm{a}_{i,j};\bm{u}_{e,i,j}]+\bm{b},
+  \quad \bm{W}\in\mathbb{R}^{(|A|+1)\times(3d+k)}.
+  \label{eq:nlp-extraction-argument-spans}
+\end{equation}
+$A$是角色集合，额外一类为无角色，$\odot$是逐元素乘积，用来表达事件与候选的交互。
+单角色规范对每个事件--候选对作softmax交叉熵，多角色规范改用独立二分类；
+类型模式掩码屏蔽该事件类型不允许的角色。
+
+训练标签按事件构造。“海棠楼201”对读书会是地点正例，对数据讨论会是无角色；
+“海棠大学”对两者都是组织者。若地点与无角色两类的分数对前者为$(2,0)$、
+对后者为$(-1,1)$，地点概率分别为$\sigma(2)\approx0.881$与$\sigma(-2)\approx0.119$：
+候选文本相同，事件条件不同，角色判断随之不同。
+候选若被句子窗口裁掉，分类头无从补救，因此要另报候选覆盖率。
+
+\subsubsection{EEQA角色问答式抽取}
+\label{sec:nlp-extraction-eeqa}
+
+跨度分类依赖候选集合，角色名称本身的语义也没有进入模型。
+EEQA把论元抽取改写为角色条件的阅读理解：问题包含事件类型、触发及角色，
+模型从原文直接预测答案的起止位置，不需要前置实体候选\scite{du2020eeqa}
+例如针对第一场“举行”询问“机器学习读书会何时举行”，对第二场则明确询问数据讨论会；
+只问“何时举行”而不指明触发，两场活动的日期都会显得合理。
+
+设问题与原文联合编码为$\bm{H}\in\mathbb{R}^{n\times d}$，其中含一个CLS位置。
+起止向量$\bm{w}_s,\bm{w}_e\in\mathbb{R}^{d}$对全部有效位置评分，并分别跨位置归一化：
+\begin{equation}
+  P_s(i)=\frac{\exp(\bm{h}_i^\top\bm{w}_s)}
+               {\sum_{u=1}^{n}\exp(\bm{h}_u^\top\bm{w}_s)},
+  \qquad
+  P_e(j)=\frac{\exp(\bm{h}_j^\top\bm{w}_e)}
+               {\sum_{u=1}^{n}\exp(\bm{h}_u^\top\bm{w}_e)}.
+  \label{eq:nlp-extraction-eeqa}
+\end{equation}
+有答案时以$-\log P_s(i^*)-\log P_e(j^*)$训练，没有该角色时起止标签都指向CLS。
+与MRC式实体识别的逐位置二分类相比，这里每个边界头在全部位置上和为1，
+多个答案只能在推理阶段通过阈值恢复。
+
+推理枚举正文中合法的$i\leq j$及允许长度，排除
+$P_s(i)<P_s(\mathrm{CLS})$或$P_e(j)<P_e(\mathrm{CLS})$的候选，再计算
+\begin{equation}
+  \delta(i,j)=P_s(\mathrm{CLS})+P_e(\mathrm{CLS})-P_s(i)-P_e(j),
+  \label{eq:nlp-extraction-eeqa-threshold}
+\end{equation}
+保留$\delta(i,j)$不大于开发集选定阈值的候选，因此一个问题可以返回多个论元。
+设有效位置只有“CLS／4月18日／14:00／海棠楼201”，
+起点概率为$(0.10,0.55,0.05,0.30)$，终点概率为$(0.10,0.10,0.65,0.15)$，
+最大答案长度为2。日期时间跨度$(2,3)$的$\delta=0.2-0.55-0.65=-1.00$，
+地点跨度$(4,4)$的$\delta=0.2-0.30-0.15=-0.25$。
+取教学阈值$-0.60$只保留前者，恢复“4月18日14:00”，
+其边界训练损失为$-\log0.55-\log0.65\approx1.029$。
+
+EEQA能找出实体识别漏掉的时间表达，代价是每个“事件、角色”组合编码一次，
+绑定仍靠问题中的触发信息。
+
+\subsection{联合与生成式事件抽取}
+\label{sec:nlp-extraction-joint-generative}
+
+前两小节是流水线：触发错了，论元跟着错；局部分类器也无法利用
+“死亡事件的受害者很可能也是同句袭击事件的受害者”这类跨任务、跨实例的规律。
+
+\subsubsection{OneIE全局特征与联合解码}
+\label{sec:nlp-extraction-oneie}
+
+联合抽取有两个先例。Li等用结构化感知机在束搜索中同时决定触发与论元，
+特征里加入跨论元的全局特征\scite{nlp-extraction-li2013joint}
+JRNN用双向循环网络编码句子，在同一次从左到右的预测中先判触发、再判论元，
+并用记忆向量记录已经预测的触发与论元之间的依赖\scite{nlp-extraction-nguyen2016jrnn}
+OneIE把这两条思路合到预训练编码器上：局部打分用神经网络，全局一致性用可学习权重的特征模板，
+解码用束搜索\scite{nlp-extraction-lin2020oneie}
+
+OneIE的输出是一张\term{信息网络}（information network）：节点是实体提及与事件触发，
+边是实体间关系与触发--实体间的论元角色。计算分三步。
+\emph{识别}：BERT编码得到词表示$\bm{x}_i$，前馈层给出BIO标签分数，
+再经CRF层（第~\ref{sec:nlp-analysis-bmes-crf}节）解码实体与触发的跨度，损失记为$L_I$；
+这一步只定边界，不定类型。\emph{分类}：节点表示$\bm{v}_i$取跨度内词表示的平均，
+各任务的前馈网络给出节点类型分数$\hat{\bm{y}}^{t}_i=\mathrm{FFN}^t(\bm{v}_i)$
+与边标签分数$\hat{\bm{y}}^{t}_{i,j}=\mathrm{FFN}^t([\bm{v}_i;\bm{v}_j])$，
+以交叉熵$L_t$训练。若每个元素取局部最高分，得到局部最优图$\hat{G}$，
+其局部分$s'(G)$是图中所选标签分数之和。
+\emph{全局打分}：一组特征模板把图映射为全局特征向量$\bm{f}_G\in\mathbb{R}^{M}$，
+例如“图中是否有多个袭击事件”“某类事件带有多个同角色论元的次数”
+“死亡事件、受害者角色、地名实体这一组合出现的次数”。全局分为
+\begin{equation}
+  s(G)=s'(G)+\bm{u}^{\top}\bm{f}_G,
+  \qquad
+  L=L_I+\sum_{t}L_t+\bigl(s(\hat{G})-s(G^{*})\bigr),
+  \label{eq:nlp-extraction-oneie-score}
+\end{equation}
+其中$\bm{u}\in\mathbb{R}^{M}$是与网络一起训练的特征权重，$G^{*}$是金标准图。
+最后一项要求金标准图的全局分不低于局部最优图：局部最优图含有而金标准没有的组合，其特征权重被压低。
+
+以构造句“来自海棠市的一名志愿者在事故中遇难”为例，局部分类器把“志愿者”（人）
+判为死亡事件受害者的分数为1.2、无角色为0.4；把“海棠市”（地名）判为受害者的分数为1.0、
+无角色为0.8。局部最优图$G_1$把两者都标为受害者，局部分2.2；
+把“海棠市”改为无角色的$G_2$局部分2.0。设“死亡—受害者—地名”特征的权重已学得$-1.5$，
+则$s(G_1)=2.2-1.5=0.7$，$s(G_2)=2.0$，联合解码选择$G_2$。
+该权重若初始为0而金标准是$G_2$，最后一项为0.2，对权重的梯度为$f_{G_1}-f_{G_2}=1$，
+梯度下降使权重变负。以上分数均为教学示例。
+
+全局特征使搜索空间不再能逐元素分解，OneIE用算法~\ref{alg:nlp-extraction-oneie-beam}
+的束搜索近似求解：节点按出现顺序逐个加入，每个节点只考虑局部分最高的$\beta_v$个类型，
+每条新边只考虑局部分最高的$\beta_e$个标签，每完成一个节点的全部边后按全局分保留$\theta$张候选图。
+原文取$\beta_v=\beta_e=2$、$\theta=10$。束搜索的一般形式见第~\ref{sec:nlp-generation-beam}节，
+这里被扩展的不是词元序列，而是逐步长大的图。
+
+\Needspace{14\baselineskip}
+\begin{algorithm}[OneIE的束搜索联合解码]
+  \label{alg:nlp-extraction-oneie-beam}
+  \begin{algorithmic}[1]
+    \Require 识别出的节点$v_1,\ldots,v_m$（按出现顺序），各节点与节点对的标签分数，
+      全局特征权重$\bm{u}$，候选数$\beta_v,\beta_e$，束宽$\theta$
+    \Ensure 全局分最高的信息网络$G$
+    \State $B\gets\{\varnothing\}$\Comment{只含空图的束}
+    \For{$i=1,\ldots,m$}
+      \State $V_i\gets v_i$局部分最高的$\beta_v$个类型
+      \State $B\gets\{G+(v_i,\ell)\mid G\in B,\ \ell\in V_i\}$\Comment{节点步}
+      \For{$j=1,\ldots,i-1$}\Comment{边步；两端都是触发时跳过}
+        \State $E_{j,i}\gets$边$(v_j,v_i)$局部分最高的$\beta_e$个标签（含无边）
+        \State $B\gets\{G+(v_j,v_i,\ell)\mid G\in B,\ \ell\in E_{j,i}\}$
+        \If{$|B|>\theta$}
+          \State 按$s(G)=s'(G)+\bm{u}^{\top}\bm{f}_G$排序，只保留前$\theta$个
+        \EndIf
+      \EndFor
+    \EndFor
+    \State \Return $\argmax_{G\in B}s(G)$
+  \end{algorithmic}
+\end{algorithm}
+
+OneIE解决了流水线的误差传播与跨任务约束缺失，代价是全局特征模板需要人工设计，
+且束搜索只给近似最优；节点边界仍由识别步决定，边界错误不会在联合解码中被修正。
+
+\subsubsection{Text2Event序列到结构生成}
+\label{sec:nlp-extraction-text2event}
+
+OneIE仍需要触发标注、实体标注和多个任务头。Text2Event换一个方向：
+把事件类型、触发与角色论元组织成一棵树，线性化为带括号的序列，
+让编码器--解码器模型（原文用T5）直接从原文生成它\scite{lu2021text2event}
+训练只需要“原文、事件记录”对，不需要逐词元的触发标注。
+在本节教学改期模式下，章首通知的目标结构为
+\begin{quote}
+（（改期 改至（活动 机器学习读书会）（原时间 4月17日）\\
+（新时间 4月18日（周五）14:00）））
+\end{quote}
+最外层括号包住全部事件，每个事件是“（类型 触发 （角色 论元）……）”；
+没有事件时目标是空括号“（）”。实际序列用独立的结构标记表示括号，
+日期中的普通括号按原文字符处理，避免与树边界混淆。
+训练用教师强制的条件负对数似然（第~\ref{sec:nlp-sft-masked-loss}节）。
+
+自由生成可能写出本体中没有的类型名、不允许的角色，或原文中不存在的词。
+Text2Event在解码时用\term{前缀树}（trie）约束每一步的候选：前缀树把一组合法词元序列
+按公共前缀合并，从根走到某个节点得到一个合法前缀，节点的子边就是下一步允许的词元。
+解码器根据已生成的括号判断当前处在树的哪个位置：
+刚打开一个事件时，候选限于事件类型名构成的前缀树；类型写完后进入触发位置，
+候选限于输入原文中的词元；打开一个角色时，候选限于该事件类型允许的角色名；
+角色名之后又回到原文词元。记当前位置的允许集合为$A(y_{<t})$，约束分布为
+\begin{equation}
+  \tilde{p}(y_t\mid y_{<t},x)\propto
+  p_{\bm{\theta}}(y_t\mid y_{<t},x)\,\mathbb{I}[y_t\in A(y_{<t})],
+  \label{eq:nlp-extraction-text2event-mask}
+\end{equation}
+它是式~\eqref{eq:nlp-inference-constrained}的特例：允许集合由事件模式与原文共同决定，
+括号的配对则像第~\ref{sec:nlp-inference-grammar}节那样需要记录嵌套深度。
+例如类型名有“改期”和“取消”时，前缀树在根下分出两条边，生成“改”之后只允许“期”。
+
+训练顺序也是Text2Event的一部分。直接学完整事件树较难，原文先训练\term{子结构学习}
+（substructure learning）阶段：目标只含“（类型 触发）”和“（角色 论元）”这样的独立片段，
+让模型先学会从原文定位片段；再在完整结构上继续训练。这一课程只改变学习难度的次序，
+不改变最终要恢复的目标。生成结束后，解析器把树转回记录，并把触发与论元字符串回对齐到原文位置。
+
+Text2Event与第~\ref{sec:nlp-extraction-entities}节的UIE同属
+第~\ref{sec:nlp-analysis-paradigm-generation}节的约束生成范式，后者侧重用统一结构语言覆盖多种任务。
+其局限在回对齐：原文有两个相同日期字符串时，生成结果无法确定指哪一处；
+树结构合法也不保证论元挂在正确的事件下。
+
+\subsubsection{事件模板条件生成}
+\label{sec:nlp-extraction-event-template}
+
+Text2Event的目标序列是人工设计的括号语言，与预训练语料的自然语言相差较远。
+模板条件生成改为让模型“填空”：每个事件类型配一句带角色占位符的自然语言模板，
+模型在文档条件下生成填好的模板。BART-Gen以BART为生成器，处理文档级论元抽取
+\scite{li2021wikievents}
+输入是“\code{<s>}模板\code{<s></s>}文档\code{</s>}”，模板中各角色写成占位符\code{<arg>}，
+文档中的当前触发两侧加标记\code{<tgr>}，以区分同一文档中的多个事件。
+教学模板为“\code{<arg>}于\code{<arg>}在\code{<arg>}举行”，三个占位符按位置分别对应活动、
+时间和地点；对读书会，目标是“机器学习读书会于4月18日14:00在海棠楼201举行”。
+缺失的角色保留\code{<arg>}，同一角色的多个论元用“和”连接。
+
+为防止生成原文中没有的论元，BART-Gen把输出分布限制在输入词元集合$V_c$
+（模板与文档中出现过的词元）上：
+\begin{equation}
+  p(x_i=w\mid x_{<i},c)=
+  \begin{cases}
+    \dfrac{\exp(\bm{h}_i^{\top}\bm{e}_w)}{\sum_{w'\in V_c}\exp(\bm{h}_i^{\top}\bm{e}_{w'})}, & w\in V_c,\\[2ex]
+    0, & w\notin V_c,
+  \end{cases}
+  \label{eq:nlp-extraction-bartgen-copy}
+\end{equation}
+其中$\bm{h}_i$是解码器第$i$步输出，$\bm{e}_w$是词元$w$的嵌入。
+与式~\eqref{eq:nlp-analysis-copy}的复制机制相比，这里没有“生成或复制”的门控，
+而是只允许复制；它减少了库外词，但输入词元的任意组合仍可能不是原文的一个连续跨度。
+生成后按模板对齐解析：模板中的固定词（“于”“在”“举行”）作为分隔，
+把各占位符位置上的文本切出并映射回角色，再在文档中定位字符跨度；
+找不到连续匹配的输出标记为解析失败，而不是强行就近对齐。
+
+DEGREE把模板生成扩展到触发检测\scite{nlp-extraction-hsu2022degree}
+输入除了原文，还有事件类型的自然语言描述、若干示例触发词和模板；
+输出一句“触发是……”加填好的模板，再确定性地解析出触发与论元。
+每个事件类型各生成一次，类型描述和关键词作为弱监督进入输入，便于少样本学习。
+模板生成的共同代价是每个“文档、事件或类型”都要生成一次，解析回跨度与论元归属仍需核验。
+
+\subsection{文档级事件抽取：Doc2EDAG}
+\label{sec:nlp-extraction-doc2edag}
+
+句子级方法在金融公告上遇到两个问题。一是\emph{论元分散}：
+一笔股权质押的质押人、股数、质权人、起止日期可能分别出现在不同句子中，
+没有一句话包含完整记录。二是\emph{多事件}：一篇公告可以记录同一股东的多笔质押，
+各笔共享质押人而股数、质权人不同，独立地对每个角色挑选论元会把不同笔的字段混在一起。
+Doc2EDAG针对中文金融公告提出端到端的文档级框架，并采用无触发词设定：
+标注只给事件表格，不要求标出触发词\scite{nlp-extraction-zheng2019doc2edag}
+
+模型分三段。\emph{实体识别}：每句经Transformer编码为$\bm{h}_i\in\mathbb{R}^{N_w\times d_w}$，
+接CRF做BIO标注，标签来自与表格匹配的论元，损失为$L_{\mathrm{er}}$。
+\emph{文档级实体编码}：对每个实体提及的词表示做最大池化得到提及向量，
+对每句的词表示做最大池化得到句向量$\bm{c}_i$；加上句子位置嵌入后，
+全部提及向量与句向量一起送入第二个Transformer交换信息，
+再把同名提及的输出最大池化合并，得到$N_e$个实体的文档感知表示
+$\bm{E}^{d}\in\mathbb{R}^{N_e\times d_w}$与句表示$\bm{C}^{d}\in\mathbb{R}^{N_s\times d_w}$。
+\emph{EDAG生成}：对$\bm{C}^{d}$最大池化得到文档向量，对每个事件类型做二分类判断是否出现
+（损失$L_{\mathrm{tr}}$）；对出现的类型，按人工规定的角色顺序逐步扩展一张
+\term{实体有向无环图}（entity-based directed acyclic graph, EDAG）。
+
+EDAG由事件表格构造：每条记录按角色顺序写成论元链表，缺失角色用特殊节点NA，
+再把所有链表的公共前缀合并。图~\ref{fig:nlp-extraction-doc2edag}的教学公告含两笔质押：
+“股东甲将3000万股质押给乙银行”“甲另将1000万股补充质押给丙证券”。
+按“质押人$\to$质押股数$\to$质权人”的顺序，两条链表共享前缀“甲”，
+在第二个角色处分叉；每条从根到叶的完整路径对应表格的一行，恢复表格只需枚举路径。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/09-natural-language-processing/02-text-analysis-and-organization/tikz/extraction-ch10c-doc2edag.tex}
+  \caption{Doc2EDAG的路径扩展（教学示例）。左端是事件类型触发节点，自左向右依次决定
+  质押人、质押股数、质权人三个角色。每一步对当前叶节点的路径，对全部候选实体做二分类，
+  选中的实体成为新节点；两笔质押共享“甲”，在第二步分叉为两条路径，每条完整路径对应一条事件记录。}
+  \label{fig:nlp-extraction-doc2edag}
+\end{figure}
+
+路径扩展把“填一张表”拆成一串子任务：对当前角色$k$与当前叶节点的路径，
+判断每个实体是否应作为该角色的论元接到路径上；没有实体被选中时接一个NA节点。
+为了让子任务知道路径上已经有哪些实体，模型为每条路径维护记忆张量
+$\bm{M}\in\mathbb{R}^{(N_s+k-1)\times d_w}$：初始化为$\bm{C}^{d}$，
+每扩展一步追加所选实体的表示（NA追加零向量）。扩展概率为
+\begin{equation}
+  \begin{aligned}
+  \bm{E}^{r}&=\mathrm{Transformer}_3\bigl([\bm{M};\bm{E}^{d}]+\bm{r}_k\bigr)_{\text{实体部分}},\\
+  p(\text{扩展实体}e)&=\sigma(\bm{w}^{\top}\bm{E}^{r}_{e,:}+b),
+  \end{aligned}
+  \label{eq:nlp-extraction-doc2edag-expand}
+\end{equation}
+其中$\bm{r}_k$是可训练的角色指示嵌入，加到每一行上；取输出中对应$N_e$个实体的行做二分类。
+每个子任务的交叉熵相加为$L_{\mathrm{dag}}$，总损失为
+$\lambda_1L_{\mathrm{er}}+\lambda_2L_{\mathrm{tr}}+\lambda_3L_{\mathrm{dag}}$。
+在图示例子中，第三步在“3000万股”之后只有“乙银行”标为1，在“1000万股”之后只有“丙证券”标为1：
+两条路径的记忆不同，同一实体在两个子任务中得到相反的标签，这正是区分两笔记录的机制。
+
+Doc2EDAG用文档级编码解决论元分散，用共享前缀的图解决多事件共享论元；
+代价是角色顺序需人工规定且前面选错会影响后续扩展，实体识别错误无法补回，推理逐角色串行。
+
+\subsection{事件共指与合并}
+\label{sec:nlp-extraction-event-coreference}
+
+一篇通知和它的转发描述同一次读书会，连续两周的读书会却是不同实例。
+\term{事件共指}（event coreference）把表达同一次事件的提及归为一簇。挑战是触发措辞不同、
+论元缺失或冲突、改期使同一事件的提及日期不一致，以及簇级传递一致性。
+方法沿用第~\ref{sec:nlp-analysis-coreference}节的实体共指框架，差别在于特征要比较论元。
+
+\subsubsection{提及对与提及排序}
+\label{sec:nlp-extraction-event-coref-models}
+
+提及对模型对事件提及对$(a,b)$构造特征$\bm{\phi}_{a,b}$：触发语境的相似度、
+已绑定论元的一致性（参与者是否共指、时间地点是否兼容）、事实性是否相同、来源关系，
+预测$p_{a,b}=\sigma(\bm{w}^{\top}\bm{\phi}_{a,b})$，按式~\eqref{eq:nlp-analysis-mention-pair}的
+二元交叉熵训练。编码器或双线性头可以替换线性评分，但正例必须指同一次事件，不能只是同类型。
+提及排序模型则对每个事件提及在较早提及与“无先行项”之间做一次softmax
+（式~\eqref{eq:nlp-analysis-antecedent-softmax}），并以正确先行项集合的边缘似然训练
+（式~\eqref{eq:nlp-analysis-coreference-marginal}），从而比较多个候选而非逐个过阈值。
+
+事件共指比实体共指更依赖簇级约束。构造三条记录：$a$为编号\code{ML-0418}的通知，
+$b$为省略编号但明确转引该通知的报道，$c$为编号\code{ML-0425}的下周读书会。
+教学分数取$p_{a,b}=0.92$、$p_{b,c}=0.86$、$p_{a,c}=0.10$，阈值0.8。
+对过阈值的边取传递闭包会把三者合为一簇；受约束的凝聚聚类按分数从高到低合并，
+先合并$a,b$，再因可靠编号冲突拒绝把$c$并入，得到$\{a,b\}$与$\{c\}$。
+日期不同并不总是硬冲突：同一活动改期后，旧通知与新通知的日期不同却应共指，
+因此要先辨认“原定”“改至”等角色，再决定日期比较的是哪一个字段。
+
+\subsubsection{事件共指的评价}
+\label{sec:nlp-extraction-event-coref-metrics}
+
+事件共指沿用第~\ref{sec:nlp-analysis-coreference-metrics}节的MUC、B³、CEAF$_e$与CoNLL F1。
+事件语料中单例很多：大部分事件只被提及一次。MUC不计单例，
+B³与CEAF$_e$却会因为大量单例天然正确而偏高，三者对同一系统可能给出差别很大的结论。
+\term{BLANC}（bilateral assessment of noun-phrase coreference）把兰德指数的思路用于共指，
+对共指链接与非共指链接分别计算F1再平均\scite{nlp-extraction-recasens2011blanc}
+设参考答案中的共指提及对集合为$C_k$、非共指提及对集合为$N_k$，
+系统输出相应为$C_r$、$N_r$，则
+\begin{equation}
+  F_c=\frac{2|C_k\cap C_r|}{|C_k|+|C_r|},\qquad
+  F_n=\frac{2|N_k\cap N_r|}{|N_k|+|N_r|},\qquad
+  \mathrm{BLANC}=\frac{F_c+F_n}{2}.
+  \label{eq:nlp-extraction-blanc}
+\end{equation}
+用第9章的五提及例子核算：参考簇$\{a,b,c\},\{d,e\}$，系统簇$\{a,b\},\{c,d,e\}$。
+共指对$C_k=\{ab,ac,bc,de\}$，$C_r=\{ab,cd,ce,de\}$，交集2，$F_c=0.5$；
+其余各6对为非共指，交集为$\{ad,ae,bd,be\}$，$F_n=4/6\approx0.667$；BLANC约为0.583。
+直接用兰德指数（全部10对中判对的比例）得0.6，与BLANC相近；
+但单例增多时非共指对数按提及数的平方增长，兰德指数几乎只反映非共指链接，BLANC则让两类链接各占一半。

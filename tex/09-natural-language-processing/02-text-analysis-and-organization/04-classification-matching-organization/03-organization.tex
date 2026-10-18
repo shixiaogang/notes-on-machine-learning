@@ -1,0 +1,285 @@
+\section{文本集合的组织}
+\label{sec:nlp-classification-organization}
+
+前两节的类别和关系都有外部定义。面对一批还没有目录的通知，问题变成怎样发现可供浏览的结构。主题模型给出主题词与文档的混合权重，聚类给出文档簇，关键词给出单篇或一组材料的导航入口。三类结果可以配合使用，但含义不同，评价方式也不同：一个簇名概括了多数成员，不意味着每个成员的每句话都符合它；主题比例、聚类成员分数和关键词得分只在各自模型的定义内有意义。
+
+\subsection{主题发现}
+\label{sec:nlp-classification-topics}
+
+\term{主题发现}（topic discovery）从一批文本中寻找反复出现的内容模式，并用词语和代表文档解释。若事先规定类别并有标签，应回到第~\ref{sec:nlp-classification-attributes}节的监督分类。令$x_{d,v}$为文档$d$中词$v$的计数，$K$为主题数，$V$为固定词表。分词、停用词和低频过滤先决定了模型能看见什么：把“无需”删掉以后，词袋方法已无从利用这个否定词。下文固定三个教学词“讲座、报名、场地”，两篇训练文档的计数矩阵为
+\begin{equation}
+ \label{eq:nlp-classification-topic-counts}
+ \bm X=\begin{pmatrix}2&1&0\\0&1&2\end{pmatrix},
+\end{equation}
+$d_1$围绕讲座与报名，$d_2$围绕报名与场地；另留一篇三词各出现一次的混合文档$d_3=(1,1,1)$，检查新文档怎样使用。
+
+主题发现的困难有五个：结果没有标准答案，难以解释和评价；主题数$K$需要选择；短文本的词袋极其稀疏；新文档的推断有成本；词袋丢掉了词序和角色。方法谱系大致沿这些困难推进。LSA用截断奇异值分解得到潜在维度，但坐标可负、难以解释；NMF加非负约束，成分可读作主题；pLSA给出概率生成解释，用EM估计；LDA加Dirichlet先验，使新文档有后验并缓和短文本过拟合；神经主题模型用推断网络一次前向得到新文档的潜在表示；CTM把上下文句向量接入推断网络，部分弥补词袋丢失的信息；BERTopic改为先聚类句向量、再提取主题词。表~\ref{tab:nlp-classification-topic-methods}对照这些方法。
+
+\begin{table*}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{17mm}
+   >{\raggedright\arraybackslash}p{30mm}>{\raggedright\arraybackslash}X
+   >{\raggedright\arraybackslash}p{30mm}>{\raggedright\arraybackslash}X@{}}
+  \toprule
+  方法 & 解决的问题 & 核心机制 & 新文档处理 & 新代价与权重含义 \\
+  \midrule
+  LSA & 同义词分散在不同维度 & 截断SVD，保留前$r$个奇异方向 & 投影到固定右奇异向量 & 坐标可负、符号可翻转，不是概率 \\
+  NMF & LSA成分难以解释 & 非负低秩分解，乘性更新 & 固定成分求非负系数 & 尺度不可识别，归一化后也不是后验 \\
+  pLSA & 缺少概率解释 & 文档主题比例与主题词分布的混合，EM & 固定词分布局部拟合 & 参数随文档数增长，无文档先验 \\
+  LDA & 新文档无定义、短文本过拟合 & Dirichlet先验，折叠Gibbs或变分推断 & 对新文档作后验推断 & 推断迭代代价；主题比例的后验估计 \\
+  NVDM、ProdLDA & 逐篇迭代推断太慢 & 推断网络与重参数化，最大化ELBO & 一次前向 & 训练不稳定、主题可能塌缩；高斯坐标或logits组合权重 \\
+  CTM & 词袋丢失语序与语境 & 句向量与词袋共同输入推断网络 & 同一编码器与词表 & 依赖句编码器与截断；权重含义同ProdLDA \\
+  BERTopic & 短文本词袋稀疏 & 句向量降维、密度聚类、c-TF-IDF选词 & 固定变换与聚类预测接口 & 每篇只归一簇，有离群点；成员分数不是词生成比例 \\
+  \bottomrule
+ \end{tabularx}
+ \caption{主题发现方法的对照。各行基于相同教学材料比较机制，不构成性能排名。潜在坐标、非负系数、主题比例和聚类成员分数即使都落在$[0,1]$，也不能互相替换。}
+ \label{tab:nlp-classification-topic-methods}
+\end{table*}
+
+\FloatBarrier
+\subsubsection{LSA：截断奇异值分解与潜在语义}
+\label{sec:nlp-classification-lsa}
+
+“报名”和“登记”在词袋里是两个无关维度，可它们常在相似的文档中出现。\term{潜在语义分析}（latent semantic analysis，LSA）用文档—词矩阵的低秩结构把这些分散的词关联起来：取截断奇异值分解$\bm X\approx\bm U_r\bm\Sigma_r\bm V_r^\top$，$\bm V_r$的每列是一条词空间方向，文档坐标为$\bm X\bm V_r=\bm U_r\bm\Sigma_r$。截断SVD在Frobenius范数下给出最优的秩$r$逼近，非负矩阵分解则在非负约束下求低秩逼近；这两种分解的一般性质可参考\BookChapterRef{chap:dimensionality-reduction}{卷四的降维章}，本节只看它们怎样用于文本。实际使用通常先作TF-IDF加权。
+
+为单独看清分解，本例对式~\eqref{eq:nlp-classification-topic-counts}不加权。两个非零奇异值为$\sqrt6$和2，右方向可取$\bm v_1=(1,1,1)^\top/\sqrt3$、$\bm v_2=(1,0,-1)^\top/\sqrt2$。只保留第一维时，两篇坐标都是$\sqrt3$，重构矩阵两行都是$(1,1,1)$，只剩“都涉及这组词”的共同方向；保留第二维后坐标为$(\sqrt3,\sqrt2)$与$(\sqrt3,-\sqrt2)$，讲座与场地的差别才恢复。新文档沿固定词表加权后右乘$\bm V_r$，不重新拟合；$d_3$投影为$(\sqrt3,0)$。第二方向含负载荷，整列翻转符号也不改变分解，所以它不是“两种主题的概率差”，解释时应分别列出正、负载荷高的词并核读文档。
+
+\subsubsection{NMF：非负成分与主题权重}
+\label{sec:nlp-classification-nmf}
+
+LSA的负坐标难以读作“文档含有多少某主题”。若要求每篇文本由非负成分相加解释，可取$\bm X\approx\bm W\bm H$，$\bm W\in\mathbb R_{\geq0}^{D\times K}$为文档系数，$\bm H\in\mathbb R_{\geq0}^{K\times V}$为成分词权重，最小化$\frac12\|\bm X-\bm W\bm H\|_F^2$\scite{lee1999nmf,lee2001nmf}。乘性更新从正初始化出发，交替执行
+\[
+  \bm W\leftarrow\bm W\odot\frac{\bm X\bm H^\top}{\bm W\bm H\bm H^\top},\qquad
+  \bm H\leftarrow\bm H\odot\frac{\bm W^\top\bm X}{\bm W^\top\bm W\bm H},
+\]
+除法逐元素进行。每一步把元素乘以一个非负比值，非负性自动保持，目标值不增。
+
+对同一$\bm X$取$\bm W=\bigl(\begin{smallmatrix}1&0.5\\0.5&1\end{smallmatrix}\bigr)$、$\bm H=\bigl(\begin{smallmatrix}1&1&0\\0&1&1\end{smallmatrix}\bigr)$，重构两行为$(1,1.5,0.5)$、$(0.5,1.5,1)$，目标值为1.5。固定$\bm H$更新$\bm W$，得$\bm W'=\bigl(\begin{smallmatrix}1.2&0.25\\0.25&1.2\end{smallmatrix}\bigr)$，目标值降至0.905；这只是半轮。两成分的高权重词分别为“讲座、报名”和“报名、场地”，可以读作两个主题。新文档固定$\bm H$求非负最小二乘系数，$d_3$的最优系数为$(2/3,2/3)$。$\bm W$某列乘常数、$\bm H$对应行除以同一常数，重构不变，因此比较系数前必须约定归一化；归一化后的$(1/2,1/2)$是人为消除尺度的结果，不是后验概率。不同初始化可能得到重复成分，非负也不自动带来稀疏。
+
+\subsubsection{pLSA：概率潜在语义分析}
+\label{sec:nlp-classification-plsa}
+
+NMF的系数有了可读的符号，却仍没有概率解释，也就无法谈似然与留出预测。\term{概率潜在语义分析}（probabilistic latent semantic analysis，pLSA）把成分约束成分布：文档$d$有主题比例$\theta_{d,k}=p(z=k\mid d)$，主题$k$有词分布$\phi_{k,v}=p(w=v\mid z=k)$，每个词先按文档比例选主题、再按主题选词\cite{pgm-static-directed-hofmann1999}：
+\[
+ p(v\mid d)=\sum_{k=1}^{K}\theta_{d,k}\phi_{k,v},\qquad
+ \ell=\sum_{d,v}x_{d,v}\log\Bigl(\sum_k\theta_{d,k}\phi_{k,v}\Bigr).
+\]
+求和在对数内部，无法闭式最大化，于是用EM：E步按当前参数计算每个已观测词来自各主题的责任度，M步把责任度当作加权计数重新归一化。EM的一般推导与单调性见第~\ref{sec:nlp-classical-interpolation-em}小节，也可参考\BookChapterRef{chap:pgm-parameter-learning}{卷六的参数学习章}；下面在计数矩阵上完整走一轮。
+
+取两个主题，初始化$\bm\Theta^{(0)}=\bigl(\begin{smallmatrix}0.8&0.2\\0.2&0.8\end{smallmatrix}\bigr)$、$\bm\Phi^{(0)}=\bigl(\begin{smallmatrix}0.6&0.3&0.1\\0.1&0.3&0.6\end{smallmatrix}\bigr)$。E步的责任度为
+\[
+ r_{d,v,k}=\frac{\theta_{d,k}\phi_{k,v}}{\sum_j\theta_{d,j}\phi_{j,v}}.
+\]
+$d_1$中“讲座”来自主题1的未归一化质量为$0.8\times0.6=0.48$，来自主题2为$0.02$，责任度为$(0.96,0.04)$；它出现两次，贡献加权计数$(1.92,0.08)$。全部非零项见表~\ref{tab:nlp-classification-plsa-em}。
+
+\begin{table}[htbp]
+ \centering
+ \begin{tabular}{@{}ccrcccc@{}}
+  \toprule
+  文档 & 词 & 次数 & $r_1$ & $r_2$ & $x r_1$ & $x r_2$\\
+  \midrule
+  $d_1$ & 讲座 & 2 & 0.96 & 0.04 & 1.92 & 0.08\\
+  $d_1$ & 报名 & 1 & 0.80 & 0.20 & 0.80 & 0.20\\
+  $d_2$ & 报名 & 1 & 0.20 & 0.80 & 0.20 & 0.80\\
+  $d_2$ & 场地 & 2 & 0.04 & 0.96 & 0.08 & 1.92\\
+  \bottomrule
+ \end{tabular}
+ \caption{pLSA的一次E步。零计数项不贡献加权计数。每行责任度之和为1，加权计数之和等于该词的出现次数。}
+ \label{tab:nlp-classification-plsa-em}
+\end{table}
+
+M步按文档和主题分别归一化加权计数：
+\[
+ \theta_{d,k}^{(1)}=\frac{\sum_vx_{d,v}r_{d,v,k}}{\sum_vx_{d,v}},\qquad
+ \phi_{k,v}^{(1)}=\frac{\sum_dx_{d,v}r_{d,v,k}}{\sum_{d,u}x_{d,u}r_{d,u,k}}.
+\]
+$d_1$的主题计数为$(2.72,0.28)$，主题1的词计数为$(1.92,1,0.08)$，总数都是3，于是
+$\bm\Theta^{(1)}=\bigl(\begin{smallmatrix}68/75&7/75\\7/75&68/75\end{smallmatrix}\bigr)$，
+$\bm\Phi^{(1)}=\bigl(\begin{smallmatrix}16/25&1/3&2/75\\2/75&1/3&16/25\end{smallmatrix}\bigr)$。
+对数似然从$-5.1805$升到$-4.3572$。重复两步直到相对增量足够小，并比较多个初始化。新文档没有训练时的$\theta_d$，只能固定$\bm\Phi$、局部迭代拟合它的比例：$d_3$从$(0.5,0.5)$出发，三个词的主题1责任度为$(0.96,0.5,0.04)$，平均仍为0.5。pLSA为每篇训练文档保存自由参数，参数随文档数线性增长，也没有“新文档比例应长什么样”的先验，短文档的比例容易被一两个词支配。
+
+\subsubsection{LDA：潜在狄利克雷分配}
+\label{sec:nlp-classification-lda}
+
+\term{潜在狄利克雷分配}（latent Dirichlet allocation，LDA）给文档比例加先验$\bm\theta_d\sim\operatorname{Dir}(\alpha\bm1_K)$，常用的贝叶斯形式还给主题词分布加$\bm\phi_k\sim\operatorname{Dir}(\beta\bm1_V)$\scite{blei2003}。这样新文档的比例有了后验，稀少观测与跨文档共享的先验共同决定结果。生成过程、折叠Gibbs采样的条件分布式~\eqref{eq:nlp-classical-lda-gibbs}及变分推断已在第~\ref{sec:nlp-classical-lda}、\ref{sec:nlp-classical-lda-inference}小节给出，概率图结构可参考\BookChapterRef{chap:pgm-static-directed}{卷六的静态有向模型章}。这里在同一计数矩阵上走通一次采样更新。
+
+把$d_1$的两次“讲座”初始指派给主题1、一次“报名”给主题2，$d_2$的三个词都给主题2；主题词计数为$(2,0,0)$与$(0,2,2)$。取$\alpha=\beta=0.5$，重采样$d_1$的“报名”。先把它从所有计数中移出：文档计数变为$(2,0)$，主题2的词计数变为$(0,1,2)$。按式~\eqref{eq:nlp-classical-lda-gibbs}，
+\[
+ u_1=(2+0.5)\frac{0+0.5}{2+1.5}=\frac5{14},\qquad
+ u_2=(0+0.5)\frac{1+0.5}{3+1.5}=\frac16,
+\]
+归一化为$(15/22,7/22)$。若均匀随机数为0.6，落入主题1，就把该词加回主题1：文档计数变为$(3,0)$，主题词计数为$(2,1,0)$与$(0,1,2)$。由这一状态估计$\widehat{\bm\theta}_{d_1}=(3.5,0.5)/4=(0.875,0.125)$，$\widehat{\bm\phi}_1=(5/9,1/3,1/9)$。第一个因子偏好文档已经常用的主题，第二个因子偏好能生成当前词的主题；若不先移出旧指派，当前词会给自己增加证据。
+
+这只是一次更新。实际要遍历全部词、多轮采样、丢弃预热阶段，对保留状态取平均；主题编号可以置换，跨运行比较前须先对齐主题。较小的$\alpha$偏好更稀疏的文档比例，较小的$\beta$偏好更集中的主题词分布。先验能缓和短文本的稀疏，却恢复不了词袋丢掉的词序与条件。
+
+\subsubsection{神经主题模型：NVDM与ProdLDA}
+\label{sec:nlp-classification-neural-topic}
+
+LDA的新文档推断需要逐篇迭代，主题模型的每次改动也要重新推导采样或变分更新。\term{神经主题模型}（neural topic model）借用变分自编码器的框架：训练一个推断网络，从词袋一次前向就输出潜在分布的参数，再用解码器重构词袋，以证据下界（ELBO）为目标端到端训练。这种做法称为\term{摊销推断}（amortized inference），因为推断的代价被分摊到网络参数里。变分自编码器与重参数化的推导可参考\BookChapterRef{chap:pgm-generative}{卷六的概率生成模型章}。
+
+NVDM是这一路线的直接形式\scite{nlp-miao2016nvdm}。推断网络把计数$\bm x\in\mathbb R^{V}$映射为$\bm\mu(\bm x),\log\bm\sigma^2(\bm x)\in\mathbb R^{K}$，取$\bm h=\bm\mu+\bm\sigma\odot\bm\epsilon$、$\bm\epsilon\sim\mathcal N(\bm0,\bm I)$，解码器以$\operatorname{softmax}(\bm R\bm h+\bm b)$给出词分布$\bm p(\bm h)$，$\bm R\in\mathbb R^{V\times K}$。训练最大化
+\[
+ \mathcal L=\mathbb E_q\Bigl[\sum_vx_v\log p_v(\bm h)\Bigr]
+ -D_{\mathrm{KL}}\bigl(q(\bm h\mid\bm x)\,\|\,\mathcal N(\bm0,\bm I)\bigr).
+\]
+对$d_1=(2,1,0)$，设推断网络输出$\bm\mu=(0.5,0)$、$\bm\sigma^2=(1,1)$，取一份教学噪声$\bm\epsilon=\bm0$，解码logits为$(0.5,0,-0.5)$，词概率约$(0.5065,0.3072,0.1863)$。重构负对数似然约2.5408，KL项为$\frac12\times0.5^2=0.125$，负ELBO的单样本估计约2.6658。对logits的重构梯度为$N\bm p-\bm x\approx(-0.48,-0.08,0.56)$，$N=3$为词数，更新会提高“讲座、报名”的概率。NVDM的$\bm h$可正可负、不加和为1，不是主题比例。
+
+ProdLDA让潜在表示回到单纯形上，并改变词分布的组合方式\scite{nlp-srivastava2017prodlda}。Dirichlet分布无法直接重参数化，ProdLDA在softmax基下用Laplace近似把Dirichlet先验换成logistic正态分布：推断网络仍输出高斯参数，采样后取$\bm\theta=\operatorname{softmax}(\bm h)$。LDA的词分布是主题词分布的算术混合$\sum_k\theta_k\bm\phi_k$；ProdLDA先在logits上组合主题，再归一化：
+\[
+ p_v=\frac{\exp\bigl(\sum_k\theta_kb_{k,v}\bigr)}{\sum_u\exp\bigl(\sum_k\theta_kb_{k,u}\bigr)}.
+\]
+若取$b_{k,v}=\log\phi_{k,v}$，它就是归一化加权几何平均$\prod_k\phi_{k,v}^{\theta_k}$，这就是\term{专家乘积}（product of experts）。主题词分布取$(0.6,0.3,0.1)$与$(0.1,0.3,0.6)$、权重各0.5时，LDA混合得$(0.35,0.30,0.35)$，ProdLDA得约$(0.3101,0.3798,0.3101)$：乘积压低了只受单个主题偏好的词，两个主题都给中等质量的“报名”反而排第一。原文认为这种组合让主题词更集中，这里的数值只演示机制。
+
+两种模型都把新文档推断变成一次前向，也继承了变分自编码器的问题：KL项可能把后验压向先验，使部分主题从不被使用；不同运行的主题也可能大量重复。验收时应检查主题词重复、各主题的使用比例和跨运行稳定性。
+
+\subsubsection{CTM：上下文文档表示与主题推断}
+\label{sec:nlp-classification-ctm}
+
+词袋推断网络无法区分词相同而次序不同的材料，短文本的词袋又太稀疏。CTM（contextualized topic model）把SBERT句向量接入ProdLDA的推断网络。CombinedTM把句向量投影后与词袋拼接作为输入\cite{nlp-intro-bianchi2021}；ZeroShotTM只用句向量作输入，因此可以用多语言句编码器为其他语言的文档推断主题\scite{nlp-bianchi2021ctm}。两种配置的解码器都重构词袋，主题仍由词分布解释。
+
+把“甲通知乙”与“乙通知甲”简化为相同词袋$(1,1,1)$，句向量分别为$(1,0)$与$(0,1)$。若推断均值相应为$(1,0)$与$(0,1)$，零噪声下主题权重为$(0.7311,0.2689)$与$(0.2689,0.7311)$。相同词袋得到了不同的推断输入；但训练目标仍是重构词袋，若这些词的分布不需要区分角色，学到的主题也可能相同。新文档必须使用同一句编码器、投影和词表；长文档被句编码器截断后，遗漏的条件不会因拼接而恢复。
+
+\subsubsection{BERTopic：表示聚类与c-TF-IDF}
+\label{sec:nlp-classification-bertopic}
+
+前面的方法都从词袋出发。BERTopic反过来，先用句向量把文档分组，再从每组的词袋中挑代表词\scite{nlp-grootendorst2022bertopic}。流程分三步：SBERT等编码器得到文档向量；UMAP降维后由HDBSCAN寻找密度簇，并把不属于任何簇的文档标为离群；把每个簇的文档合并成一篇，计算类别级TF-IDF（c-TF-IDF）选出代表词。向量决定谁和谁近，词袋只用于解释已经得到的簇，两个环节可以分别调整。
+
+设聚类输出把$d_1$与补充的讲座通知$(2,0,0)$归入簇A，$d_2$归入簇B，$d_3$为离群。这组指派是教学给定的，不是由三维计数运行UMAP得到。簇计数为$A=(4,1,0)$、$B=(0,1,2)$，平均簇长$\overline L_c=4$。c-TF-IDF为
+\[
+ w_{c,v}=\frac{x_{c,v}}{\sum_ux_{c,u}}\log\Bigl(1+\frac{\overline L_c}{\sum_{c'}x_{c',v}}\Bigr),
+\]
+分母是词$v$在所有簇中的总次数，不是出现该词的簇数。三词的逆频率项为$(\log2,\log3,\log3)$，得$\bm w_A\approx(0.5545,0.2197,0)$、$\bm w_B\approx(0,0.3662,0.7324)$，两簇可分别命名为“讲座、报名”与“场地、报名”。合并两簇时须重新计算。BERTopic每篇文档只归一个簇，混合文档$d_3$要么成离群、要么被硬分，这与LDA的主题混合不同；簇成员分数反映密度结构，不是词生成比例。
+
+\subsubsection{主题数选择、解释与评价}
+\label{sec:nlp-classification-topic-evaluation}
+
+主题词看起来合理，只说明通过了一次人工印象检查。自动指标从三方面补充：\term{主题连贯性}（topic coherence）看高权重词在参考语料中是否常共同出现，主题多样性看不同主题是否反复使用同一组词，跨运行稳定性先对齐主题再比较词分布。连贯性常用归一化点互信息。若100个固定窗口中“讲座”出现20次、“报名”30次、共同出现10次，
+\[
+ \operatorname{NPMI}(u,v)=\frac{\log[p(u,v)/(p(u)p(v))]}{-\log p(u,v)}
+ =\frac{\log(0.1/0.06)}{-\log0.1}\approx0.2218.
+\]
+它在$[-1,1]$内，1表示总是同现。共现为零时须按评价协议平滑；经常同现的也可能只是模板页脚。人工评价用词语侵入和文档侵入测试：把一个异类词混入主题词表或把一篇异类文档混入代表文档，看读者能否找出\scite{nlp-organization-chang2009tea}。原文的实验显示，留出似然更好的模型，侵入测试的结果不一定更好。
+
+留出似然或每词困惑度只适用于概率生成路线，且须固定词表与推断协议；BERTopic等聚类路线没有同名的似然。选择主题数时，固定语料与预处理，在若干$K$下比较重复主题、连贯性、多样性、稳定性与用途；密度聚类则记录簇数和离群率怎样随参数变化。数量过少会合并讲座与场地，过多会把同一模板拆成多个主题。
+
+\subsection{文档聚类}
+\label{sec:nlp-classification-clustering}
+
+文档聚类把表示相近的材料放在一起，“相近”由表示、归一化和距离共同决定。文本聚类的困难在于：TF-IDF向量高维稀疏，句向量维数低却各向异性；簇数事先未知；混合文档和离群文档很常见；簇的解释必须回到真实文档。同主题与同版本还需要不同的身份约束：主题聚类允许不同日期的同类活动放在一起，版本聚类必须先区分活动编号。K-means、层次聚类与密度聚类的定义、目标与收敛性质可参考\BookChapterRef{chap:clustering}{卷四的聚类章}；本小节只讨论文本任务中的选择。
+
+本小节把四份通知的二维表示固定为$A=(1,0)$、$B=(0.8,0.2)$、$C=(0,1)$、$D=(0.2,0.8)$，另以$E=(0.5,0.5)$代表混合材料。向量均为教学构造。
+
+\subsubsection{文本表示下的聚类选择}
+\label{sec:nlp-classification-cluster-choice}
+
+先选表示，再选距离。TF-IDF向量的范数随文档长度和词频增长：同一份通知重复两遍得到$2A=(2,0)$，它与$A$的欧氏距离为1，比$A$与$B$的距离0.2828还大，余弦却等于1。文本的“内容相同”通常对应方向相同，因此稀疏词向量一般用余弦。对单位向量，
+\[
+  \|\bm x-\bm y\|_2^2=2-2\bm x^\top\bm y,
+\]
+欧氏距离的排序与余弦一致；先把所有文档$L_2$归一化，再使用任何基于欧氏距离的算法，就等于在余弦下聚类。句向量常已归一化，但其分布往往集中在一个狭窄锥体内，绝对的余弦值不宜跨编码器比较，阈值须在当前编码器上验证。
+
+再选是否允许软分配。硬划分给每篇文档一个簇；在连续表示上拟合高斯混合$p(\bm x)=\sum_k\pi_k\mathcal N(\bm x;\bm\mu_k,\bm\Sigma_k)$，则由成分后验给出软分配。取两成分等先验，均值$(0.9,0.1)$与$(0.1,0.9)$，共享协方差$0.08\bm I$。新通知$F=(0.7,0.3)$到两中心的平方距离为0.08与0.72，第一成分后验为$\sigma\bigl((0.72-0.08)/(2\times0.08)\bigr)=\sigma(4)\approx0.9820$。$E$到两中心等距，后验各0.5。但后验各半不等于内容各半：一篇离两簇都很远的文档同样可能后验各半，因此还要检查绝对密度或另设拒绝条件。这个后验说的是“文档向量属于哪个成分”，与LDA中“每个词来自哪个主题”的比例不是同一对象。
+
+最后是评价。\term{轮廓系数}（silhouette coefficient）$s_i=(b_i-a_i)/\max(a_i,b_i)$比较样本到同簇的平均距离$a_i$与到最近其他簇的平均距离$b_i$；有参考分组时可补充\term{调整兰德指数}（adjusted Rand index, ARI）与归一化互信息（normalized mutual information, NMI）：前者统计样本对是否被两种划分同样地分在一起，并扣除随机划分下的期望值；后者把两种划分之间的互信息归一化到$[0,1]$。内部指标与簇名都不能替代对代表文档的核读，也不能替代新文档分配的实际验证。
+
+\subsubsection{球面K-means文档聚类}
+\label{sec:nlp-classification-kmeans}
+
+普通K-means以平方欧氏距离分配、以簇内均值更新中心，中心的范数会随成员变化，与余弦口径不符。球面K-means把文档和中心都限制在单位球面上\cite{nlp-organization-dhillon2001concept}：目标是最大化$\sum_k\sum_{\bm x\in\mathcal C_k}\bm x^\top\bm c_k$，约束$\|\bm c_k\|_2=1$。分配步把每篇文档分给余弦最大的中心；更新步取簇内向量之和再归一化，$\bm c_k=\sum_{\bm x\in\mathcal C_k}\bm x/\|\sum_{\bm x\in\mathcal C_k}\bm x\|_2$，它在单位约束下使簇内余弦之和最大。由前一节的恒等式，这等价于对归一化文档做平方欧氏距离K-means，只是中心多了一步归一化。
+
+对$A,B,C,D$取初始中心$(1,0)$与$(0,1)$。归一化后$B$变为$(0.9701,0.2425)$，分到第一簇；$D$对称地分到第二簇。第一簇中心为$A$与归一化$B$之和再归一化，约为$(0.9925,0.1222)$，而普通K-means的均值是$(0.9,0.1)$。重新分配不变，迭代停止。$E$到两个中心的余弦相同，需要事先规定并列规则，或把它标为低确定性，而不是硬称它只属于一个主题。中心是抽象方向，不是任何原文，解释簇时要取离中心最近的真实文档。球面K-means适合高维稀疏的TF-IDF，每轮代价与非零元个数成正比；它仍要预设$K$，结果依赖初始化，空簇需要按预设规则重启。
+
+\subsubsection{密度聚类与层次聚类}
+\label{sec:nlp-classification-density}
+
+K-means类方法要求预设簇数，并把每篇文档都分进某个簇。密度聚类与层次聚类从不同方向放松这两点。DBSCAN以半径$\varepsilon$和最少邻域点数$\mathrm{MinPts}$定义核心点，沿核心点的密度可达关系恢复簇，邻域稀疏的点标为噪声\scite{ester1996}。取欧氏距离、$\varepsilon=0.3$、$\mathrm{MinPts}=2$（邻域计入自身），$A,B$相距0.2828，$C,D$亦然，各成一簇；$E$到最近的$B,D$都约0.4243，邻域只有自身，成为噪声。把$\varepsilon$增至0.45，$E$同时连到$B$和$D$，成为核心点，两簇被连成一簇。这个变化只反映密度连通的变化，不说明两组通知突然变成了同一主题。
+
+单一半径难以同时适应密集与稀疏的区域。HDBSCAN用核心距离（到第$\mathrm{MinPts}$个近邻的距离，本例邻域计入自身）定义互达距离$d_{\mathrm{mr}}(a,b)=\max\{\mathrm{core}(a),\mathrm{core}(b),d(a,b)\}$，在其上构造所有半径下的簇层次，再按簇在层次中存在的稳定性选出最终簇\scite{clust-campello2013}。本例$\mathrm{MinPts}=2$时，$A$的核心距离约0.2828，$E$约0.4243，$E$参与的边都处在较稀疏的层级，因此$E$最后才并入、或保持为离群。这正是BERTopic选用它的原因：短文本中大量文档不属于任何清晰主题，强行归簇会污染代表词。
+
+凝聚层次聚类则不预设簇数，而是保留整个合并过程：从每篇一簇开始，反复合并最近的两簇，记录合并距离形成树。簇间距离的定义决定结果。$\{A,B\}$与$\{C,D\}$之间，单链接取最近点对$B,D$的0.8485，全链接取最远点对$A,C$的1.4142，平均链接取四个点对的平均约1.1314；在距离1.0处截断，单链接已合成一簇，另两种仍是两簇。加入桥接文档$E$后，单链接更容易沿局部近邻串成一个大簇，这就是链式效应。层次树表示合并顺序，不自动对应“活动通知—讲座—机器学习”这样的业务层级；经典算法也没有自然的新文档分配方式，重新聚类可能改变已有目录。三类方法的共同验收是：同时报告覆盖率与噪声比例，在非噪声子集上计算内部指标时注明排除了谁，并核读代表文档。
+
+\subsection{关键词与关键短语组织}
+\label{sec:nlp-classification-keyphrases}
+
+文档分组后，用户仍需要简短的入口来找到材料。\term{关键词抽取}（keyword extraction）从原文中选出词或跨度，\term{关键短语生成}（keyphrase generation）允许输出原文未出现的概括。单篇关键词服务当前材料，主题代表词解释潜在分布，簇代表词解释文档组，同一个词在不同接口下的得分并不相同。
+
+这一任务有四个困难。候选生成决定上限，漏掉“报名截止时间”这个候选，后面的排序无法补回；短语边界须完整，“机器学习读书会”不能只剩“读书会”；所选短语彼此冗余会浪费导航位置；参考关键短语中常有原文没出现的概括。方法谱系依次回应这些困难：TF-IDF依赖参考语料的区分度；RAKE与YAKE只用单篇局部统计，不需要语料；TextRank在共现图上传播重要性；EmbedRank用语义相似排序并以MMR去冗余；序列标注与跨度方法从标注中学习边界规范；生成式方法可以产生原文未出现的短语。表~\ref{tab:nlp-classification-keyphrase-methods}汇总这些方法。
+
+\begin{table*}[htbp]
+ \centering
+ \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}
+   >{\raggedright\arraybackslash}p{32mm}>{\raggedright\arraybackslash}X
+   >{\raggedright\arraybackslash}p{40mm}@{}}
+  \toprule
+  方法 & 解决的问题 & 核心机制 & 新代价 \\
+  \midrule
+  TF-IDF & 区分常见词与局部重要词 & 单篇词频乘参考语料的逆文档频率 & 需要参考语料；短语须另造候选 \\
+  RAKE、YAKE & 无参考语料 & 停用词切分加共现度；位置、频率、分散度等局部特征 & 依赖停用词表与分词；启发式权重 \\
+  TextRank & 局部频率忽略词间关系 & 共现图上的PageRank & 窗口与词性过滤敏感 \\
+  EmbedRank & 统计量不看语义，结果冗余 & 候选与文档嵌入的余弦，MMR去冗余 & 依赖句编码器；需调$\lambda$ \\
+  序列标注、跨度 & 边界规范难以手写 & BIO加CRF，或跨度打分 & 需要标注；无法输出原文外短语 \\
+  CopyRNN、catSeq & 原文未出现的概括 & 编码器—解码器加复制；单条或整组生成 & 生成内容须核验；整组生成引入顺序 \\
+  \bottomrule
+ \end{tabularx}
+ \caption{关键短语方法的对照。前五类只能输出原文中的跨度，评价应把原文内与原文外的参考短语分开统计。}
+ \label{tab:nlp-classification-keyphrase-methods}
+\end{table*}
+
+\FloatBarrier
+\subsubsection{TF-IDF：词频与跨文档区分度}
+\label{sec:nlp-classification-keyword-tfidf}
+
+TF-IDF用单篇词频与参考语料的文档频率区分常见词和局部重要词。采用$\operatorname{idf}(v)=\log((N+1)/(\operatorname{df}_v+1))+1$：参考集有4篇，“读书会”只出现在1篇、在当前通知出现2次，权重为$2(\log(5/2)+1)\approx3.8326$；“通知”4篇都出现、当前出现3次，权重为3。前者次数少，却因区分度更高排在前面。参考语料的来源必须说明，过度的低频过滤会删掉活动编号和新术语。短语候选可由词性模式或连续$n$元组生成，再按整短语的文档频率计分，或按规定聚合组成词的权重；高分的“机器”和“报名”若不相邻，不能拼成一条抽取短语。
+
+\subsubsection{RAKE与YAKE：单篇文本的局部统计}
+\label{sec:nlp-classification-rake}
+
+没有参考语料时，只能从当前文档内部找信号。RAKE先用停用词和分隔符把文本切成候选短语，再用词在候选中的共现计分\scite{nlp-rose2010rake}。词频$f(w)$为出现次数，共现度$\deg(w)$按包含自身的口径计：词每出现在一个长为$r$的候选中，度加$r$。词分数为$\deg(w)/f(w)$，短语分数为其词分数之和。固定候选“机器／学习／读书会”“报名／信息”“机器／学习”，则“机器、学习”频次各2、度各5，分数各2.5；“读书会”分数3；“报名、信息”分数各2。三个候选得分为8、4、5，排序为完整活动短语、“机器学习”、“报名信息”。长短语天然得分高，这是$\deg/f$偏好长候选的结果；中文的分词与停用词表直接决定候选边界。
+
+YAKE改用更多局部特征，并让分数越小越好\scite{nlp-campos2020yake}。对单词$w$，$C$为大写特征，$F=f/(\overline f+s_f)$为相对词频（$\overline f,s_f$为非停用词词频的均值与标准差），$D$为出现句数占比，$P=\log\log(3+\text{所在句序号的中位数})$为位置特征，$R=1+(L+R_{\!c})f/f_{\max}$刻画左右邻词的分散程度，其中$L,R_{\!c}$为左、右邻词的种类数与邻接次数之比。组合为
+\[
+ H(w)=\frac{PR}{C+F/R+D/R},\qquad
+ H(c)=\frac{\prod_{w\in c}H(w)}{f(c)\bigl[1+\sum_{w\in c}H(w)\bigr]}.
+\]
+出现越早$P$越小；频繁且分布在多句中使分母增大；邻词越杂乱$R$越大，说明它更像虚词。设某词$f=2$、$f_{\max}=4$、$\overline f=2$、$s_f=1$，在4句中的第0、1句出现，$L=R_{\!c}=0.5$，无大小写信号，则$C=0$、$F=2/3$、$D=1/2$、$P=\log\log3.5$、$R=1.5$，$H\approx0.4346$；它与$H=0.3$的另一词组成只出现一次的候选，得$H(c)\approx0.0752$。中文没有大小写，$C$恒为零。两种方法都无需外部语料，代价是标题重复与模板开头可能被过度奖励。
+
+\subsubsection{TextRank：共现图与关键词排序}
+\label{sec:nlp-classification-textrank}
+
+局部统计把词孤立地计分。TextRank认为，与许多重要词共现的词本身也重要：候选词为节点，在固定窗口内共现的词之间连边，再做PageRank迭代\scite{nlp-mihalcea2004textrank}。对$M$个节点，取阻尼$d\in(0,1)$，
+\[
+ r_i^{(t+1)}=\frac{1-d}{M}+d\sum_{j:\,w_{j,i}>0}\frac{w_{j,i}}{\sum_kw_{j,k}}r_j^{(t)}.
+\]
+取“机器、学习、读书会”三个节点，只有无向边“机器—学习”“学习—读书会”。初值各$1/3$、$d=0.85$，一轮后两端各约0.1917，中间约0.6167，总和仍为1；迭代到相邻向量的$L_1$差小于容差才得到稳定排名。选定高分词后，按原文中的连续出现恢复“机器学习读书会”，不能把不相邻的高分词随意连接。窗口过大会让通用词连到许多对象，词性过滤也可能删去关键动词。第~\ref{chap:nlp-text-generation}章的抽取式摘要把节点换成句子，复用同一图排序。
+
+\subsubsection{EmbedRank：语义表示与MMR选择}
+\label{sec:nlp-classification-embedrank}
+
+统计方法不看语义，选出的前几个短语也常彼此重复。EmbedRank用词性规则取名词短语候选，把候选和文档都编码为句向量，按余弦排序；EmbedRank++再用\term{最大边际相关性}（maximal marginal relevance，MMR）平衡相关与重复\scite{nlp-bennani2018embedrank}。已选集合为$S$时，从未选候选中取
+\[
+ \operatorname{MMR}(c)=\lambda s(c,x)-(1-\lambda)\max_{c'\in S}s(c,c')
+\]
+的最大者，$x$为文档。为便于手算，这里直接用原始余弦，原文还对相似度作了规范化。候选A“机器学习读书会”、B“读书会”、C“报名信息”与文档的相似度为0.90、0.88、0.75，A与B相似度0.95，A与C为0.40。先选A；$\lambda=0.7$时B得0.331、C得0.405，第二项选C；$\lambda=0.9$时B得0.697、C得0.635，又改选B。$\lambda$表达导航对重复的容忍度，没有普遍正确的取值。“报名信息”虽提示了报名事项，却没有保留截止时刻，还要核查所选候选是否覆盖关键事项。
+
+\subsubsection{序列标注与跨度式关键短语抽取}
+\label{sec:nlp-classification-keyphrase-spans}
+
+有参考关键短语时，边界规范可以从标注中学习。把参考短语在原文中的出现位置转成BIO标签，就成为第~\ref{sec:nlp-analysis-paradigm-tagging}小节的序列标注；枚举有限长度跨度并打分，就成为第~\ref{sec:nlp-analysis-paradigm-span}小节的跨度方法。转换前须先规定：同一短语多次出现是否都标，嵌套短语是否都保留，原文中不存在的参考短语从抽取训练中排除。
+
+对“机器／学习／读书会／报名／截止”，若参考为前3词与后2词，BIO序列为$(B,I,I,B,I)$。独立逐词分类若把第4词判为$O$、第5词判为$I$，就出现非法的$O\to I$；CRF的转移约束可以禁止它。跨度模型可给$(1,3)$与$(4,5)$打分0.92与0.86，在验证阈值0.8下恢复两段，并映射回字符区间。若同时需要“机器学习”和“机器学习读书会”，平坦BIO无法表达嵌套，需改用跨度集合。评价应分别报告候选覆盖、完整边界F1与去重后的短语F1，以区分没找到位置、边界不全与选错短语。
+
+\subsubsection{生成式关键短语预测：CopyRNN与One2Seq}
+\label{sec:nlp-classification-copyrnn}
+
+抽取方法输出不了原文中没有的概括，而科技文献的作者关键词中有相当一部分不在原文里出现。CopyRNN把关键短语预测改写为序列生成：双向GRU编码文档，带注意力的GRU解码器每次生成一条短语，并用复制机制让解码器能直接输出原文中的低频词和未登录词\scite{nlp-meng2017copyrnn}。训练数据按“一篇文档—一条参考短语”拆成多个样本，因此称为One2One。复制与生成的一般形式见式~\eqref{eq:nlp-analysis-copy}，那里用门控概率$p_{\mathrm{gen}}$混合两个分别归一化的分布；CopyRNN沿用CopyNet的写法，把生成与复制的未归一化质量放进同一个分母：
+\[
+ p_t(w)=\frac{\mathbf1[w\in V]\exp g_t(w)+\sum_{j:x_j=w}\exp c_t(j)}
+ {\sum_{v\in V}\exp g_t(v)+\sum_{j=1}^{|x|}\exp c_t(j)},
+\]
+$g_t(v)$为生成logit，$c_t(j)$为复制原文第$j$个位置的logit。两种写法的输出空间都是词表与原文词的并集，同一个词在原文多处出现时复制质量相加。
+
+设某步词表只展示“报名、信息、结束符”，生成质量为$(2,1,1)$；原文三个位置为“海棠楼、报名、报名”，复制质量为$(1,1,2)$。共同分母为8，$p(\text{报名})=(2+1+2)/8=0.625$，不在词表中的“海棠楼”也可经复制得到$1/8$。训练目标是参考短语及结束符的负对数似然：三步条件概率为$(0.625,0.5,0.8)$时，序列概率为0.25，损失约1.3863。推断时用束搜索得到多条完成的序列（束搜索的一般做法见第~\ref{sec:nlp-generation-beam}小节），去重后取前若干条。One2One的问题是输出数量需要人为截断，例如固定取前5条，而且各条短语独立生成，彼此冗余。
+
+One2Seq把一篇文档的全部参考短语用分隔符拼成一个目标序列，例如“机器学习读书会$\langle\mathrm{sep}\rangle$报名截止$\langle\mathrm{sep}\rangle$海棠楼$\langle\mathrm{eos}\rangle$”，由同一个带复制的编码器—解码器生成；catSeq是这种训练方式下的模型\scite{nlp-organization-yuan2020catseq}。这样做有两个直接收益：生成后一条短语时能看到已生成的短语，可以避免重复；模型自己决定何时输出结束符，从而决定短语数量。原文发现，贪心解码一条序列就能输出数量可变的短语，并相应提出按模型实际输出计算的F1@M。代价是把无序的集合变成了有序的序列：同一组短语的不同排列给出不同的训练目标，常用的约定是原文中出现的短语按首次出现位置排在前，未出现的短语排在后；顺序选择会影响结果。
+
+大语言模型也可以直接按提示生成关键短语，提示中给出数量、格式与少样本示例即可（第~\ref{sec:nlp-inference-icl-shots}小节）。无论哪种生成方式，原文内的短语都可以用字符串匹配回查，原文外的概括则需单独核验是否得到原文支持。评价时应把原文内与原文外的参考短语分开统计，并声明精确匹配还是词形规范化：能复制地点不证明它最有用，能生成流畅的概括也不证明原文支持这个概括。
