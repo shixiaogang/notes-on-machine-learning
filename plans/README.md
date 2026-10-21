@@ -2,11 +2,11 @@
 
 本目录按 `tex/volumes.json` 的十二卷登记组织。每个设有部分的卷按部分保存一份大纲；卷四与卷五不设部分，各保存一份卷级大纲。卷目录名称与 `tex/` 对应目录一致。
 
-大纲以 `volume.tex → part.tex → 章节及章内输入` 的实际接入顺序为准：章号在卷内连续，保留正文层级，每节及下级小节均说明主要内容、论证依据和表述逻辑。正文与旧规划不一致时采用正文；未接入的拟设章节不作为现有内容。当前共131章；卷九接入15章，卷十接入15章，卷十一接入10章，卷十二仅有部分入口，尚无章节正文。
+大纲以 `volume.tex → part.tex → 章节及章内输入` 的实际接入顺序为准：章号在卷内连续，保留正文层级，每节及下级小节均说明主要内容、论证依据和表述逻辑。正文与旧规划不一致时采用正文；未接入的拟设章节不作为现有内容。当前共132章；卷九接入15章，卷十接入15章，卷十一接入10章，卷十二仅有部分入口，尚无章节正文。
 
 | 卷 | 卷名 | 正文章数 | 部分与大纲 |
 | --- | --- | --- | --- |
-| 1 | 数学准备：计算、分析与几何 | 10 | [计数、分析与优化](01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)；[空间与几何](01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry.md)；[信号与图](01-mathematical-preliminaries-upper/03-graphs-and-signals.md) |
+| 1 | 数学准备：计算、分析与几何 | 11 | [计数、分析与优化](01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)；[空间与几何](01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry.md)；[信号与图](01-mathematical-preliminaries-upper/03-graphs-and-signals.md) |
 | 2 | 数学准备：概率、因果与决策 | 10 | [随机变量、分布与因果响应](02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality.md)；[演化、控制、决策与博弈](02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games.md)；[数学与机器学习](02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning.md) |
 | 3 | 基础、理论与可信性 | 17 | [机器学习基础](03-foundations/01-basics.md)；[机器学习理论](03-foundations/02-learning-theory.md)；[机器学习可信性](03-foundations/03-trustworthiness.md) |
 | 4 | 模型：经典模型 | 6 | [模型：经典模型](04-classic-models/outline.md) |
@@ -23,4 +23,4 @@
 
 正文位置均通过相对链接给出。旧卷级规划、选材资料、研究课题、过程记录及重复映射已从本目录移除，历史可由 Git 查阅。仍被数学审计使用的历史章目映射和标签退役契约迁至 `tests/fixtures/math-reading-structure/`；它们用于校验，不承担正文规划职责。
 
-目录与维护要求见[正文大纲与计划目录规范](../specs/plans.md)。每次修改正文都须核对相应部分或卷的大纲，保持标题、顺序和主要段落提要一致；内容、条件或结论变化时，即使标题未变也须同步提要。涉及卷、部分或章数变化时同步本索引，正文与相应大纲作为同一项变更交付与提交。各卷独立出版，不生成全集，每卷总页数不超过800页。
+目录与维护要求见[正文大纲与计划目录规范](../specs/plans.md)。每次修改正文都须核对相应部分或卷的大纲，保持标题、顺序和主要段落提要一致；内容、条件或结论变化时，即使标题未变也须同步提要。涉及卷、部分或章数变化时同步本索引，正文与相应大纲作为同一项变更交付与提交。各卷独立出版，不生成全集，每卷总页数不超过1000页。

@@ -9,6 +9,11 @@
 - `01-mathematical-preliminaries-upper/` 与 `02-mathematical-preliminaries-lower/`：数学两卷图源，各三部分。
   卷二于2026-10-17新增20幅解析教学图，覆盖八章的概率、因果、状态演化、控制、价值与策略比较及学习分析；各部分的`matplotlib/`子目录保存独立源码、解析参数、矢量成图与预览，使用位置登记在共用图像接入清单中。
   同日第二轮另按具体概念障碍增补15幅图，集中解释条件平均、统计推断、跳跃对齐、隐藏位置、机制复合与动态可行性等问题，不设各章数量配额；图源分别归入所属部分的`tikz/`和`matplotlib/`，保留原有推导及既有图像。
+  卷一的两集合容斥示意图保留可编辑 TikZ 源、字体已嵌入的 PDF、PNG 预览及解析集合与字体记录，位于第1部分的 `tikz/inclusion-exclusion-overlap.*`。
+  卷一第三章另补集合测量与积分的四幅图解：有限与可数覆盖、精确分割、内外逼近（TikZ）及取值分层积分（Matplotlib），图源、解析参数、预览和核验记录随各图保存。
+  度量空间节的 `tikz/metric-ball-neighborhood/` 和 `tikz/metric-open-closed-relative/` 分别说明开球与邻域，以及开闭性随母空间改变；保留TikZ图源、字体嵌入PDF与预览。
+  集合测量节的 `tikz/measure-abstraction/` 另以关系图对照勒贝格测度的具体构造与一般测度空间的共同结构。
+  卷一第三章于2026-10-21新增26幅概念与过程图：18幅Matplotlib解析图、8幅TikZ几何图，分别位于第1部分的`matplotlib/chapter3-concept-processes/`和`tikz/chapter3-concept-processes/`。覆盖极限与误差、局部线性近似、积分截断和换序、路径与曲面、公共边界抵消；解释放在图注，目录内保留生成器、解析参数、矢量成图、预览与逐图核验记录。
 - `03-foundations/`：基础、理论与可信性三部分资源。
 - `04-classic-models/` 与 `05-neural-network-models/`：不设部分，按制作方式归档。
 - `06-probabilistic-graphical-models/`：表示、推断、学习与典型模型四部分。

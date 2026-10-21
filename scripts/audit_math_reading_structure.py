@@ -25,6 +25,33 @@ CURRENT_VOLUMES = (
 OUTLINE_DIRECTORIES = tuple(Path("plans") / volume.name for volume in CURRENT_VOLUMES)
 CONTRACT = Path("tests/fixtures/math-reading-structure/chapter-map.md")
 RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter17-retired-labels.json")
+CHAPTER1_RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter1-retired-labels.json")
+CHAPTER1_BASELINE_REVISION = "f435c9df3d52f2aee75b22e40ed6fc33fd0eca15"
+CHAPTER1_PRE_REWRITE_REVISION = "870ef690a9f1cd74a98510b05cc033529986fa4e"
+CHAPTER1_BASELINE_SOURCE = Path(
+    "01-mathematical-language-combinatorics-analysis-optimization/01-sets-functions-and-proofs.tex"
+)
+CHAPTER1_CURRENT_SOURCE = CURRENT_VOLUMES[0] / CHAPTER1_BASELINE_SOURCE
+# The authorized topic was section 1.4 in the baseline and 1.5 before removal.
+# Bind its real title in each immutable source instead of reusing a section number.
+CHAPTER1_REMOVED_SECTION_TITLES = ("命题与证明",)
+CHAPTER2_RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter2-retired-labels.json")
+CHAPTER2_BASELINE_REVISION = "f435c9df3d52f2aee75b22e40ed6fc33fd0eca15"
+CHAPTER2_PRE_REWRITE_REVISION = "870ef690a9f1cd74a98510b05cc033529986fa4e"
+CHAPTER2_BASELINE_SOURCE = Path(
+    "01-mathematical-language-combinatorics-analysis-optimization/02-combinatorics.tex"
+)
+CHAPTER2_CURRENT_SOURCE = CURRENT_VOLUMES[0] / CHAPTER2_BASELINE_SOURCE
+CHAPTER2_BASELINE_SECTION_TITLES = (
+    "候选空间上的约束与求解", "问题族的可计算性与复杂度",
+)
+CHAPTER2_PRE_REWRITE_SECTION_TITLES = (
+    "候选解的构造", "候选解的质量核验", "问题族的可计算性", "问题族的计算复杂度",
+)
+# This summary table recapped the removed solving/computability material.
+# The summary's semantic label and all its other labels remain protected.
+CHAPTER2_SUMMARY_RETIREMENT = "tab:prelim-four-solution-questions"
+CHAPTER2_FORMULA_RETIREMENT = "eq:prelim-binomial-theorem"
 CHAPTER17_BASELINE_SOURCE = Path(
     "05-dynamical-systems-control-and-decision/06-mathematics-and-future-research.tex"
 )
@@ -91,21 +118,22 @@ def assignments(root: Path) -> list[dict]:
             "chapter": int(number),
             "title": title.strip(), "path": path.strip() if path.strip().startswith("tex/") else str(VOLUME / path.strip()),
         })
-    # Historical audit identities stay stable when a current chapter splits.
+    # Historical audit identities stay stable when current chapters merge.
     # In particular, ID 17 remains the source governed by the retirement file.
-    # IDs 18, 19 and 20 identify measurable functions, processes and inference.
-    count = 20 if modern else 17
+    # Independent one-variable and multivariable calculus retain IDs 18 and 21.
+    expected_identities = list(range(1, 22)) if modern else list(range(1, 18))
+    count = len(expected_identities)
     if modern and len(modern) != len(rows):
         raise ValueError("Chapter assignments must not mix current and legacy formats")
     if len(rows) != count:
         raise ValueError(f"Expected {count} assignments, found {len(rows)}")
     identities = [row["chapter"] for row in rows]
-    if (sorted(identities) if modern else identities) != list(range(1, count + 1)):
-        raise ValueError(f"Chapter assignments must use current numbers 1 through {count} exactly once")
+    if (sorted(identities) if modern else identities) != expected_identities:
+        raise ValueError("Chapter assignments must use current numbers and historical identities exactly once")
     if len({row["path"] for row in rows}) != count:
         raise ValueError("Chapter assignments must have unique source paths")
     if modern:
-        for volume, expected_count in ((1, 10), (2, 10)):
+        for volume, expected_count in ((1, 11), (2, 10)):
             local_numbers = [row["local_chapter"] for row in rows if row["volume"] == volume]
             if local_numbers != list(range(1, expected_count + 1)):
                 raise ValueError(f"Volume {volume} assignments must list local chapters 1 through {expected_count} in reading order")
@@ -116,7 +144,7 @@ def current_outline_chapter(row: dict) -> int:
     """Map stable audit identities to the current concatenated outline."""
     if "local_chapter" not in row:
         return row["chapter"]
-    return row["local_chapter"] + (10 if row["volume"] == 2 else 0)
+    return row["local_chapter"] + (11 if row["volume"] == 2 else 0)
 
 
 def chapter17_retirement_source(rows: list[dict]) -> str:
@@ -138,7 +166,7 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
     current = None
     for line_no, line in enumerate(text.splitlines(), 1):
         if line.startswith("## 卷二"):
-            offset = 10
+            offset = 11
         chapter = re.match(r"## 第(\d+)章 (.+)$", line)
         if chapter:
             current = int(chapter[1]) + offset
@@ -427,13 +455,272 @@ def audit_retired_chapter17_labels(
     return report
 
 
+def section_labels(text: str, titles: tuple[str, ...]) -> set[str]:
+    """Locate labels inside specified sections of an immutable source."""
+    text = uncomment(text)
+    sections = [item for item in tex_headings(text) if item["command"] == "section"]
+    result = set()
+    for index, section in enumerate(sections):
+        if section["title"] in titles:
+            end = sections[index + 1]["start"] if index + 1 < len(sections) else len(text)
+            result.update(LABEL_RE.findall(text[section["start"]:end]))
+    return result
+
+
+def audit_retired_chapter1_labels(
+    root: Path, baseline_revision: str, baseline_labels: dict[str, str],
+    source_path: str, all_locations: dict, body_sources: dict[Path, str],
+    baseline_source: str, pre_rewrite_source: str,
+) -> dict:
+    """Retire only explicit labels from the removed propositions/proofs section.
+
+    Both source inventories come from fixed Git objects in main(). A manifest
+    cannot widen the eligible topic, hide removals elsewhere in chapter 1, or
+    borrow the independent retirement permissions for chapters 2 and 17.
+    """
+    report = {
+        "path": str(CHAPTER1_RETIRED_LABELS),
+        "exists": (root / CHAPTER1_RETIRED_LABELS).is_file(),
+        "issues": [], "retired_labels": [], "approved_baseline_retirements": [],
+    }
+    if not report["exists"]:
+        return report
+    issues = report["issues"]
+    try:
+        manifest = json.loads((root / CHAPTER1_RETIRED_LABELS).read_text())
+    except (json.JSONDecodeError, OSError) as error:
+        issues.append({"kind": "invalid_retirement_manifest", "error": str(error)})
+        return report
+    if not isinstance(manifest, dict):
+        issues.append({"kind": "invalid_retirement_manifest_object"})
+        return report
+
+    baseline_inventory = set(LABEL_RE.findall(uncomment(baseline_source)))
+    inventory = LABEL_RE.findall(uncomment(pre_rewrite_source))
+    eligible_baseline = section_labels(baseline_source, CHAPTER1_REMOVED_SECTION_TITLES)
+    eligible_baseline &= {
+        label for label, path in baseline_labels.items()
+        if path == str(CHAPTER1_BASELINE_SOURCE)
+    }
+    eligible_new = section_labels(pre_rewrite_source, CHAPTER1_REMOVED_SECTION_TITLES)
+    required = {
+        "schema_version": 1, "chapter": 1, "source": str(CHAPTER1_CURRENT_SOURCE),
+        "baseline_revision": CHAPTER1_BASELINE_REVISION,
+        "baseline_source": str(VOLUME / CHAPTER1_BASELINE_SOURCE),
+        "pre_rewrite_revision": CHAPTER1_PRE_REWRITE_REVISION,
+        "pre_rewrite_source": str(CHAPTER1_CURRENT_SOURCE),
+        "authorized_baseline_section_titles": list(CHAPTER1_REMOVED_SECTION_TITLES),
+        "authorized_pre_rewrite_section_titles": list(CHAPTER1_REMOVED_SECTION_TITLES),
+        "baseline_source_sha256": hashlib.sha256(baseline_source.encode()).hexdigest(),
+        "pre_rewrite_source_sha256": hashlib.sha256(pre_rewrite_source.encode()).hexdigest(),
+        "baseline_section_labels": sorted(eligible_baseline),
+        "pre_rewrite_section_labels": sorted(eligible_new),
+        "pre_rewrite_labels": sorted(inventory),
+        "pre_rewrite_labels_sha256": label_inventory_sha256(inventory),
+    }
+    for key, expected in required.items():
+        if manifest.get(key) != expected:
+            issues.append({
+                "kind": "retirement_manifest_metadata", "field": key,
+                "expected": expected, "actual": manifest.get(key),
+            })
+    if baseline_revision != CHAPTER1_BASELINE_REVISION or source_path != str(CHAPTER1_CURRENT_SOURCE):
+        issues.append({"kind": "chapter1_retirement_identity_mismatch"})
+    if not eligible_baseline or not eligible_new:
+        issues.append({"kind": "chapter1_retirement_scope_missing"})
+    if not isinstance(manifest.get("reason"), str) or not manifest["reason"].strip():
+        issues.append({"kind": "retirement_reason_missing"})
+
+    entries = manifest.get("retired_labels")
+    if not isinstance(entries, list):
+        issues.append({"kind": "invalid_retired_label_entries"})
+        return report
+    retired = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("label"), str):
+            issues.append({"kind": "invalid_retired_label_entry", "entry": entry})
+            continue
+        label = entry["label"]
+        retired.append(label)
+        if label not in eligible_baseline | eligible_new:
+            issues.append({"kind": "retired_label_outside_chapter1_removal_scope", "label": label})
+        if label in baseline_labels and baseline_labels[label] != str(CHAPTER1_BASELINE_SOURCE):
+            issues.append({"kind": "foreign_baseline_label_retirement", "label": label})
+        expected_versions = [
+            name for name, labels in (("baseline", eligible_baseline), ("pre_rewrite", eligible_new))
+            if label in labels
+        ]
+        if entry.get("present_in") != expected_versions:
+            issues.append({"kind": "retired_label_source_versions_mismatch", "label": label,
+                           "expected": expected_versions, "actual": entry.get("present_in")})
+        if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+            issues.append({"kind": "retired_label_reason_missing", "label": label})
+        if label in all_locations:
+            issues.append({"kind": "retired_label_still_defined", "label": label,
+                           "locations": all_locations[label]})
+    if len(set(retired)) != len(retired):
+        issues.append({"kind": "duplicate_retired_labels"})
+    report["retired_labels"] = sorted(set(retired))
+    for path, body in body_sources.items():
+        for reference in references(body):
+            if reference["label"] in retired:
+                issues.append({"kind": "retired_label_active_reference", "path": str(path), **reference})
+    undeclared = (baseline_inventory | set(inventory)) - set(all_locations) - set(retired)
+    if undeclared:
+        issues.append({"kind": "unrecorded_chapter1_label_removal", "labels": sorted(undeclared)})
+    report["baseline_section_label_count"] = len(eligible_baseline)
+    report["pre_rewrite_section_label_count"] = len(eligible_new)
+    report["pre_rewrite_label_count"] = len(inventory)
+    report["prior_baseline_only_retirements"] = sorted(set(retired) & (eligible_baseline - eligible_new))
+    report["active_reference_scope"] = "All active body inputs in the twelve volumes."
+    if not issues:
+        report["approved_baseline_retirements"] = sorted(set(retired) & eligible_baseline)
+    return report
+
+
+def audit_retired_chapter2_labels(
+    root: Path, baseline_revision: str, baseline_labels: dict[str, str],
+    source_path: str, all_locations: dict, body_sources: dict[Path, str],
+    baseline_source: str, pre_rewrite_source: str,
+) -> dict:
+    """Retire authorized chapter-2 topics and one explicitly removed formula.
+
+    The older baseline has different section numbers. Topic ranges in that
+    source and sections 2.3--2.6 in the pre-rewrite commit determine eligibility;
+    neither a manifest inventory nor a mutable build snapshot can widen it.
+    The separate formula opt-in accepts only the literal binomial theorem label.
+    """
+    report = {
+        "path": str(CHAPTER2_RETIRED_LABELS),
+        "exists": (root / CHAPTER2_RETIRED_LABELS).is_file(),
+        "issues": [], "retired_labels": [], "approved_baseline_retirements": [],
+    }
+    if not report["exists"]:
+        return report
+    issues = report["issues"]
+    try:
+        manifest = json.loads((root / CHAPTER2_RETIRED_LABELS).read_text())
+    except (json.JSONDecodeError, OSError) as error:
+        issues.append({"kind": "invalid_retirement_manifest", "error": str(error)})
+        return report
+    if not isinstance(manifest, dict):
+        issues.append({"kind": "invalid_retirement_manifest_object"})
+        return report
+    required = {
+        "schema_version": 1, "chapter": 2, "source": str(CHAPTER2_CURRENT_SOURCE),
+        "baseline_revision": CHAPTER2_BASELINE_REVISION,
+        "baseline_source": str(VOLUME / CHAPTER2_BASELINE_SOURCE),
+        "pre_rewrite_revision": CHAPTER2_PRE_REWRITE_REVISION,
+        "pre_rewrite_source": str(CHAPTER2_CURRENT_SOURCE),
+        "authorized_pre_rewrite_sections": [3, 4, 5, 6],
+        "authorized_baseline_section_titles": list(CHAPTER2_BASELINE_SECTION_TITLES),
+        "authorized_pre_rewrite_section_titles": list(CHAPTER2_PRE_REWRITE_SECTION_TITLES),
+        "authorized_summary_label": CHAPTER2_SUMMARY_RETIREMENT,
+        "baseline_source_sha256": hashlib.sha256(baseline_source.encode()).hexdigest(),
+        "pre_rewrite_source_sha256": hashlib.sha256(pre_rewrite_source.encode()).hexdigest(),
+    }
+    for key, expected in required.items():
+        if manifest.get(key) != expected:
+            issues.append({
+                "kind": "retirement_manifest_metadata", "field": key,
+                "expected": expected, "actual": manifest.get(key),
+            })
+    if baseline_revision != CHAPTER2_BASELINE_REVISION or source_path != str(CHAPTER2_CURRENT_SOURCE):
+        issues.append({"kind": "chapter2_retirement_identity_mismatch"})
+    if not isinstance(manifest.get("reason"), str) or not manifest["reason"].strip():
+        issues.append({"kind": "retirement_reason_missing"})
+
+    baseline_inventory = set(LABEL_RE.findall(uncomment(baseline_source)))
+    inventory = LABEL_RE.findall(uncomment(pre_rewrite_source))
+    if manifest.get("pre_rewrite_labels") != sorted(inventory):
+        issues.append({"kind": "pre_rewrite_label_inventory_mismatch"})
+    if manifest.get("pre_rewrite_labels_sha256") != label_inventory_sha256(inventory):
+        issues.append({"kind": "pre_rewrite_label_inventory_sha256_mismatch"})
+    # The user explicitly removed this one formula in the counting lesson.
+    # No manifest-supplied label can extend the historical topic ranges.
+    formula_labels = manifest.get("authorized_formula_labels", [])
+    formula_authorized = formula_labels == [CHAPTER2_FORMULA_RETIREMENT]
+    if formula_labels not in ([], [CHAPTER2_FORMULA_RETIREMENT]):
+        issues.append({"kind": "invalid_formula_retirement_scope"})
+    if formula_authorized and (
+        CHAPTER2_FORMULA_RETIREMENT not in baseline_inventory
+        or CHAPTER2_FORMULA_RETIREMENT not in inventory
+        or baseline_labels.get(CHAPTER2_FORMULA_RETIREMENT) != str(CHAPTER2_BASELINE_SOURCE)
+    ):
+        issues.append({"kind": "formula_retirement_source_mismatch"})
+    eligible_baseline = section_labels(baseline_source, CHAPTER2_BASELINE_SECTION_TITLES)
+    eligible_baseline &= {
+        label for label, path in baseline_labels.items()
+        if path == str(CHAPTER2_BASELINE_SOURCE)
+    }
+    eligible_new = section_labels(pre_rewrite_source, CHAPTER2_PRE_REWRITE_SECTION_TITLES)
+    if CHAPTER2_SUMMARY_RETIREMENT in inventory:
+        eligible_new.add(CHAPTER2_SUMMARY_RETIREMENT)
+    if formula_authorized:
+        eligible_baseline.add(CHAPTER2_FORMULA_RETIREMENT)
+        eligible_new.add(CHAPTER2_FORMULA_RETIREMENT)
+    if not eligible_baseline or not eligible_new:
+        issues.append({"kind": "chapter2_retirement_scope_missing"})
+    entries = manifest.get("retired_labels")
+    if not isinstance(entries, list):
+        issues.append({"kind": "invalid_retired_label_entries"})
+        return report
+    retired = []
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("label"), str):
+            issues.append({"kind": "invalid_retired_label_entry", "entry": entry})
+            continue
+        label = entry["label"]
+        retired.append(label)
+        if label not in eligible_baseline | eligible_new:
+            issues.append({"kind": "retired_label_outside_chapter2_removal_scope", "label": label})
+        if label in baseline_labels and baseline_labels[label] != str(CHAPTER2_BASELINE_SOURCE):
+            issues.append({"kind": "foreign_baseline_label_retirement", "label": label})
+        if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+            issues.append({"kind": "retired_label_reason_missing", "label": label})
+        if label in all_locations:
+            issues.append({"kind": "retired_label_still_defined", "label": label,
+                           "locations": all_locations[label]})
+    if len(set(retired)) != len(retired):
+        issues.append({"kind": "duplicate_retired_labels"})
+    report["retired_labels"] = sorted(set(retired))
+    for path, body in body_sources.items():
+        for reference in references(body):
+            if reference["label"] in retired:
+                issues.append({"kind": "retired_label_active_reference", "path": str(path), **reference})
+    undeclared = (baseline_inventory | set(inventory)) - set(all_locations) - set(retired)
+    if undeclared:
+        issues.append({"kind": "unrecorded_chapter2_label_removal", "labels": sorted(undeclared)})
+    report["pre_rewrite_label_count"] = len(inventory)
+    report["active_reference_scope"] = "All active body inputs in the twelve volumes."
+    if not issues:
+        report["approved_baseline_retirements"] = sorted(set(retired) & eligible_baseline)
+    return report
+
+
+def expanded_chapter_source(root: Path, path: Path, stack: tuple[Path, ...] = ()) -> str:
+    """Read a chapter and its actual inputs in publication order."""
+    if path in stack:
+        raise ValueError(f"Recursive chapter input: {' -> '.join(map(str, (*stack, path)))}")
+    text = (root / path).read_text()
+
+    def expand(match: re.Match) -> str:
+        child = Path(match[1].strip())
+        if not child.suffix:
+            child = child.with_suffix(".tex")
+        return expanded_chapter_source(root, child, (*stack, path))
+
+    # Ignore commented-out inputs while preserving source line breaks.
+    return re.sub(r"\\input\s*\{([^{}]+)\}", expand, uncomment(text))
+
+
 def audit_chapter(root: Path, row: dict, expected: list[dict]) -> dict:
     path = root / row["path"]
     report = {**row, "exists": path.exists(), "expected_heading_count": len(expected)}
     if not path.exists():
         report["issues"] = [{"kind": "missing_file"}]
         return report
-    raw = path.read_text()
+    raw = expanded_chapter_source(root, Path(row["path"]))
     text = uncomment(raw)
     headings = tex_headings(text)
     issues = []
@@ -528,12 +815,19 @@ def main() -> int:
     ).splitlines()
     baseline_labels = {}
     baseline_stats = Counter()
+    chapter1_baseline_source = ""
+    chapter2_baseline_source = ""
     for path in baseline_paths:
         if not path.endswith(".tex"):
             continue
-        old = uncomment(subprocess.check_output(
+        old_source = subprocess.check_output(
             ["git", "show", f"{baseline_revision}:{path}"], cwd=root, text=True,
-        ))
+        )
+        old = uncomment(old_source)
+        if path == str(VOLUME / CHAPTER1_BASELINE_SOURCE):
+            chapter1_baseline_source = old_source
+        if path == str(VOLUME / CHAPTER2_BASELINE_SOURCE):
+            chapter2_baseline_source = old_source
         baseline_stats.update(source_stats(old))
         for match in LABEL_RE.finditer(old):
             baseline_labels[match[1]] = str(Path(path).relative_to(VOLUME))
@@ -544,7 +838,7 @@ def main() -> int:
         path = root / row["path"]
         if not path.exists():
             continue
-        new = uncomment(path.read_text())
+        new = uncomment(expanded_chapter_source(root, Path(row["path"])))
         for match in LABEL_RE.finditer(new):
             locations[match[1]].append({
                 "path": row["path"], "line": new.count("\n", 0, match.start()) + 1,
@@ -567,6 +861,24 @@ def main() -> int:
         root, baseline_revision, baseline_labels, chapter17_source,
         all_locations, body_sources,
     )
+    chapter1_pre_rewrite_source = subprocess.check_output(
+        ["git", "show", f"{CHAPTER1_PRE_REWRITE_REVISION}:{CHAPTER1_CURRENT_SOURCE}"],
+        cwd=root, text=True,
+    )
+    chapter1_retirements = audit_retired_chapter1_labels(
+        root, baseline_revision, baseline_labels,
+        next(row["path"] for row in rows if row["chapter"] == 1),
+        all_locations, body_sources, chapter1_baseline_source, chapter1_pre_rewrite_source,
+    )
+    chapter2_pre_rewrite_source = subprocess.check_output(
+        ["git", "show", f"{CHAPTER2_PRE_REWRITE_REVISION}:{CHAPTER2_CURRENT_SOURCE}"],
+        cwd=root, text=True,
+    )
+    chapter2_retirements = audit_retired_chapter2_labels(
+        root, baseline_revision, baseline_labels,
+        next(row["path"] for row in rows if row["chapter"] == 2),
+        all_locations, body_sources, chapter2_baseline_source, chapter2_pre_rewrite_source,
+    )
     chapter17_references = references(body_sources.get(Path(chapter17_source), ""))
     chapter17_reference_audit = {
         "source": chapter17_source, "reference_count": len(chapter17_references),
@@ -577,9 +889,12 @@ def main() -> int:
         "active_source": Path(chapter17_source) in body_sources,
         "resolution_scope": "All active body inputs in the twelve volumes.",
     }
+    approved_retirements = set(retirements["approved_baseline_retirements"])
+    approved_retirements.update(chapter1_retirements["approved_baseline_retirements"])
+    approved_retirements.update(chapter2_retirements["approved_baseline_retirements"])
     missing = {
         label: path for label, path in missing_before_retirements.items()
-        if label not in retirements["approved_baseline_retirements"]
+        if label not in approved_retirements
     }
     result = {
         "outlines": [str(path) for path in outline_paths],
@@ -590,6 +905,8 @@ def main() -> int:
         "baseline_stats": dict(baseline_stats),
         "missing_baseline_labels_before_retirements": missing_before_retirements,
         "chapter17_label_retirements": retirements,
+        "chapter1_label_retirements": chapter1_retirements,
+        "chapter2_label_retirements": chapter2_retirements,
         "chapter17_cross_references": chapter17_reference_audit,
         "missing_baseline_labels": missing, "duplicate_labels": duplicate,
         "duplicate_label_scope": "All active body inputs in the twelve volumes.",
@@ -611,11 +928,19 @@ def main() -> int:
     if retirements["exists"]:
         print(f"CHAPTER17_RETIREMENTS labels={len(retirements['retired_labels'])} "
               f"issues={len(retirements['issues'])}")
+    if chapter1_retirements["exists"]:
+        print(f"CHAPTER1_RETIREMENTS labels={len(chapter1_retirements['retired_labels'])} "
+              f"issues={len(chapter1_retirements['issues'])}")
+    if chapter2_retirements["exists"]:
+        print(f"CHAPTER2_RETIREMENTS labels={len(chapter2_retirements['retired_labels'])} "
+              f"issues={len(chapter2_retirements['issues'])}")
     print(f"CHAPTER17_REFERENCES count={chapter17_reference_audit['reference_count']} "
           f"undefined={len(chapter17_reference_audit['undefined_references'])} "
           f"active={chapter17_reference_audit['active_source']}")
     failed = any(report["issues"] for report in reports)
     failed = failed or bool(retirements["issues"])
+    failed = failed or bool(chapter1_retirements["issues"])
+    failed = failed or bool(chapter2_retirements["issues"])
     failed = failed or bool(chapter17_reference_audit["undefined_references"])
     failed = failed or not chapter17_reference_audit["active_source"]
     if not args.chapter:

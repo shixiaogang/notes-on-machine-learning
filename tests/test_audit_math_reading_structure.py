@@ -1,4 +1,4 @@
-"""Regression checks for explicit chapter-17 label retirement."""
+"""Regression checks for reading structure and scoped label retirement."""
 
 import importlib.util
 import json
@@ -28,8 +28,8 @@ class CurrentChapterStructureTests(unittest.TestCase):
             paths, text = AUDIT.reading_structure(root)
             self.assertEqual(len(paths), 6)
             headings = AUDIT.outline_headings(text)
-            self.assertEqual(list(headings), [1, 2, 3, 11, 12, 13])
-            self.assertEqual(headings[11][1]["number"], "1.1")
+            self.assertEqual(list(headings), [1, 2, 3, 12, 13, 14])
+            self.assertEqual(headings[12][1]["number"], "1.1")
             (root / paths[-1]).unlink()
             with self.assertRaisesRegex(ValueError, "Expected 3 part outlines"):
                 AUDIT.reading_structure(root)
@@ -72,7 +72,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
 
     def current_assignment_rows(self):
         rows = []
-        for local, identity in enumerate([1, 2, 3, 18, 4, 5, 6, 7, 8, 9], 1):
+        for local, identity in enumerate([1, 2, 5, 3, 18, 21, 4, 6, 7, 8, 9], 1):
             rows.append(f"| {identity} | 1 | {local} | 章节{identity} | tex/upper/chapter{local}.tex |")
         for local, identity in enumerate([10, 11, 19, 20, 12, 13, 14, 15, 16, 17], 1):
             source = (
@@ -82,7 +82,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
             rows.append(f"| {identity} | 2 | {local} | 章节{identity} | {source} |")
         return rows
 
-    def test_split_chapter_keeps_historical_identities_and_current_positions(self):
+    def test_split_chapters_keep_historical_identities_and_current_positions(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / AUDIT.CONTRACT
@@ -90,13 +90,14 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path.write_text("\n".join(self.current_assignment_rows()))
             rows = AUDIT.assignments(root)
             by_identity = {row["chapter"]: row for row in rows}
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[3]), 3)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[18]), 4)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[4]), 5)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 13)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 14)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 15)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[17]), 20)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[3]), 4)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[18]), 5)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[21]), 6)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[4]), 7)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 14)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 15)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 16)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[17]), 21)
             self.assertEqual(by_identity[17]["local_chapter"], 10)
             self.assertEqual(by_identity[17]["volume"], 2)
             self.assertEqual(AUDIT.chapter17_retirement_source(rows), by_identity[17]["path"])
@@ -108,7 +109,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             rows = self.current_assignment_rows()
             path.write_text("\n".join(rows[:-1]))
-            with self.assertRaisesRegex(ValueError, "Expected 20 assignments"):
+            with self.assertRaisesRegex(ValueError, "Expected 21 assignments"):
                 AUDIT.assignments(root)
             rows[-1] = rows[-1].replace("| 17 |", "| 16 |", 1)
             path.write_text("\n".join(rows))
@@ -147,7 +148,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path = root / AUDIT.CONTRACT
             path.parent.mkdir(parents=True)
             rows = self.current_assignment_rows()
-            rows[12] = rows[12].replace("| 2 | 3 |", "| 2 | 2 |")
+            rows[13] = rows[13].replace("| 2 | 3 |", "| 2 | 2 |")
             path.write_text("\n".join(rows))
             with self.assertRaisesRegex(ValueError, "Volume 2 assignments"):
                 AUDIT.assignments(root)
@@ -176,8 +177,8 @@ class CurrentChapterStructureTests(unittest.TestCase):
             rows = self.current_assignment_rows()
             (root / AUDIT.CONTRACT).write_text("\n".join(rows))
             assignments = AUDIT.assignments(root)
-            self.assertEqual(len(assignments), 20)
-            self.assertEqual(sorted(row["chapter"] for row in assignments), list(range(1, 21)))
+            self.assertEqual(len(assignments), 21)
+            self.assertEqual(sorted(row["chapter"] for row in assignments), list(range(1, 22)))
             self.assertEqual(
                 AUDIT.chapter17_retirement_source(assignments),
                 "tex/lower/01-mathematics-and-future-research.tex",
@@ -192,6 +193,30 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path.write_text("\n".join(rows))
             with self.assertRaisesRegex(ValueError, "Expected 17 assignments"):
                 AUDIT.assignments(root)
+
+
+    def test_chapter_audit_follows_nested_inputs_and_keeps_their_labels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "chapter.tex").write_text(
+                "\\chapter{合章}\\label{chap:merged}\n"
+                "% \\input{not-active}\n\\input{section}\n"
+                "\\section{本章小结}\n"
+            )
+            (root / "section.tex").write_text(
+                "\\section{极限}\\label{sec:limits}\n\\input{detail}\n"
+            )
+            (root / "detail.tex").write_text("\\subsection{序列}\\label{def:sequence}\n")
+            row = {"chapter": 3, "path": "chapter.tex", "title": "合章"}
+            expected = AUDIT.outline_headings(
+                "## 第3章 合章\n### 3.1 极限\n#### 3.1.1 序列\n### 3.2 本章小结\n"
+            )[3]
+            report = AUDIT.audit_chapter(root, row, expected)
+            self.assertEqual(report["issues"], [])
+            self.assertEqual(report["stats"]["labels"], 3)
+            (root / "detail.tex").write_text("\\input{section}\n")
+            with self.assertRaisesRegex(ValueError, "Recursive chapter input"):
+                AUDIT.audit_chapter(root, row, expected)
 
 
 class Chapter17RetirementTests(unittest.TestCase):
@@ -295,6 +320,392 @@ class Chapter17RetirementTests(unittest.TestCase):
         result = self.run_audit()
         self.assertIn("retirement_manifest_metadata", self.kinds(result))
         self.assertIn("pre_rewrite_label_inventory_sha256_mismatch", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+
+
+class Chapter1RetirementTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / AUDIT.CHAPTER1_RETIRED_LABELS).parent.mkdir(parents=True)
+        self.source = str(AUDIT.CHAPTER1_CURRENT_SOURCE)
+        self.revision = AUDIT.CHAPTER1_BASELINE_REVISION
+        self.old = (
+            r"\chapter{旧章}\label{chap:one}" "\n"
+            r"\section{集合与关系}\label{eq:kept}" "\n"
+            r"\section{命题与证明}\label{eq:old}\label{eq:prior-removal}" "\n"
+            r"\section{本章小结}\label{sec:summary}" "\n"
+        )
+        self.before = (
+            r"\chapter{改写前章}\label{chap:one}" "\n"
+            r"\section{集合与关系}\label{eq:kept}" "\n"
+            r"\section{向量与矩阵}\label{eq:new-kept}" "\n"
+            r"\section{命题与证明}\label{eq:old}\label{eq:added}" "\n"
+            r"\section{本章小结}\label{sec:summary}" "\n"
+        )
+        self.baseline = {
+            label: str(AUDIT.CHAPTER1_BASELINE_SOURCE)
+            for label in AUDIT.LABEL_RE.findall(self.old)
+        }
+        self.baseline.update({
+            "eq:chapter-two": str(AUDIT.CHAPTER2_BASELINE_SOURCE),
+            "eq:chapter-seventeen": str(AUDIT.CHAPTER17_BASELINE_SOURCE),
+        })
+        self.locations = {
+            label: [{"path": self.source, "line": 1}]
+            for label in ["chap:one", "eq:kept", "eq:new-kept", "sec:summary"]
+        }
+        inventory = AUDIT.LABEL_RE.findall(self.before)
+        self.manifest = {
+            "schema_version": 1, "chapter": 1, "source": self.source,
+            "baseline_revision": self.revision,
+            "baseline_source": str(AUDIT.VOLUME / AUDIT.CHAPTER1_BASELINE_SOURCE),
+            "pre_rewrite_revision": AUDIT.CHAPTER1_PRE_REWRITE_REVISION,
+            "pre_rewrite_source": self.source,
+            "authorized_baseline_section_titles": ["命题与证明"],
+            "authorized_pre_rewrite_section_titles": ["命题与证明"],
+            "baseline_source_sha256": AUDIT.hashlib.sha256(self.old.encode()).hexdigest(),
+            "pre_rewrite_source_sha256": AUDIT.hashlib.sha256(self.before.encode()).hexdigest(),
+            "baseline_section_labels": ["eq:old", "eq:prior-removal"],
+            "pre_rewrite_section_labels": ["eq:added", "eq:old"],
+            "pre_rewrite_labels": sorted(inventory),
+            "pre_rewrite_labels_sha256": AUDIT.label_inventory_sha256(inventory),
+            "reason": "User removed only propositions and proofs.",
+            "retired_labels": [
+                {"label": "eq:old", "present_in": ["baseline", "pre_rewrite"],
+                 "reason": "Removed in this revision."},
+                {"label": "eq:added", "present_in": ["pre_rewrite"],
+                 "reason": "Newer label removed in this revision."},
+                {"label": "eq:prior-removal", "present_in": ["baseline"],
+                 "reason": "Baseline-only removal, separately identified."},
+            ],
+        }
+
+    def run_audit(self, body="", locations=None):
+        (self.root / AUDIT.CHAPTER1_RETIRED_LABELS).write_text(json.dumps(self.manifest))
+        return AUDIT.audit_retired_chapter1_labels(
+            self.root, self.revision, self.baseline, self.source,
+            self.locations if locations is None else locations,
+            {Path("tex/12-systems/active.tex"): AUDIT.uncomment(body)},
+            self.old, self.before,
+        )
+
+    def kinds(self, result):
+        return {issue["kind"] for issue in result["issues"]}
+
+    def test_only_real_topic_labels_are_approved_with_version_provenance(self):
+        result = self.run_audit()
+        self.assertEqual(result["issues"], [])
+        self.assertEqual(result["approved_baseline_retirements"], ["eq:old", "eq:prior-removal"])
+        self.assertEqual(result["prior_baseline_only_retirements"], ["eq:prior-removal"])
+        self.assertEqual(result["baseline_section_label_count"], 2)
+        self.assertEqual(result["pre_rewrite_section_label_count"], 2)
+
+    def test_missing_manifest_never_exempts_labels(self):
+        result = AUDIT.audit_retired_chapter1_labels(
+            self.root, self.revision, self.baseline, self.source,
+            self.locations, {}, self.old, self.before,
+        )
+        self.assertFalse(result["exists"])
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_unknown_foreign_and_duplicate_entries_fail_closed(self):
+        self.manifest["retired_labels"].extend([
+            {"label": label, "present_in": [], "reason": "Outside chapter 1."}
+            for label in ["eq:chapter-two", "eq:chapter-seventeen", "eq:invented"]
+        ] + [dict(self.manifest["retired_labels"][0])])
+        result = self.run_audit()
+        self.assertIn("retired_label_outside_chapter1_removal_scope", self.kinds(result))
+        foreign = [issue["label"] for issue in result["issues"]
+                   if issue["kind"] == "foreign_baseline_label_retirement"]
+        self.assertEqual(foreign, ["eq:chapter-two", "eq:chapter-seventeen"])
+        self.assertIn("duplicate_retired_labels", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_other_sections_and_summary_remain_protected(self):
+        for label in ["chap:one", "eq:kept", "eq:new-kept", "sec:summary"]:
+            with self.subTest(label=label):
+                self.manifest["retired_labels"].append({
+                    "label": label, "present_in": [], "reason": "Not an authorized topic.",
+                })
+                result = self.run_audit(locations={
+                    key: value for key, value in self.locations.items() if key != label
+                })
+                self.assertIn("retired_label_outside_chapter1_removal_scope", self.kinds(result))
+                self.assertEqual(result["approved_baseline_retirements"], [])
+                self.manifest["retired_labels"].pop()
+
+    def test_unrecorded_removal_elsewhere_in_chapter_is_blocked(self):
+        result = self.run_audit(locations={
+            key: value for key, value in self.locations.items() if key != "eq:new-kept"
+        })
+        self.assertIn("unrecorded_chapter1_label_removal", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+        self.manifest["retired_labels"].pop()
+        self.assertIn("unrecorded_chapter1_label_removal", self.kinds(self.run_audit()))
+
+    def test_live_definitions_anywhere_block_retirement(self):
+        result = self.run_audit(locations={
+            **self.locations, "eq:added": [{"path": "tex/elsewhere.tex", "line": 4}],
+        })
+        self.assertIn("retired_label_still_defined", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_all_supported_active_reference_forms_block_retirement(self):
+        body = r"""\ref{eq:old}
+\eqref{eq:added}
+\BookSectionRef{eq:old}{fallback}
+\hyperref[eq:old]{link}
+\cref{eq:unrelated,eq:old}
+\crefrange{eq:start}{eq:old}
+\getrefnumber{eq:old}
+"""
+        result = self.run_audit(body)
+        refs = [issue for issue in result["issues"]
+                if issue["kind"] == "retired_label_active_reference"]
+        self.assertEqual(len(refs), 7)
+        self.assertEqual(result["approved_baseline_retirements"], [])
+        self.assertEqual(self.run_audit(r"% \ref{eq:old}" + "\n")["issues"], [])
+
+    def test_immutable_metadata_inventories_and_provenance_cannot_widen_scope(self):
+        for field in ["baseline_revision", "pre_rewrite_revision", "source", "baseline_source",
+                      "pre_rewrite_source", "baseline_source_sha256", "pre_rewrite_source_sha256",
+                      "authorized_baseline_section_titles", "authorized_pre_rewrite_section_titles",
+                      "baseline_section_labels", "pre_rewrite_section_labels", "pre_rewrite_labels",
+                      "pre_rewrite_labels_sha256"]:
+            with self.subTest(field=field):
+                value = self.manifest[field]
+                self.manifest[field] = "tampered"
+                result = self.run_audit()
+                self.assertIn("retirement_manifest_metadata", self.kinds(result))
+                self.assertEqual(result["approved_baseline_retirements"], [])
+                self.manifest[field] = value
+        self.manifest["retired_labels"][1]["present_in"] = ["baseline"]
+        self.assertIn("retired_label_source_versions_mismatch", self.kinds(self.run_audit()))
+
+    def test_source_identity_and_authorized_title_are_required(self):
+        self.source = "tex/other.tex"
+        self.assertIn("chapter1_retirement_identity_mismatch", self.kinds(self.run_audit()))
+        self.source = str(AUDIT.CHAPTER1_CURRENT_SOURCE)
+        self.revision = "a" * 40
+        self.assertIn("chapter1_retirement_identity_mismatch", self.kinds(self.run_audit()))
+        self.revision = AUDIT.CHAPTER1_BASELINE_REVISION
+        self.before = self.before.replace("命题与证明", "集合与关系")
+        result = self.run_audit()
+        self.assertIn("chapter1_retirement_scope_missing", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_malformed_entries_and_missing_reasons_fail_closed(self):
+        self.manifest["retired_labels"].append("eq:old")
+        result = self.run_audit()
+        self.assertIn("invalid_retired_label_entry", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+        self.manifest["retired_labels"].pop()
+        self.manifest["retired_labels"][0]["reason"] = " "
+        self.manifest["reason"] = " "
+        result = self.run_audit()
+        self.assertIn("retirement_reason_missing", self.kinds(result))
+        self.assertIn("retired_label_reason_missing", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_invalid_json_and_nonobject_manifests_fail_closed(self):
+        path = self.root / AUDIT.CHAPTER1_RETIRED_LABELS
+        for raw in ["{", "[]"]:
+            with self.subTest(raw=raw):
+                path.write_text(raw)
+                result = AUDIT.audit_retired_chapter1_labels(
+                    self.root, self.revision, self.baseline, self.source,
+                    self.locations, {}, self.old, self.before,
+                )
+                self.assertTrue(result["issues"])
+                self.assertEqual(result["approved_baseline_retirements"], [])
+
+
+class Chapter2RetirementTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / AUDIT.CHAPTER2_RETIRED_LABELS).parent.mkdir(parents=True)
+        self.source = str(AUDIT.CHAPTER2_CURRENT_SOURCE)
+        self.revision = AUDIT.CHAPTER2_BASELINE_REVISION
+        self.old = (
+            r"\chapter{旧章}\label{chap:two}" "\n"
+            r"\section{候选空间的结构与计数}\label{eq:kept}" "\n"
+            r"\section{候选空间上的约束与求解}\label{eq:old}" "\n"
+            r"\section{问题族的可计算性与复杂度}\label{eq:prior-removal}" "\n"
+            r"\section{本章小结}\label{sec:summary}" "\n"
+        )
+        self.before = (
+            r"\chapter{改写前章}\label{chap:two}" "\n"
+            r"\section{有限候选的计数}\label{eq:kept}" "\n"
+            r"\section{有限输入上的可区分模式}" "\n"
+            r"\section{候选解的构造}\label{eq:old}" "\n"
+            r"\section{候选解的质量核验}\label{eq:added}" "\n"
+            r"\section{问题族的可计算性}" "\n"
+            r"\section{问题族的计算复杂度}" "\n"
+            r"\section{本章小结}\label{sec:summary}" "\n"
+            rf"\label{{{AUDIT.CHAPTER2_SUMMARY_RETIREMENT}}}" "\n"
+        )
+        self.baseline = {
+            label: str(AUDIT.CHAPTER2_BASELINE_SOURCE)
+            for label in AUDIT.LABEL_RE.findall(self.old)
+        }
+        self.baseline["eq:foreign"] = "other-chapter.tex"
+        self.locations = {
+            label: [{"path": self.source, "line": 1}]
+            for label in ["chap:two", "eq:kept", "sec:summary"]
+        }
+        inventory = AUDIT.LABEL_RE.findall(self.before)
+        self.manifest = {
+            "schema_version": 1, "chapter": 2, "source": self.source,
+            "baseline_revision": self.revision,
+            "baseline_source": str(AUDIT.VOLUME / AUDIT.CHAPTER2_BASELINE_SOURCE),
+            "pre_rewrite_revision": AUDIT.CHAPTER2_PRE_REWRITE_REVISION,
+            "pre_rewrite_source": self.source,
+            "authorized_pre_rewrite_sections": [3, 4, 5, 6],
+            "authorized_baseline_section_titles": list(AUDIT.CHAPTER2_BASELINE_SECTION_TITLES),
+            "authorized_pre_rewrite_section_titles": list(AUDIT.CHAPTER2_PRE_REWRITE_SECTION_TITLES),
+            "authorized_summary_label": AUDIT.CHAPTER2_SUMMARY_RETIREMENT,
+            "baseline_source_sha256": AUDIT.hashlib.sha256(self.old.encode()).hexdigest(),
+            "pre_rewrite_source_sha256": AUDIT.hashlib.sha256(self.before.encode()).hexdigest(),
+            "pre_rewrite_labels": sorted(inventory),
+            "pre_rewrite_labels_sha256": AUDIT.label_inventory_sha256(inventory),
+            "reason": "User removed former sections 2.3--2.6 and their summary table.",
+            "retired_labels": [
+                {"label": label, "reason": "Its solving/computability topic was removed."}
+                for label in ["eq:old", "eq:prior-removal", "eq:added", AUDIT.CHAPTER2_SUMMARY_RETIREMENT]
+            ],
+        }
+
+    def run_audit(self, body="", locations=None):
+        (self.root / AUDIT.CHAPTER2_RETIRED_LABELS).write_text(json.dumps(self.manifest))
+        return AUDIT.audit_retired_chapter2_labels(
+            self.root, self.revision, self.baseline, self.source,
+            self.locations if locations is None else locations,
+            {Path("tex/12-infrastructure/active.tex"): AUDIT.uncomment(body)},
+            self.old, self.before,
+        )
+
+    def kinds(self, result):
+        return {issue["kind"] for issue in result["issues"]}
+
+    def authorize_formula(self):
+        label = AUDIT.CHAPTER2_FORMULA_RETIREMENT
+        self.old = self.old.replace(r"\label{eq:kept}", rf"\label{{eq:kept}}\label{{{label}}}")
+        self.before = self.before.replace(r"\label{eq:kept}", rf"\label{{eq:kept}}\label{{{label}}}")
+        self.baseline[label] = str(AUDIT.CHAPTER2_BASELINE_SOURCE)
+        self.manifest["baseline_source_sha256"] = AUDIT.hashlib.sha256(self.old.encode()).hexdigest()
+        self.manifest["pre_rewrite_source_sha256"] = AUDIT.hashlib.sha256(self.before.encode()).hexdigest()
+        inventory = AUDIT.LABEL_RE.findall(self.before)
+        self.manifest["pre_rewrite_labels"] = sorted(inventory)
+        self.manifest["pre_rewrite_labels_sha256"] = AUDIT.label_inventory_sha256(inventory)
+        self.manifest["authorized_formula_labels"] = [label]
+        self.manifest["retired_labels"].append({"label": label, "reason": "User removed this formula."})
+        return label
+
+    def test_exact_removed_formula_can_be_retired(self):
+        label = self.authorize_formula()
+        result = self.run_audit()
+        self.assertEqual(result["issues"], [])
+        self.assertIn(label, result["approved_baseline_retirements"])
+
+    def test_formula_scope_cannot_authorize_other_counting_labels(self):
+        self.manifest["authorized_formula_labels"] = ["eq:kept"]
+        self.manifest["retired_labels"].append({"label": "eq:kept", "reason": "Not authorized."})
+        result = self.run_audit()
+        self.assertIn("invalid_formula_retirement_scope", self.kinds(result))
+        self.assertIn("retired_label_outside_chapter2_removal_scope", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_removed_formula_must_exist_in_both_immutable_sources(self):
+        self.manifest["authorized_formula_labels"] = [AUDIT.CHAPTER2_FORMULA_RETIREMENT]
+        result = self.run_audit()
+        self.assertIn("formula_retirement_source_mismatch", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_removed_formula_cannot_remain_defined_or_referenced(self):
+        label = self.authorize_formula()
+        result = self.run_audit(body=rf"\eqref{{{label}}}")
+        self.assertIn("retired_label_active_reference", self.kinds(result))
+        locations = dict(self.locations, **{label: [{"path": self.source, "line": 2}]})
+        result = self.run_audit(locations=locations)
+        self.assertIn("retired_label_still_defined", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_only_authorized_missing_baseline_labels_are_approved(self):
+        result = self.run_audit()
+        self.assertEqual(result["issues"], [])
+        self.assertEqual(result["approved_baseline_retirements"], ["eq:old", "eq:prior-removal"])
+        self.assertNotIn("eq:foreign", result["approved_baseline_retirements"])
+
+    def test_missing_contract_never_exempts_labels(self):
+        result = AUDIT.audit_retired_chapter2_labels(
+            self.root, self.revision, self.baseline, self.source,
+            self.locations, {}, self.old, self.before,
+        )
+        self.assertFalse(result["exists"])
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_foreign_unknown_and_duplicate_entries_fail_closed(self):
+        self.manifest["retired_labels"].extend([
+            {"label": "eq:foreign", "reason": "Not chapter 2."},
+            {"label": "eq:invented", "reason": "Not in either immutable source."},
+            {"label": "eq:old", "reason": "Duplicate."},
+        ])
+        result = self.run_audit()
+        self.assertIn("foreign_baseline_label_retirement", self.kinds(result))
+        self.assertIn("retired_label_outside_chapter2_removal_scope", self.kinds(result))
+        self.assertIn("duplicate_retired_labels", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_counting_and_summary_labels_cannot_be_retired(self):
+        for label in ["eq:kept", "sec:summary"]:
+            with self.subTest(label=label):
+                entry = {"label": label, "reason": "Outside the authorized topics."}
+                self.manifest["retired_labels"].append(entry)
+                locations = {key: value for key, value in self.locations.items() if key != label}
+                result = self.run_audit(locations=locations)
+                self.assertIn("retired_label_outside_chapter2_removal_scope", self.kinds(result))
+                self.assertEqual(result["approved_baseline_retirements"], [])
+                self.manifest["retired_labels"].pop()
+
+    def test_live_definitions_and_cross_volume_references_block_retirement(self):
+        result = self.run_audit(locations={**self.locations, "eq:old": [{"path": "another.tex", "line": 5}]})
+        self.assertIn("retired_label_still_defined", self.kinds(result))
+        for command in [r"\eqref{eq:old}", r"\BookChapterRef{eq:old}{fallback}",
+                        r"\hyperref[eq:old]{link}", r"\crefrange{eq:first}{eq:old}"]:
+            with self.subTest(command=command):
+                result = self.run_audit(command)
+                self.assertIn("retired_label_active_reference", self.kinds(result))
+                self.assertEqual(result["approved_baseline_retirements"], [])
+
+    def test_immutable_metadata_inventory_and_identity_are_checked(self):
+        for field in ["baseline_revision", "pre_rewrite_revision", "source", "baseline_source_sha256"]:
+            with self.subTest(field=field):
+                old = self.manifest[field]
+                self.manifest[field] = "tampered"
+                result = self.run_audit()
+                self.assertIn("retirement_manifest_metadata", self.kinds(result))
+                self.assertEqual(result["approved_baseline_retirements"], [])
+                self.manifest[field] = old
+        self.manifest["pre_rewrite_labels"].append("eq:invented")
+        result = self.run_audit()
+        self.assertIn("pre_rewrite_label_inventory_mismatch", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+        self.revision = "a" * 40
+        self.assertIn("chapter2_retirement_identity_mismatch", self.kinds(self.run_audit()))
+
+    def test_unrecorded_removal_and_missing_reason_fail_closed(self):
+        removed = self.manifest["retired_labels"].pop()
+        result = self.run_audit()
+        self.assertIn("unrecorded_chapter2_label_removal", self.kinds(result))
+        self.assertEqual(result["approved_baseline_retirements"], [])
+        self.manifest["retired_labels"].append({**removed, "reason": " "})
+        result = self.run_audit()
+        self.assertIn("retired_label_reason_missing", self.kinds(result))
         self.assertEqual(result["approved_baseline_retirements"], [])
 
 
