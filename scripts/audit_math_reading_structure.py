@@ -121,7 +121,7 @@ def assignments(root: Path) -> list[dict]:
     # Historical audit identities stay stable when current chapters merge.
     # In particular, ID 17 remains the source governed by the retirement file.
     # Independent one-variable and multivariable calculus retain IDs 18 and 21.
-    expected_identities = list(range(1, 22)) if modern else list(range(1, 18))
+    expected_identities = list(range(1, 23)) if modern else list(range(1, 18))
     count = len(expected_identities)
     if modern and len(modern) != len(rows):
         raise ValueError("Chapter assignments must not mix current and legacy formats")
@@ -133,7 +133,7 @@ def assignments(root: Path) -> list[dict]:
     if len({row["path"] for row in rows}) != count:
         raise ValueError("Chapter assignments must have unique source paths")
     if modern:
-        for volume, expected_count in ((1, 11), (2, 10)):
+        for volume, expected_count in ((1, 12), (2, 10)):
             local_numbers = [row["local_chapter"] for row in rows if row["volume"] == volume]
             if local_numbers != list(range(1, expected_count + 1)):
                 raise ValueError(f"Volume {volume} assignments must list local chapters 1 through {expected_count} in reading order")

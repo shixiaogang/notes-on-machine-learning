@@ -12,6 +12,7 @@
   卷一的两集合容斥示意图保留可编辑 TikZ 源、字体已嵌入的 PDF、PNG 预览及解析集合与字体记录，位于第1部分的 `tikz/inclusion-exclusion-overlap.*`。
   卷一第三章另补集合测量与积分的四幅图解：有限与可数覆盖、精确分割、内外逼近（TikZ）及取值分层积分（Matplotlib），图源、解析参数、预览和核验记录随各图保存。
   度量空间节的 `tikz/metric-ball-neighborhood/` 和 `tikz/metric-open-closed-relative/` 分别说明开球与邻域，以及开闭性随母空间改变；保留TikZ图源、字体嵌入PDF与预览。
+  卷一第8章《度量空间》于2026-10-23在第2部分新增13幅TikZ概念图，统一归档于 `02-linear-algebra-and-geometry/tikz/metric-spaces/`：三角不等式、伪距离等价类与商度量、子空间弦长、相对球、内部闭包边界、稠密、有限$\varepsilon$网、连续球刻画、Lipschitz锥、双Lipschitz夹逼带、柯西尾部、完备化嵌入与压缩误差收缩；各图保留可编辑源、独立渲染入口、字体嵌入PDF及逐图生成与核验记录。
   集合测量节的 `tikz/measure-abstraction/` 另以关系图对照勒贝格测度的具体构造与一般测度空间的共同结构。
   卷一第三章于2026-10-21新增26幅概念与过程图：18幅Matplotlib解析图、8幅TikZ几何图，分别位于第1部分的`matplotlib/chapter3-concept-processes/`和`tikz/chapter3-concept-processes/`。覆盖极限与误差、局部线性近似、积分截断和换序、路径与曲面、公共边界抵消；解释放在图注，目录内保留生成器、解析参数、矢量成图、预览与逐图核验记录。
 - `03-foundations/`：基础、理论与可信性三部分资源。

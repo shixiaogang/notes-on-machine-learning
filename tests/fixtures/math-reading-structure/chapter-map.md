@@ -1,6 +1,6 @@
 # 数学准备两卷章目与文件映射
 
-数学准备分为卷一11章与卷二10章，各三部分。下表使用卷内正式章号和项目根目录相对路径。审计序号1—17保留历史标签检查身份，随机序列与随机过程、统计推断分别使用审计序号19、20；18、21分别对应一元函数微积分、多元函数微积分。审计序号不作为出版章号。章内输入按实际入口递归核对；现行大纲位于 `plans/01-mathematical-preliminaries-upper/` 与 `plans/02-mathematical-preliminaries-lower/`。
+数学准备分为卷一12章与卷二10章，各三部分。下表使用卷内正式章号和项目根目录相对路径。审计序号1—17保留历史标签检查身份，随机序列与随机过程、统计推断分别使用审计序号19、20；18、21分别对应一元函数微积分、多元函数微积分。审计序号不作为出版章号。章内输入按实际入口递归核对；现行大纲位于 `plans/01-mathematical-preliminaries-upper/` 与 `plans/02-mathematical-preliminaries-lower/`。
 
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
@@ -11,10 +11,11 @@
 | 18 | 1 | 5 | 一元函数微积分 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/05-univariate-calculus.tex |
 | 21 | 1 | 6 | 多元函数微积分 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/06-multivariate-calculus.tex |
 | 4 | 1 | 7 | 最优化 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/07-optimization.tex |
-| 6 | 1 | 8 | 非线性空间与流形 | tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/01-differential-geometry-and-symmetry.tex |
-| 7 | 1 | 9 | 函数空间 | tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/02-functional-analysis-and-approximation.tex |
-| 8 | 1 | 10 | 信号 | tex/01-mathematical-preliminaries-upper/03-graphs-and-signals/01-signal-representation-and-processing.tex |
-| 9 | 1 | 11 | 图的表示与计算 | tex/01-mathematical-preliminaries-upper/03-graphs-and-signals/02-graph-structure-and-computation.tex |
+| 22 | 1 | 8 | 度量空间 | tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/01-metric-spaces.tex |
+| 6 | 1 | 9 | 非线性空间与流形 | tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/02-differential-geometry-and-symmetry.tex |
+| 7 | 1 | 10 | 函数空间 | tex/01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry/03-functional-analysis-and-approximation.tex |
+| 8 | 1 | 11 | 信号 | tex/01-mathematical-preliminaries-upper/03-graphs-and-signals/01-signal-representation-and-processing.tex |
+| 9 | 1 | 12 | 图的表示与计算 | tex/01-mathematical-preliminaries-upper/03-graphs-and-signals/02-graph-structure-and-computation.tex |
 | 10 | 2 | 1 | 随机变量与概率基础 | tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/01-random-variables.tex |
 | 11 | 2 | 2 | 概率分布的分析与优化 | tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/02-information-theory-and-statistical-geometry.tex |
 | 19 | 2 | 3 | 随机序列与随机过程 | tex/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/03-random-sequences-and-processes.tex |

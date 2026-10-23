@@ -13,7 +13,7 @@ import json
 import math
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 
 
 def page_selection(value: str | None, count: int) -> list[int]:
