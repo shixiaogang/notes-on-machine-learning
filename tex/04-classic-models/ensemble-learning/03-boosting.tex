@@ -50,7 +50,13 @@ $\alpha_t>0$是成员投票系数，平局规则事先固定。
   \epsilon_t=\sum_{i:h_t(\bm x_i)\neq y_i}w_i^{(t)}.
   \label{eq:ensemble-adaboost-error}
 \end{equation}
-AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩罚指数级增长）。在已有得分$F_{t-1}$上加入$\alpha h_t$后展开指数项，把样本按分对、错分两组求和；对$\alpha$求导并令其为零，得到投票系数
+AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩罚指数级增长）。在已有得分$F_{t-1}$上加入$\alpha h_t$后，本轮要最小化的归一化指数加权和为
+\[
+  Z_t(\alpha)=\sum_i w_i^{(t)}e^{-\alpha y_i h_t(\bm x_i)}
+  =e^{-\alpha}\sum_{\text{分对}}w_i^{(t)}+e^{\alpha}\sum_{\text{错分}}w_i^{(t)}
+  =e^{-\alpha}(1-\epsilon_t)+e^{\alpha}\epsilon_t,
+\]
+其中$\sum_{\text{错分}}w_i^{(t)}=\epsilon_t$是错分样本的权重和，$\sum_{\text{分对}}w_i^{(t)}=1-\epsilon_t$。对$\alpha$求导并令其为零：$-(1-\epsilon_t)e^{-\alpha}+\epsilon_t e^{\alpha}=0$，整理得$e^{2\alpha}=(1-\epsilon_t)/\epsilon_t$，即投票系数
 \begin{equation}
   \alpha_t=\frac12\ln\frac{1-\epsilon_t}{\epsilon_t}.
   \label{eq:ensemble-adaboost-alpha}
@@ -75,7 +81,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩�
 
 \subsubsection{理论分析}
 \label{sec:ensemble-adaboost-theory}
-指数损失满足$1[\operatorname{sign}F(\bm x_i)\neq y_i]\le e^{-y_iF(\bm x_i)}$，因此训练错误率被平均指数损失上界控制。每轮归一化因子$Z_t$把指数损失递推为连乘；记弱优势$\gamma_t=1/2-\epsilon_t$，则最优$Z_t=2\sqrt{\epsilon_t(1-\epsilon_t)}\le e^{-2\gamma_t^2}$，于是训练错误率满足
+指数损失满足$1[\operatorname{sign}F(\bm x_i)\neq y_i]\le e^{-y_iF(\bm x_i)}$，因此训练错误率被平均指数损失$\frac1n\sum_i e^{-y_iF_T(\bm x_i)}$上界控制。再看这个平均指数损失：权重递推$w_i^{(t+1)}=w_i^{(t)}e^{-\alpha_t y_i h_t}/Z_t$把逐轮指数因子串起来，且$\sum_iw_i^{(t)}=1$；把$F_T=\sum_t\alpha_t h_t$代入、对$i$求和，每轮的归一化常数$Z_t$就从权重里逐项析出，平均指数损失恰等于各轮$Z_t$的连乘。每轮$Z_t$在上述最优$\alpha_t$处取最小值$2\sqrt{\epsilon_t(1-\epsilon_t)}$；记弱优势$\gamma_t=1/2-\epsilon_t$，则$2\sqrt{\epsilon_t(1-\epsilon_t)}=2\sqrt{1/4-\gamma_t^2}\le e^{-2\gamma_t^2}$，于是训练错误率满足
 \begin{equation}
   \frac1n\sum_i\mathbf1[\hat y(\bm x_i)\neq y_i]
   \le \prod_{t=1}^T Z_t
@@ -107,7 +113,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩�
   r_{ti}=-\left[\frac{\partial L(y_i,F)}{\partial F}\right]_{F=F_{t-1}(\bm x_i)},
   \label{eq:ensemble-pseudo-residual}
 \end{equation}
-平方损失下$r_{ti}=y_i-F_{t-1}(\bm x_i)$，恰好是普通残差。回归树以平方误差拟合这组负梯度，得到叶区域$R_{tj}$与叶均值；有限样本下$F_0$取使初始损失最小的常数（平方损失取训练均值）。图\ref{fig:ensemble-boosting-residuals}展示平方损失下的一次更新：新成员拟合的是残差，再把输出加回已有预测，偏高的预测随负残差降低、偏低的随正残差升高。拟合目标是负梯度方向，不是直接拟合原始标签；这一区分在换损失时尤其重要。
+平方损失$L=\frac12(y-F)^2$对当前得分的导数为$\partial L/\partial F=F-y$，取负即$r_{ti}=y_i-F_{t-1}(\bm x_i)$，恰好是普通残差。回归树以平方误差拟合这组负梯度，得到叶区域$R_{tj}$与叶均值；有限样本下$F_0$取使初始损失最小的常数（平方损失取训练均值）。图\ref{fig:ensemble-boosting-residuals}展示平方损失下的一次更新：新成员拟合的是残差，再把输出加回已有预测，偏高的预测随负残差降低、偏低的随正残差升高。拟合目标是负梯度方向，不是直接拟合原始标签；这一区分在换损失时尤其重要。
 
 \begin{figure*}[tbp]
   \centering
@@ -129,7 +135,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩�
 逐叶线搜索与单一全局步幅是两种实现，更新形式不同，不要混为一谈。
 
 \paragraph{不同损失及后续调整}
-平方损失关注条件均值；二项对数损失下伪响应为$r_{ti}=y_i-p_i$（$p_i$为当前概率），叶值修正概率对数几率而非概率本身，不能把实数值修正直接加到概率上。在此基础上，收缩改变增量幅度、随机采样改变本轮样本、DART改变参照的已有组合、分位数提升改变预测目标，分别在下面几小节展开。
+平方损失关注条件均值；二项对数损失$L=-[y\log p+(1-y)\log(1-p)]$在$p=\sigma(F)$时的导数为$\partial L/\partial F=p-y$，取负得伪响应$r_{ti}=y_i-p_i$（$p_i$为当前概率），叶值修正概率对数几率而非概率本身，不能把实数值修正直接加到概率上。在此基础上，收缩改变增量幅度、随机采样改变本轮样本、DART改变参照的已有组合、分位数提升改变预测目标，分别在下面几小节展开。
 
 \subsubsection{收缩与早停：控制累积拟合}
 \label{sec:ensemble-shrinkage}
@@ -196,7 +202,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩�
   \mathrm{Obj}^{(t)}=\sum_i[g_i f_t(\bm x_i)+\tfrac12h_i f_t^2(\bm x_i)]+\Omega(f_t),
   \label{eq:ensemble-xgb-objective}
 \end{equation}
-$g_i=\partial_{\hat y}L(y_i,\hat y)|_{\hat y=F_{t-1}}$为一阶导，$h_i=\partial_{\hat y}^2L|$为曲率。叶$j$内汇总$G_j=\sum_{i\in R_j}g_i$、$H_j=\sum_{i\in R_j}h_i$，在$H_j+\lambda>0$时最优叶值为
+$g_i=\partial_{\hat y}L(y_i,\hat y)|_{\hat y=F_{t-1}}$为一阶导，$h_i=\partial_{\hat y}^2L|$为曲率。叶$j$内汇总$G_j=\sum_{i\in R_j}g_i$、$H_j=\sum_{i\in R_j}h_i$；把本轮叶常数$f_t(\bm x_i)=w_j$代回二阶目标，叶$j$的贡献为$w_jG_j+\frac12(H_j+\lambda)w_j^2$（$\lambda$是叶值平方罚的系数）。对$w_j$求导并令其为零：$G_j+(H_j+\lambda)w_j=0$，在$H_j+\lambda>0$时解得叶值
 \begin{equation}
   w_j^*=-\frac{G_j}{H_j+\lambda}.
   \label{eq:ensemble-xgb-leaf}
