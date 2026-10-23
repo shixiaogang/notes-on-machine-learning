@@ -74,7 +74,7 @@ ax.set_ylabel("尾（对数轴）", fontsize=8)
 ax.set_title("Neumann 级数：尾界随 $q^{n+1}$ 几何衰减", fontsize=8)
 ax.set(xticks=range(0, 16, 2), ylim=(1e-3, 20))
 ax.grid(True, which="both")
-ax.legend(loc="upper right", fontsize=7.5, frameon=False)
+ax.legend(loc="lower left", fontsize=7.5, frameon=False)
 
 finalize(fig)
 fig.tight_layout()

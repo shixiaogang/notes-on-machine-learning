@@ -69,11 +69,11 @@ fig, (a, b) = plt.subplots(1, 2, figsize=(169 / 25.4, 66 / 25.4))
 a.plot(XNORM, RES, color=BLUE, lw=1.2)
 for i, lam in ((0, 0.02), (20, LAM[20]), (40, 8.0)):
     a.plot(XNORM[i], RES[i], "o", ms=4, mfc=YELLOW, mec=INK, mew=.4, zorder=5)
-a.annotate("λ 小：参数范数大\n过拟合，方差大", xy=(XNORM[0], RES[0]),
-           xytext=(1.15, 0.55), fontsize=7.5,
+a.annotate("λ 小：参数范数大\n过拟合，方差大", xy=(2.18, 0.04),
+           xytext=(1.30, 0.30), fontsize=7.5,
            arrowprops=dict(arrowstyle="->", color=BLUE, lw=.6))
-a.annotate("λ 大：残差大\n偏差大", xy=(XNORM[-1], RES[-1]),
-           xytext=(0.15, 2.6), fontsize=7.5,
+a.annotate("λ 大：残差大\n偏差大", xy=(0.12, 4.02),
+           xytext=(1.25, 3.45), fontsize=7.5,
            arrowprops=dict(arrowstyle="->", color=RED, lw=.6))
 a.set_xlabel("$\\|x(\\lambda)\\|$（参数范数）")
 a.set_ylabel("$\\|Ax-b\\|$（残差）")

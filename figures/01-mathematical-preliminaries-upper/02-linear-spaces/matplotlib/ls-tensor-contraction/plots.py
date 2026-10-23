@@ -72,13 +72,14 @@ for k in range(2):
             ax.text(x0 + j + .5, 2 - i + .5, str(SLICES[k][i][j]),
                     fontsize=8, ha="center", va="center",
                     color=RED if diag else INK)
-    # 求和箭头：从两个对角格的下边缘出发 -> C_k
-    ax.annotate("", xy=(x0 + .85, .72), xytext=(x0 + .5, 2.05),
+    # 求和箭头：沿网格边框走线，不穿过任何数字格。
+    # 上对角格 (0,0)：先沿 y=2 边框向右，再沿 x=x0+1 边框向下；
+    # 下对角格 (1,1)：从其下边缘 y=1 垂直向下。
+    ax.annotate("", xy=(x0 + 1.0, .45), xytext=(x0 + .5, 2.0),
                 arrowprops=dict(arrowstyle="-|>", color=RED, lw=.8,
-                                connectionstyle="arc3,rad=.2"))
-    ax.annotate("", xy=(x0 + 1.15, .72), xytext=(x0 + 1.5, 1.05),
-                arrowprops=dict(arrowstyle="-|>", color=RED, lw=.8,
-                                connectionstyle="arc3,rad=-.2"))
+                                connectionstyle="angle,angleA=0,angleB=-90,rad=0"))
+    ax.annotate("", xy=(x0 + 1.3, .45), xytext=(x0 + 1.5, 1.0),
+                arrowprops=dict(arrowstyle="-|>", color=RED, lw=.8))
     ax.text(x0 + 1, .05, f"$C_{k}=T[0,0,{k}]+T[1,1,{k}]={C[k]}$",
             fontsize=7.5, ha="center", color=RED)
 

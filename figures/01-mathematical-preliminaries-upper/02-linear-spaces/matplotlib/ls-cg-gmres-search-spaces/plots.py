@@ -113,12 +113,14 @@ b.annotate("", xy=XSTAR, xytext=X0G,
            arrowprops=dict(arrowstyle="-|>", color=RED, lw=1.1))
 b.plot(*X0G, "o", ms=4, mfc=YELLOW, mec=INK, mew=.5, zorder=5)
 b.plot(*XSTAR, "o", ms=5, mfc=GREEN, mec=INK, mew=.5, zorder=5)
-b.plot(0, 0, "o", ms=3, mfc=MUTED, zorder=4)
+b.plot(0, 0, "o", ms=4, mfc=INK, mec=INK, mew=.5, zorder=5)
+b.text(-0.62, 0.16, "解 $x$（残差为零）", fontsize=7.5, color=INK)
 b.text(X0G[0] + .05, X0G[1] + .02, "$x_0$", fontsize=8, color=YELLOW)
-b.text(XSTAR[0] + .04, XSTAR[1] - .10, "$x_*$：残差最小点", fontsize=7.5, color=GREEN)
+b.text(1.08, -0.62, "$x_1$：残差最小点", fontsize=7.5, color=GREEN)
 b.text(-1.95, 1.35, "同心圆：残差范数 $\\|r\\|$\n绿线：$K_1=x_0+\\operatorname{span}\\{r_0\\}$",
-       fontsize=7.5, color=GREEN)
-b.text(-1.75, -1.85, "$x_*$ 是原点到直线的垂足；\n二维下 $K_2=R^2$，两步内残差可取 0",
+       fontsize=7.5, color=GREEN,
+       bbox=dict(facecolor="white", edgecolor="none", alpha=.9, pad=1.6))
+b.text(-1.75, -1.85, "$x_1$ 是原点到直线的垂足；\n二维下 $K_2=R^2$，两步内残差可取 0",
        fontsize=7.5, color=INK)
 b.set_title("(b) GMRES：在 Krylov 仿射空间中最小化残差", fontsize=8)
 b.set(xlim=(-2.0, 2.2), ylim=(-2.0, 2.0), xticks=range(-2, 3), yticks=range(-2, 3))

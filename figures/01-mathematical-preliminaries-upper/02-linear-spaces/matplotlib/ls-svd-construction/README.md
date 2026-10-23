@@ -4,7 +4,13 @@
 
 | 文件 | 读图任务 | 建议正文宽度 | 建议图环境 |
 | --- | --- | --- | --- |
-| `ls-svd-construction.pdf/.png` | 三步：① 形成对称 Gram 矩阵 AᵀA；② 对称谱引理正交对角化得特征值；③ σᵢ=√λᵢ，右奇异向量 vᵢ=特征向量，左奇异向量 uᵢ=Avᵢ/σᵢ | 169 mm | `figure*` |
+| `ls-svd-construction.pdf/.png/.svg` | 三步：① 形成对称 Gram 矩阵 AᵀA；② 对称谱引理正交对角化得特征方向；③ σᵢ=√λᵢ，右奇异向量 vᵢ=特征向量，左奇异向量 uᵢ=Avᵢ/σᵢ | 169 mm | `figure*` |
+
+## 图中元素含义
+
+- 栏 ①：蓝色椭圆是 $x^\top A^\top A x=2$ 的水平集（正定二次型）；下方上下两行分别是 $A$ 与 $A^\top A$（mathtext 两行数字配细括号线，不用 LaTeX matrix 环境）。
+- 栏 ②：灰圆为单位圆，蓝箭头 $v_1$、绿箭头 $v_2$ 是正交特征方向；下方为对角化公式与 $\lambda$ 数值。
+- 栏 ③：灰圆为单位圆、蓝椭圆为 $A$ 的像，蓝/绿箭头 $u_1,u_2$ 即左奇异向量；栏间箭头表示计算顺序。
 
 ## 关键精确值
 - $\bm A=\begin{smallmatrix}2&0.5\\0.5&1\end{smallmatrix}$，$\bm A^\top\bm A=\begin{smallmatrix}4.25&1.5\\1.5&1.25\end{smallmatrix}$。

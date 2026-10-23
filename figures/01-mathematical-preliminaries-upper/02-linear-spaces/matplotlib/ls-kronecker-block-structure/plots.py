@@ -78,7 +78,8 @@ ax.plot([0, 4], [2, 2], color=INK, lw=1.4)
 block_labels = [("$a_{11}B$", .08, 3.92), ("$a_{12}B$", 2.08, 3.92),
                 ("$a_{21}B$", .08, 1.92), ("$a_{22}B$", 2.08, 1.92)]
 for lab, cx, cy in block_labels:
-    ax.text(cx, cy, lab, fontsize=6.5, ha="left", va="top", color=MUTED)
+    ax.text(cx, cy, lab, fontsize=6.5, ha="left", va="top", color=INK,
+            bbox=dict(facecolor="white", edgecolor="none", pad=1.0, alpha=.9))
 
 ax.text(2, 4.35, "$A\\otimes B$，$A$=(1,2; 3,4)，$B$=(1,1; 0,1)",
         fontsize=8, ha="center", color=INK)
