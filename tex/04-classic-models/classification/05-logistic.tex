@@ -1,0 +1,209 @@
+\subsection{Logistic回归}
+\label{sec:classification-logistic}
+
+感知机与SVM用得分的正负决定类别，但有些任务还需要知道判断有多大把握。例如，把一封普通邮件误判为垃圾邮件，可能比让一封垃圾邮件进入收件箱更难接受。此时我们希望调整判为垃圾邮件的门槛，并用类别概率计算两种决定各自的预期代价。分类得分可以另行校准为概率，也可以从一开始就建立概率模型。
+
+GDA能计算类别概率，但先要拟合每类的输入分布，这要求对“每类的输入长什么样”作出较强假设（见第\ref{sec:classification-gda}节）。这里改为直接描述$\mathbb P(Y=1\mid\bm X=\bm x)$：只关心给定输入后属于正类的概率，对输入本身如何分布不作假设。我们仍用特征的加权和组织证据，不过线性得分可能小于$0$或大于$1$，不能直接作为概率——把一个可能取$-3$或$5$的数解释成“概率”显然没有意义。\term{Logistic回归}（logistic regression）用一个S形函数把整条实数轴上的得分“压缩”到$(0,1)$区间，从而转成正类概率；它不要求输入服从类条件高斯分布，所规定的是对数几率与特征的线性关系。本节采用标签$\{0,1\}$，名称中的“回归”指概率与特征关系的建模。
+
+第\ref{sec:regression-glm}节把伯努利分布、logit链接与其他响应模型统一在广义线性模型中；本节复用这套条件概率结构，类别决策阈值与误判代价的完整讨论见第\ref{sec:classification-cost-decision}节，概率校准见第\ref{sec:classification-calibration}节。
+
+\subsubsection{模型结构}
+\label{sec:classification-logistic-structure}
+
+\paragraph{二分类条件概率}
+记$p(\bm{x})=\mathbb{P}(y=1\mid\bm{x})$。比值$p(\bm{x})/[1-p(\bm{x})]$称为\term{几率}（odds），衡量正类相对于负类的可能性。对它取对数得到\term{对数几率}（log-odds，也称logit），其取值可以覆盖整个实数轴，因而适合与线性得分连接：
+\begin{equation}
+  \label{eq:classification-logistic-logodds}
+  \log\frac{p(\bm{x})}{1-p(\bm{x})}
+  =\bm{w}^{\top}\bm{x}+b.
+\end{equation}
+其中$\bm{w}\in\mathbb{R}^{d}$是权重，$b\in\mathbb{R}$是偏置。令右侧为$z$，由$p/(1-p)=e^z$整理出$p=e^z/(1+e^z)$，便得到
+\begin{equation}
+  \label{eq:classification-logistic-sigmoid}
+  p(\bm{x})=\sigma(\bm{w}^{\top}\bm{x}+b),
+  \qquad
+  \sigma(z)=\frac{1}{1+e^{-z}}.
+\end{equation}
+这个S形函数称为\term{Sigmoid函数}（sigmoid function），此处特指Logistic形式。它把任意有限得分转成严格介于零和一之间的数。Cox在1958年的二值序列回归研究是这一统计建模路线的经典文献\scite{cox1958binary}。
+
+\paragraph{系数解释与默认类别输出}
+参数的解释落在对数几率尺度上：保持其他特征不变，$x_j$增加一个单位，正类几率乘以$e^{w_j}$。概率本身的变化还取决于原来的概率，因为
+\[
+  \frac{\partial p(\bm{x})}{\partial x_j}
+  =w_jp(\bm{x})[1-p(\bm{x})].
+\]
+在其余特征固定时，$w_j$的符号表示模型中正类对数几率的变化方向，大小则依赖特征单位。例如$w_j=\log 2$、原概率为$1/2$时，该特征增加一单位将几率乘以2，概率变为$2/3$。这种条件关联的因果解释还需要有关数据生成与混杂的额外假设。
+
+在两类误判代价相同时，以$p(\bm{x})\geq1/2$预测正类，边界就是$\bm{w}^{\top}\bm{x}+b=0$；非对称代价下的阈值推导见第\ref{sec:classification-cost-decision}节。
+
+\subsubsection{参数学习}
+\label{sec:classification-logistic-learning}
+
+\paragraph{似然与同步参数更新}
+对独立样本，模型给出的标签概率为$p_i^{y_i}(1-p_i)^{1-y_i}$，其中$p_i=\sigma(\bm{w}^{\top}\bm{x}_i+b)$。\term{最大似然估计}（maximum likelihood estimation, MLE）选择使已观察标签最可能出现的参数。其条件对数似然为
+\begin{equation}
+  \label{eq:classification-logistic-likelihood}
+  \ell(\bm{w},b)
+  =\sum_{i=1}^{n}
+  \bigl[y_i\log p_i+(1-y_i)\log(1-p_i)\bigr].
+\end{equation}
+最大化$\ell$等价于最小化负对数似然$L=-\ell$，也就是二分类\term{交叉熵损失}（cross-entropy loss）：给真实标签分配的概率越低，惩罚越大。令增广输入$\tilde{\bm{x}}_i=(\bm{x}_i^{\top},1)^{\top}$、参数$\bm{\beta}=(\bm{w}^{\top},b)^{\top}\in\mathbb{R}^{d+1}$，并记$z_i=\tilde{\bm{x}}_i^{\top}\bm{\beta}$，可写成
+\begin{equation}
+  \label{eq:classification-logistic-loss}
+  L(\bm{\beta})
+  =\sum_{i=1}^{n}\bigl[\log(1+e^{z_i})-y_i z_i\bigr].
+\end{equation}
+数值计算不宜先求极端概率再取对数，可用$\log(1+e^z)=\max\{0,z\}+\log(1+e^{-|z|})$避免指数溢出。
+
+为确定更新方向，利用$\sigma'(z)=\sigma(z)[1-\sigma(z)]$求导。令$\tilde{\bm{X}}\in\mathbb{R}^{n\times(d+1)}$的第$i$行为$\tilde{\bm{x}}_i^{\top}$，$\bm{p}=(p_1,\ldots,p_n)^{\top}$、$\bm{y}=(y_1,\ldots,y_n)^{\top}$，则
+\begin{equation}
+  \label{eq:classification-logistic-derivatives}
+  \begin{aligned}
+    \nabla L(\bm{\beta})
+      &=\tilde{\bm{X}}^{\top}(\bm{p}-\bm{y}),\\
+    \nabla^2 L(\bm{\beta})
+      &=\tilde{\bm{X}}^{\top}\bm{R}\tilde{\bm{X}},\\
+    \bm{R}
+      &=\operatorname{diag}\bigl(p_i(1-p_i)\bigr)_{i=1}^{n}.
+  \end{aligned}
+\end{equation}
+梯度中的$p_i-y_i$是预测概率与观察标签的差。对任意$\bm{v}\in\mathbb{R}^{d+1}$，Hessian的二次型为
+\[
+  \bm{v}^{\top}\nabla^2L\,\bm{v}
+  =\sum_{i=1}^{n}p_i(1-p_i)
+    (\tilde{\bm{x}}_i^{\top}\bm{v})^2\geq0.
+\]
+所以负对数似然$L$是凸函数，而被最大化的$\ell$是凹函数。有限参数处的$p_i(1-p_i)>0$；若$\tilde{\bm{X}}$列满秩，$L$严格凸，否则可能存在不改变训练得分的平坦方向。这涉及\term{可识别性}（identifiability）：数据能否区分不同参数。即使严格凸，也只能保证有限极小点若存在便唯一，不能保证它一定存在。
+
+\paragraph{求解器与停止依据}
+求解器的选择取决于数据规模和存储成本。稠密数据的一轮完整梯度计算为$O(nd)$，构造Hessian约为$O(nd^2)$，直接分解又需要$O(d^3)$。若存储$d\times d$量级的Hessian过于昂贵，\term{有限内存拟牛顿法}（limited-memory BFGS, L-BFGS）只保留少量历史更新来近似二阶信息。大规模稀疏数据则可采用\term{随机梯度下降}（stochastic gradient descent, SGD），每次用一个样本或小批量近似完整梯度。样本数、稀疏程度和精度要求共同决定求解选择。
+
+中小规模问题还可用牛顿法。把正则项加入梯度与Hessian后，每轮解$\bm H_t\bm d_t=-\nabla F(\bm\beta^{(t)})$，再以带阻尼的$\bm\beta^{(t+1)}=\bm\beta^{(t)}+\eta_t\bm d_t$更新；$F$是当前受惩罚目标。第\ref{sec:regression-glm}节已把同一步改写成IRLS：按当前概率产生工作响应$z_i=(y_i-p_i)/[p_i(1-p_i)]$和权重$v_i=p_i(1-p_i)$，再解加权最小二乘；这里沿用其计算，不把工作响应误当作固定的新标签。实现应解线性方程而不显式求逆，并检查目标变化、梯度与预算；极端概率、病态设计或过大的完整牛顿步都需要数值处理。
+
+\subsubsection{理论分析}
+\label{sec:classification-logistic-theory}
+
+\paragraph{无正则模型的有限解}
+例如，若存在$\bm{\beta}_0$使$(2y_i-1)\tilde{\bm{x}}_i^{\top}\bm{\beta}_0>0$对所有样本成立，沿$t\bm{\beta}_0$令$t\to\infty$，每项损失均趋于零，但任意有限$t$的损失仍大于零。完全分离的数据因此没有有限MLE；准完全分离也可能使部分参数发散。完整的存在性分析需要区分分离、准分离和重叠情形\scite{albert1984existence}。
+
+\paragraph{正则化与退化标签}
+实际训练常加入$\lambda\lVert\bm{w}\rVert_2^2/2$，其中$\lambda>0$。这个$L_2$惩罚抑制权重无限增大，也改善病态方向的数值条件。若两类均有样本，所有权重都受惩罚而偏置不受惩罚，所得二分类目标仍有唯一有限极小点；但若训练集只有一类，偏置仍可独自趋于无穷。若连偏置也作正的二次惩罚，则整个增广参数方向都受约束。使用$\lambda\lVert\bm{w}\rVert_1$可得到稀疏权重，但目标不再处处可微，需要适合非光滑目标的求解步骤。
+
+记真实类别后验为$\bm\eta(\bm x)$，预测概率向量为$\bm p(\bm x)$。固定输入时，预测交叉熵减去真实后验的熵为
+\[
+ -\sum_c\eta_c\log p_c+\sum_c\eta_c\log\eta_c
+ =D_{\mathrm{KL}}(\bm\eta\Vert\bm p)\geq0.
+\]
+因此最理想的条件概率目标是真实后验；使用有限参数的Logistic或Softmax时，只能在所设定的对数几率关系中拟合它。若目标的对数几率需要平方或交互项，应改变输入特征，而不是只增加优化轮数。分类又只取最大概率的类别，所以概率拟合误差与分类错误是不同的评价对象。
+
+\subsubsection{支持稀疏概率核预测：二分类相关向量模型}
+\label{sec:classification-rvm}
+
+\paragraph{Logistic基函数结构与ARD先验}
+核SVM用支持向量形成得分；若希望同时学习概率，并压缩预测时需要的基函数，可以采用Tipping的\term{相关向量机}（relevance vector machine, RVM）。它在二分类上沿用Logistic概率，却把得分写成$g(\bm x)=\sum_{j=1}^m w_j\phi_j(\bm x)$；候选基函数通常取训练点为中心的核函数并加入常数项。每个系数分别有先验$w_j\sim\mathcal N(0,\alpha_j^{-1})$，其中$\alpha_j>0$是待学精度，即方差的倒数。精度大时，该基函数的系数受到更强收缩，而不是预先规定哪些样本必须成为支持向量\scite{tipping2001rvm}。
+
+\paragraph{后验近似与基函数选择}
+固定精度后，先以原伯努利似然乘这些高斯先验，最大化后验；这等价于最小化Logistic负对数似然加$\bm w^\top\bm A\bm w/2$，其中$\bm A=\operatorname{diag}(\alpha_1,\ldots,\alpha_m)$。牛顿或IRLS求得众数$\hat{\bm w}$后，RVM用众数附近的高斯近似来描述后验，这称为Laplace近似。令$\bm\Phi\in\mathbb R^{n\times m}$满足$\bm\Phi_{i,j}=\phi_j(\bm x_i)$，以$p_i=\sigma(g(\bm x_i))$记当前正类概率，并令$\bm B=\operatorname{diag}(p_i(1-p_i))_{i=1}^n$，则$m\times m$的近似协方差为
+\[
+  \bm\Sigma=(\bm\Phi^\top\bm B\bm\Phi+\bm A)^{-1}.
+\]
+原方法再依据近似边缘似然更新精度，例如使用固定点更新$\alpha_j\leftarrow(1-\alpha_j\bm\Sigma_{j,j})/\hat w_j^2$，并交替重算后验众数与协方差。数值上按阈值剔除受到强收缩的基函数，配合目标变化或迭代预算停止；分母过小等退化情况需要数值处理，精度学习也不保证全局最优。
+
+最终保留的基函数及其系数构成稀疏预测器。若对近似后验积分，得到的是近似贝叶斯类别概率；只代入众数则是点估计预测，二者应区分。RVM改变了SVM的间隔准则和参数选择机制，有限精度只保证收缩，不保证系数恰为零；稀疏程度、计算收益与概率质量仍需验证。这里的RVM扩展限定于二分类的Logistic概率框架；多类RVM另有其建模方式，不在此节展开。
+
+\subsection{Softmax回归}
+\label{sec:classification-softmax}
+
+从垃圾邮件判断转到新闻主题分类，候选类别可以是体育、科技、文化等多个互斥主题。若分别训练“是否属于某主题”的二分类概率模型，它们的输出未必相加等于$1$；同一篇新闻可能在多个模型中都得到较高概率。我们需要一个共同描述类别竞争的模型。\term{Softmax回归}（softmax regression，也称multinomial logistic regression）为每类建立一个得分，再通过共同分母把这些得分转成和为一的概率向量。其表示约束是任意两类的对数概率比为线性函数。
+
+\subsubsection{模型结构}
+\label{sec:classification-softmax-structure}
+
+为每类引入$\bm{w}_c\in\mathbb{R}^{d}$和$b_c\in\mathbb{R}$，令$z_c(\bm{x})=\bm{w}_c^{\top}\bm{x}+b_c$。其后验模型为
+\begin{equation}
+  \label{eq:classification-softmax-model}
+  p_c(\bm{x})
+  =\mathbb{P}(y=c\mid\bm{x})
+  =\frac{\exp z_c(\bm{x})}
+         {\sum_{r=1}^{C}\exp z_r(\bm{x})}.
+\end{equation}
+指数保证概率为正，分母保证归一化；两类之间的分母相消，得到
+\[
+  \log\frac{p_c(\bm{x})}{p_r(\bm{x})}
+  =(\bm{w}_c-\bm{w}_r)^{\top}\bm{x}+b_c-b_r.
+\]
+当$C=2$时，$p_1(\bm{x})=\sigma((\bm{w}_1-\bm{w}_2)^{\top}\bm{x}+b_1-b_2)$。把第1类视为正类、第2类视为负类，就回到二分类Logistic回归。
+
+共同增加得分不会改变概率。更具体地，对任意$\bm{a}\in\mathbb{R}^{d}$和$t\in\mathbb{R}$，变换$\bm{w}_c\mapsto\bm{w}_c+\bm{a}$、$b_c\mapsto b_c+t$使每个指数项同乘$\exp(\bm{a}^{\top}\bm{x}+t)$，因而全部约掉。这是$d+1$维的参数冗余。选择第$C$类为\term{参考类}（reference class），就是把该类完整的增广参数固定为零：
+\begin{equation}
+  \label{eq:classification-softmax-reference}
+  \begin{gathered}
+    \bm{w}_C=\bm{0},\qquad b_C=0,\\
+    \log\frac{p_c(\bm{x})}{p_C(\bm{x})}
+    =\bm{w}_c^{\top}\bm{x}+b_c
+    \quad(c<C).
+  \end{gathered}
+\end{equation}
+参考类约束需同时固定权重与偏置。$\lambda\sum_c\lVert\bm{w}_c\rVert_2^2/2$只消除共同权重平移，还须例如令$\sum_c b_c=0$或惩罚全部偏置，才能锁定共同偏置平移。参数冗余消除后，设计矩阵的秩决定数据能否区分剩余方向，数据分离则影响有限解的存在性。
+
+\subsubsection{参数学习}
+\label{sec:classification-softmax-learning}
+
+\paragraph{联合似然的数值求解}
+现在$y_i\in\{1,\ldots,C\}$，记$p_{i,c}=p_c(\bm{x}_i)$，$\bm{\Theta}\in\mathbb{R}^{(d+1)\times C}$的第$c$列为$\bm{\beta}_c=(\bm{w}_c^{\top},b_c)^{\top}$。多类负对数似然是
+\begin{equation}
+  \label{eq:classification-softmax-loss}
+  \begin{aligned}
+    L(\bm{\Theta})
+      &=-\sum_{i=1}^{n}\log p_{i,y_i}\\
+      &=\sum_{i=1}^{n}\left[
+        \log\sum_{c=1}^{C}e^{z_c(\bm{x}_i)}
+        -z_{y_i}(\bm{x}_i)\right].
+  \end{aligned}
+\end{equation}
+多分类同样可以通过迭代优化学习参数。为构造每轮更新，先对上述损失求导；以$\mathbb{1}\{\cdot\}$表示条件成立时为一、否则为零的指示函数，得到
+\begin{equation}
+  \label{eq:classification-softmax-gradient}
+  \begin{aligned}
+    \nabla_{\bm{w}_c}L
+      &=\sum_{i=1}^{n}
+        [p_{i,c}-\mathbb{1}\{y_i=c\}]\bm{x}_i,\\
+    \frac{\partial L}{\partial b_c}
+      &=\sum_{i=1}^{n}
+        [p_{i,c}-\mathbb{1}\{y_i=c\}].
+  \end{aligned}
+\end{equation}
+梯度仍由“预测概率减观察标签”组成。目标凸，但共同参数平移及秩亏可能带来平坦方向，分离数据也可能没有有限MLE。参考类约束消除表示冗余，正则化控制参数大小，两者的作用不同。
+
+\paragraph{目标含义与表示限制}
+Softmax可用分块牛顿法、L-BFGS或小批量SGD优化，多类Hessian还包含类别间的耦合，不能简单把$C$个独立的二分类IRLS问题拼起来。求概率时应先减去$m(\bm{x})=\max_c z_c(\bm{x})$，用$e^{z_c-m}/\sum_r e^{z_r-m}$得到完全相同且更稳定的结果。普通稠密实现的一轮梯度计算约为$O(ndC)$。
+
+预测可取$\hat y(\bm{x})=\argmax_c p_c(\bm{x})=\argmax_c z_c(\bm{x})$，并按固定类别次序处理平局。共同分母不改变得分排序，所以只需输出一个类别时，可以直接比较各类得分。类别特别多时的归一化成本问题（层次Softmax、NCE、负采样）集中在第\ref{sec:classification-large-category-set}节讨论。
+
+\subsection{本节比较}
+\label{sec:classification-linear-comparison}
+
+本节各模型共享仿射或得分形式，学习依据却完全不同：Fisher比较投影后的类间散度与类内散度，感知机按错分或零得分修正，被动攻击按当前记录的间隔违反作最小改动投影，SVM在批量目标中权衡范数与间隔违反，Logistic与Softmax直接拟合条件概率。相同的得分形式不意味着相同的学习目标，也不意味着会从同一训练集选出相同边界。
+
+若类条件高斯与共享协方差近似可信，GDA可以同时利用类内相关性并形成后验概率（见第\ref{sec:classification-gda}节）；样本不足以估计完整协方差时，需要收缩或更受限的协方差表示。感知机省去分布拟合，适合直接使用错误反馈作增量更新，但停止预算、访问顺序和历史参数的返回方式会影响结果。被动攻击在单条记录上作最小改动，适合在线场景，但只保证当前记录的间隔。SVM在给定表示中显式权衡间隔与违反程度，代价是求解相应优化问题并选择惩罚强度。Logistic直接拟合条件概率，概率解释清晰，但完全分离时没有有限MLE，需要正则化。表\ref{tab:classification-linear-comparison}汇总这些选择条件。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{18mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
+    \toprule
+    模型 & 边界由什么决定 & 主要条件与代价 \\
+    \midrule
+    Fisher & 类间散度与类内散度之比 & 不要求高斯分布；只给方向，阈值与后验另立。 \\
+    感知机 & 错分或零得分触发的权重更新 & 依赖访问顺序；不可分时需停止规则或变体。 \\
+    被动攻击 & 当前记录间隔违反下的最小改动投影 & 只保证当前记录；$C$容忍度需训练内选择。 \\
+    线性 SVM & 范数与间隔损失的权衡 & 硬间隔要求可分；软间隔需选择惩罚强度。 \\
+    核 SVM / 核Fisher / 核感知机 & 特征空间中的间隔或统计量比较 & 核定义相似性；训练与预测开销受样本数和稀疏度影响。 \\
+    Logistic / Softmax & 条件似然（交叉熵） & 直接给概率；分离数据需正则化，概率仍需校准检验。 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{基于投影与参数得分的分类器比较。GDA一行见第\ref{sec:classification-gda}节；比较时还需固定输入表示与评价口径。}
+  \label{tab:classification-linear-comparison}
+\end{table}
+
+原坐标中的类别关系不能由仿射得分表达时，重复更新参数或调整惩罚都不能补上这种限制。核Fisher判别、核感知机与核SVM改用特征空间内积，分别保留类统计量比较、错分反馈与间隔选择这三种依据。核与输入尺度决定提供哪些关系，各自的学习目标再决定怎样使用这些关系。预测时是否需要保存全部训练样本、更新样本或支持向量，也随方法而异。若还需要稀疏的概率核预测，相关向量机改用逐基函数的高斯先验与精度学习，见第\ref{sec:classification-rvm}节；它与SVM共享核展开形式，但不使用同一个间隔目标。

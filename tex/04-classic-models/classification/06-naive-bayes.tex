@@ -1,0 +1,202 @@
+\section{基于类条件统计的分类}
+\label{sec:classification-statistical}
+
+第\ref{sec:classic-overview-probability}节已区分直接建立条件类别概率与先描述类条件输入分布的两条路线。本节走第二条：先为每个类别描述“该类的输入长什么样”（类条件分布），再结合类先验，用贝叶斯公式反推给定输入属于各类的概率。朴素贝叶斯用条件独立假设把类条件分布拆成单特征乘积，高斯判别分析（GDA）则用多元高斯及其协方差约束描述类内形状。两者都先估计输入分布，再作决策；与第\ref{sec:classification-logistic}节直接拟合条件概率的路线互为对照。
+
+\subsection{朴素贝叶斯}
+\label{sec:classification-naive-bayes}
+
+判断一封邮件是不是垃圾邮件，也可以换个问法：“如果它是垃圾邮件，有多大概率出现这些词？如果是正常邮件呢？”比较这两个问题的答案，再结合两类邮件各自的比例，就能反推它属于垃圾邮件的概率。如果以$d$个词是否出现作为二值特征，完整类条件分布就有$2^d$种输入组合；即使只选20个词，也已有一百多万种组合，很多组合在训练集中一次都没有出现。逐项估计它们的概率，需要远多于单个词频统计的数据，其中绝大部分组合的计数都会是零。
+
+要打破这个组合爆炸，可以作一个简化假设：一旦知道了邮件类别，各个词是否出现就彼此无关。这并不要求现实中词与词真的独立——给定“这是垃圾邮件”之后，“免费”和“领取”仍可能一起出现——而是用一个乘积近似来换取可计算性。\term{朴素贝叶斯}（naive Bayes, NB）正是基于给定类别后各特征条件独立这一假设，把单个特征的概率相乘，得到输入的类条件概率。这样，无需等待整套词语组合反复出现，就能从各词的计数估计类别证据。简化也会遗漏词语依赖：例如给定邮件类别后，“免费”与“领取”仍可能共同出现得更多。模型用较少统计量换取可直接计算的估计，样本波动可能减小，依赖假设造成的偏差则仍会保留。
+
+Maron在1961年关于自动索引的研究，是概率方法用于文档归类的早期工作之一。文档分类需要从大量词项中提取可累积的类别证据，这也成为朴素贝叶斯的一项典型用途\scite{maron1961indexing}。
+
+\subsubsection{模型结构}
+\label{sec:classification-naive-bayes-structure}
+
+对一般特征向量，NB采用给定类别后的\term{条件独立}（conditional independence）假设：已知$y=c$后，一个特征的取值不再改变其他特征的分布。令$\pi_c=\mathbb{P}(y=c)$、$p_{j,c}(x_j)=p(x_j\mid y=c)$，模型写成
+\begin{equation}
+  \label{eq:classification-naive-bayes-model}
+  \begin{aligned}
+    q_c(\bm{x})&=\prod_{j=1}^{d}p_{j,c}(x_j),\\
+    \mathbb{P}_{\mathrm{NB}}(y=c\mid\bm{x})
+      &=\frac{\pi_c q_c(\bm{x})}
+      {\sum_{r=1}^{C}\pi_r q_r(\bm{x})}.
+  \end{aligned}
+\end{equation}
+记号$q_c$强调这是模型使用的乘积分布，未必等于真实类条件分布。条件独立不要求全部训练样本混在一起时特征仍独立，例如词项之间的总体相关性可能部分来自主题差异。
+
+只需要分类时，各类共同的分母可以省略。为避免许多小概率连乘下溢，通常比较对数得分
+\begin{equation}
+  \label{eq:classification-naive-bayes-score}
+  s_c(\bm{x})
+  =\log\pi_c+\sum_{j=1}^{d}\log p_{j,c}(x_j),
+  \qquad
+  \hat y(\bm{x})=\argmax_c s_c(\bm{x}).
+\end{equation}
+这里$s_c$不是归一化的对数后验；需要概率时还须减去$\log\sum_r e^{s_r}$。零概率可使得分为负无穷，后面的平滑正是为未见事件保留概率质量。文档的多项式版本沿用相似得分，但它的独立性对象是词元位置，而非总长度固定后的各维计数，必须另外说明。
+
+\subsubsection{参数学习}
+\label{sec:classification-naive-bayes-learning}
+
+\paragraph{类条件估计与平滑}
+令$n_c=\sum_i\mathbb{1}\{y_i=c\}$，类先验的MLE为$\hat\pi_c=n_c/n$。这是以训练样本的类别比例估计目标总体的比例，依赖抽样具有代表性；人为重采样改变类别比例，部署先验需要按抽样机制修正或另行估计。也可以使用有依据的外部类别比例；若希望保留对该比例的不确定性，并为训练中未见的类别保留概率质量，则可对类概率向量$\bm{\pi}=(\pi_1,\ldots,\pi_C)^{\top}$设置参数先验。以下对类别概率与各组类条件参数设置相互独立的先验，以便分别更新。
+
+若使用正参数$\gamma_c$的Dirichlet参数先验，观察类别计数后的参数变为$\gamma_c+n_c$，相应后验均值为
+\[
+  \tilde\pi_c=\frac{n_c+\gamma_c}{n+\sum_r\gamma_r}.
+\]
+伪计数使未见类别仍有正概率；其总量控制先验相对于数据的影响。“类别先验$\pi_c$”属于样本生成模型，“对$\bm\pi$设置参数先验”描述估计它之前的不确定性，两者不能混同。Dirichlet分布的形式可参考\BookChapterRef{chap:random-variables}{卷2《数学准备：概率、因果与决策》的“随机变量与概率基础”章}。
+
+连续特征可采用\term{高斯朴素贝叶斯}（Gaussian naive Bayes），即$x_j\mid y=c\sim\mathcal{N}(\mu_{j,c},\sigma_{j,c}^{2})$，其中$\sigma_{j,c}^{2}>0$。当$n_c>0$且该特征的类内平方偏差和为正时，均值和方差的MLE为
+\begin{equation}
+  \label{eq:classification-naive-bayes-gaussian}
+  \begin{aligned}
+    \hat\mu_{j,c}
+      &=\frac{1}{n_c}\sum_{i:y_i=c}x_{i,j},\\
+    \hat\sigma_{j,c}^{2}
+      &=\frac{1}{n_c}\sum_{i:y_i=c}
+        (x_{i,j}-\hat\mu_{j,c})^2.
+  \end{aligned}
+\end{equation}
+方差分母为$n_c$，不是无偏样本方差所用的$n_c-1$。在上述条件下，预测时将这些量代入一维高斯密度后相乘。若某类某特征恒定为$a$，固定$\mu_{j,c}=a$后，对数似然为$-n_c\log(2\pi\sigma_{j,c}^{2})/2$，随正方差趋于零而无界增大。因此，此时正方差参数域内没有有限MLE；式\eqref{eq:classification-naive-bayes-gaussian}给出的零值只是样本散度，不能代入普通高斯密度。设定有明确尺度的方差下限或加入先验后，得到的是相应的受约束或正则化估计；给密度任意“加一”不是离散概率的平滑对应物。
+
+只关心某个词是否出现时，可用\term{伯努利朴素贝叶斯}（Bernoulli naive Bayes）。输入$x_{i,j}\in\{0,1\}$，令$n_{j,c}=\sum_{i:y_i=c}x_{i,j}$，则
+\begin{equation}
+  \label{eq:classification-naive-bayes-bernoulli}
+  \begin{aligned}
+    q_c(\bm{x})
+      &=\prod_{j=1}^{d}
+        \theta_{j,c}^{x_j}(1-\theta_{j,c})^{1-x_j},\\
+    \hat\theta_{j,c}&=\frac{n_{j,c}}{n_c}.
+  \end{aligned}
+\end{equation}
+$x_j=0$也通过词缺失概率提供证据，因此两种取值的项都参与得分；这里的MLE要求$n_c>0$。
+为平滑这个二值事件，使用Beta分布作为$\theta_{j,c}$的先验，
+两个正参数$\alpha_1,\alpha_0$分别对应出现与未出现。乘以似然后，
+两项指数分别增加$n_{j,c}$和$n_c-n_{j,c}$，所以
+\[
+  \theta_{j,c}\mid D_n
+  \sim\operatorname{Beta}
+    (\alpha_1+n_{j,c},\,\alpha_0+n_c-n_{j,c}).
+\]
+其后验均值为$(n_{j,c}+\alpha_1)/(n_c+\alpha_1+\alpha_0)$；对称情形$\alpha_1=\alpha_0=\alpha$的分母是$n_c+2\alpha$。这同时平滑了出现和未出现两种事件。
+
+若重复出现的次数也有意义，应使用\term{多项式朴素贝叶斯}（multinomial naive Bayes）。设固定词表有$d$个词项，$\bm{x}_i\in\mathbb{N}_0^d$记录一篇文档的词项计数，$m_i=\sum_jx_{i,j}$是该文档的总词元数。给定类别和$m_i$，假设每个词元位置独立地按$\bm{\theta}_c=(\theta_{1,c},\ldots,\theta_{d,c})^{\top}$抽取词项，其中$\sum_j\theta_{j,c}=1$。忽略顺序后，计数向量服从
+\begin{equation}
+  \label{eq:classification-naive-bayes-multinomial}
+  \mathbb{P}(\bm{x}_i\mid y_i=c,m_i)
+  =\frac{m_i!}{\prod_{j=1}^{d}x_{i,j}!}
+    \prod_{j=1}^{d}\theta_{j,c}^{x_{i,j}}.
+\end{equation}
+因为计数总和已固定，各维计数并不独立。将它写成每维整数取值的独立类别分布，会改变模型和分母。McCallum与Nigam专门比较了伯努利和多项式这两种文档事件模型，明确区分“词是否出现”与“词出现多少次”\scite{mccallum1998event}。
+
+标准文档分类通常进一步假设长度分布与类别无关，因而$\mathbb{P}(m_i\mid y_i=c)$在类别比较中约掉，此时给定长度后的类先验仍为$\pi_c$。若长度本身携带类别信息，则应保留并估计该项，使长度也参与后验计算。
+
+令$t_{j,c}=\sum_{i:y_i=c}x_{i,j}$为第$c$类中词项$j$的总出现次数，$t_c=\sum_jt_{j,c}$为该类的总词元数。去掉与参数无关的组合系数后，类内对数似然为$\sum_jt_{j,c}\log\theta_{j,c}$。当$t_c>0$时，在$\sum_j\theta_{j,c}=1$约束下求极值，正计数坐标上的拉格朗日方程给出$t_{j,c}/\theta_{j,c}$为同一常数，零计数坐标取零；求和确定常数为$t_c$，从而得到频率MLE。
+
+若对$\bm{\theta}_c$使用$\operatorname{Dirichlet}(\alpha_1,\ldots,\alpha_d)$先验，其中$\alpha_j>0$，同样的共轭更新把各坐标的幂次从$\alpha_j-1$变为$\alpha_j+t_{j,c}-1$，得到
+\[
+  \bm{\theta}_c\mid D_n
+  \sim\operatorname{Dirichlet}
+    (\alpha_1+t_{1,c},\ldots,\alpha_d+t_{d,c}).
+\]
+把更新后的参数归一化即可得到后验均值。两种估计分别为
+\begin{equation}
+  \label{eq:classification-naive-bayes-smoothing}
+  \hat\theta_{j,c}=\frac{t_{j,c}}{t_c},
+  \qquad
+  \tilde\theta_{j,c}
+  =\frac{t_{j,c}+\alpha_j}
+         {t_c+\sum_{r=1}^{d}\alpha_r}.
+\end{equation}
+前式要求$t_c>0$；后式也给出下一词元的后验预测概率，因为给定参数时该概率为$\theta_{j,c}$，对参数后验积分便得到其后验均值。这种均值估计通常既不同于MLE，也不同于式\eqref{eq:regression-map}定义的MAP。对称$\alpha_j=1$给出\term{拉普拉斯平滑}（Laplace smoothing），相当于每个词项加入一个伪计数；$\alpha_j=1/2$对应多项式参数的Jeffreys先验。对伯努利参数，其对应物是$\operatorname{Beta}(1/2,1/2)$，不应把这些常数不加区分地推广到高斯方差。以平滑估计代入式\eqref{eq:classification-naive-bayes-multinomial}得到的是常用的点估计分类器，不等于积分消去参数后的整篇文档预测分布。
+
+在长度与类别无关的约定下，文档预测只需计算$\log\tilde\pi_c+\sum_jx_j\log\tilde\theta_{j,c}$。算法\ref{alg:classification-multinomial-nb}给出完整的统计与预测流程，训练和预测使用相同的词表，并明确处理平滑与得分平局。
+\begin{algorithm}[带平滑的多项式朴素贝叶斯]
+  \label{alg:classification-multinomial-nb}
+  \begin{algorithmic}[1]
+    \Require 非空训练集$D_n$，固定词表大小$d$与类别数$C$；
+    \Statex \hspace{\algorithmicindent} 词项伪计数$\alpha>0$，类别伪计数$\gamma>0$
+    \Ensure 类先验$\tilde{\bm{\pi}}$、词项概率$\tilde{\bm{\Theta}}$及预测规则
+    \State 检查所有输入为有限非负整数计数，标签属于$\{1,\ldots,C\}$
+    \State 将$n_c$、$t_c$与$t_{j,c}$全部初始化为零
+    \For{$i=1,\ldots,n$}
+      \State 令$c=y_i$，并更新$n_c\gets n_c+1$
+      \For{满足$x_{i,j}>0$的词项$j$}
+        \State $t_{j,c}\gets t_{j,c}+x_{i,j}$
+        \State $t_c\gets t_c+x_{i,j}$
+      \EndFor
+    \EndFor
+    \For{$c=1,\ldots,C$}
+      \State $\tilde\pi_c\gets(n_c+\gamma)/(n+C\gamma)$
+      \State 对所有$j$，令$\tilde\theta_{j,c}\gets(t_{j,c}+\alpha)/(t_c+d\alpha)$
+    \EndFor
+    \State 对新计数向量$\bm{x}$，按相同词表与输入检查计算
+    \Statex \hspace{\algorithmicindent}
+      $s_c=\log\tilde\pi_c+\sum_{j:x_j>0}x_j\log\tilde\theta_{j,c}$
+    \State 返回$s_c$最大的类别；平局时返回索引最小的类别
+  \end{algorithmic}
+\end{algorithm}
+
+\paragraph{计数算例与概率失真}
+假设词表只有三个词项，两类累计计数分别为$(3,1,0)$和$(0,1,3)$，类先验均为$1/2$。取$\alpha=1$，平滑后的词项概率分别为$(4,2,1)/7$和$(1,2,4)/7$。对新文档$\bm{x}=(1,0,1)^{\top}$，两类乘积相同，判决平局；对$\bm{x}=(2,0,1)^{\top}$，两类得分之差为$\log4$，于是选择第1类。这个教学例子显示了重复计数怎样改变证据，而零计数词项经平滑后不会把整类概率直接清零。
+
+模型失配时，更多计数可以使乘积分布的估计稳定，却不能恢复被独立假设省掉的关系。例如，把一个有信息的二值特征复制一次，在等类先验下，NB会把原似然比平方：真实比值为4时后验为$4/5$，重复计算后却报$16/17$。最高类别没有改变，置信度已经失真；先验不等时，重复证据还可能改变类别。分类排序与概率质量因而需要分别检查，不能只因存在相关性就断言分类必然失败，也不能因分类正确就接受输出概率\scite{domingos1997optimality}。
+
+\subsubsection{支持部分特征依赖：AODE}
+\label{sec:classification-naive-bayes-dependence-extension}
+
+朴素贝叶斯按单个特征累计证据，类内条件独立假设会省略特征之间的联系。若同一类别中的“免费”与“领取”经常共同出现，单独累计两个词的频数仍会遗漏这段关系。\term{平均单依赖估计器}（averaged one-dependence estimators, AODE）让每个依赖模型以一个特征作为共同父特征，再平均这些模型的联合得分。各个模型假设其余特征在同时给定类别和父特征后条件独立，从而保留部分成对关系。Webb、Boughton与Wang在2005年研究了这一方法；代价是更多条件计数、存储与预测计算，条件样本不足时也可能难以估计这些额外关系\scite{webb2005aode}。
+
+把“免费”“领取”“优惠”是否出现记为三个二值特征，就能写出父特征实际改变了哪个条件。回到$C$个类别，固定当前输入$\bm x=(x_1,x_2,x_3)^\top$，以下用$p(c,x_j)$简写类别与父特征取值的联合概率，用$p(x_l\mid c,x_j)$简写同时给定这两者后的条件概率。三个单依赖模型的当前联合得分分别为
+\[
+  \begin{aligned}
+    q_{1,c}(\bm x)
+      &=p(c,x_1)p(x_2\mid c,x_1)p(x_3\mid c,x_1),\\
+    q_{2,c}(\bm x)
+      &=p(c,x_2)p(x_1\mid c,x_2)p(x_3\mid c,x_2),\\
+    q_{3,c}(\bm x)
+      &=p(c,x_3)p(x_1\mid c,x_3)p(x_2\mid c,x_3).
+  \end{aligned}
+\]
+例如，第一个模型中“领取”的概率既随类别改变，也随“免费”是否出现而改变，这就是把第一个特征称为父特征的含义；其余两个子特征则仍假设在这些条件下独立。与NB相比，变化落在条件计数中，并不要求三个词无条件地互相独立。
+
+并非每个父特征取值都有足够记录支持。令$N_j(x_j)$为训练集中第$j$个特征取当前值$x_j$的记录数，在训练或验证方案中预定最低频数$m\geq1$，并记
+\[
+  J(\bm x)=\{j\in\{1,2,3\}:N_j(x_j)\geq m\}.
+\]
+这个集合只选择当前有足够频数的父特征；联合与条件概率仍用相应计数作平滑估计，正平滑使未见的类内组合也有定义。$J(\bm x)$非空时，先平均这些模型的联合得分，再在类别之间归一化：
+\begin{equation}
+  \label{eq:classification-aode-joint-average}
+  \begin{aligned}
+    Q_c(\bm x)
+      &=\frac{1}{|J(\bm x)|}
+          \sum_{j\in J(\bm x)}q_{j,c}(\bm x),\\
+    \hat p_c(\bm x)
+      &=\frac{Q_c(\bm x)}{\sum_{r=1}^{C}Q_r(\bm x)}.
+  \end{aligned}
+\end{equation}
+只需类别时，可以直接比较$Q_c$并沿用固定的平局规则。这里平均的是联合得分，先把每个模型分别归一化再平均后验，一般会改变各模型的相对权重。若$J(\bm x)$为空，就明确回退到使用同一二值事件模型和平滑方式的NB；不能对空集合取平均。频数门槛与平滑分别处理统计支持和未见组合，仍不能保证增加依赖后一定改善独立数据上的分类或校准。
+
+\subsubsection{改善类别不平衡下的统计：补集朴素贝叶斯}
+\label{sec:classification-naive-bayes-complement}
+
+对文本数据，参数估计还受到类别样本数的影响。一个主题若只有少量文档，某个词的类内计数就可能被个别记录明显改变；其他主题的文档总量却可能充足。\term{补集朴素贝叶斯}（complement naive Bayes, CNB）改用不属于第$c$类的文档构造补集统计，再寻找与该补集不匹配的输入。它改变的是估计词项权重的样本来源，目标仍是预测原来的类别。Rennie等在2003年提出这一方法，针对类别不平衡时的权重估计偏差，并结合其他修正研究文本分类效果\scite{rennie2003complement}。
+
+沿用多项式计数，令$t_{j,\bar c}=\sum_{i:y_i\neq c}x_{i,j}$、$t_{\bar c}=\sum_jt_{j,\bar c}$。先定义补集词项参数及其对数权重：
+\begin{equation}
+  \label{eq:classification-complement-nb}
+  \begin{aligned}
+    \tilde\theta_{j,\bar c}
+      &=\frac{t_{j,\bar c}+\alpha_j}
+              {t_{\bar c}+\sum_{r=1}^{d}\alpha_r},\\
+    w_{j,c}&=\log\tilde\theta_{j,\bar c},\\
+    s_c^{\mathrm{CNB}}(\bm{x})
+      &=\log\pi_c-\sum_{j=1}^{d}x_jw_{j,c}.
+  \end{aligned}
+\end{equation}
+Rennie等给出的CNB规则选择最大$s_c^{\mathrm{CNB}}$；他们同时说明实验中为简化采用均匀类别先验，此时等价于选择补集对数得分$\sum_jx_jw_{j,c}$最小的类别。负号使“不像补集”转化为支持第$c$类的证据：$\tilde\theta_{j,\bar c}$表示补集的词项参数，与正类$\mathbb{P}(\bm{x}\mid y=c)$中的参数是不同对象。补集可能混合多个类别，本身也未必是单一多项式分布，因此CNB按补集统计构造分类得分，正类后验需要另外的概率模型。
+
+补集计数可用全局计数减去类内计数获得。权重归一化、文档长度变换和类别先验处理还会改变最终得分，比较实现时应固定这些设置。补集统计有更多记录可用，也可能混合差异明显的其他主题；分类收益与输出概率仍需在独立数据上检查。注意CNB是补集计分（与补集统计比较），不是生成式正类后验；不要把补集参数当作$\mathbb{P}(\bm{x}\mid y=c)$。

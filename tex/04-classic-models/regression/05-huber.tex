@@ -1,0 +1,40 @@
+\subsection{Huber回归}
+\label{sec:regression-huber}
+
+平方损失把大误差二次放大：一个严重偏离的异常样本会迫使整条直线为它大幅偏转，训练中其他记录的贡献被冲淡。\term{Huber回归}（Huber regression）保留线性均值结构，只把计分函数从平方换成在大误差处线性增长的Huber损失，使异常响应不再主导拟合。Huber在1964年提出这一介于平方与绝对误差之间的稳健计分\scite{huber1964}。
+
+\subsubsection{模型结构}
+\label{sec:regression-huber-structure}
+
+预测仍为$f(\bm{x})=b+\bm{w}^{\top}\bm{x}$，目标为
+\begin{equation}
+  \frac{1}{n}\sum_{i=1}^n\rho_\delta(e_i),
+  \qquad
+  \rho_\delta(e)=
+  \begin{cases}
+    e^2/2,&|e|\leq\delta,\\
+    \delta|e|-\delta^2/2,&|e|>\delta.
+  \end{cases}
+  \label{eq:regression-huber-loss}
+\end{equation}
+残差不超过$\delta$时按平方计分，超过$\delta$后转为线性；两段在$|e|=\delta$处函数值与一阶导数都连续，过渡光滑。常数$\delta$控制切换位置，由训练内验证选择，它不是“删除异常点”的阈值，而是损失曲率从二次变为一次的位置。Huber损失对应尺度固定的Laplace型稳健似然，这里只把它作为计分函数使用，不引入完整概率模型。
+
+\subsubsection{参数学习}
+\label{sec:regression-huber-learning}
+
+先固定已由稳健尺度和训练内验证确定的Huber阈值$\delta$，再由链式法则得到系数与截距估计方程。Huber损失的分段导数为$\rho'_\delta(e)=e$（$|e|\leq\delta$）与$\delta\operatorname{sign}(e)$（$|e|>\delta$）。把第$i$条记录的权重写成
+\[
+  w_i=
+  \begin{cases}
+    1,&|e_i|\leq\delta,\\
+    \delta/|e_i|,&|e_i|>\delta,
+  \end{cases}
+\]
+则$\rho'_\delta(e_i)=w_i e_i$，梯度为$\sum_i w_i e_i\bm{x}_i=0$，即加权正规方程。给定当前权重解加权最小二乘，再用新参数更新残差与权重，反复迭代，这就是\term{迭代重加权最小二乘}（iteratively reweighted least squares, IRLS）的一种实例；更新权重时阈值保持不变，避免无声改变训练目标。
+
+可用OLS结果初始化；每轮重算残差与权重，在固定权重后解加权线性方程，按原Huber目标或估计方程的变化检查收敛；$\delta$与稳健尺度（如用残差中位数估计的标准差）在训练折内确定。实现中不应把$|e_i|>\delta$的记录直接删除，它们仍以线性权重参与。
+
+\subsubsection{性质与使用条件}
+\label{sec:regression-huber-theory}
+
+式\eqref{eq:regression-huber-loss}的导数在切换点连续，损失处处可微；大误差处斜率为常数$\delta$，误差再大也只按线性累加，而平方损失按$e^2$爆炸。对照两端：$\delta\to\infty$时回到OLS的平方损失，$\delta\to0$时趋近最小绝对偏差（LAD）。Huber处在两者之间：中部高效、尾部稳健。代价是效率——在干净的高斯误差下，Huber的估计方差略高于OLS；换来的是面对非高斯尾部或污染样本时，预测不被个别记录带偏。是否值得这一交换，由训练内验证与任务对异常响应的敏感度决定。

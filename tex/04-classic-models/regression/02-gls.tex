@@ -1,0 +1,61 @@
+\subsection{加权与广义最小二乘}
+\label{sec:regression-wls-gls}
+
+OLS假设各条记录的误差在拟合中地位相同。当观测精度不同，或误差彼此相关时，预测形式可以保持不变，训练中的残差度量却需要调整。本小节明确协方差从哪里来、在什么条件下可以使用。
+
+\subsubsection{模型结构}
+\label{sec:regression-gls-structure}
+
+两次独立测量同一个未知常数，噪声方差分别为$1$和$100$。OLS直接取两次观测的平均，精度较低的第二条测量与第一条贡献相同；用噪声方差倒数加权，则给第一条观测$100$倍于第二条的权重，降低较不精确观测的影响。这是等权拟合最直接的缺口。
+
+一般地，设观测方程为$\bm{y}=\tilde{\bm{X}}\bm{\theta}+\bm{\varepsilon}$，误差满足零条件均值$\mathbb E[\bm{\varepsilon}\mid\tilde{\bm{X}}]=\bm{0}$，其协方差为正定矩阵$\bm{\Omega}\in\mathbb{R}^{n\times n}$：对角元$\Omega_{ii}$是第$i$条记录的误差方差，非对角元$\Omega_{ij}$是第$i,j$条误差的协方差。独立异方差时$\bm{\Omega}$对角，非对角元描述跨记录的共同变化；注意$\bm{\Omega}$是误差的协方差，不是输入特征的协方差，二者不能混同。
+
+把残差按误差尺度重新度量，协方差加权的平方目标为
+\begin{equation}
+  \widehat{\bm{\theta}}_{\mathrm{GLS}}
+  \in\argmin_{\bm{\theta}}
+    (\bm{y}-\tilde{\bm{X}}\bm{\theta})^{\top}
+    \bm{\Omega}^{-1}
+    (\bm{y}-\tilde{\bm{X}}\bm{\theta}).
+  \label{eq:regression-gls-objective}
+\end{equation}
+独立异方差对应$\Omega_{ii}=\sigma_i^2$，$\Omega^{-1}$的对角元为$1/\sigma_i^2$，即倒方差权重；相关误差还需在残差度量中扣除跨记录的共同变化。
+
+\subsubsection{参数学习}
+\label{sec:regression-gls-learning}
+
+\paragraph{已知误差协方差时的训练}
+
+对式\eqref{eq:regression-gls-objective}关于增广系数$\bm{\theta}$求梯度并令其为零，得到加权正规方程
+\begin{equation}
+  \tilde{\bm{X}}^{\top}\bm{\Omega}^{-1}\tilde{\bm{X}}\,\widehat{\bm{\theta}}
+  =\tilde{\bm{X}}^{\top}\bm{\Omega}^{-1}\bm{y}.
+  \label{eq:regression-gls-normal}
+\end{equation}
+直接求解前先对正定$\bm{\Omega}$作分解，取对称正定逆平方根$\bm{C}=\bm{\Omega}^{-1/2}$，同时白化响应与全部设计列：令$\bm{y}'=\bm{C}\bm{y}$、$\tilde{\bm{X}}'=\bm{C}\tilde{\bm{X}}$，新误差$\bm{C}\bm{\varepsilon}$的协方差为$\bm{C}\bm{\Omega}\bm{C}^{\top}=\bm{I}_n$，式\eqref{eq:regression-gls-objective}恰好变成普通残差平方和$\lVert\bm{y}'-\tilde{\bm{X}}'\bm{\theta}\rVert_2^2$，于是可调用OLS的QR或SVD接口。白化改变的是训练准则，并未改变新输入的预测公式：预测仍在原始特征上用已学系数计算$f(\bm{x})=b+\bm{w}^{\top}\bm{x}$。
+
+计算所用的$\bm{\Omega}$必须有明确来源：仪器标定给出的测量方差、重复测量估计的组内波动，或预先指定的低维相关结构。使用时应交代它对应哪一组观测、误差单位以及记录之间的相关关系；若$\bm{\Omega}$也要由当前数据估计，不能把它当成已知量，转入下面的可行GLS。
+
+\paragraph{协方差未知时的可行GLS}
+
+$\bm{\Omega}$未知时，单个长度为$n$的残差向量不足以估计$n\times n$的任意矩阵：未知量个数超过数据提供的信息。可行GLS（feasible GLS）先从OLS残差进入，在共享分组方差或预先指定的低维相关结构内估计协方差，再代回加权正规方程。例如按分组估计方差$\hat\sigma_g^2$，要求每组有足够样本，方差估计设下限避免除零；用估计的$\hat{\bm{\Omega}}$替换$\bm{\Omega}$后重新加权拟合，必要时再由新残差更新$\hat{\bm{\Omega}}$，直到估计稳定。这样得到的是插件式估计，有限样本下$\hat{\bm{\Omega}}$的误差会传入系数，停止依据应同时检查系数变化与加权残差。
+
+另一条路线是同时采用高斯似然估计系数与协方差。零均值高斯误差下，忽略与参数无关的常数，负对数似然为
+\[
+  \tfrac12(\bm{y}-\tilde{\bm{X}}\bm{\theta})^{\top}
+    \bm{\Omega}^{-1}(\bm{y}-\tilde{\bm{X}}\bm{\theta})
+  +\tfrac12\log|\bm{\Omega}|.
+\]
+二次残差项压低拟合偏差，对数行列式项记录协方差尺度的归一化代价；只压低加权残差而忽略行列式，会把方差估计推向零。联合目标与插件式可行GLS的分工不同：前者把$\bm{\Omega}$作为待估参数与系数一起优化，后者先估计再代入。
+
+\subsubsection{理论分析}
+\label{sec:regression-gls-theory}
+
+在正确线性均值、已知正定误差协方差、零条件均值与满列秩条件下，GLS估计无偏，协方差为
+\[
+  \operatorname{Var}(\widehat{\bm{\theta}}_{\mathrm{GLS}}\mid\tilde{\bm{X}})
+  =(\tilde{\bm{X}}^{\top}\bm{\Omega}^{-1}\tilde{\bm{X}})^{-1}.
+\]
+任取另一个线性无偏估计$\widetilde{\bm{\theta}}=\bm{A}\bm{y}$，无偏性要求$\bm{A}\tilde{\bm{X}}=\bm{I}$。令$\bm{B}=\bm{A}-(\tilde{\bm{X}}^{\top}\bm{\Omega}^{-1}\tilde{\bm{X}})^{-1}\tilde{\bm{X}}^{\top}\bm{\Omega}^{-1}$，由$\bm{B}\tilde{\bm{X}}=\bm{0}$可验证其协方差与GLS协方差之差半正定：GLS在所有线性无偏估计中方差最小，这就是Gauss--Markov结论。
+
+回到两次测量的教学例。设未知常数为$\mu$，$\bm{y}=(\mu+\varepsilon_1,\mu+\varepsilon_2)^{\top}$，$\operatorname{Var}(\varepsilon_1)=1$、$\operatorname{Var}(\varepsilon_2)=100$。OLS平均的方差为$(1+100)/4=25.25$；GLS取倒方差权重$(100/101,1/101)$，方差为$(100/101)^2\cdot1+(1/101)^2\cdot100=100/101\approx0.99$，收益来自利用已知的精度差。这个最小方差结论以$\bm{\Omega}$已知且均值设定正确为前提：协方差估计有误差、或均值模型失配时，GLS不直接继承最小方差性质；未来预测也应按与训练相同的目标评价，而不是默认加权一定更准。

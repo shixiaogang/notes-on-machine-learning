@@ -1,0 +1,83 @@
+\subsection{被动攻击算法}
+\label{sec:classification-pa}
+
+感知机只在符号错误或零得分时修正参数，而且修正幅度由固定学习率决定。另一种在线思路是：当前样本即使符号正确，若得分离边界太近（间隔不足），仍可能希望把它推到一个指定间隔；同时，每一步改动都应尽量小，以免破坏已经学到的结果。\term{被动攻击算法}（passive-aggressive algorithm, PA）把这两件事写成一个逐次约束优化：在满足当前记录单位间隔的参数中，最小化与上一轮参数的距离。它与感知机相邻比较，但不从感知机的固定步长修正规则推断它的目标——PA的目标函数是“最小改动”，约束是“当前记录达到单位间隔”，这是一个投影问题，而不是感知机损失的固定步长下降。Crammer等人在2006年统一分析了这类在线大间隔方法\scite{crammer2006}。
+
+\subsubsection{模型结构}
+\label{sec:classification-pa-structure}
+
+沿用二分类的增广仿射得分。令增广输入$\tilde{\bm{x}}=(\bm{x}^{\top},1)^{\top}$、增广参数$\tilde{\bm{w}}=(\bm{w}^{\top},b)^{\top}$，得分
+\begin{equation}
+  g_t(\bm{x})=\tilde{\bm{w}}_t^{\top}\tilde{\bm{x}},
+  \qquad
+  \hat y_t=\operatorname{sign}g_t(\bm{x}_t),
+\end{equation}
+平局按固定顺序处理。每轮先看到输入并预测，再获得真实标签$y_t\in\{-1,+1\}$。本节使用增广参数的欧氏范数度量改动，因此偏置$b$也参与单次改动的距离惩罚；这与只约束$\|\bm{w}\|_2$的写法不同。
+
+\subsubsection{参数学习}
+\label{sec:classification-pa-learning}
+
+\paragraph{当前单位间隔下的最小改动}
+收到标签后，先定义当前记录的\term{合页违反量}（hinge violation）
+\begin{equation}
+  \ell_t=\max\{0,\,1-y_t\tilde{\bm{w}}_t^{\top}\tilde{\bm{x}}_t\}.
+  \label{eq:classification-pa-violation}
+\end{equation}
+$\ell_t=0$表示当前记录已经达到单位间隔，算法保持“被动”，参数不动；$\ell_t>0$时，在满足当前单位间隔的参数中最小化本次改动：
+\begin{equation}
+  \begin{aligned}
+    \min_{\tilde{\bm{w}}}\quad&
+      \tfrac12\|\tilde{\bm{w}}-\tilde{\bm{w}}_t\|_2^2\\
+    \text{满足}\quad&
+      y_t\tilde{\bm{w}}^{\top}\tilde{\bm{x}}_t\geq1 .
+  \end{aligned}
+  \label{eq:classification-pa-projection}
+\end{equation}
+目标$\tfrac12\|\tilde{\bm{w}}-\tilde{\bm{w}}_t\|_2^2$衡量本次改动的大小，约束只来自当前一条记录；它不等于批量SVM对全部样本的间隔目标。
+
+建立单乘子拉格朗日函数$\mathcal L=\tfrac12\|\tilde{\bm{w}}-\tilde{\bm{w}}_t\|_2^2-\tau[y_t\tilde{\bm{w}}^{\top}\tilde{\bm{x}}_t-1]$，对$\tilde{\bm{w}}$求驻点得
+\begin{equation}
+  \tilde{\bm{w}}-\tilde{\bm{w}}_t=\tau y_t\tilde{\bm{x}}_t,
+  \qquad \tau\geq0,
+  \label{eq:classification-pa-candidate}
+\end{equation}
+即候选改动只能沿当前有符号输入的方向。将式\eqref{eq:classification-pa-candidate}代回活跃约束$y_t\tilde{\bm{w}}^{\top}\tilde{\bm{x}}_t=1$：
+\[
+  y_t\tilde{\bm{w}}_t^{\top}\tilde{\bm{x}}_t
+    +\tau\|\tilde{\bm{x}}_t\|_2^2=1,
+\]
+结合$\ell_t=1-y_t\tilde{\bm{w}}_t^{\top}\tilde{\bm{x}}_t$，解得
+\begin{equation}
+  \tau_t=\frac{\ell_t}{\|\tilde{\bm{x}}_t\|_2^2},
+  \qquad
+  \tilde{\bm{w}}_{t+1}
+    =\tilde{\bm{w}}_t+\tau_t y_t\tilde{\bm{x}}_t .
+  \label{eq:classification-pa-update}
+\end{equation}
+增广输入含常数$1$，故$\|\tilde{\bm{x}}_t\|_2^2>0$，分母不会为零；损失$\ell_t=0$时$\tau_t=0$，参数不动。把更新代回当前记录的有符号得分即可核算投影结果：
+\[
+  y_t\tilde{\bm{w}}_{t+1}^{\top}\tilde{\bm{x}}_t
+    =y_t\tilde{\bm{w}}_t^{\top}\tilde{\bm{x}}_t
+      +\tau_t\|\tilde{\bm{x}}_t\|_2^2
+    =(1-\ell_t)+\ell_t=1,
+\]
+即活跃约束恰好达到单位间隔，不多也不少。
+
+\paragraph{允许当前样本违反约束：PA-I}
+噪声样本可能使硬性满足单位间隔带来过大移动。PA-I引入非负松弛$\xi\geq0$与代价$C\xi$，把约束放宽为
+\begin{equation}
+  y_t\tilde{\bm{w}}^{\top}\tilde{\bm{x}}_t\geq1-\xi,
+  \qquad \xi\geq0,
+  \label{eq:classification-pai-constraint}
+\end{equation}
+目标相应改为$\tfrac12\|\tilde{\bm{w}}-\tilde{\bm{w}}_t\|_2^2+C\xi$。对$\xi$的最优性条件给出$\tau\leq C$，于是步长被截断为
+\begin{equation}
+  \tau_t=\min\left\{C,\frac{\ell_t}{\|\tilde{\bm{x}}_t\|_2^2}\right\},
+  \qquad
+  \tilde{\bm{w}}_{t+1}
+    =\tilde{\bm{w}}_t+\tau_t y_t\tilde{\bm{x}}_t .
+  \label{eq:classification-pai-update}
+\end{equation}
+$C>0$越大越接近硬性投影，$C$越小越容忍当前记录保持违反。$C$在训练集内部选择，预算结束后返回当前参数；在线累计损失与独立测试风险须分别评价。
+
+PA与感知机的触发条件不同：感知机只按错误或零得分修正，符号正确但间隔不足的样本不动；PA按间隔违反$\ell_t$修正，符号正确而得分小于$1$的记录也会触发。无松弛投影只保证当前记录达到单位间隔，PA-I允许保留违反；两者都不保证其余样本正确，步长截断限制当前改动也不构成任意异常数据下的泛化保证。PA的单位间隔要求改变单步参数选择，候选得分仍是仿射函数，因此它与基本感知机、Pocket共享原坐标中的表示限制，间隔要求本身不能表达异或交互。

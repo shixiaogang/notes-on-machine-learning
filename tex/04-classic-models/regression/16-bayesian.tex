@@ -1,0 +1,183 @@
+\section{贝叶斯回归}
+\label{sec:regression-bayesian}
+
+前面各模型给出一个点预测，并不说明这个预测有多大把握。贝叶斯回归为参数或函数设置先验，由数据得到后验分布，同时给出均值与不确定性。概率模型的基础见第\ref{sec:classic-overview-probability}节。
+
+\subsection{贝叶斯线性回归}
+\label{sec:regression-bayesian-linear}
+
+\subsubsection{模型结构}
+\label{sec:regression-bayesian-linear-structure}
+
+设线性模型$\bm{y}=\tilde{\bm{X}}\bm{\theta}+\bm{\varepsilon}$，$\bm{\varepsilon}\sim N(\bm{0},\sigma^2\bm{I})$，参数先验$\bm{\theta}\sim N(\bm{\theta}_0,\bm{\Sigma}_0)$，与系数独立的高斯观测噪声分别说明已知超参数与待推断参数。用单截距例交代先验中心、方差和单次测量精度，明确需要输出系数后验及新响应分布，而非只求一个最优向量。高斯先验与高斯噪声共轭，后验仍为高斯：均值给出点估计，协方差给出各参数的不确定范围。
+
+\subsubsection{参数学习}
+\label{sec:regression-bayesian-linear-learning}
+
+\paragraph{系数后验}
+
+将先验和似然相乘，展开并合并系数的二次项与一次项，再完整配方得到后验均值和协方差。后验$\bm{\theta}\mid\bm{y}\sim N(\widehat{\bm{\theta}}_N,\bm{\Sigma}_N)$，其中零均值、各向同性先验下
+\begin{equation}
+  \widehat{\bm{\theta}}_N
+  =\left(\tilde{\bm{X}}^{\top}\tilde{\bm{X}}+\frac{\sigma^2}{\tau^2}\bm{I}\right)^{-1}
+    \tilde{\bm{X}}^{\top}\bm{y},
+  \qquad
+  \bm{\Sigma}_N
+  =\sigma^2\left(\tilde{\bm{X}}^{\top}\tilde{\bm{X}}+\frac{\sigma^2}{\tau^2}\bm{I}\right)^{-1}.
+  \label{eq:regression-bayesian-posterior}
+\end{equation}
+单截距例复算精度相加：先验精度$1/\tau^2$与观测精度$1/\sigma^2$在同一常数上合并。
+
+\paragraph{响应预测}
+
+用后验系数的线性变换和独立新噪声得到响应预测均值与方差：新输入预测为高斯，均值$\tilde{\bm{x}}_\star^{\top}\widehat{\bm{\theta}}_N$，方差含后验参数方差与观测噪声；实际矩阵分解和新点输入沿用的特征与训练一致。
+
+\subsubsection{性质与先验选择}
+\label{sec:regression-bayesian-linear-theory}
+
+\paragraph{与二次正则的对应}
+
+\begin{theorem}[高斯先验下的线性后验]
+\label{thm:regression-bayesian-linear}
+在高斯似然与高斯先验下，后验均值与协方差由式\eqref{eq:regression-bayesian-posterior}给出；MAP估计为
+\begin{equation}
+  \widehat{\bm{\theta}}_{\mathrm{MAP}}
+  \in\arg\max_{\bm{\theta}}
+  \left[-\frac{1}{2\sigma^2}\lVert\bm{y}-\tilde{\bm{X}}\bm{\theta}\rVert_2^2
+    -\frac{1}{2\tau^2}\lVert\bm{\theta}\rVert_2^2\right],
+  \label{eq:regression-map}
+\end{equation}
+其解与岭回归式\eqref{eq:regression-ridge-solution}在$\lambda=\sigma^2/(n\tau^2)$时一致。
+\end{theorem}
+
+\begin{proof}
+对数后验等于对数似然加对数先验，略去常数后恰为平方数据项加二次惩罚；MAP取众数，而贝叶斯估计保留整个后验协方差。
+\end{proof}
+
+高斯后验的均值与MAP相同，一般先验中心和精度矩阵对应围绕该中心的二次正则；再限定零均值、各向同性斜率先验，并将截距固定或采用平坦先验单独处理，得到前文不惩罚截距的普通岭。交代后验适当性、样本归一化、先验尺度与噪声方差的换算，不把任意正定先验都等同于普通岭。图\ref{fig:regression-mle-map-geometry}比较MLE与MAP在参数平面上的位置：先验把估计从MLE向原点拉动。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=105.412mm]{figures/04-classic-models/00-shared/matplotlib/regression-mle-map-geometry/figure.pdf}
+  \caption{MLE与MAP的几何。等高线为似然椭圆，圆为各向同性先验约束；MLE取似然最高点，MAP取似然与先验联合最高处，位于MLE与原点之间。}
+  \label{fig:regression-mle-map-geometry}
+\end{figure}
+
+\paragraph{不确定性的不同对象}
+
+区分参数后验协方差、重复抽样协方差、潜在函数方差和新响应噪声；区间概率依赖所设先验、似然和超参数处理，$\sigma^2,\tau^2$可由边缘证据（经验贝叶斯）估计，注意MAP只是后验众数，不等同于完整后验。
+
+\subsection{高斯过程回归（GPR）}
+\label{sec:regression-gpr}
+
+贝叶斯线性回归的不确定性绑定在有限参数上；当关系是任意函数时，更自然的做法是直接把函数本身作为随机对象。\term{高斯过程回归}（Gaussian process regression, GPR）把先验放在函数上：任意有限输入处的函数值服从联合高斯，核规定两点函数值的协方差。Rasmussen与Williams在2006年给出高斯过程的系统论述\scite{rasmussen2006}。
+
+\subsubsection{模型结构}
+\label{sec:regression-gpr-structure}
+
+有限高斯参数$f(\bm{x})=\phi(\bm{x})^{\top}\bm{w}$、$\bm{w}\sim N(\bm{0},\bm{\Sigma}_w)$诱导出协方差
+\[
+  \operatorname{Cov}(f(\bm{x}),f(\bm{x}'))=\phi(\bm{x})^{\top}\bm{\Sigma}_w\phi(\bm{x}');
+\]
+GPR直接规定任意有限输入上的函数值联合分布，不再显式写出参数。先验为
+\[
+  f(\cdot)\sim\mathcal{GP}(m_0(\cdot),C(\cdot,\cdot)),
+\]
+$m_0$为均值函数，$C$为合法协方差核。观测$y=f(\bm{x})+\varepsilon$，$\varepsilon\sim N(0,\sigma^2)$独立噪声；训练与测试函数值、噪声、核矩阵和未知超参数的角色分别说明。核$C$规定函数值随输入距离如何相关，例如平方指数核$C(\bm{x},\bm{x}')=s^2\exp(-\lVert\bm{x}-\bm{x}'\rVert_2^2/(2\ell^2))$给出平滑、局部相关的函数；长度尺度、幅度、平滑性和周期说明核控制怎样的函数变化，观测分布与函数先验区分，不把核仅当一般相似度。
+
+\subsubsection{参数学习}
+\label{sec:regression-gpr-learning}
+
+\paragraph{潜在函数与响应的后验预测}
+
+令$\bm{f}=(f(\bm{x}_1),\ldots,f(\bm{x}_n))^{\top}$，训练协方差矩阵$\bm{C}_{ij}=C(\bm{x}_i,\bm{x}_j)$。写训练响应与测试函数值的联合高斯，用去相关余量和独立性条件化，给出新输入$\bm{x}_\star$处的后验：
+\begin{equation}
+  \begin{aligned}
+  \mu_\star
+  &=m_0(\bm{x}_\star)+\bm{k}_\star^{\top}
+    (\bm{C}+\sigma^2\bm{I})^{-1}
+    (\bm{y}-m_0),\\
+  v_\star
+  &=C(\bm{x}_\star,\bm{x}_\star)
+    -\bm{k}_\star^{\top}
+    (\bm{C}+\sigma^2\bm{I})^{-1}\bm{k}_\star,
+  \end{aligned}
+  \label{eq:regression-gp-posterior}
+\end{equation}
+其中$\bm{k}_\star=(C(\bm{x}_\star,\bm{x}_1),\ldots,C(\bm{x}_\star,\bm{x}_n))^{\top}$。$\mu_\star$为点预测，$v_\star$为函数方差；未来响应预测再加噪声$\sigma^2$。
+
+图\ref{fig:regression-gp-posterior}展示式\eqref{eq:regression-gp-posterior}的两项输出。在固定平稳核的例子中，观测附近的函数值受到较强约束，观测间的较大空隙与远离观测的区域保留更多不确定性。曲线给出点预测，带状区域说明在当前先验和噪声设定下，哪些函数值仍与数据相容。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=105.412mm]{figures/04-classic-models/00-shared/matplotlib/regression-gp-posterior/figure.pdf}
+  \caption{高斯过程后验。实线为后验均值，阴影为$\pm2\sqrt{v_\star}$函数方差带；观测附近带宽收窄，观测稀疏处带宽放宽。}
+  \label{fig:regression-gp-posterior}
+\end{figure}
+
+\paragraph{核与噪声超参数的学习}
+
+给定核和噪声参数，后验已由式\eqref{eq:regression-gp-posterior}确定；仍需选择长度尺度$\ell$、信号方差$s^2$、噪声方差$\sigma^2$及可能的均值参数。直接追求训练拟合会把$\sigma^2$调到零、$\ell$调到极小，得到剧烈振荡的曲线。积分潜在函数得到边缘似然，解释二次匹配项与行列式归一化项：令超参数为$\bm{\theta}$，积分掉训练函数值（零均值先验下）得
+\begin{equation}
+  \log p(\bm{y}\mid\bm{\theta})
+  =-\frac12\bm{y}^{\top}\bm{C}_{\bm{\theta}}^{-1}\bm{y}
+    -\frac12\log|\bm{C}_{\bm{\theta}}|
+    -\frac n2\log 2\pi,
+  \label{eq:regression-gp-evidence}
+\end{equation}
+$\bm{C}_{\bm{\theta}}=\bm{C}+\sigma^2\bm{I}$。从矩阵微分推导核、噪声等超参数梯度：记$\bm{a}=\bm{C}_{\bm{\theta}}^{-1}\bm{y}$，对式\eqref{eq:regression-gp-evidence}关于$\theta_j$求导得
+\[
+  \frac{\partial\log p}{\partial\theta_j}
+  =\frac12\bm{a}^{\top}
+    \frac{\partial\bm{C}_{\bm{\theta}}}{\partial\theta_j}\bm{a}
+   -\frac12\operatorname{tr}\left(
+     \bm{C}_{\bm{\theta}}^{-1}
+     \frac{\partial\bm{C}_{\bm{\theta}}}{\partial\theta_j}
+   \right),
+\]
+沿增大边缘似然的方向迭代，三项分别控制拟合、复杂度与归一化；初始化、正参数坐标和训练外检查服务同一参数学习流程。
+
+\paragraph{矩阵计算与数值实现}
+
+使用Cholesky分解计算拟合与新点预测：先对正定的$\bm{C}_{\bm{\theta}}=\bm{C}+\sigma^2\bm{I}$作Cholesky分解，再回代求解线性系统，避免直接求逆；明确单点均值和方差各自代价，存储与求逆为$O(n^2)$与$O(n^3)$。
+
+\subsubsection{理论分析}
+\label{sec:regression-gpr-theory}
+
+\paragraph{有限基模型与GP}
+
+用有限高斯参数的线性变换说明有限基模型与GP的一致对应：基固定时，参数后验与函数后验一一对应；GPR不显式限制基，核直接规定函数协方差，核的有限秩和设计退化必须分别处理。
+
+\paragraph{后验方差与模型条件}
+
+$v_\star$由先验核方差减去数据提供的信息构成，作为真实随机变量方差说明后验方差非负及观测提供的信息：观测密集且核相关强的方向，$v_\star$小；远离观测或核相关弱的区域，$v_\star$保留先验大小。后验方差只反映函数估计的不确定性，不度量未来噪声；模型内概率不能直接变成任意固定真实机制下的频率覆盖保证。讨论核的表达和平滑假设、观测分布失配与超参数点估计忽略的不确定性，界定理论计算精确与真实任务预测正确的差别。
+
+\paragraph{与核岭点预测的对应}
+
+同一个零均值后验均值还可由核岭回归求得。在第\ref{sec:regression-krr}节的核空间中使用平方损失而非SVR容忍带，目标为
+\[
+  \min_f\frac{1}{n}\sum_i(y_i-f(\bm{x}_i))^2+\lambda\lVert f\rVert_{\mathcal H_k}^2,
+\]
+其解为$f(\bm{x}_\star)=\bm{k}_\star^{\top}(\bm{K}+n\lambda\bm{I})^{-1}\bm{y}$。在两者均使用已知零均值、相同核且GP噪声方差满足$\sigma^2=n\lambda$时，比较$\bm{k}_\star^{\top}(\bm{K}+\sigma^2\bm{I})^{-1}\bm{y}$与前面固定零截距的核岭解，说明相同点预测的条件与参数换算；这只是点预测的对应：核岭没有因此获得GP后验协方差，GP样本路径也不能直接等同于RKHS中的确定函数；非零均值需先拟合$\bm{y}-m_0$再加回。
+
+\subsubsection{支持非高斯响应：改变似然与近似后验}
+\label{sec:regression-gp-nongaussian}
+
+\paragraph{改变似然后的计算困难}
+
+响应非高斯（如Poisson计数、二分类）时，似然不再与高斯先验共轭。用Poisson似然的指数项说明完成平方失效，而不是只说“不能解析求解”：后验不再是高斯，条件均值与方差也不能由闭式给出。
+
+\paragraph{Laplace与变分近似}
+
+先在$f$上求后验众数，再在众数处对负对数后验作二阶展开得到Laplace近似，写正定曲率与秩条件，秩不足时只能覆盖部分方向。说明变分族与定向KL的目标：取高斯变分族$q(f)$，最小化$\mathrm{KL}(q\Vert p(f\mid\bm{y}))$，由非负KL推出边缘对数似然的下界（ELBO）；最后从潜在分布积分观测似然，得到响应预测。
+
+\subsubsection{支持更多观测：诱导变量近似}
+\label{sec:regression-gp-computation}
+
+\paragraph{诱导变量与近似族}
+
+精确GPR的协方差求逆为$O(n^3)$，完整核矩阵的时间与存储压力推动近似。诱导变量方法选$m\ll n$个诱导位置$\bar{\bm{x}}_j$，引入少数位置上的函数值而不是丢掉其他观测；诱导值$\bm{u}=(f(\bar{\bm{x}}_1),\ldots,f(\bar{\bm{x}}_m))^{\top}$，定义训练潜在函数值$\bm{f}$、诱导值$\bm{u}$及近似族$q(\bm{f},\bm{u})=p(\bm{f}\mid\bm{u})q(\bm{u})$，保留先验条件分布$p(\bm{f}\mid\bm{u})$，全部观测仍进入学习，$q(\bm{u})$为高斯，其均值与协方差为待学参数\scite{titsias2009}。
+
+\paragraph{变分下界与训练}
+
+由联合后验KL非负，$\log p(\bm{y})$的ELBO为期望对数似然减诱导先验KL，间隙为$\mathrm{KL}(q(\bm{f},\bm{u})\Vert p(\bm{f},\bm{u}\mid\bm{y}))$；利用共同条件分布抵消后，目标化为$\mathbb E_q[\log p(\bm{y}\mid\bm{f})]-\mathrm{KL}(q(\bm{u})\Vert p(\bm{u}))$。固定核时学$q(\bm{u})$参数，诱导位置与核由训练内验证选择；新输入经$q(\bm{u})$传播得到近似均值与方差，计算代价降为$O(nm^2)$，点预测与方差近似需分别验证。
