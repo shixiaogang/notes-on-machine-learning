@@ -120,7 +120,7 @@ def save_pdf(key, data, record):
         subprocess.run([converter, "-layout", str(path), str(CACHE / (key + "-full.txt"))],
                        check=True, capture_output=True)
     else:
-        import fitz
+        import pymupdf as fitz
         with fitz.open(path) as document:
             (CACHE / (key + "-full.txt")).write_text(
                 "\n".join(page.get_text(sort=True) for page in document))
