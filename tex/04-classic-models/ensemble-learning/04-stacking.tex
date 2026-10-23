@@ -46,7 +46,7 @@ $\bm\lambda$为元模型参数。成员可以输出回归数值、类别标签�
   \lambda_m\ge0,\ \sum_m\lambda_m=1.
   \label{eq:ensemble-constrained-obj}
 \end{equation}
-无约束梯度为$\bm g=\frac1n\bm Z^\top(\bm Z\bm\lambda-\bm y)+\gamma\bm\lambda$；单纯形约束用投影梯度步$\bm\lambda\leftarrow\Pi_\Delta(\bm\lambda-\eta\bm g)$，其中$\Pi_\Delta$按排序与共同阈值投影到单纯形，步长满足$\eta<1/L$（$L$为$\frac1n\bm Z^\top\bm Z+\gamma\bm I$的最大特征值）。退化情形（各成员预测列近似常数）下目标不唯一，按实现约定取一个可行解；截距是否自由决定约束口径。
+无约束目标对组合参数$\bm\lambda$的梯度为$\bm g=\frac{2}{n}\bm Z^\top(\bm Z\bm\lambda-\bm y)+2\gamma\bm\lambda$，与式\eqref{eq:ensemble-constrained-obj}中$\frac1n\lVert\bm Z\bm\lambda-\bm y\rVert_2^2+\gamma\lVert\bm\lambda\rVert_2^2$逐项对应。带约束求解走单纯形投影梯度，属于受约束二次规划的投影梯度法，不是自由SGD：每步先沿$\bm g$更新，再投影回单纯形，即$\bm\lambda\leftarrow\Pi_\Delta(\bm\lambda-\eta\bm g)$，其中$\Pi_\Delta$按排序与共同阈值投影到单纯形，步长满足$\eta<1/L$（$L$为$\frac{2}{n}\bm Z^\top\bm Z+2\gamma\bm I$的最大特征值，即$\bm g$的Lipschitz常数）。退化情形（各成员预测列近似常数）下目标不唯一，按实现约定取一个可行解；截距是否自由决定约束口径。
 
 \paragraph{权重解释与数据处理}
 成员尺度、相关性影响估计权重，权重不等于成员的独立贡献；成员的预处理与调参仍在训练范围内完成，不在元模型阶段重新使用留出标签。
@@ -67,7 +67,16 @@ $\bm\lambda$为元模型参数。成员可以输出回归数值、类别标签�
 \term{门控组合}（gating）用原始输入$\bm x$决定各成员权重：门控线性得分$s_m(\bm x)$经Softmax（把任意得分归一化成和为1的一组权重）得到非负、和为$1$的权重$\lambda_m(\bm x)$，最终$\hat y=\sum_m\lambda_m(\bm x)\hat f_m(\bm x)$。原始输入参与路由，OOF成员预测是被组合的量；训练只更新门控元模型，底层成员保持固定。
 
 \paragraph{参数学习}
-门控目标在OOF成员预测上构造，采用显式线性门控配平方损失与正则；Softmax导数$\partial\lambda_m/\partial s_j=\lambda_m(\delta_{mj}-\lambda_j)$给出组合输出对门控得分的导数，再反传至门控参数更新。底层成员固定，整体目标一般非凸（可能有多个局部最优，求解结果依赖起点）。
+门控目标在OOF成员预测上构造，采用显式线性门控配平方损失与正则：门控得分$s_m(\bm x)=\bm a_m^\top\bm x$（含截距）。记$\Delta L_m=\partial L/\partial\lambda_m$为损失对第$m$个门控权重的偏导，由Softmax导数$\partial\lambda_m/\partial s_j=\lambda_m(\delta_{mj}-\lambda_j)$链式展开，组合损失对门控参数的显式梯度为
+\begin{equation}
+  \frac{\partial L}{\partial s_j}
+    =\lambda_j\Big(\Delta L_j-\sum_m\lambda_m\Delta L_m\Big),
+  \qquad
+  \frac{\partial L}{\partial\bm a_j}
+    =\frac{\partial L}{\partial s_j}\,\bm x,
+  \label{eq:ensemble-gating-grad}
+\end{equation}
+再按通用更新$\bm a_j\leftarrow\bm a_j-\eta\,\partial L/\partial\bm a_j$训练门控参数。底层成员固定，整体目标一般非凸（可能有多个局部最优，求解结果依赖起点）。
 
 \paragraph{部署计算与成员选择}
 训练用OOF，新点使用部署成员输出与同一输入变换；全量重训改变规模。加权方案仍需计算全部参与成员，这与只调用子集的动态选择不同。

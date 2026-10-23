@@ -47,12 +47,18 @@
 \subsubsection{参数学习}
 
 \paragraph{监督目标及温度梯度}
-学生同时拟合硬标签损失与教师软目标损失，按已标注与未标注索引分别平均。设教师、学生在温度$T$下的软概率分别为$q_{ic}^T=\operatorname{softmax}(z_{ic}^T/T)_c$、$p_{ic}^T=\operatorname{softmax}(z_{ic}^S/T)_c$，软目标为KL散度（衡量两个概率分布差别的非对称量）并按惯例乘$T^2$：
+学生同时拟合硬标签损失与教师软目标损失，按已标注与未标注索引分别平均。设教师、学生在温度$T$下的软概率分别为$q_{ic}^T=\operatorname{softmax}(z_{ic}^T/T)_c$、$p_{ic}^T=\operatorname{softmax}(z_{ic}^S/T)_c$，软目标为教师对学生的KL散度（衡量两个概率分布差别的非对称量，方向上让学生分布去贴近教师）并按惯例乘$T^2$：
 \begin{equation}
-  L_{\mathrm{soft}}=T^2\sum_c p_{ic}^T\log\frac{p_{ic}^T}{q_{ic}^T}.
+  L_{\mathrm{soft}}=T^2\sum_c q_{ic}^T\log\frac{q_{ic}^T}{p_{ic}^T}.
   \label{eq:ensemble-distill-kl}
 \end{equation}
-对学生logit求导得$\partial L_{\mathrm{soft}}/\partial z_{ic}^S=T(p_{ic}^T-q_{ic}^T)$；硬标签交叉熵梯度为$p_{ic}-y_{ic}$。合并后经链式法则得到学生参数梯度$\partial L/\partial\bm\theta=(\partial L/\partial\bm z^S)(\partial\bm z^S/\partial\bm\theta)$，教师参数固定不更新。温度$T$改变相对概率的尖锐程度：$T$越大，教师的软分布越平滑、各类之间的差距被摊得越开；$T\to0$则接近只留一个类别的硬标签。$T^2$是训练尺度约定。
+由温度Softmax的导数$\partial p_{jc}^T/\partial z_{ic}^S=\frac1T p_{jc}^T(\delta_{ij}-p_{ic}^T)$，软目标项对学生logit的导数为$\partial L_{\mathrm{soft}}/\partial z_{ic}^S=T(p_{ic}^T-q_{ic}^T)$；硬标签交叉熵对学生logit的梯度为$p_{ic}-y_{ic}$。两项经链式法则汇总成对学生参数$\bm\theta$的显式梯度：
+\begin{equation}
+  \nabla_{\bm\theta}L
+  =\sum_{i,c}\Big[\big(p_{ic}-y_{ic}\big)+T\big(p_{ic}^T-q_{ic}^T\big)\Big]\,\frac{\partial z_{ic}^S}{\partial\bm\theta},
+  \label{eq:ensemble-distill-theta-grad}
+\end{equation}
+再按通用更新$\bm\theta\leftarrow\bm\theta-\eta\,\nabla_{\bm\theta}L$训练学生，教师参数固定不更新。温度$T$改变相对概率的尖锐程度：$T$越大，教师的软分布越平滑、各类之间的差距被摊得越开；$T\to0$则接近只留一个类别的硬标签。$T^2$是训练尺度约定。
 
 \paragraph{部署规则与使用边界}
 部署时固定先聚合教师输出再软化、零概率平滑等顺序；训练温度不等于部署校准温度。检查输入覆盖、学生容量、误差与端到端资源；教师很强或训练损失很低，不直接等于部署质量好\scite{bucilua2006compression,hinton2015distilling}。

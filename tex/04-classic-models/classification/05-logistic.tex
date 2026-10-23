@@ -67,7 +67,17 @@ GDA能计算类别概率，但先要拟合每类的输入分布，这要求对�
       &=\operatorname{diag}\bigl(p_i(1-p_i)\bigr)_{i=1}^{n}.
   \end{aligned}
 \end{equation}
-梯度中的$p_i-y_i$是预测概率与观察标签的差。对任意$\bm{v}\in\mathbb{R}^{d+1}$，Hessian的二次型为
+按增广记号$(\bm{\beta}=(\bm{w}^{\top},b)^{\top})$与$(\tilde{\bm{x}}_i=(\bm{x}_i^{\top},1)^{\top})$的对应，向量式拆开就是系数与截距各自的梯度：
+\begin{equation}
+  \label{eq:classification-logistic-wb-gradient}
+  \begin{aligned}
+    \frac{\partial L}{\partial\bm{w}}
+      &=\sum_{i=1}^{n}(p_i-y_i)\bm{x}_i,\\
+    \frac{\partial L}{\partial b}
+      &=\sum_{i=1}^{n}(p_i-y_i).
+  \end{aligned}
+\end{equation}
+若把目标写成平均损失$L/n$（即$1/n$加权），两式右端同除以$n$。梯度中的$p_i-y_i$是预测概率与观察标签的差。对任意$\bm{v}\in\mathbb{R}^{d+1}$，Hessian的二次型为
 \[
   \bm{v}^{\top}\nabla^2L\,\bm{v}
   =\sum_{i=1}^{n}p_i(1-p_i)
@@ -76,7 +86,14 @@ GDA能计算类别概率，但先要拟合每类的输入分布，这要求对�
 所以负对数似然$L$是凸函数，而被最大化的$\ell$是凹函数。有限参数处的$p_i(1-p_i)>0$；若$\tilde{\bm{X}}$列满秩，$L$严格凸，否则可能存在不改变训练得分的平坦方向。这涉及\term{可识别性}（identifiability）：数据能否区分不同参数。即使严格凸，也只能保证有限极小点若存在便唯一，不能保证它一定存在。
 
 \paragraph{求解器与停止依据}
-求解器的选择取决于数据规模和存储成本。稠密数据的一轮完整梯度计算为$O(nd)$，构造Hessian约为$O(nd^2)$，直接分解又需要$O(d^3)$。若存储$d\times d$量级的Hessian过于昂贵，\term{有限内存拟牛顿法}（limited-memory BFGS, L-BFGS）只保留少量历史更新来近似二阶信息。大规模稀疏数据则可采用\term{随机梯度下降}（stochastic gradient descent, SGD），每次用一个样本或小批量近似完整梯度。样本数、稀疏程度和精度要求共同决定求解选择。
+求解器的选择取决于数据规模和存储成本。稠密数据的一轮完整梯度计算为$O(nd)$，构造Hessian约为$O(nd^2)$，直接分解又需要$O(d^3)$。若存储$d\times d$量级的Hessian过于昂贵，\term{有限内存拟牛顿法}（limited-memory BFGS, L-BFGS）只保留少量历史更新来近似二阶信息。大规模稀疏数据则可采用\term{随机梯度下降}（stochastic gradient descent, SGD），每次用一个样本或小批量近似完整梯度。单条记录对参数的梯度为
+\begin{equation}
+  \label{eq:classification-logistic-sgd}
+  \nabla_{\bm{w}}L_i=(p_i-y_i)\bm{x}_i,
+  \qquad
+  \frac{\partial L_i}{\partial b}=p_i-y_i,
+\end{equation}
+它对全部样本求和得到的完整梯度是无偏估计；通用更新为$\bm{w}\leftarrow\bm{w}-\eta\,\nabla_{\bm{w}}J$、$b\leftarrow b-\eta\,\partial J/\partial b$，批量时$J=L$、按式~\eqref{eq:classification-logistic-wb-gradient}~取值，单样本时$J=L_i$、按式~\eqref{eq:classification-logistic-sgd}~取值。样本数、稀疏程度和精度要求共同决定求解选择。
 
 中小规模问题还可用牛顿法。把正则项加入梯度与Hessian后，每轮解$\bm H_t\bm d_t=-\nabla F(\bm\beta^{(t)})$，再以带阻尼的$\bm\beta^{(t+1)}=\bm\beta^{(t)}+\eta_t\bm d_t$更新；$F$是当前受惩罚目标。第\ref{sec:regression-glm}节已把同一步改写成IRLS：按当前概率产生工作响应$z_i=(y_i-p_i)/[p_i(1-p_i)]$和权重$v_i=p_i(1-p_i)$，再解加权最小二乘；这里沿用其计算，不把工作响应误当作固定的新标签。实现应解线性方程而不显式求逆，并检查目标变化、梯度与预算；极端概率、病态设计或过大的完整牛顿步都需要数值处理。
 
@@ -87,7 +104,7 @@ GDA能计算类别概率，但先要拟合每类的输入分布，这要求对�
 例如，若存在$\bm{\beta}_0$使$(2y_i-1)\tilde{\bm{x}}_i^{\top}\bm{\beta}_0>0$对所有样本成立，沿$t\bm{\beta}_0$令$t\to\infty$，每项损失均趋于零，但任意有限$t$的损失仍大于零。完全分离的数据因此没有有限MLE；准完全分离也可能使部分参数发散。完整的存在性分析需要区分分离、准分离和重叠情形\scite{albert1984existence}。
 
 \paragraph{正则化与退化标签}
-实际训练常加入$\lambda\lVert\bm{w}\rVert_2^2/2$，其中$\lambda>0$。这个$L_2$惩罚抑制权重无限增大，也改善病态方向的数值条件。若两类均有样本，所有权重都受惩罚而偏置不受惩罚，所得二分类目标仍有唯一有限极小点；但若训练集只有一类，偏置仍可独自趋于无穷。若连偏置也作正的二次惩罚，则整个增广参数方向都受约束。使用$\lambda\lVert\bm{w}\rVert_1$可得到稀疏权重，但目标不再处处可微，需要适合非光滑目标的求解步骤。
+实际训练常加入$\lambda\lVert\bm{w}\rVert_2^2/2$，其中$\lambda>0$。这个$L_2$惩罚抑制权重无限增大，也改善病态方向的数值条件。在梯度上它只加在系数上：$\partial(\lambda\lVert\bm{w}\rVert_2^2/2)/\partial\bm{w}=\lambda\bm{w}$，截距$b$不受惩罚，故受惩罚目标满足$\nabla_{\bm{w}}F=\nabla_{\bm{w}}L+\lambda\bm{w}$、$\partial F/\partial b=\partial L/\partial b$。若两类均有样本，所有权重都受惩罚而偏置不受惩罚，所得二分类目标仍有唯一有限极小点；但若训练集只有一类，偏置仍可独自趋于无穷。若连偏置也作正的二次惩罚，则整个增广参数方向都受约束。使用$\lambda\lVert\bm{w}\rVert_1$可得到稀疏权重，但目标不再处处可微，需要适合非光滑目标的求解步骤（其权重次梯度为$\nabla_{\bm{w}}L+\lambda\,\operatorname{sign}(\bm{w})$）。
 
 记真实类别后验为$\bm\eta(\bm x)$，预测概率向量为$\bm p(\bm x)$。固定输入时，预测交叉熵减去真实后验的熵为
 \[
@@ -107,7 +124,7 @@ GDA能计算类别概率，但先要拟合每类的输入分布，这要求对�
 \[
   \bm\Sigma=(\bm\Phi^\top\bm B\bm\Phi+\bm A)^{-1}.
 \]
-原方法再依据近似边缘似然更新精度，例如使用固定点更新$\alpha_j\leftarrow(1-\alpha_j\bm\Sigma_{j,j})/\hat w_j^2$，并交替重算后验众数与协方差。数值上按阈值剔除受到强收缩的基函数，配合目标变化或迭代预算停止；分母过小等退化情况需要数值处理，精度学习也不保证全局最优。
+原方法再依据近似边缘似然更新精度，例如使用固定点更新$\alpha_j\leftarrow(1-\alpha_j\bm\Sigma_{j,j})/\hat w_j^2$，并交替重算后验众数与协方差。这是按近似边缘似然交替求后验、再更新精度的EM式过程，不是对$\alpha_j$做梯度下降。数值上按阈值剔除受到强收缩的基函数，配合目标变化或迭代预算停止；分母过小等退化情况需要数值处理，精度学习也不保证全局最优。
 
 最终保留的基函数及其系数构成稀疏预测器。若对近似后验积分，得到的是近似贝叶斯类别概率；只代入众数则是点估计预测，二者应区分。RVM改变了SVM的间隔准则和参数选择机制，有限精度只保证收缩，不保证系数恰为零；稀疏程度、计算收益与概率质量仍需验证。这里的RVM扩展限定于二分类的Logistic概率框架；多类RVM另有其建模方式，不在此节展开。
 
@@ -176,7 +193,7 @@ GDA能计算类别概率，但先要拟合每类的输入分布，这要求对�
 梯度仍由“预测概率减观察标签”组成。目标凸，但共同参数平移及秩亏可能带来平坦方向，分离数据也可能没有有限MLE。参考类约束消除表示冗余，正则化控制参数大小，两者的作用不同。
 
 \paragraph{目标含义与表示限制}
-Softmax可用分块牛顿法、L-BFGS或小批量SGD优化，多类Hessian还包含类别间的耦合，不能简单把$C$个独立的二分类IRLS问题拼起来。求概率时应先减去$m(\bm{x})=\max_c z_c(\bm{x})$，用$e^{z_c-m}/\sum_r e^{z_r-m}$得到完全相同且更稳定的结果。普通稠密实现的一轮梯度计算约为$O(ndC)$。
+Softmax可用分块牛顿法、L-BFGS或小批量SGD优化，多类Hessian还包含类别间的耦合，不能简单把$C$个独立的二分类IRLS问题拼起来。小批量SGD的单样本贡献与二分类同形：令$y_{ic}=\mathbb{1}\{y_i=c\}$，则$\nabla_{\bm{w}_c}L_i=(p_{ic}-y_{ic})\bm{x}_i$、$\partial L_i/\partial b_c=p_{ic}-y_{ic}$，对全部样本求和即回到式~\eqref{eq:classification-softmax-gradient}。求概率时应先减去$m(\bm{x})=\max_c z_c(\bm{x})$，用$e^{z_c-m}/\sum_r e^{z_r-m}$得到完全相同且更稳定的结果。普通稠密实现的一轮梯度计算约为$O(ndC)$。
 
 预测可取$\hat y(\bm{x})=\argmax_c p_c(\bm{x})=\argmax_c z_c(\bm{x})$，并按固定类别次序处理平局。共同分母不改变得分排序，所以只需输出一个类别时，可以直接比较各类得分。类别特别多时的归一化成本问题（层次Softmax、NCE、负采样）集中在第\ref{sec:classification-large-category-set}节讨论。
 

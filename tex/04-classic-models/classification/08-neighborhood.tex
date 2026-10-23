@@ -124,7 +124,7 @@ KD树或球树（ball tree）等精确索引通过空间划分排除不可能更
     +\eta_t s_i(\bm x_i-\bm m_{j^\ast}),\qquad
   s_i=\begin{cases}1,&c_{j^\ast}=y_i,\\-1,&c_{j^\ast}\ne y_i.\end{cases}
 \]
-其他原型不动。同类时拉近，异类时推远；训练遍历记录并按所选步长序列和停止预算执行。原型数、每类分配和初始化均需选择，不能把这种移动规则当作全局最优保证。它以更少的代表点换取存储和查询收益，但可能丢掉实例库保留的细小类别区域\scite{kohonen2001som}。
+其他原型不动。同类时拉近，异类时推远；训练遍历记录并按所选步长序列和停止预算执行。这是启发式的样本推动规则，并非由某个对原型的损失函数求导得到的梯度下降步，因而不能以梯度下降的收敛性质为依据。原型数、每类分配和初始化均需选择，不能把这种移动规则当作全局最优保证。它以更少的代表点换取存储和查询收益，但可能丢掉实例库保留的细小类别区域\scite{kohonen2001som}。
 
 \subsection{最近质心分类}
 \label{sec:classification-nearest-centroid}
@@ -155,7 +155,15 @@ Weinberger与Saul研究的\term{大间隔最近邻}（large margin nearest neigh
       [1+d_{\bm M}(\bm x_i,\bm x_j)^2-d_{\bm M}(\bm x_i,\bm x_k)^2]_+,
   \end{aligned}
 \]
-其中$\mu>0$权衡同类聚拢与异类间隔，$[u]_+=\max(0,u)$。目标对$\bm M$凸；平方距离对矩阵的梯度是输入差的外积，违反项贡献同类外积减异类外积。可以从单位矩阵初始化，按这些梯度更新矩阵，再通过特征值分解把负特征值截为零，保持半正定。学成后用这个距离重新找邻居，投票规则不变。半正定矩阵可以压掉某些方向；若要求严格正定的距离，还须限制最小特征值或加正则项。
+其中$\mu>0$权衡同类聚拢与异类间隔，$[u]_+=\max(0,u)$。记同类对外积$\bm p_{ij}=(\bm x_i-\bm x_j)(\bm x_i-\bm x_j)^{\top}$，并令$\mathcal V_i=\{(j,k):j\in T_i,\ \xi_{ijk}>0\}$为第$i$个样本的活跃合页违反集合。由于$\partial d_{\bm M}(\bm x,\bm z)^2/\partial\bm M=(\bm x-\bm z)(\bm x-\bm z)^{\top}$，目标对$\bm M$的梯度可逐项写成
+\[
+  \begin{aligned}
+    \frac{\partial L}{\partial\bm M}
+      &=\sum_i\sum_{j\in T_i}\bm p_{ij}
+        +\mu\sum_i\sum_{(j,k)\in\mathcal V_i}\bigl(\bm p_{ij}-\bm p_{ik}\bigr),
+  \end{aligned}
+\]
+即同类对的外积全部计入，每个活跃的合页违反项再贡献“同类外积减异类外积”。目标对$\bm M$凸；可以从单位矩阵初始化，按上式梯度更新矩阵，再通过特征值分解把负特征值截为零，保持半正定。学成后用这个距离重新找邻居，投票规则不变。半正定矩阵可以压掉某些方向；若要求严格正定的距离，还须限制最小特征值或加正则项。
 
 \paragraph{概率邻居选择的NCA}
 \term{近邻成分分析}（neighbourhood components analysis, NCA）用另一种方式让邻居选择可学习。令$\bm A\in\mathbb R^{r\times d}$为待学线性变换，把“从其他记录随机选一个邻居”的概率写成
@@ -164,7 +172,16 @@ Weinberger与Saul研究的\term{大间隔最近邻}（large margin nearest neigh
     {\sum_{k\ne i}\exp[-\|\bm A(\bm x_i-\bm x_k)\|_2^2]},
   \quad j\ne i,\qquad p_{i,i}=0.
 \]
-最大化$\sum_i\sum_{j:y_j=y_i}p_{i,j}$，就是提高留一选择中选到同类记录的总概率。对$\bm A$求梯度并迭代上升可拟合这个目标，但它不是凸优化，初始化与停止预算会影响结果。预测时将输入与参考记录作同一变换，再采用近邻规则；变换维数$r$、近邻数和其他超参数都在训练集内部选择\scite{goldberger2004nca}。
+最大化$L(\bm A)=\sum_i\sum_{j:y_j=y_i}p_{i,j}$，就是提高留一选择中选到同类记录的总概率。记$d_{i,j}(\bm A)=\|\bm A(\bm x_i-\bm x_j)\|_2^2$，则$\partial(-d_{i,j})/\partial\bm A=-2\bm A(\bm x_i-\bm x_j)(\bm x_i-\bm x_j)^{\top}$；沿softmax对数似然求链式，单条记录的梯度骨架为
+\[
+  \frac{\partial L}{\partial\bm A}
+    =\sum_i\sum_{j:\,y_j=y_i}p_{i,j}
+      \left[
+        \frac{\partial(-d_{i,j})}{\partial\bm A}
+        -\sum_{k\ne i}p_{i,k}\frac{\partial(-d_{i,k})}{\partial\bm A}
+      \right].
+\]
+对$\bm A$按此式迭代上升可拟合这个目标，但它不是凸优化，初始化与停止预算会影响结果。预测时将输入与参考记录作同一变换，再采用近邻规则；变换维数$r$、近邻数和其他超参数都在训练集内部选择\scite{goldberger2004nca}。
 
 \subsubsection{使用条件与模型衔接}
 LMNN固定目标邻居并学习间隔，NCA学习概率化的邻居选择；两者都改变了输入的距离结构。它们增加监督拟合成本，也可能过拟合，因此所学距离不能再用参与拟合的记录给出独立评价。
