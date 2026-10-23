@@ -33,7 +33,7 @@ Boosting把预测写成成员的加法组合
 \label{sec:ensemble-adaboost}
 
 \subsubsection{模型结构}
-二分类标签取$y_i\in\{-1,+1\}$，弱成员$h_t(\bm x)\in\{-1,+1\}$给出判断，加法得分与决策为
+二分类标签取$y_i\in\{-1,+1\}$，弱成员$h_t(\bm x)\in\{-1,+1\}$（只比随机猜测略好、错误率略低于$1/2$的成员）给出判断，加法得分与决策为
 \begin{equation}
   F_T(\bm x)=\sum_{t=1}^T\alpha_t h_t(\bm x),
   \qquad
@@ -50,7 +50,7 @@ $\alpha_t>0$是成员投票系数，平局规则事先固定。
   \epsilon_t=\sum_{i:h_t(\bm x_i)\neq y_i}w_i^{(t)}.
   \label{eq:ensemble-adaboost-error}
 \end{equation}
-AdaBoost对应指数损失$L(y,F)=e^{-yF}$。在已有得分$F_{t-1}$上加入$\alpha h_t$后展开指数项，把样本按分对、错分两组求和；对$\alpha$求导并令其为零，得到投票系数
+AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩罚指数级增长）。在已有得分$F_{t-1}$上加入$\alpha h_t$后展开指数项，把样本按分对、错分两组求和；对$\alpha$求导并令其为零，得到投票系数
 \begin{equation}
   \alpha_t=\frac12\ln\frac{1-\epsilon_t}{\epsilon_t}.
   \label{eq:ensemble-adaboost-alpha}
@@ -64,7 +64,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$。在已有得分$F_{t-1}$上加入$\
   Z_t=\sum_i w_i^{(t)}\exp[-\alpha_t y_i h_t(\bm x_i)].
   \label{eq:ensemble-adaboost-update}
 \end{equation}
-分对样本乘$e^{-\alpha_t}$、错分样本乘$e^{\alpha_t}$，相对变化由此可见。例如$\epsilon_t=1/4$时$\alpha_t=\frac12\ln3\approx0.549$，错分样本权重约为分对样本的$e^{2\alpha_t}=3$倍。若$\epsilon_t=0$，当前成员已分对全部加权样本，直接输出$h_t$并停止，避免代入发散系数（参考\BookChapterRef{chap:binary-learnability}{卷三《基础、理论与可信性》“二分类学习的可学习性”章}）。正投票系数要求$\epsilon_t<1/2$；条件未满足时可停止本轮、调整训练或采用相应变体。持续被错分的异常标签会获得越来越大的权重，需要在数据层面处理。
+分对样本乘$e^{-\alpha_t}$、错分样本乘$e^{\alpha_t}$，相对变化由此可见。例如$\epsilon_t=1/4$时$\alpha_t=\frac12\ln3\approx0.549$，错分样本权重约为分对样本的$e^{2\alpha_t}=3$倍。若$\epsilon_t=0$，当前成员已分对全部加权样本，直接输出$h_t$并停止，避免代入发散系数（参考\BookChapterRef{chap:binary-learnability}{卷三《基础、理论与可信性》“二分类学习的可学习性”章}）。正投票系数要求$\epsilon_t<1/2$；条件未满足时可停止本轮、调整训练或采用相应变体。持续被错分的噪声标签（标签本身标错的样本）会获得越来越大的权重，需要在数据层面处理。
 
 \begin{figure*}[htbp]
   \centering
@@ -149,7 +149,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$。在已有得分$F_{t-1}$上加入$\
 普通GBDT在后期参照完整的已有组合拟合负梯度，新增树容易被前面树的贡献掩盖。\term{DART}（Dropout Additive Regression Trees）在计算本轮负梯度前随机丢弃若干已有树，使本轮参照的组合暂时变小，新树被迫补回被丢弃部分；加回时按丢弃比例缩放以保持整体贡献规模\scite{rashmi2015dart}。它改变的是本轮参照的已有组合，不是本轮样本。
 
 \subsubsection{分位数提升：改变预测目标}
-\term{分位数提升}（quantile boosting）把第\ref{sec:regression-quantiles}节的分位数损失$\ell(y,z)=\rho_\tau(y-z)$用于提升，成员学习减少该分位目标的偏差。损失在$z=y$处不可微，修正信号改用负次梯度，例如约定
+\term{分位数提升}（quantile boosting）把第\ref{sec:regression-quantiles}节的分位数损失$\ell(y,z)=\rho_\tau(y-z)$用于提升，成员学习减少该分位目标的偏差。损失在$z=y$处不可微，修正信号改用负次梯度（损失在尖点不可微时，夹在左右斜率之间的一个可行下降方向），例如约定
 \[
   r_{ti}=\begin{cases}\tau-1,&y_i<F_{t-1}(\bm x_i),\\ \tau,&y_i\ge F_{t-1}(\bm x_i).\end{cases}
 \]
@@ -171,7 +171,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$。在已有得分$F_{t-1}$上加入$\
 \subsubsection{参数学习}
 
 \paragraph{二阶目标与工作响应}
-二项对数损失在当前概率$p_i$处的一阶导为$p_i-y_i$，曲率$v_i=p_i(1-p_i)$，工作响应与LMT节点学习中从二项损失推出的相同：
+二项对数损失在当前概率$p_i$处的一阶导为$p_i-y_i$，曲率$v_i=p_i(1-p_i)$（损失对得分的二阶导，反映该点附近曲线弯得多厉害，用于估计一步能迈多大），工作响应与LMT节点学习中从二项损失推出的相同：
 \begin{equation}
   z_i=\frac{y_i-p_i}{p_i(1-p_i)},\qquad
   w_i=p_i(1-p_i).
@@ -180,7 +180,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$。在已有得分$F_{t-1}$上加入$\
 这里恢复第3章逻辑模型树（LMT）节点学习已经推出的一阶导、曲率与工作响应，不重复证明；区别在于LMT在局部叶节点内细化祖先模型，LogitBoost对全样本的完整组合拟合下一个成员。以加权最小二乘拟合$z_i$得到成员修正，按学习率加入$F$后重新计算$p_i$；实数值成员不能直接加到概率上，只能加入logit。逐轮累积的近似误差与单轮牛顿步的误差分开评价。
 
 \paragraph{停止与数值处理}
-概率接近$0$或$1$时曲率$v_i\to0$，工作响应$z_i$被放大，数值上不稳定；实现中需对概率截断、给权重设下限并约定有限停止规则。这些处理改变了理想牛顿步，其影响要在共同验证口径下检查；训练得到的概率是否校准另由独立的概率校准评价，不并入拟合误差。
+概率接近$0$或$1$时曲率$v_i\to0$，工作响应$z_i$被放大，数值上不稳定；实现中需对概率截断、给权重设下限并约定有限停止规则。这些处理改变了理想牛顿步（用二阶曲率信息一步求出最佳修正的做法），其影响要在共同验证口径下检查；训练得到的概率是否校准另由独立的概率校准评价，不并入拟合误差。
 
 \subsection{XGBoost}
 \label{sec:ensemble-xgboost}
@@ -257,7 +257,7 @@ $g_i=\partial_{\hat y}L(y_i,\hat y)|_{\hat y=F_{t-1}}$为一阶导，$h_i=\parti
 先验$p$与平滑系数$\alpha$按数据来源设定，无前驱时退回先验。进入统计的是前缀内同类别标签，部署时只使用已观测的训练记录；低频类别的不确定性由平滑系数控制。
 
 \paragraph{有序提升}
-当前预测若直接使用当前标签会造成泄漏。\term{有序提升}（ordered boosting）让每条记录的本轮预测只由排在它之前的样本产生，修正信号也基于该前缀；理想上每条记录应有独立的训练与更新，实际通过共享树结构与状态近似，区分有序（Ordered）与普通（Plain）两种实现\scite{prokhorenkova2018catboost}。
+当前预测若直接使用当前标签会造成泄漏（训练时偷看了部署时拿不到的标签信息）。\term{有序提升}（ordered boosting）让每条记录的本轮预测只由排在它之前的样本产生，修正信号也基于该前缀；理想上每条记录应有独立的训练与更新，实际通过共享树结构与状态近似，区分有序（Ordered）与普通（Plain）两种实现\scite{prokhorenkova2018catboost}。
 
 \begin{figure*}[htbp]
   \centering
