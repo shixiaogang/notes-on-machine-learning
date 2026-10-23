@@ -2,11 +2,11 @@
 
 本目录按 `tex/volumes.json` 的十二卷登记组织。每个设有部分的卷按部分保存一份大纲；卷四与卷五不设部分，各保存一份卷级大纲。卷目录名称与 `tex/` 对应目录一致。
 
-大纲以 `volume.tex → part.tex → 章节及章内输入` 的实际接入顺序为准：章号在卷内连续，保留正文层级，每节及下级小节均说明主要内容、论证依据和表述逻辑。正文与旧规划不一致时采用正文；未接入的拟设章节不作为现有内容。当前共132章；卷九接入15章，卷十接入15章，卷十一接入10章，卷十二仅有部分入口，尚无章节正文。
+大纲以 `volume.tex → part.tex → 章节及章内输入` 的实际接入顺序为准：章号在卷内连续，保留正文层级，每节及下级小节均说明主要内容、论证依据和表述逻辑。正文与旧规划不一致时采用正文；未接入的拟设章节不作为现有内容。当前共135章；卷九接入15章，卷十接入15章，卷十一接入10章，卷十二仅有部分入口，尚无章节正文。
 
 | 卷 | 卷名 | 正文章数 | 部分与大纲 |
 | --- | --- | --- | --- |
-| 1 | 数学准备：计算、分析与几何 | 11 | [计数、分析与优化](01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)；[空间与几何](01-mathematical-preliminaries-upper/02-linear-algebra-and-geometry.md)；[信号与图](01-mathematical-preliminaries-upper/03-graphs-and-signals.md) |
+| 1 | 数学准备：计算、分析与几何 | 14 | [数学对象、计数与极限](01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)；[线性空间](01-mathematical-preliminaries-upper/02-linear-spaces.md)；[微积分与优化](01-mathematical-preliminaries-upper/03-calculus-and-optimization.md)；[空间与几何](01-mathematical-preliminaries-upper/04-space-and-geometry.md)；[信号与图](01-mathematical-preliminaries-upper/05-graphs-and-signals.md) |
 | 2 | 数学准备：概率、因果与决策 | 10 | [随机变量、分布与因果响应](02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality.md)；[演化、控制、决策与博弈](02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games.md)；[数学与机器学习](02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning.md) |
 | 3 | 基础、理论与可信性 | 17 | [机器学习基础](03-foundations/01-basics.md)；[机器学习理论](03-foundations/02-learning-theory.md)；[机器学习可信性](03-foundations/03-trustworthiness.md) |
 | 4 | 模型：经典模型 | 6 | [模型：经典模型](04-classic-models/outline.md) |

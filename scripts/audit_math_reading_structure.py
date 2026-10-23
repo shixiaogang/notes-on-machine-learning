@@ -121,7 +121,7 @@ def assignments(root: Path) -> list[dict]:
     # Historical audit identities stay stable when current chapters merge.
     # In particular, ID 17 remains the source governed by the retirement file.
     # Independent one-variable and multivariable calculus retain IDs 18 and 21.
-    expected_identities = list(range(1, 22)) if modern else list(range(1, 18))
+    expected_identities = list(range(1, 25)) if modern else list(range(1, 18))
     count = len(expected_identities)
     if modern and len(modern) != len(rows):
         raise ValueError("Chapter assignments must not mix current and legacy formats")
@@ -133,7 +133,7 @@ def assignments(root: Path) -> list[dict]:
     if len({row["path"] for row in rows}) != count:
         raise ValueError("Chapter assignments must have unique source paths")
     if modern:
-        for volume, expected_count in ((1, 11), (2, 10)):
+        for volume, expected_count in ((1, 14), (2, 10)):
             local_numbers = [row["local_chapter"] for row in rows if row["volume"] == volume]
             if local_numbers != list(range(1, expected_count + 1)):
                 raise ValueError(f"Volume {volume} assignments must list local chapters 1 through {expected_count} in reading order")
@@ -144,7 +144,7 @@ def current_outline_chapter(row: dict) -> int:
     """Map stable audit identities to the current concatenated outline."""
     if "local_chapter" not in row:
         return row["chapter"]
-    return row["local_chapter"] + (11 if row["volume"] == 2 else 0)
+    return row["local_chapter"] + (14 if row["volume"] == 2 else 0)
 
 
 def chapter17_retirement_source(rows: list[dict]) -> str:
@@ -166,7 +166,7 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
     current = None
     for line_no, line in enumerate(text.splitlines(), 1):
         if line.startswith("## 卷二"):
-            offset = 11
+            offset = 14
         chapter = re.match(r"## 第(\d+)章 (.+)$", line)
         if chapter:
             current = int(chapter[1]) + offset
@@ -206,8 +206,8 @@ def reading_structure(root: Path) -> tuple[list[Path], str]:
     texts = []
     for number, directory in enumerate(OUTLINE_DIRECTORIES, 1):
         parts = sorted((root / directory).glob("*.md"))
-        if len(parts) != 3:
-            raise ValueError(f"Expected 3 part outlines in {directory}, found {len(parts)}")
+        if not parts:
+            raise ValueError(f"Expected at least one part outline in {directory}")
         if number == 2:
             texts.append("## 卷二")
         for path in parts:
