@@ -1,6 +1,8 @@
 # 第一卷“信号”章审读报告
 
-当前主要交付是[信号章逐段写作大纲](detailed-outline.md)：按已讨论的八个主体section列出完整标题层级，使用paragraph归组较大的内容，并逐项说明其下自然段的引入、定义、推导、算例、结论与条件。[完整内容呈现方案](presentation-design.md)保留分组理由与呈现示范；本文件保留首轮审读及覆盖调查的证据。
+当前主要交付是[信号章逐段写作大纲](detailed-outline.md)。根据“subsection粒度清楚，但下层划分混乱”的反馈，本轮保留全部30个subsection，重新整理其下的分支、paragraph与自然段归属。可先看[标题层级总览](hierarchy-overview.md)：每个小节先说明分组依据，再列下级标题；逐段内容和正式环境的安排仍在完整细纲中。
+
+[分组修订记录](hierarchy-revision-check.md)说明本轮改动、复读范围及限制；[首版自查](detailed-outline-check.md)和[早期呈现方案](presentation-design.md)保留历史依据，不作为当前下层目录。本文件以下仍保留首轮审读及覆盖调查的证据。
 
 日期：2026-10-23。基线：`28794ef40438a5d7bc98468a1aaec380f877f76e`。
 
