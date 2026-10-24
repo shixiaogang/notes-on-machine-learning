@@ -28,11 +28,11 @@ class CurrentChapterStructureTests(unittest.TestCase):
             paths, text = AUDIT.reading_structure(root)
             self.assertEqual(len(paths), 6)
             headings = AUDIT.outline_headings(text)
-            self.assertEqual(list(headings), [1, 2, 3, 12, 13, 14])
-            self.assertEqual(headings[12][1]["number"], "1.1")
+            self.assertEqual(list(headings), [1, 2, 3, 17, 18, 19])
+            self.assertEqual(headings[17][1]["number"], "1.1")
+            # A volume may carry any number of part outlines; none is required to equal another.
             (root / paths[-1]).unlink()
-            with self.assertRaisesRegex(ValueError, "Expected 3 part outlines"):
-                AUDIT.reading_structure(root)
+            self.assertEqual(len(AUDIT.reading_structure(root)[0]), 5)
 
     def test_current_chapter_numbers_include_nested_titles(self):
         headings = AUDIT.outline_headings(
@@ -72,7 +72,9 @@ class CurrentChapterStructureTests(unittest.TestCase):
 
     def current_assignment_rows(self):
         rows = []
-        for local, identity in enumerate([1, 2, 5, 3, 18, 21, 4, 22, 23, 6, 7, 8, 9], 1):
+        for local, identity in enumerate(
+            [1, 2, 3, 5, 22, 23, 24, 18, 21, 4, 25, 26, 6, 7, 8, 9], 1
+        ):
             rows.append(f"| {identity} | 1 | {local} | 章节{identity} | tex/upper/chapter{local}.tex |")
         for local, identity in enumerate([10, 11, 19, 20, 12, 13, 14, 15, 16, 17], 1):
             source = (
@@ -90,20 +92,23 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path.write_text("\n".join(self.current_assignment_rows()))
             rows = AUDIT.assignments(root)
             by_identity = {row["chapter"]: row for row in rows}
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[3]), 4)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[18]), 5)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[21]), 6)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[4]), 7)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[22]), 8)
-            self.assertEqual(by_identity[22]["local_chapter"], 8)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[3]), 3)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[18]), 8)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[21]), 9)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[4]), 10)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[22]), 5)
+            self.assertEqual(by_identity[22]["local_chapter"], 5)
             self.assertEqual(by_identity[22]["volume"], 1)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[23]), 9)
-            self.assertEqual(by_identity[23]["local_chapter"], 9)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[23]), 6)
+            self.assertEqual(by_identity[23]["local_chapter"], 6)
             self.assertEqual(by_identity[23]["volume"], 1)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 16)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 17)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 18)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[17]), 23)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[24]), 7)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[25]), 11)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[26]), 12)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 19)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 20)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 21)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[17]), 26)
             self.assertEqual(by_identity[17]["local_chapter"], 10)
             self.assertEqual(by_identity[17]["volume"], 2)
             self.assertEqual(AUDIT.chapter17_retirement_source(rows), by_identity[17]["path"])
@@ -115,7 +120,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             rows = self.current_assignment_rows()
             path.write_text("\n".join(rows[:-1]))
-            with self.assertRaisesRegex(ValueError, "Expected 23 assignments"):
+            with self.assertRaisesRegex(ValueError, "Expected 26 assignments"):
                 AUDIT.assignments(root)
             rows[-1] = rows[-1].replace("| 17 |", "| 16 |", 1)
             path.write_text("\n".join(rows))
@@ -154,12 +159,12 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path = root / AUDIT.CONTRACT
             path.parent.mkdir(parents=True)
             rows = self.current_assignment_rows()
-            rows[15] = rows[15].replace("| 2 | 3 |", "| 2 | 2 |")
+            rows[18] = rows[18].replace("| 2 | 3 |", "| 2 | 2 |")
             path.write_text("\n".join(rows))
             with self.assertRaisesRegex(ValueError, "Volume 2 assignments"):
                 AUDIT.assignments(root)
             rows = self.current_assignment_rows()
-            rows[14], rows[15] = rows[15], rows[14]
+            rows[18], rows[19] = rows[19], rows[18]
             path.write_text("\n".join(rows))
             with self.assertRaisesRegex(ValueError, "Volume 2 assignments"):
                 AUDIT.assignments(root)
@@ -183,8 +188,8 @@ class CurrentChapterStructureTests(unittest.TestCase):
             rows = self.current_assignment_rows()
             (root / AUDIT.CONTRACT).write_text("\n".join(rows))
             assignments = AUDIT.assignments(root)
-            self.assertEqual(len(assignments), 23)
-            self.assertEqual(sorted(row["chapter"] for row in assignments), list(range(1, 24)))
+            self.assertEqual(len(assignments), 26)
+            self.assertEqual(sorted(row["chapter"] for row in assignments), list(range(1, 27)))
             self.assertEqual(
                 AUDIT.chapter17_retirement_source(assignments),
                 "tex/lower/01-mathematics-and-future-research.tex",
