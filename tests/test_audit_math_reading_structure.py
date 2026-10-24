@@ -623,6 +623,34 @@ class Chapter2RetirementTests(unittest.TestCase):
         self.assertEqual(result["issues"], [])
         self.assertIn(label, result["approved_baseline_retirements"])
 
+    def test_pattern_relocation_requires_live_definition_at_volume_three_destination(self):
+        label = "def:pattern"
+        self.old = self.old.replace(r"\label{eq:kept}", rf"\label{{eq:kept}}\label{{{label}}}")
+        self.before = self.before.replace(
+            r"\section{有限输入上的可区分模式}",
+            rf"\section{{有限输入上的可区分模式}}\label{{{label}}}",
+        )
+        self.baseline[label] = str(AUDIT.CHAPTER2_BASELINE_SOURCE)
+        self.manifest["baseline_source_sha256"] = AUDIT.hashlib.sha256(self.old.encode()).hexdigest()
+        self.manifest["pre_rewrite_source_sha256"] = AUDIT.hashlib.sha256(self.before.encode()).hexdigest()
+        inventory = AUDIT.LABEL_RE.findall(self.before)
+        self.manifest["pre_rewrite_labels"] = sorted(inventory)
+        self.manifest["pre_rewrite_labels_sha256"] = AUDIT.label_inventory_sha256(inventory)
+        self.manifest["relocated_pattern_labels"] = [{
+            "label": label, "destination": AUDIT.CHAPTER2_PATTERN_DESTINATION,
+            "reason": "User moved the full pattern lesson to volume 3.",
+        }]
+        self.locations[label] = [{"path": AUDIT.CHAPTER2_PATTERN_DESTINATION, "line": 1}]
+        result = self.run_audit(body=rf"\ref{{{label}}}")
+        self.assertEqual(result["issues"], [])
+        self.assertIn(label, result["approved_baseline_relocations"])
+        self.locations.pop(label)
+        self.assertIn("pattern_relocation_definition", self.kinds(self.run_audit()))
+        self.locations[label] = [{"path": "tex/other.tex", "line": 1}]
+        self.assertIn("pattern_relocation_definition", self.kinds(self.run_audit()))
+        self.manifest["relocated_pattern_labels"][0]["label"] = "eq:kept"
+        self.assertIn("pattern_relocation_scope", self.kinds(self.run_audit()))
+
     def test_formula_scope_cannot_authorize_other_counting_labels(self):
         self.manifest["authorized_formula_labels"] = ["eq:kept"]
         self.manifest["retired_labels"].append({"label": "eq:kept", "reason": "Not authorized."})

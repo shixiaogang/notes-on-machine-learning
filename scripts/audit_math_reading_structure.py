@@ -52,6 +52,8 @@ CHAPTER2_PRE_REWRITE_SECTION_TITLES = (
 # The summary's semantic label and all its other labels remain protected.
 CHAPTER2_SUMMARY_RETIREMENT = "tab:prelim-four-solution-questions"
 CHAPTER2_FORMULA_RETIREMENT = "eq:prelim-binomial-theorem"
+CHAPTER2_PATTERN_RELOCATION_TITLE = "有限输入上的可区分模式"
+CHAPTER2_PATTERN_DESTINATION = "tex/03-foundations/02-learning-theory/statistical-learning-framework/01-finite-input-patterns.tex"
 CHAPTER17_BASELINE_SOURCE = Path(
     "05-dynamical-systems-control-and-decision/06-mathematics-and-future-research.tex"
 )
@@ -693,8 +695,35 @@ def audit_retired_chapter2_labels(
         issues.append({"kind": "unrecorded_chapter2_label_removal", "labels": sorted(undeclared)})
     report["pre_rewrite_label_count"] = len(inventory)
     report["active_reference_scope"] = "All active body inputs in the twelve volumes."
+    # The user moved this exact historical lesson to volume 3. Require live,
+    # unique definitions at the declared destination; a deletion cannot pass.
+    relocation_entries = manifest.get("relocated_pattern_labels", [])
+    relocated = []
+    pattern_labels = section_labels(pre_rewrite_source, (CHAPTER2_PATTERN_RELOCATION_TITLE,))
+    if not isinstance(relocation_entries, list):
+        issues.append({"kind": "invalid_pattern_relocations"})
+        relocation_entries = []
+    for entry in relocation_entries:
+        if not isinstance(entry, dict):
+            issues.append({"kind": "invalid_pattern_relocation"})
+            continue
+        label = entry.get("label")
+        if label not in pattern_labels or entry.get("destination") != CHAPTER2_PATTERN_DESTINATION:
+            issues.append({"kind": "pattern_relocation_scope", "label": label})
+            continue
+        found = all_locations.get(label, [])
+        if len(found) != 1 or found[0]["path"] != CHAPTER2_PATTERN_DESTINATION:
+            issues.append({"kind": "pattern_relocation_definition", "label": label})
+        if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
+            issues.append({"kind": "pattern_relocation_reason", "label": label})
+        relocated.append(label)
+    if len(relocated) != len(set(relocated)):
+        issues.append({"kind": "duplicate_pattern_relocations"})
+    report["relocated_pattern_labels"] = sorted(set(relocated))
+    report["approved_baseline_relocations"] = []
     if not issues:
         report["approved_baseline_retirements"] = sorted(set(retired) & eligible_baseline)
+        report["approved_baseline_relocations"] = sorted(set(relocated) & baseline_inventory)
     return report
 
 
@@ -892,6 +921,7 @@ def main() -> int:
     approved_retirements = set(retirements["approved_baseline_retirements"])
     approved_retirements.update(chapter1_retirements["approved_baseline_retirements"])
     approved_retirements.update(chapter2_retirements["approved_baseline_retirements"])
+    approved_retirements.update(chapter2_retirements.get("approved_baseline_relocations", []))
     missing = {
         label: path for label, path in missing_before_retirements.items()
         if label not in approved_retirements

@@ -5,7 +5,7 @@
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
 | 1 | 1 | 1 | 数学对象 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/01-sets-functions-and-proofs.tex |
-| 2 | 1 | 2 | 集合的计数 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/02-combinatorics.tex |
+| 2 | 1 | 2 | 集合的计数和基数 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/02-combinatorics.tex |
 | 3 | 1 | 3 | 函数的极限 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/03-function-limits.tex |
 | 5 | 1 | 4 | 表示 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/01-representation.tex |
 | 22 | 1 | 5 | 运算 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/02-operations.tex |
