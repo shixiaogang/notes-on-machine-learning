@@ -73,7 +73,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
     def current_assignment_rows(self):
         rows = []
         for local, identity in enumerate(
-            [1, 2, 3, 5, 22, 23, 24, 18, 21, 4, 25, 26, 6, 7, 8, 9], 1
+            [1, 2, 5, 3, 18, 21, 4, 22, 6, 7, 8, 9, 23, 24, 25, 26], 1
         ):
             rows.append(f"| {identity} | 1 | {local} | 章节{identity} | tex/upper/chapter{local}.tex |")
         for local, identity in enumerate([10, 11, 19, 20, 12, 13, 14, 15, 16, 17], 1):
@@ -92,19 +92,19 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path.write_text("\n".join(self.current_assignment_rows()))
             rows = AUDIT.assignments(root)
             by_identity = {row["chapter"]: row for row in rows}
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[3]), 3)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[18]), 8)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[21]), 9)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[4]), 10)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[22]), 5)
-            self.assertEqual(by_identity[22]["local_chapter"], 5)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[3]), 4)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[18]), 5)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[21]), 6)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[4]), 7)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[22]), 8)
+            self.assertEqual(by_identity[22]["local_chapter"], 8)
             self.assertEqual(by_identity[22]["volume"], 1)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[23]), 6)
-            self.assertEqual(by_identity[23]["local_chapter"], 6)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[23]), 13)
+            self.assertEqual(by_identity[23]["local_chapter"], 13)
             self.assertEqual(by_identity[23]["volume"], 1)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[24]), 7)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[25]), 11)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[26]), 12)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[24]), 14)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[25]), 15)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[26]), 16)
             self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 19)
             self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 20)
             self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 21)
