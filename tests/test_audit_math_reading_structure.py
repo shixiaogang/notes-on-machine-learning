@@ -72,7 +72,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
 
     def current_assignment_rows(self):
         rows = []
-        for local, identity in enumerate([1, 2, 5, 3, 18, 21, 4, 22, 6, 7, 8, 9], 1):
+        for local, identity in enumerate([1, 2, 5, 3, 18, 21, 4, 22, 23, 6, 7, 8, 9], 1):
             rows.append(f"| {identity} | 1 | {local} | 章节{identity} | tex/upper/chapter{local}.tex |")
         for local, identity in enumerate([10, 11, 19, 20, 12, 13, 14, 15, 16, 17], 1):
             source = (
@@ -97,10 +97,13 @@ class CurrentChapterStructureTests(unittest.TestCase):
             self.assertEqual(AUDIT.current_outline_chapter(by_identity[22]), 8)
             self.assertEqual(by_identity[22]["local_chapter"], 8)
             self.assertEqual(by_identity[22]["volume"], 1)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 14)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 15)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 16)
-            self.assertEqual(AUDIT.current_outline_chapter(by_identity[17]), 21)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[23]), 9)
+            self.assertEqual(by_identity[23]["local_chapter"], 9)
+            self.assertEqual(by_identity[23]["volume"], 1)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[19]), 16)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[20]), 17)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[12]), 18)
+            self.assertEqual(AUDIT.current_outline_chapter(by_identity[17]), 23)
             self.assertEqual(by_identity[17]["local_chapter"], 10)
             self.assertEqual(by_identity[17]["volume"], 2)
             self.assertEqual(AUDIT.chapter17_retirement_source(rows), by_identity[17]["path"])
@@ -112,7 +115,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path.parent.mkdir(parents=True)
             rows = self.current_assignment_rows()
             path.write_text("\n".join(rows[:-1]))
-            with self.assertRaisesRegex(ValueError, "Expected 22 assignments"):
+            with self.assertRaisesRegex(ValueError, "Expected 23 assignments"):
                 AUDIT.assignments(root)
             rows[-1] = rows[-1].replace("| 17 |", "| 16 |", 1)
             path.write_text("\n".join(rows))
@@ -151,12 +154,12 @@ class CurrentChapterStructureTests(unittest.TestCase):
             path = root / AUDIT.CONTRACT
             path.parent.mkdir(parents=True)
             rows = self.current_assignment_rows()
-            rows[14] = rows[14].replace("| 2 | 3 |", "| 2 | 2 |")
+            rows[15] = rows[15].replace("| 2 | 3 |", "| 2 | 2 |")
             path.write_text("\n".join(rows))
             with self.assertRaisesRegex(ValueError, "Volume 2 assignments"):
                 AUDIT.assignments(root)
             rows = self.current_assignment_rows()
-            rows[13], rows[14] = rows[14], rows[13]
+            rows[14], rows[15] = rows[15], rows[14]
             path.write_text("\n".join(rows))
             with self.assertRaisesRegex(ValueError, "Volume 2 assignments"):
                 AUDIT.assignments(root)
@@ -180,8 +183,8 @@ class CurrentChapterStructureTests(unittest.TestCase):
             rows = self.current_assignment_rows()
             (root / AUDIT.CONTRACT).write_text("\n".join(rows))
             assignments = AUDIT.assignments(root)
-            self.assertEqual(len(assignments), 22)
-            self.assertEqual(sorted(row["chapter"] for row in assignments), list(range(1, 23)))
+            self.assertEqual(len(assignments), 23)
+            self.assertEqual(sorted(row["chapter"] for row in assignments), list(range(1, 24)))
             self.assertEqual(
                 AUDIT.chapter17_retirement_source(assignments),
                 "tex/lower/01-mathematics-and-future-research.tex",
