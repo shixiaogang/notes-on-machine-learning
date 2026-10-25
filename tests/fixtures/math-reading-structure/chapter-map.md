@@ -7,10 +7,10 @@
 | 1 | 1 | 1 | 数学对象 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/01-sets-functions-and-proofs.tex |
 | 2 | 1 | 2 | 集合的计数和基数 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/02-combinatorics.tex |
 | 3 | 1 | 3 | 函数的极限 | tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/03-function-limits.tex |
-| 5 | 1 | 4 | 表示 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/01-representation.tex |
-| 22 | 1 | 5 | 运算 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/02-operations.tex |
-| 23 | 1 | 6 | 方程和优化 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/03-equations-and-optimization.tex |
-| 24 | 1 | 7 | 分析 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/04-analysis.tex |
+| 22 | 1 | 4 | 向量、矩阵与张量 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/02-operations.tex |
+| 5 | 1 | 5 | 线性空间 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/01-representation.tex |
+| 24 | 1 | 6 | 特征值与谱理论 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/04-analysis.tex |
+| 23 | 1 | 7 | 线性方程与矩阵方程 | tex/01-mathematical-preliminaries-upper/02-linear-spaces/03-equations-and-optimization.tex |
 | 18 | 1 | 8 | 一元函数微积分 | tex/01-mathematical-preliminaries-upper/03-calculus-and-optimization/01-univariate-calculus.tex |
 | 21 | 1 | 9 | 多元函数微积分 | tex/01-mathematical-preliminaries-upper/03-calculus-and-optimization/02-multivariate-calculus.tex |
 | 4 | 1 | 10 | 最优化 | tex/01-mathematical-preliminaries-upper/03-calculus-and-optimization/03-optimization.tex |
