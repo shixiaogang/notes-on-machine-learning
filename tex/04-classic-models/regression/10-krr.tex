@@ -9,12 +9,12 @@
 采用本卷概述中已经建立的合法核及其特征空间，给$f(\bm{x})=b+\langle\bm{w},\Phi(\bm{x})\rangle$与平均半平方损失加$\lambda\lVert\bm{w}\rVert^2/2$的目标，限定$\lambda>0$。截距不惩罚，待学习量与核配置分别说明；核范数衡量的是特征空间函数，而不是原始输入坐标上的斜率。在RKHS$\mathcal H_k$中，函数$f$的拟合误差加范数惩罚目标为
 \begin{equation}
   \min_{f\in\mathcal H_k}
-  \frac{1}{n}\sum_{i=1}^n(y_i-f(\bm{x}_i))^2
-  +\lambda\lVert f\rVert_{\mathcal H_k}^2,
+  \frac{1}{2n}\sum_{i=1}^n(y_i-f(\bm{x}_i))^2
+  +\frac{\lambda}{2}\lVert f\rVert_{\mathcal H_k}^2,
   \qquad\lambda>0.
   \label{eq:regression-krr-objective}
 \end{equation}
-第一项是平方拟合，第二项限制函数在核空间中的幅度；惩罚不规定响应分布，也不产生后验方差。由表示定理，核空间中加范数惩罚时最优函数必是训练点核函数的线性组合，因此只需学这$n$个系数：
+第一项是半平方拟合（与OLS的$1/(2n)$约定一致），第二项限制函数在核空间中的幅度；取$\lambda/2$因子是为了让对偶正规方程写成$\bm{K}+n\lambda\bm{I}$；惩罚不规定响应分布，也不产生后验方差。由表示定理，核空间中加范数惩罚时最优函数必是训练点核函数的线性组合，因此只需学这$n$个系数：
 \[
   f(\bm{x})=b+\sum_{i=1}^n a_iK(\bm{x}_i,\bm{x}),
 \]
@@ -29,15 +29,20 @@
 \[
   \bm{w}=-n^{-1}\lambda^{-1}\sum_i e_i\Phi(\bm{x}_i),\qquad \sum_i e_i=0,
 \]
-其中$e_i=f(\bm{x}_i)-y_i$。对核系数$a_j$的梯度为$(1/n)\sum_i e_i k(\bm{x}_i,\bm{x}_j)+\lambda a_j$，令其为零（连同截距的驻点条件$\sum_i e_i=0$）即得下面的线性方程组；KRR直接解这个线性系统，不走迭代梯度下降。
-令$a_i=-e_i/(n\lambda)$。逐步代入训练得分，得到关于$\bm{a},b$的线性方程组
+其中$e_i=f(\bm{x}_i)-y_i$。代入表示定理$f=\sum_i a_i k(\cdot,\bm{x}_i)$，惩罚项为$\lambda\lVert f\rVert^2_{\mathcal H_k}=\lambda\bm{a}^{\top}\bm{K}\bm{a}$（$\bm{K}_{ij}=k(\bm{x}_i,\bm{x}_j)$），故对核系数$a_j$的梯度为
+\begin{equation}
+  \frac{\partial J}{\partial a_j}
+  =\frac1n\sum_{i=1}^{n}e_i\,k(\bm{x}_i,\bm{x}_j)+\lambda(\bm{K}\bm{a})_j,
+  \label{eq:regression-krr-grad-a}
+\end{equation}
+惩罚导数含核矩阵$\bm{K}$，不是直接对$\lambda a_j$求导。令$\nabla_{\bm a}J=\bm 0$（连同截距驻点条件$\sum_i e_i=0$），即得下面的线性方程组；KRR直接解这个线性系统，不走迭代梯度下降。由$\partial J/\partial a_j=0$得$e_i=-n\lambda a_i$，逐步代入训练得分，得到关于$\bm{a},b$的线性方程组
 \[
   \begin{aligned}
     (\bm{K}+n\lambda\bm{I})\bm{a}+b\bm{1}&=\bm{y},\\
     \bm{1}^{\top}\bm{a}&=0,
   \end{aligned}
 \]
-这也说明不能在奇异核矩阵的系数梯度中直接消去$\bm{K}$。先分解正定矩阵$\bm{K}+n\lambda\bm{I}$，再结合截距方程解出$\bm{a},b$；也可把两式组成增广系统，或用Schur补先消去$b$再求解。整个过程只做分解与回代，不显式求逆。当前核展开可有多种系数表示，这套残差条件选择一组确定系数。如果均值已知并固定$b=0$，去掉关于截距的驻点条件，直接解
+先分解正定矩阵$\bm{K}+n\lambda\bm{I}$，再结合截距方程解出$\bm{a},b$；也可把两式组成增广系统，或用Schur补先消去$b$再求解。整个过程只做分解与回代，不显式求逆。如果均值已知并固定$b=0$，去掉关于截距的驻点条件，直接解
 \begin{equation}
   (\bm{K}+n\lambda\bm{I})\bm{a}=\bm{y},
   \label{eq:regression-krr-dual}
@@ -46,7 +51,7 @@
 
 \paragraph{新输入、配置与计算}
 
-对新输入计算同一核下的训练样本核向量并代入预测$f(\bm{x}_\star)=b+\sum_i a_i k(\bm{x}_i,\bm{x}_\star)$；核预处理、训练均值和截距的保持规则沿用概述：若特征空间也要中心化，则核矩阵按$\bm{H}\bm{K}\bm{H}$改写（$\bm{H}=\bm{I}-\frac1n\mathbf{1}\mathbf{1}^{\top}$），即在特征空间里减去训练特征均值，与线性设计的中心化是同一操作的核版本；新点核向量也减同一个由训练导出的均值，不重推一般中心化结论。在训练内共同选择核类型、长度尺度与正则强度，交代完整核矩阵的存储、分解和新点计算成本；核方法省去显式坐标，但不会自动减小样本维度上的矩阵问题。
+对新输入计算同一核下的训练样本核向量并代入预测$f(\bm{x}_\star)=b+\sum_i a_i k(\bm{x}_i,\bm{x}_\star)$；核预处理、训练均值和截距的保持规则沿用概述：若特征空间也要中心化，则核矩阵按$\bm{H}\bm{K}\bm{H}$改写（$\bm{H}=\bm{I}-\frac1n\mathbf{1}\mathbf{1}^{\top}$），即在特征空间里减去训练特征均值，与线性设计的中心化是同一操作的核版本；新点核向量也减同一个由训练导出的均值。核类型、长度尺度与正则强度在训练内共同选择；核矩阵存储与分解随样本数增长，核方法省去显式坐标，但不会自动减小样本维度上的矩阵问题。
 
 \subsubsection{性质与模型关系}
 \label{sec:regression-krr-theory}

@@ -36,7 +36,7 @@ $\bm\lambda$为元模型参数。成员可以输出回归数值、类别标签�
 \label{sec:ensemble-constrained-linear-stacking}
 
 \paragraph{模型结构}
-元模型取带截距的线性形式$\hat y=\beta_0+\sum_m\lambda_m\hat f_m(\bm x)$。常用候选约束为$\lambda_m\ge0$、$\sum_m\lambda_m=1$（单纯形：权重非负且和为1的区域，可看成允许取值的“三角形”），或固定截距；约束意图是限制相互抵消与尺度漂移。要记清的是，这条约束买的是组合输出的可解释范围与概率含义，不是额外的预测精度。概率成员必须属于同一类别集合、使用同一组权重。
+元模型取带截距的线性形式$\hat y=\beta_0+\sum_m\lambda_m\hat f_m(\bm x)$。常用候选约束为$\lambda_m\ge0$、$\sum_m\lambda_m=1$（单纯形：权重非负且和为1的区域，可看成允许取值的“三角形”），或固定截距。这些约束限制成员预测之间的相互抵消与组合尺度漂移；它们不以提高预测精度为目的，换来的是组合输出落在成员预测凸包内的可解释范围，以及概率向量的单纯形保持。概率成员必须属于同一类别集合、使用同一组权重。
 
 \paragraph{参数学习：约束权重的求解}
 在OOF矩阵$\bm Z\in\mathbb R^{n\times M}$（第$m$列为成员$m$的折外预测）上，以平方损失加正则训练：
@@ -46,7 +46,7 @@ $\bm\lambda$为元模型参数。成员可以输出回归数值、类别标签�
   \lambda_m\ge0,\ \sum_m\lambda_m=1.
   \label{eq:ensemble-constrained-obj}
 \end{equation}
-无约束目标对组合参数$\bm\lambda$的梯度为$\bm g=\frac{2}{n}\bm Z^\top(\bm Z\bm\lambda-\bm y)+2\gamma\bm\lambda$，与式\eqref{eq:ensemble-constrained-obj}中$\frac1n\lVert\bm Z\bm\lambda-\bm y\rVert_2^2+\gamma\lVert\bm\lambda\rVert_2^2$逐项对应。带约束求解走单纯形投影梯度，属于受约束二次规划的投影梯度法，不是自由SGD：每步先沿$\bm g$更新，再投影回单纯形，即$\bm\lambda\leftarrow\Pi_\Delta(\bm\lambda-\eta\bm g)$，其中$\Pi_\Delta$按排序与共同阈值投影到单纯形，步长满足$\eta<1/L$（$L$为$\frac{2}{n}\bm Z^\top\bm Z+2\gamma\bm I$的最大特征值，即$\bm g$的Lipschitz常数）。退化情形（各成员预测列近似常数）下目标不唯一，按实现约定取一个可行解；截距是否自由决定约束口径。
+无约束目标对组合参数$\bm\lambda$的梯度为$\bm g=\frac{2}{n}\bm Z^\top(\bm Z\bm\lambda-\bm y)+2\gamma\bm\lambda$。约束集$\Delta=\{\lambda:\lambda_m\ge0,\sum_m\lambda_m=1\}$是凸集，求解走投影梯度：每步先沿$\bm g$更新，再投影回单纯形，即$\bm\lambda\leftarrow\Pi_\Delta(\bm\lambda-\eta\bm g)$，其中$\Pi_\Delta$按排序与共同阈值投影到单纯形，步长满足$\eta<1/L$（$L$为$\frac{2}{n}\bm Z^\top\bm Z+2\gamma\bm I$的最大特征值，即$\bm g$的Lipschitz常数）。退化情形（各成员预测列近似常数）下目标不唯一，按实现约定取一个可行解；截距是否自由决定约束口径。
 
 \paragraph{权重解释与数据处理}
 成员尺度、相关性影响估计权重，权重不等于成员的独立贡献；成员的预处理与调参仍在训练范围内完成，不在元模型阶段重新使用留出标签。
@@ -88,6 +88,8 @@ $\bm\lambda$为元模型参数。成员可以输出回归数值、类别标签�
 \subsection{Super Learner}
 \label{sec:ensemble-super-learner}
 
+事先没有依据断定哪个成员或哪种组合最合适时，与其临时试一个，不如把候选集合、评价数据的切分方式与允许的选择动作事先写死，让整个开发按同一协议跑一遍。
+
 \subsubsection{候选程序与预测结构}
 \term{Super Learner}（超级学习器）先固定一个候选程序库，在“挑一个成员”与“受约束组合”之间按协议选择。它是比较协议，不是与成员互斥的新模型；连续组合复用元模型，离散选择则部署被选中的成员\scite{vanderlaan2007superlearner}。
 
@@ -104,7 +106,7 @@ $\bm\lambda$为元模型参数。成员可以输出回归数值、类别标签�
 
 \subsection{本节比较}
 \label{sec:ensemble-stacking-comparison}
-三个问题分开回答：元特征来自哪里（OOF、Blending留出）、允许的组合函数（固定权重、受约束线性、门控、多层）、候选如何按损失选择（Stacking元学习、Super Learner协议）。Blending与OOF不改变预测公式；线性约束与门控改变可学习函数；Super Learner规定库与协议。同一公式可属于不同训练程序；固定成员的门控只学元参数，成员之间不交换标签；输入相关权重仍计算全部成员，不等于动态子集选择；多层隔离完整下层训练。两条部署路径（全量重训、折成员平均）都配以外层评价；选中的OOF损失不是未触碰的测试\scite{hastie2009}。
+三个问题分开回答：元特征来自哪里（OOF、Blending留出）、允许的组合函数（固定权重、受约束线性、门控、多层）、候选如何按损失选择（Stacking元学习、Super Learner协议）。Blending与OOF不改变预测公式；线性约束与门控改变可学习函数；Super Learner规定库与协议。同一公式可属于不同训练程序；固定成员的门控只学元参数，成员之间不交换标签；输入相关权重仍计算全部成员，不等于动态子集选择；多层隔离完整下层训练。两条部署路径（全量重训、折成员平均）都配以外层评价\scite{hastie2009}。
 
 \begin{table}[htbp]
   \centering

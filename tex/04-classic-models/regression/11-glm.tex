@@ -11,6 +11,7 @@ OLS默认响应在均值附近高斯、同方差地波动；但订单数只能�
   g(\mu(\bm{x}))=\eta(\bm{x}),\qquad \mu(\bm{x})=g^{-1}(\eta(\bm{x})).
 \]
 链接函数把取值受限的均值（如概率、非负计数）"翻译"到无界的线性组合$\eta$上，让线性预测器不再外推越界。
+
 条件响应属于指数族
 \begin{equation}
   p(y\mid\theta,\varphi)
@@ -48,24 +49,33 @@ OLS默认响应在均值附近高斯、同方差地波动；但订单数只能�
 
 \paragraph{似然、得分与信息矩阵}
 
-从条件响应似然建立系数学习目标，明确线性预测器、链接及响应族中哪些量固定。给定独立样本，对数似然关于$\beta$的得分（梯度）沿响应均值、线性预测器到系数的链式关系求导，为
+学习目标取条件响应对数似然关于$\bm{\beta}$的最大化。$n$条独立记录的对数似然为$\sum_i[(y_i\theta_i-b(\theta_i))/a(\varphi)]$。对$\bm{\beta}$求导沿链传导：先对$\theta$求导（$\partial l_i/\partial\theta=(y_i-\mu_i)/a(\varphi)$，用到$\mu=b'(\theta)$），再经$\theta$与$\mu$的关系、链接$\mu=g^{-1}(\eta)$到线性预测器$\eta_i=\bm{x}_i^{\top}\bm{\beta}$，最终得分（对数似然的梯度）为
 \begin{equation}
   \bm{s}(\bm{\beta})
   =\sum_{i=1}^n
-    \frac{(y_i-\mu_i)x_i}{a(\varphi)V(\mu_i)g'(\mu_i)}
-  =\bm{X}^{\top}\bm{W}(\bm{y}-\bm{\mu})/\sigma^2,
+    \frac{(y_i-\mu_i)\,\bm{x}_i}
+         {a(\varphi)\,V(\mu_i)\,g'(\mu_i)},
   \label{eq:regression-glm-score}
 \end{equation}
-其中$V(\mu)$为方差函数，$\bm{x}_i$含截距常数列，故$\bm{\beta}$同时包含斜率$\bm{w}$与截距$b$；对数似然沿得分上升，即$\bm{\beta}\leftarrow\bm{\beta}+\eta\,\bm{s}(\bm{\beta})$。MLE令得分等于零；Fisher信息是对数似然在真值附近的平均曲率，曲率越大参数越容易与别的取值区分开，这里它为$\bm{X}^{\top}\bm{W}\bm{X}/\sigma^2$，$\bm{W}$对角元由方差与链接导数构成。在当前系数处定义工作响应和权重，并在Poisson例中逐项代入；工作响应是求解工具，并不是将原始观测永久作链接变换。
+其中$V(\mu)$为方差函数（$\operatorname{Var}(Y\mid\bm x)=a(\varphi)V(\mu)$），$\bm{x}_i$含截距常数列，故$\bm{\beta}$同时包含斜率与截距。MLE令$\bm{s}(\bm{\beta})=\bm{0}$。得分的平均曲率即Fisher信息，其期望形式为$\bm{X}^{\top}\bm{W}\bm{X}$，对角权重$\bm{W}$的对角元为
+\begin{equation}
+  W_{i,i}=\frac{1}{a(\varphi)\,V(\mu_i)\,g'(\mu_i)^2}.
+  \label{eq:regression-glm-fisher-weight}
+\end{equation}
+曲率越大，参数越容易与邻近取值区分开。
 
 \paragraph{迭代重加权最小二乘}
 
-得分方程没有OLS那样的闭式解。看式\eqref{eq:regression-glm-score}的结构：它是$\sum_i\frac{y_i-\mu_i}{a(\varphi)V(\mu_i)g'(\mu_i)}\bm x_i$，每个样本对得分的贡献由"残差$y_i-\mu_i$、方差函数$V(\mu_i)$与链接导数$g'(\mu_i)$"三个量合成。在当前系数处把它改写成加权残差的形式：定义校正到链接尺度上的"工作响应"
+得分方程没有OLS那样的闭式解。注意得分与式\eqref{eq:regression-glm-fisher-weight}的权重相乘后可以写成加权残差：定义校正到链接尺度上的"工作响应"
 \begin{equation}
-  z_i=\eta_i+\frac{y_i-\mu_i}{V(\mu_i)g'(\mu_i)},
+  z_i=\eta_i+g'(\mu_i)(y_i-\mu_i),
   \label{eq:regression-irls}
 \end{equation}
-残差$z_i-\eta_i=(y_i-\mu_i)/(V(\mu_i)g'(\mu_i))$恰是上式每样本贡献除去$1/a(\varphi)$与$\bm x_i$的部分；配对角权重$\bm W$（对角元由方差与链接导数构成）后，得分就写成$\bm X^{\top}\bm W(\bm z-\bm\eta)$。令得分为零，恰是对$\bm z$作加权最小二乘的正规方程——这就是把非线性得分方程"迭代线性化"的关键一步。IRLS每轮在当前估计处构造$\bm z$与$\bm W$，待求系数的线性方程为$\bm{X}^{\top}\bm{W}\bm{X}\,\bm{\beta}^{+}=\bm{X}^{\top}\bm{W}\bm{z}$，解出后更新$\eta,\mu$并重复。给单次合法初始化，每轮重算工作响应和权重、分解求系数，可加阻尼/线搜索，直到参数或得分变化小于容差；离散度与系数的估计角色分别交代，实现解线性方程而不显式求逆。
+则$W_{i,i}(z_i-\eta_i)=\dfrac{g'(\mu_i)(y_i-\mu_i)}{a(\varphi)V(\mu_i)g'(\mu_i)^2}=\dfrac{y_i-\mu_i}{a(\varphi)V(\mu_i)g'(\mu_i)}$，恰是式\eqref{eq:regression-glm-score}中第$i$项除去$\bm{x}_i$的部分。于是得分写成矩阵形式$\bm{s}(\bm{\beta})=\bm{X}^{\top}\bm{W}(\bm{z}-\bm{\eta})$，令得分为零就是加权最小二乘的正规方程
+\[
+  \bm{X}^{\top}\bm{W}\bm{X}\,\bm{\beta}^{+}=\bm{X}^{\top}\bm{W}\bm{z}.
+\]
+这就是把非线性得分方程迭代线性化的机制：在当前系数$\bm{\beta}$处算出$\mu,\eta$，构造$\bm{z}$与$\bm{W}$，解这个线性方程得到更新$\bm{\beta}^{+}$，再用新系数重算$\mu,\eta$并重复，直到参数或得分变化小于容差。工作响应是当前点处的一阶校正，不是把原始观测永久作链接变换。
 
 \subsubsection{理论分析}
 \label{sec:regression-glm-theory}
@@ -74,16 +84,16 @@ OLS默认响应在均值附近高斯、同方差地波动；但订单数只能�
 
 在支持集固定且可交换微分与积分/求和的条件下，从分布归一化求导推导指数族均值与方差：
 \begin{equation}
-  \mu=b'(\theta),\qquad \operatorname{Var}(Y)=a(\varphi)b''(\theta),
+  \mu=b'(\theta),\qquad \operatorname{Var}(Y)=a(\varphi)b''(\theta).
   \label{eq:regression-glm-moments}
 \end{equation}
-并由此连接得分和信息矩阵。
+定义方差函数$V(\mu)=b''(\theta)$后，$\operatorname{Var}(Y)=a(\varphi)V(\mu)$，与式\eqref{eq:regression-glm-score}、\eqref{eq:regression-glm-fisher-weight}中的$V(\mu)$是同一个量。
 
 \paragraph{凸性与有限解}
 
-规范（自然）链接下说明凸性、严格凸所需条件与有限最优解存在性不同：自然链接下对数似然关于$\beta$凹，设计满列秩时严格凸、MLE唯一；非自然链接在合理范围内仍通常凹，但需检查局部最优。用含截距、全部计数为零的Poisson数据说明：对数均值趋负无穷时似然上确界未由有限参数达到，有限最优解存在性不能只由凹性推出；伯努利分离的完整专属分析留在分类章的Logistic模型。均值结构与响应分布要分别检查：Poisson对数链接配特征$1,x$只能给出$\mu(x)=\exp(b+wx)$，若真实对数均值含$x^2$，应加入相应特征；若均值正确但响应方差明显大于均值，则是Poisson分布的限制，单独增加均值特征不能解除它。
+自然链接下对数似然关于$\bm{\beta}$是凹的：每个$y_i\theta_i-b(\theta_i)$关于$\eta_i$凹，$\eta_i$是$\bm{\beta}$的线性函数，凹函数复合线性映射仍凹。设计满列秩时严格凹、MLE唯一；非自然链接在合理参数范围内通常仍凹，但需检查局部最优。凹性保证任意局部最优即全局最优，却不保证有限解存在：含截距、全部计数为零的Poisson数据中，对数均值趋负无穷时似然上确界未由任何有限参数达到，有限最优解的存在性要单独检查；伯努利分离的完整分析留在分类章的Logistic模型。均值结构与响应分布要分别检查：Poisson对数链接配特征$1,x$只能给出$\mu(x)=\exp(b+wx)$，若真实对数均值含$x^2$，应加入相应特征；若均值正确但响应方差明显大于均值，则是Poisson分布的限制，单独增加均值特征不能解除它。
 
 \paragraph{支持链接尺度上的曲率：基函数预测器}
 \label{sec:regression-glm-basis}
 
-把前述多项式或样条作为GLM预测器的设计列：线性预测器中的原始特征可以替换为基函数，例如Poisson对数均值写成$\eta(x)=b+w_1x+w_2x^2$，用多项式基描述对数均值的弯曲，重新构造设计后如何沿用IRLS。这里改变的只是$\eta$的输入表示，响应族与链接保持不变；比较遗漏曲率与方差大于均值两类问题，前者改变均值特征，后者需要检查响应族，不把增加特征说成解决所有分布失配。基的选择、中心化与验证仍按第\ref{sec:regression-basis}节的规则处理，不能把它与基函数回归合并成同一个模型。
+线性预测器中的原始特征可以替换为基函数，例如Poisson对数均值写成$\eta(x)=b+w_1x+w_2x^2$，用多项式基描述对数均值的弯曲。改变的只是$\eta$的输入表示，响应族与链接保持不变；重新构造设计矩阵后，上文IRLS的全部推导原样沿用。这里要区分两类失配：均值缺少曲率是预测器表示问题，加入基函数解决；方差明显大于均值是响应分布假设问题，增加特征不能解决。基的选择、中心化与验证仍按第\ref{sec:regression-basis}节的规则处理。
