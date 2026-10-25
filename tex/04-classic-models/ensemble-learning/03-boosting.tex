@@ -94,12 +94,12 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩�
 
 \subsubsection{多分类AdaBoost：SAMME}
 \label{sec:ensemble-adaboost-multiclass}
-二分类符号规则不能直接用于$K>2$类。\term{SAMME}（Stagewise Additive Modeling using a Multiclass Exponential loss function）把投票系数修正为
+二分类符号规则不能直接用于$K>2$类：\term{SAMME}（Stagewise Additive Modeling using a Multiclass Exponential loss function）改为对每一类分别累计成员投票，$h_t^{(c)}(\bm x)\in\{0,1\}$为第$t$个成员把输入判给类$c$的指示，最终按各类得分$\sum_t\alpha_t h_t^{(c)}(\bm x)$取最大类决策；投票系数修正为
 \begin{equation}
   \alpha_t=\frac12\ln\frac{1-\epsilon_t}{\epsilon_t}+\ln(K-1),
   \label{eq:ensemble-samme-alpha}
 \end{equation}
-其中$\epsilon_t$为多分类加权错误率。额外的$\ln(K-1)$项补偿随机猜测的基准概率$1/K$：只有当加权错误率低于$1-1/K$时$\alpha_t$才为正。成员在加权多分类样本上训练，样本权重更新形式与式\eqref{eq:ensemble-adaboost-update}相同，最终按各类得分$\sum_t\alpha_t h_t^{(c)}(\bm x)$取最大类决策\scite{zhu2009samme}。
+其中$\epsilon_t$为多分类加权错误率。额外的$\ln(K-1)$项补偿随机猜测的基准概率$1/K$：只有当加权错误率低于$1-1/K$时$\alpha_t$才为正。成员在加权多分类样本上训练，样本权重更新形式与式\eqref{eq:ensemble-adaboost-update}相同\scite{zhu2009samme}。
 
 \subsection{梯度提升机与GBDT}
 \label{sec:ensemble-gradient-boosting}
@@ -200,7 +200,7 @@ AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩�
 提升树每轮要同时决定两件事：样本如何分到各叶、每叶输出多大。只用一阶信息选分裂时，叶值取多大缺乏准则；XGBoost在当前预测处把损失二阶展开，让叶区域选择与叶值大小由同一个二阶目标决定。
 
 \subsubsection{模型结构}
-\term{XGBoost}沿用回归树加法结构：本轮树把输入映到叶区域$R_j$，叶输出$w_j$，本轮增量$f_t(\bm x)=\sum_j w_j\mathbf1[\bm x\in R_j]$，累积$F_t=F_{t-1}+f_t$。结构（叶划分）与叶输出分开确定；惩罚包含叶数与叶值平方，一阶导与曲率作为局部近似工具。
+\term{XGBoost}沿用回归树加法结构：本轮树把输入映到叶区域$R_j$，叶输出$w_j$，本轮增量$f_t(\bm x)=\sum_j w_j\mathbf1[\bm x\in R_j]$，累积$F_t=F_{t-1}+f_t$。结构（叶划分）与叶输出分开确定；预测时缺失特征按训练时保存的默认方向路由。惩罚包含叶数与叶值平方，一阶导与曲率作为局部近似工具。
 
 \subsubsection{参数学习}
 
@@ -218,7 +218,7 @@ $g_i=\partial_{\hat y}L(y_i,\hat y)|_{\hat y=F_{t-1}}$为一阶导，$h_i=\parti
 代回得到该叶的二阶近似得分。
 
 \paragraph{分裂搜索与缺失路由}
-比较父节点与分裂后两子节点的二阶目标增益，增益高于叶值惩罚才分裂；精确枚举与分位数候选两种搜索方式。缺失记录在分裂时不参与统计，两侧各自尝试并保存默认方向，预测时按默认方向路由。
+比较父节点与分裂后两子节点的二阶目标增益，增益高于叶值惩罚才分裂；精确枚举与分位数候选两种搜索方式。缺失记录在分裂时不参与统计，两侧各自尝试并保存默认方向。
 
 \paragraph{增量更新与计算组织}
 按增益贪心生长、定叶值、加增量的顺序更新；式\eqref{eq:ensemble-xgb-leaf}的叶值是未收缩成员二阶代理目标的最优值，再乘学习率是额外保守步，不能把收缩后的叶值称作精确最优，也不要把收缩前后的惩罚混算。遇到负曲率、分母非正或近似误差增大时回退；二阶代理是局部近似，叶值最优不等于全局目标最优。块存储、缓存、并行统计与外存处理改变的是计算组织，受益程度依赖数据规模与硬件。
@@ -262,7 +262,7 @@ $g_i=\partial_{\hat y}L(y_i,\hat y)|_{\hat y=F_{t-1}}$为一阶导，$h_i=\parti
 高基数类别特征做独热编码维度爆炸，直接拿类别当前标签做编码又会偷看部署时拿不到的信息。CatBoost在树加法结构上换成用历史标签平滑得到的有序类别统计。
 
 \subsubsection{模型结构}
-\term{CatBoost}在树加法结构上增加有序类别统计：类别先由同类别历史标签平滑成数值统计量，再进入树；树采用对称结构，同一层使用相同分裂条件，便于路径编码与预测，但便利不等于必然提升精度。
+\term{CatBoost}在树加法结构上增加有序类别统计：类别先由同类别历史标签平滑成数值统计量，再进入树；新输入的类别只按已观测训练记录的统计编码，不使用部署时拿不到的标签。树采用对称结构，同一层使用相同分裂条件，便于路径编码与预测，但便利不等于必然提升精度。
 
 \subsubsection{参数学习}
 
@@ -272,7 +272,7 @@ $g_i=\partial_{\hat y}L(y_i,\hat y)|_{\hat y=F_{t-1}}$为一阶导，$h_i=\parti
   \hat p_c=\frac{\sum_{i\in\mathrm{prefix},\,x_i=c}y_i+\alpha p}{\#\{i\in\mathrm{prefix},\,x_i=c\}+\alpha},
   \label{eq:ensemble-catboost-codestat}
 \end{equation}
-先验$p$与平滑系数$\alpha$按数据来源设定，无前驱时退回先验。进入统计的是前缀内同类别标签，部署时只使用已观测的训练记录；低频类别的不确定性由平滑系数控制。
+先验$p$与平滑系数$\alpha$按数据来源设定，无前驱时退回先验。进入统计的是前缀内同类别标签；低频类别的不确定性由平滑系数控制。
 
 \paragraph{有序提升}
 当前预测若直接使用当前标签会造成泄漏（训练时偷看了部署时拿不到的标签信息）。\term{有序提升}（ordered boosting）让每条记录的本轮预测只由排在它之前的样本产生，修正信号也基于该前缀；理想上每条记录应有独立的训练与更新，实际通过共享树结构与状态近似，区分有序（Ordered）与普通（Plain）两种实现\scite{prokhorenkova2018catboost}。

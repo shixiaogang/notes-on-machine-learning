@@ -16,6 +16,12 @@ OLS在设计矩阵秩亏或样本少于维度时不稳定：接近共线的列�
 \end{equation}
 其中$\bar{\bm{x}},\bar y$为训练特征与响应的均值，$\bm{V}_k,\bm{c}$为待学对象：$\bm{V}_k$只由输入方差决定（不看响应），$\bm{c}$是得分到响应的系数。写成原始输入斜率时$\bm{w}=\bm{V}_k\bm{c}$、原始截距$b=\bar y-\bm{w}^{\top}\bar{\bm{x}}$；截距不是独立待估项，而是中心化得分预测$\bar y$反变换回原尺度时扣除$\bm{w}^{\top}\bar{\bm{x}}$所得。部署时保存的是训练均值$\bar{\bm{x}},\bar y$、方向$\bm{V}_k$与系数$\bm{c}$；SVD中出现的$\bm{U},\bm{\Sigma}$只是训练阶段求解$\bm{V}_k$与$\bm{c}$的中间量，不进入预测。
 
+给定训练得到的$\bar{\bm{x}},\bar y,\bm{V}_k,\bm{c}$，对新输入$\bm{x}_\star$的实际预测规则为：先用保存的训练均值中心化
+\[
+  \bm{x}_{\star c}=\bm{x}_\star-\bar{\bm{x}},
+\]
+再以保存的方向投影得分$\bm{t}_\star=\bm{V}_k^{\top}\bm{x}_{\star c}$，最后代入式\eqref{eq:regression-pcr-model}得$\widehat f(\bm{x}_\star)=\bar y+\bm{t}_\star^{\top}\bm{c}$。整个过程不使用新输入自身的均值，也不在新数据上另作一套PCA；若启用标准化（尺度矩阵的训练估计见参数学习段），新点除以的是同一组训练尺度。
+
 \subsubsection{参数学习}
 \label{sec:regression-pcr-learning}
 
@@ -36,9 +42,9 @@ OLS在设计矩阵秩亏或样本少于维度时不稳定：接近共线的列�
 \]
 $\widehat{\bm{y}}_c=\sum_{j=1}^k c_j\sigma_j\bm{u}_j$。代回式\eqref{eq:regression-pcr-model}：原始斜率$\bm{w}=\bm{V}_k\bm{c}$、原始截距$b=\bar y-\bm{w}^{\top}\bar{\bm{x}}$。由得分重建的中心化输入为$\widehat{\bm{X}}_c=\bm{T}\bm{V}_k^{\top}$，被删除的是输入方差小的方向，而不是响应贡献小的方向。
 
-\paragraph{新输入预测与成分数选择}
+\paragraph{成分数选择与标准化尺度估计}
 
-新输入先使用训练折保存的中心和已保存方向得到成分，再代入式\eqref{eq:regression-pcr-model}，不能在新数据上另作一套PCA：先中心化$\bm{x}_{\star c}=\bm{x}_\star-\bar{\bm{x}}$，再投影得分$\bm{t}_\star=\bm{V}_k^{\top}\bm{x}_{\star c}$，预测为$\bar y+\bm{t}_\star^{\top}\bm{c}$。若选择标准化，则先在训练折得到对角尺度矩阵（各列除以自己的样本标准差），避免大量纲特征天然主导成分；新点必须除以同一训练尺度，恢复原单位的系数时也计入同一尺度变换。截断数$k$由训练内验证按预测损失选择，累计解释方差只能提供候选，不能替代响应预测的验证。
+截断数$k$由训练内验证按预测损失选择，累计解释方差只能提供候选，不能替代响应预测的验证。若选择标准化，则先在训练折内得到对角尺度矩阵（各列除以自己的样本标准差），避免大量纲特征天然主导成分；这组尺度与训练均值一样只由训练折估计，新点的使用规则见模型结构段。
 
 \subsubsection{性质与使用条件}
 \label{sec:regression-pcr-theory}
@@ -67,6 +73,8 @@ PCR的成分由输入方差决定，可能删掉真正携带响应信息的低�
 \end{equation}
 其中$\bm{R}_k\in\mathbb R^{d\times k}$与$\bm{c}\in\mathbb R^k$为待学对象。区别在于$\bm{R}_k$不再是PCA的无监督方向，而是由有标签训练样本迭代估计的监督投影矩阵：每一步方向都指向当前输入残差与响应残差协方差最大的位置，随后从两边扣除该成分、在剩余残差上重复。展开成原始输入时$\bm{w}=\bm{R}_k\bm{c}$、原始截距$b=\bar y-\bm{w}^{\top}\bar{\bm{x}}$，与PCR同一反变换。方向、载荷与响应系数共同由有标签训练样本估计；部署时保存训练均值$\bar{\bm{x}},\bar y$、方向/载荷（或等价的$\bm{R}_k$）与系数$\bm{c}$，得分只是这些已学变换作用于样本后得到的中间表示，不单独保存。
 
+给定训练得到的$\bar{\bm{x}},\bar y$与$\bm{R}_k,\bm{c}$，对新输入$\bm{x}_\star$的实际预测规则为：先用保存的训练均值中心化$\bm{x}_{\star c}=\bm{x}_\star-\bar{\bm{x}}$，再以$\bm{R}_k$投影$\bm{z}_\star=\bm{R}_k^{\top}\bm{x}_{\star c}$，最后代入式\eqref{eq:regression-pls-model}得$\widehat f(\bm{x}_\star)=\bar y+\bm{z}_\star^{\top}\bm{c}$。若只保存了逐轮方向$\bm{a}_h$与载荷$\bm{p}_h$，等价的逐步递推为$z_h=\bm{a}_h^{\top}\bm{e}_{h-1}$、$\bm{e}_h=\bm{e}_{h-1}-z_h\bm{p}_h$（$\bm{e}_0=\bm{x}_{\star c}$），预测$\bar y+\sum_h c_h z_h$；两种形式代数等价，训练完成后应在训练数据上核对一致。启用标准化时，新点同样沿同一组训练尺度（减均值除标准差）投影，预测后把响应按训练标准差乘回、均值加回。
+
 \subsubsection{参数学习}
 \label{sec:regression-pls-learning}
 
@@ -93,11 +101,11 @@ PCR的成分由输入方差决定，可能删掉真正携带响应信息的低�
 \]
 停止条件：达到指定成分数$k$，或$\bm{E}_{h-1}^{\top}\bm{f}_{h-1}=\bm{0}$（当前残差输入与残差响应已无协方差），或$\bm{t}_h$退化；实际返回的成分数不超过预算。
 
-\paragraph{恢复矩阵与原始尺度预测}
+\paragraph{恢复矩阵$\bm{R}_k$与训练配置}
 
-由于$\bm{E}_h$各列已与$\bm{t}_h$正交，下一轮得分$\bm{t}_{h+1}=\bm{E}_h\bm{a}_{h+1}$与此前所有得分正交，逐轮系数$c_h$同时也是$\bm{f}_0$在$\operatorname{span}(\bm{t}_1,\ldots,\bm{t}_k)$上的最小二乘系数。把方向矩阵$\bm{A}_k=(\bm{a}_1,\ldots,\bm{a}_k)$与载荷矩阵$\bm{P}_k=(\bm{p}_1,\ldots,\bm{p}_k)$代入$\bm{R}_k=\bm{A}_k(\bm{P}_k^{\top}\bm{A}_k)^{-1}$，则$\bm{Z}=\bm{E}_0\bm{R}_k=\bm{X}_c\bm{R}_k$的第$h$列就是$\bm{t}_h$。代回式\eqref{eq:regression-pls-model}：原始斜率$\bm{w}=\bm{R}_k\bm{c}$、原始截距$b=\bar y-\bm{w}^{\top}\bar{\bm{x}}$。对新输入，等价的逐步递推为$z_h=\bm{a}_h^{\top}\bm{e}_{h-1}$、$\bm{e}_h=\bm{e}_{h-1}-z_h\bm{p}_h$（$\bm{e}_0=\bm{x}_{\star c}$），预测$\bar y+\sum_h c_h z_h$；它与直接用矩阵式$\bar y+\bm{c}^{\top}\bm{R}_k^{\top}\bm{x}_{\star c}$在代数上等价，训练完成后应在训练数据上核对这两种逐步递推预测与矩阵式预测一致。
+由于$\bm{E}_h$各列已与$\bm{t}_h$正交，下一轮得分$\bm{t}_{h+1}=\bm{E}_h\bm{a}_{h+1}$与此前所有得分正交，逐轮系数$c_h$同时也是$\bm{f}_0$在$\operatorname{span}(\bm{t}_1,\ldots,\bm{t}_k)$上的最小二乘系数。把方向矩阵$\bm{A}_k=(\bm{a}_1,\ldots,\bm{a}_k)$与载荷矩阵$\bm{P}_k=(\bm{p}_1,\ldots,\bm{p}_k)$代入$\bm{R}_k=\bm{A}_k(\bm{P}_k^{\top}\bm{A}_k)^{-1}$，则$\bm{Z}=\bm{E}_0\bm{R}_k=\bm{X}_c\bm{R}_k$的第$h$列就是$\bm{t}_h$——这是把逐步消去的方向权重整理成原始输入上一个固定投影矩阵，供模型结构段的新点预测使用。
 
-标准化是可选配置：若启用，输入各列与响应先按训练折的均值与标准差缩放，再做上述迭代；新点必须沿同一训练尺度（减均值除标准差）投影，预测后把响应按训练标准差乘回、均值加回。成分数$k$由训练内验证确定，每折重新拟合方向与系数；响应参与方向学习，不能先在全部数据上选方向再报告交叉验证结果。名称“PLS”覆盖一族相关算法，这里给出的是单响应NIPALS式逐步消去版本，与其他实现的收敛行为可能不同，比较时应写明所用算法。
+标准化是可选配置：若启用，输入各列与响应先按训练折的均值与标准差缩放（尺度只从训练折估计），再做上述迭代；新点的使用规则见模型结构段。成分数$k$由训练内验证确定，每折重新拟合方向与系数；响应参与方向学习，不能先在全部数据上选方向再报告交叉验证结果。名称“PLS”覆盖一族相关算法，这里给出的是单响应NIPALS式逐步消去版本，与其他实现的收敛行为可能不同，比较时应写明所用算法。
 
 \subsubsection{性质与使用条件}
 \label{sec:regression-pls-theory}
