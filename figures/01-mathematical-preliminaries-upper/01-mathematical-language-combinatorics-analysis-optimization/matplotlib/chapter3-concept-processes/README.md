@@ -29,6 +29,6 @@ python3 figures/01-mathematical-preliminaries-upper/01-mathematical-language-com
 | `surface-area-stretch` | 增加参数区域与斜面片的逐块对应，按实际参数化及两切向量核对√3的面积权重，区分参数面积与曲面面积。 |
 | `divergence-circulation-fields` | 增加同一圆周上的径向场与旋转场对照，以实际散度、旋转率、通量和环流辨别两种算子，不以零散度误推零场。 |
 | `stokes-spanning-surfaces` | 增加同一有向单位圆的圆盘与半球跨接图，核对常旋度通量均π但两面面积不同，说明换面保留的是有条件的旋度通量。 |
-| `pointwise-uniform-errors` | 增加幂函数列与线性缩小函数列的误差带对照，固定点态极限代表元并解释靠近边界的坏点可随n移动，共同1/n界才给一致收敛。 |
+| `convergence-modes` | 一致收敛与逐点收敛并排对照：x/n的整条图像自N(ε)=9起落入ε带，同一N适用于全部输入；x^n在[0,1)上逐点趋零，但x₁=0.5与x₂=0.9所需N分别为4与21，且每个f_n在ε^{1/n}处离开带，不存在共同N。有限个n只作示意，不代替证明。 |
 
 验收范围为本次新增图及其接入，不追认历史图像。逐图核验记录见同名 `.review.json`。

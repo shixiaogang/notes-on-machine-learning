@@ -751,7 +751,7 @@ Pascal恒等式：按是否包含固定元素分成两类，推出组合数递�
 
 ### 3.4 实轴上的邻域与闭区间
 
-正文入口：[`02-metric-spaces.tex`](../../tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/function-limits/02-metric-spaces.tex)。只保留一元函数微积分所需内容。节首指出前几节的极限都在控制距离，并提出下一章连续性、极值与积分要回答的三个问题：一个点附近指哪些点，什么集合留住点列的极限，局部控制怎样合成整个闭区间上的控制；依次用邻域与开闭集、闭集的序列判据和闭区间的有限子覆盖回答。一般度量、子空间中的相对开闭以及完备性留给“度量空间”章。
+正文入口：[`02-metric-spaces.tex`](../../tex/01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization/function-limits/02-metric-spaces.tex)。只保留一元函数微积分所需内容。节首指出前几节的极限都在控制距离，并提出后面两章连续性、极值与积分要回答的三个问题：一个点附近指哪些点，什么集合留住点列的极限，局部控制怎样合成整个闭区间上的控制；依次用邻域与开闭集、闭集的序列判据和闭区间的有限子覆盖回答。一般度量、子空间中的相对开闭以及完备性留给“度量空间”章。
 
 #### 3.4.1 开球、邻域与开闭集
 

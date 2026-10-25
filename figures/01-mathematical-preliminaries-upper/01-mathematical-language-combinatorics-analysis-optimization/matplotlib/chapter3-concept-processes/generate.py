@@ -183,25 +183,65 @@ def improper():
         'right_full_discarded_integral':'2 sqrt(epsilon)=0.6',
         'sampling':'601 uniform / geometric abscissae respectively','interpretation':'finite plotting window, not finite integration domain'})
 
-def convergence():
-    fig,axs=s.figure(169,56,ncols=2); x=np.linspace(0,1,801)
-    for ax in axs:
-        ax.axhspan(0,.12,color=s.GREEN_FILL)
-        ax.axhline(.12,color=s.GREEN,ls='--',lw=.6)
-        ax.set(xlim=(0,1),ylim=(-.03,1.04),xticks=[0,.5,1],yticks=[0,.12,1],yticklabels=['0','$\\varepsilon$','1'])
-        axes2(ax,'$x$','$f_n(x)$')
-    for n,c,ls in zip([2,8,32],[s.BLUE,s.GREEN,s.RED],['-','--','-.']):
-        axs[0].plot(x,x**n,color=c,ls=ls,label='$n='+str(n)+'$')
-        axs[1].plot(x,x/n,color=c,ls=ls)
-    axs[0].plot([0,1],[0,0],color=s.INK,lw=.6)
-    axs[0].plot(1,0,'o',mfc='white',mec=s.INK,ms=3)
-    axs[0].plot(1,1,'o',color=s.INK,ms=3)
-    axs[0].legend(loc='upper left')
-    for ax,letter in zip(axs,'ab'):panel(ax,letter)
-    save(fig,'pointwise-uniform-errors',{'left':'f_n=x^n on [0,1], pointwise limit I_{1}, error supremum 1 for every n',
-        'right':'g_n=x/n on [0,1], uniform error 1/n','n':[2,8,32],'epsilon':.12,
-        'sampling':'801 uniform points; analytic supremum, not estimated from grid',
-        'limit_markers':'open (1,0), filled (1,1) encode discontinuous left pointwise limit'})
+def first_index_below(x, eps):
+    """Smallest n>=1 with x**n < eps, by exact integer search (0<x<1)."""
+    n=1
+    while x**n>=eps: n+=1
+    return n
+
+def convergence_modes():
+    eps=.12; fig,axs=s.figure(169,60,ncols=2)
+    x=np.linspace(0,1,801); xo=np.linspace(0,.9995,801)
+    for ax,title in zip(axs,['一致收敛','逐点收敛']):
+        # Band drawn over the plotted domain only, leaving the right margin for labels.
+        ax.fill_between([0,1.04],-eps,eps,color=s.GREEN_FILL,lw=0)
+        ax.hlines([-eps,eps],0,1.04,color=s.GREEN,ls='--',lw=.6)
+        ax.hlines(0,0,1.04,color=s.STROKE,lw=.6)
+        ax.set(xlim=(0,1.04),ylim=(-.2,1.06))
+        ax.set_yticks([-eps,0,eps,.5,1],['$-\\varepsilon$','0','$\\varepsilon$','0.5','1'])
+        ax.set_title(title,loc='center',pad=4)
+    panel(axs[0],'a'); panel(axs[1],'b')
+    # (a) g_n(x)=x/n: sup error 1/n, so one N works for all x.
+    N=next(n for n in range(1,100) if 1/n<eps)
+    styles={2:(s.BLUE,'-',1.1),4:(s.PURPLE,'--',1.1),N:(s.RED,'-',1.4),16:(s.RED,'-.',1.1)}
+    for n,(c,ls,lw) in styles.items():
+        axs[0].plot(x,x/n,color=c,ls=ls,lw=lw)
+        lab='$n=N='+str(n)+'$' if n==N else '$n='+str(n)+'$'
+        dy={N:1.5,16:-1.5}.get(n,0)
+        axs[0].annotate(lab,(1,1/n),xytext=(3,dy),textcoords='offset points',ha='left',va='center',color=s.INK,fontsize=7.5)
+    axes2(axs[0],'$x$','$g_n(x)$'); axs[0].set_xticks([0,.5,1],['0','0.5','1'])
+    axs[0].set(xlim=(0,1.2),ylim=(-.2,.58)); axs[0].spines['bottom'].set_bounds(0,1.04)
+    axs[0].set_yticks([-eps,0,eps,.5],['$-\\varepsilon$','0','$\\varepsilon$','0.5'])
+    # (b) f_n(x)=x^n on [0,1): N depends on x; every f_n leaves the band.
+    ns=[2,8,32]; cols=[s.BLUE,s.PURPLE,s.RED]; lss=['-','--','-.']
+    x1,x2=.5,.9; N1,N2=first_index_below(x1,eps),first_index_below(x2,eps)
+    exits={n:eps**(1/n) for n in ns}
+    for xi in (x1,x2): axs[1].axvline(xi,color=s.MUTED,ls=':',lw=.6)
+    for n,c,ls in zip(ns,cols,lss):
+        axs[1].plot(xo,xo**n,color=c,ls=ls,label='$n='+str(n)+'$')
+        axs[1].plot(exits[n],eps,'o',mfc='white',mec=c,ms=3.2,mew=.8,zorder=4)
+        axs[1].plot([x1,x2],[x1**n,x2**n],'o',color=c,ms=2.6,zorder=4)
+    axs[1].plot(1,1,'o',mfc='white',mec=s.INK,ms=3.2,mew=.8,zorder=4)
+    axs[1].legend(loc='upper left',bbox_to_anchor=(0,1),handlelength=2.2)
+    axs[1].text(x1+.012,.97,'$N(x_1)='+str(N1)+'$',ha='left',va='top',fontsize=7.5)
+    axs[1].text(x2-.012,.97,'$N(x_2)='+str(N2)+'$',ha='right',va='top',fontsize=7.5)
+    axes2(axs[1],'$x$','$f_n(x)$')
+    axs[1].set_xticks([0,x1,x2,1],['0','$x_1$','$x_2$','1'])
+    save(fig,'convergence-modes',{
+        'epsilon':eps,
+        'band':'|value-0|<epsilon, i.e. (-epsilon, epsilon) around the limit function 0',
+        'left':{'formula':'g_n(x)=x/n on [0,1]','limit':'0','sup_error':'1/n',
+            'n':list(styles),'N_epsilon':N,'N_check':'1/8=0.125>=0.12, 1/9=0.111<0.12; for n>=9 the whole graph lies in the band',
+            'emphasis':'n=N=9 drawn thicker'},
+        'right':{'formula':'f_n(x)=x^n on [0,1)','limit':'0 (continuous on [0,1))','n':ns,
+            'x1':x1,'x2':x2,'N_x1':N1,'N_x2':N2,
+            'N_rule':'smallest n with x^n<epsilon; then x^m<epsilon for all m>=n',
+            'N_check':'0.5^3=0.125, 0.5^4=0.0625; 0.9^20=%.4f, 0.9^21=%.4f'%(.9**20,.9**21),
+            'values_at_x1':{str(n):float('%.4g'%(x1**n)) for n in ns},'values_at_x2':{str(n):float('%.4g'%(x2**n)) for n in ns},
+            'exit_points':{str(n):round(v,4) for n,v in exits.items()},
+            'exit_rule':'x=epsilon^(1/n): f_n(x)>=epsilon for x>=epsilon^(1/n), so sup_{[0,1)} f_n=1 for every n',
+            'domain_marker':'open circle at (1,1): x=1 excluded'},
+        'sampling':'801 uniform points on [0,1] (left) and [0,0.9995] (right; 0.9995^32=0.984); N and exit points computed analytically'})
 
 def joint_paths():
     fig,axs=s.figure(169,61,ncols=2)
@@ -409,7 +449,7 @@ def stokes_surfaces():
 
 if __name__=='__main__':
     for fn in [sequence_tail,series_sums,epsilon_delta,mean_value,riemann_bounds,
-               accumulation,improper,convergence,joint_paths,gradient,linearization,
+               accumulation,improper,convergence_modes,joint_paths,gradient,linearization,
                hessian,jacobian,slicing,path_dependence,surface_area,field_types,stokes_surfaces]:
         with warnings.catch_warnings(record=True) as ws:
             warnings.simplefilter('always');fn()
