@@ -1,6 +1,6 @@
 # 卷十仍待补充的随机谱与概率估计知识
 
-本文件只保留卷十使用、在当前数学卷仍待进一步建立的内容。卷一的确定性分析、代数、几何、信号与图算法补充已落实到现有正文；卷二已补齐成像噪声与方差稳定化、概率变换、稳健抽样、分布比较、编码与率失真等前置。相应当前提要见卷一[第一部分 数学对象、计数与极限](../01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)、[第二部分 线性空间](../01-mathematical-preliminaries-upper/02-linear-spaces.md)、[第三部分 微积分与优化](../01-mathematical-preliminaries-upper/03-calculus-and-optimization.md)，以及卷二[随机变量、分布与因果响应](../02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality.md)。已完成项不再列为待办。
+本文件只保留卷十使用、在当前数学卷仍待进一步建立的内容。卷一的确定性分析、代数、几何、信号与图算法补充已落实到现有正文；卷二已补齐成像噪声与方差稳定化、概率变换、稳健抽样、分布比较、编码与率失真等前置。相应当前提要见卷一[第一部分 数学对象、计数与极限](../01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)、[第二部分 线性空间](../01-mathematical-preliminaries-upper/02-linear-spaces.md)、[第三部分 微积分](../01-mathematical-preliminaries-upper/03-calculus.md)、[第四部分 最优化](../01-mathematical-preliminaries-upper/04-optimization.md)，以及卷二[随机变量、分布与因果响应](../02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality.md)。已完成项不再列为待办。
 
 以下仍是用户要求暂存的补充清单，不是新增章目。每项只列尚缺的具体联系；已有前置应直接回用。相机、颜色标准、辐射度量、Hough、Hu不变量、CABAC具体实现和BD-rate等领域内容继续在卷十使用处自足说明。
 
