@@ -1,205 +1,124 @@
 \section{基于Boosting的集成}
 \label{sec:ensemble-boosting}
 
-Bagging让多个成员分别完成同一个预测任务，再聚合它们的结果。如果这些成员反复在同一批样本上预测偏低，仅增加类似成员并平均，偏低的误差仍会保留——平均能抵消随机波动，却消不掉大家都有的系统性偏差。我们可以换一种训练方式：不再让成员各干各的，而是排成一队、接力完成任务，先计算已有组合还错在哪里，再让下一个成员专门学习这部分修正量。
+把许多相近成员平均，只能抵消成员特有的波动，无法补上所有成员共同遗漏的结构。Boosting换一种顺序：先看当前组合在哪些记录上系统性地没学好，再让新成员专门去补这一部分，逐轮把欠拟合的结构加上。各轮成员依次依赖前面的组合，但同一轮内部的候选拟合仍是独立计算。下面先给出所有Boosting方法共享的加法模型与前向逐步框架，再分别讲AdaBoost、GBDT、LogitBoost、XGBoost、LightGBM与CatBoost；注意区分“损失准则”与“训练机制”，前者决定补什么，后者决定怎样搜索。
 
-这很像学生改错题：第一遍做完卷子，把做错的题挑出来重点练习；第二遍再把仍然错的挑出来……每一轮都把注意力集中到尚未掌握的部分。\term{Boosting}（提升）由此构造序贯加法模型：第$t$轮根据已有函数$F_{t-1}$选择新成员及其贡献，以降低指定训练目标。由于每个新成员只需承担“补上一点点剩余误差”的任务，它可以非常简单，甚至只是一棵只分裂一次的树（称为树桩）、准确率仅略高于瞎猜；这样的模型称为\emph{弱学习器}。Boosting理论的一个重要结论是：只要每轮的弱学习器都比瞎猜稍好，把足够多的它们按恰当方式加起来，就能得到一个很强的组合模型。AdaBoost、梯度提升及现代提升树共享这种逐轮依赖，但它们从错误中提取修正信号的方式不同。与Bagging的另一个对比也由此显现：Bagging的成员彼此独立、可以并行训练；Boosting的第$t$个成员必须等前$t-1$个训练完才知道该补什么，只能串行，而且因为一直在追逐训练误差，轮数过多时容易过拟合，需要控制。
-
-\subsection{前向逐步加法模型}
+\subsection{共同模型与前向逐步学习}
 \label{sec:ensemble-stagewise-additive}
 
 \subsubsection{模型结构}
-
-设$F_0$为初始预测，Boosting经过$T$轮得到
+Boosting把预测写成成员的加法组合
 \begin{equation}
-  F_T(\bm{x})
-  =
-  F_0(\bm{x})
-  +
-  \sum_{t=1}^{T}\alpha_t h_t(\bm{x}),
-  \label{eq:ensemble-additive-model}
+  F_M(\bm x)=F_0(\bm x)+\sum_{t=1}^M f_t(\bm x),
+  \label{eq:ensemble-additive}
 \end{equation}
-其中$h_t$是第$t$个成员，$\alpha_t$控制其贡献。这个式子的读法是：从一个粗糙的初始预测$F_0$（比如所有样本的平均值）出发，每一轮在当前预测上叠加一个小的修正$\alpha_th_t$，最终预测是所有修正的累加和。
+其中$F_0$是初始值（回归常取训练均值，分类常取先验对数几率），每个$f_t$属于预先选定的成员族（树、线性修正等），最终输出按任务转换为数值、类别或概率。这里待学的正是逐轮加入的成员$f_t$及其组合系数；$F_0$只按训练数据初始化，此后固定，不逐轮调整。
 
 \subsubsection{参数学习}
 
-如果想一次性同时优化全部$T$个成员及其系数，搜索空间巨大、难以求解。前向逐步（forward stagewise）的思路是“贪心地一次只加一个”：前面已经加进来的成员保持不动，每轮只求解当前这一个新成员，问题就简化成只含一个函数的优化。为使复杂度惩罚对应真正加入模型的函数，把本轮增量记为$f_t=\alpha_t h_t$。给定损失$\ell$，理想化的第$t$轮直接优化增量：
+前向逐步学习在第$t$轮固定已有组合$F_{t-1}$，只选择本轮成员$f_t$及其系数，使本轮目标最小：
 \begin{equation}
-  f_t
-  \in
-  \argmin_{f\in\mathcal{F}}
-  \sum_{i=1}^{n}
-  \ell\!\left(
-    y_i,
-    F_{t-1}(\bm{x}_i)+f(\bm{x}_i)
-  \right)
-  +\Omega_t(f).
-  \label{eq:ensemble-forward-stagewise}
+  f_t,\beta_t=\arg\min_{f,\beta}\sum_{i=1}^n L\big(y_i,\,F_{t-1}(\bm x_i)+\beta f(\bm x_i)\big)+\Omega(f),
+  \label{eq:ensemble-stagewise}
 \end{equation}
-这里$\mathcal{F}=\{\alpha h:\alpha\in\mathbb{R},h\in\mathcal{H}\}$是由成员函数族$\mathcal{H}$生成的增量函数族，$\Omega_t$是相应复杂度惩罚，也可以取零。
+其中$L$是任务损失，$\Omega$是成员复杂度惩罚。旧成员的参数在本轮不再调整。成员族、损失与待估未知量三者由任务确定：平方损失配回归树，指数损失配分类成员，对数损失配概率输出。
 
-树的叶数惩罚控制分区规模，叶输出范数惩罚控制本轮增量。范数应作用于$f$，使惩罚随实际加入组合的幅度变化；若仅惩罚$h$，它与$\alpha$的相互缩放会改变惩罚却保持预测。
+无约束时惩罚项为零；采用回归树作为成员时，惩罚通常包含叶数与叶值平方两部分，并要求组合系数非负。惩罚施加在本轮实际加入的函数$\beta f$上，而不是孤立地惩罚成员$f$。这里存在缩放关系：若把成员参数整体放大$c$倍、把系数缩小$c$倍，$\beta f$不变但叶值平方罚的计算口径会改变，因此要明确罚的是哪一个。
 
-逐步优化固定已有成员，减少了联合搜索变量，但最优范围仅限本轮增量。后文用梯度拟合、二阶目标和收缩构造近似更新。
+式\eqref{eq:ensemble-stagewise}直接优化的是实际增量$\beta f$；另一种常见实现先拟合一个未收缩的成员$f_t^{\mathrm{raw}}$，再乘以学习率$\nu\in(0,1]$加入组合，即$F_t=F_{t-1}+\nu f_t^{\mathrm{raw}}$。后者不再严格最小化同一代理目标，$\nu$是额外的保守步幅，不能把收缩后的叶值仍称作该代理目标的精确最优。
 
-不同方法将当前预测转换为不同的训练信号。AdaBoost改变训练样本的权重，使当前错分记录在下一轮具有更大影响；梯度提升把损失对当前预测的负梯度作为伪响应；二阶提升树还利用局部曲率近似叶权重和分裂收益。平方损失的负梯度恰为普通响应残差，其他损失则给出不同修正量。损失决定了下一轮成员拟合的对象。
+前向逐步每轮只在当前候选族内比较，得到的是逐步贪心解，不是全体成员联合优化的全局最优。梯度与牛顿的一般原理参考卷一，各模型从自身目标推出修正方向、成员拟合与更新规则，本地完成推导。
 
 \subsection{AdaBoost}
 \label{sec:ensemble-adaboost}
 
+所有样本同权训练时，已经分对的记录反复参与，难分记录始终占同样份量，新成员继续学不好它们。AdaBoost让每轮训练都提高上一轮错分记录的份量，并按成员的好坏分配它在投票中的发言权。
+
 \subsubsection{模型结构}
-
-先考虑二分类。如果每轮都用相同权重训练一个简单分类器，容易分类的多数样本可能反复决定边界，而少量错分样本始终得不到修正。\term{AdaBoost}（adaptive boosting）让错分记录在下一轮占更大权重，使新分类器更多地处理这些记录；同时根据本轮分类器的加权错误率确定它在组合中的贡献。这样，训练下一成员所面对的数据权重会随前面成员的预测改变。
-
-模型以二分类函数作为成员，用加权得分$F_T(\bm{x})=\sum_{t=1}^T\alpha_t h_t(\bm{x})$表示组合，按其正负输出类别。每个成员只给出一个类别判断，投票权重决定该判断在组合中的作用。
+二分类标签取$y_i\in\{-1,+1\}$，弱成员$h_t(\bm x)\in\{-1,+1\}$（只比随机猜测略好、错误率略低于$1/2$的成员）给出判断，加法得分与决策为
+\begin{equation}
+  F_T(\bm x)=\sum_{t=1}^T\alpha_t h_t(\bm x),
+  \qquad
+  \hat y(\bm x)=\operatorname{sign}(F_T(\bm x)),
+  \label{eq:ensemble-adaboost-model}
+\end{equation}
+$\alpha_t>0$是成员投票系数，平局规则事先固定。
 
 \subsubsection{参数学习}
 
-取标签$y_i\in\{-1,1\}$和成员$h_t(\bm{x})\in\{-1,1\}$。初始样本权重为$w_i^{(1)}=1/n$，第$t$轮成员的加权错误率为
+\paragraph{成员训练与投票系数}
+第$t$轮样本权重归一化后为$w_i^{(t)}$，成员在加权样本上训练，加权错误率为
 \begin{equation}
-  \epsilon_t
-  =
-  \sum_{i=1}^{n}
-  w_i^{(t)}
-  \mathbb{I}\!\left\{y_i\neq h_t(\bm{x}_i)\right\}.
+  \epsilon_t=\sum_{i:h_t(\bm x_i)\neq y_i}w_i^{(t)}.
   \label{eq:ensemble-adaboost-error}
 \end{equation}
-当$0<\epsilon_t<1/2$时，成员投票权重取
+AdaBoost对应指数损失$L(y,F)=e^{-yF}$（打分离真实标签越远，惩罚指数级增长）。在已有得分$F_{t-1}$上加入$\alpha h_t$后，本轮要最小化的归一化指数加权和为
+\[
+  Z_t(\alpha)=\sum_i w_i^{(t)}e^{-\alpha y_i h_t(\bm x_i)}
+  =e^{-\alpha}\sum_{\text{分对}}w_i^{(t)}+e^{\alpha}\sum_{\text{错分}}w_i^{(t)}
+  =e^{-\alpha}(1-\epsilon_t)+e^{\alpha}\epsilon_t,
+\]
+其中$\sum_{\text{错分}}w_i^{(t)}=\epsilon_t$是错分样本的权重和，$\sum_{\text{分对}}w_i^{(t)}=1-\epsilon_t$。对$\alpha$求导并令其为零：$-(1-\epsilon_t)e^{-\alpha}+\epsilon_t e^{\alpha}=0$，整理得$e^{2\alpha}=(1-\epsilon_t)/\epsilon_t$，即投票系数
 \begin{equation}
-  \alpha_t
-  =
-  \frac{1}{2}
-  \log\frac{1-\epsilon_t}{\epsilon_t},
+  \alpha_t=\frac12\ln\frac{1-\epsilon_t}{\epsilon_t}.
+  \label{eq:ensemble-adaboost-alpha}
+\end{equation}
+
+\paragraph{样本权重与停止规则}
+更新后的样本权重归一化为
+\begin{equation}
+  w_i^{(t+1)}=\frac{w_i^{(t)}\exp[-\alpha_t y_i h_t(\bm x_i)]}{Z_t},
   \qquad
-  w_i^{(t+1)}
-  =
-  \frac{
-    w_i^{(t)}
-    \exp\!\left[-\alpha_t y_i h_t(\bm{x}_i)\right]
-  }{Z_t},
+  Z_t=\sum_i w_i^{(t)}\exp[-\alpha_t y_i h_t(\bm x_i)].
   \label{eq:ensemble-adaboost-update}
 \end{equation}
-其中$Z_t$使新权重和为1。错分样本满足$y_i h_t(\bm{x}_i)=-1$，权重乘上$e^{\alpha_t}$；正确样本的权重乘上$e^{-\alpha_t}$。
-
-若$\epsilon_t=0$，在这些正权重下当前成员已分对全部训练样本，便直接输出$h_t$并停止，避免将发散系数代入更新（参考\BookChapterRef{chap:binary-learnability}{卷3《基础、理论与可信性》“二分类学习的可学习性”章}）。其余情况下，最终分类器在预先固定平局规则后按$\operatorname{sign}(\sum_t\alpha_t h_t(\bm{x}))$决策。正的成员贡献要求当前加权错误率小于$1/2$；条件未满足时，可停止本轮、调整训练或采用相应变体。
-
-图\ref{fig:ensemble-adaboost-weight-update}将分类错误与下一轮权重连接起来。当前分类结果先改变样本权重，再由归一化后的权重决定下一轮成员看到的训练分布；错分记录因而获得更大的后续影响。
+分对样本乘$e^{-\alpha_t}$、错分样本乘$e^{\alpha_t}$，相对变化由此可见。例如$\epsilon_t=1/4$时$\alpha_t=\frac12\ln3\approx0.549$，错分样本权重约为分对样本的$e^{2\alpha_t}=3$倍。若$\epsilon_t=0$，当前成员已分对全部加权样本，直接输出$h_t$并停止，避免代入发散系数（参考\BookChapterRef{chap:binary-learnability}{卷三《基础、理论与可信性》“二分类学习的可学习性”章}）。正投票系数要求$\epsilon_t<1/2$；条件未满足时可停止本轮、调整训练或采用相应变体。持续被错分的噪声标签（标签本身标错的样本）会获得越来越大的权重，需要在数据层面处理。整轮流程是“加权重训弱成员、按加权错误率解析确定投票系数”，并不是直接对投票系数做梯度下降。
 
 \begin{figure*}[htbp]
   \centering
   \includegraphics[width=130.048mm]{figures/04-classic-models/00-shared/generated/ensemble-adaboost-weight-update/figure.png}
-  \caption{AdaBoost的样本权重更新。分类结果把样本分成正确与错分两路，两路缩放后的权重汇合并归一化，形成下一轮训练分布。实线连接各更新步骤；绿色框标示正确分类样本的减权，红色框标示错分样本的增权。}
+  \caption{AdaBoost样本权重更新示意：错分样本权重上升、分对样本权重下降（教学构造）。}
   \label{fig:ensemble-adaboost-weight-update}
 \end{figure*}
 
-这一更新也可以从指数损失解释。令$F(\bm{x})=\sum_t\alpha_t h_t(\bm{x})$，经验目标为
-\[
-  \sum_{i=1}^{n}\exp\!\left[-y_iF(\bm{x}_i)\right].
-\]
-令当前样本权重正比于$\exp[-y_iF_{t-1}(\bm x_i)]$。固定$F_{t-1}$与$h_t$后，加入$\alpha h_t$使指数损失乘上
-\[
- Z_t(\alpha)=(1-\epsilon_t)e^{-\alpha}+\epsilon_t e^{\alpha}.
-\]
-两项分别来自正确与错分记录；令导数为零，得到$e^{2\alpha}=(1-\epsilon_t)/\epsilon_t$，即式\eqref{eq:ensemble-adaboost-update}的系数。当$\epsilon_t=1/4$时，$\alpha_t=\tfrac12\log3$，更新后错分记录的总权重为
-\[
- \frac{(1/4)e^{\alpha_t}}
- {(3/4)e^{-\alpha_t}+(1/4)e^{\alpha_t}}=\frac12.
-\]
-它们原本只占四分之一的权重，下一轮却承担一半，因而对新成员产生更大影响。这个等式依赖上述最优系数及$0<\epsilon_t<1/2$，样本重加权由指数损失的逐步优化导出\scite{freund1997boosting,friedman2000adaboost}。
+\subsubsection{理论分析}
+\label{sec:ensemble-adaboost-theory}
+指数损失满足$1[\operatorname{sign}F(\bm x_i)\neq y_i]\le e^{-y_iF(\bm x_i)}$，因此训练错误率被平均指数损失$\frac1n\sum_i e^{-y_iF_T(\bm x_i)}$上界控制。再把这个平均指数损失用权重递推显式展开：把$w_i^{(t+1)}=w_i^{(t)}e^{-\alpha_t y_i h_t(\bm x_i)}/Z_t$逐轮代入，得$w_i^{(T+1)}=w_i^{(0)}\prod_{t=1}^T e^{-\alpha_t y_i h_t(\bm x_i)}/Z_t$；取初始权重$w_i^{(0)}=1/n$、加法模型$F_T=\sum_t\alpha_t h_t(\bm x_i)$，则$w_i^{(T+1)}=\frac1n e^{-y_iF_T(\bm x_i)}\big/\prod_{t=1}^T Z_t$。两边同乘$\prod_{t=1}^T Z_t$并对$i$求和，由归一化$\sum_iw_i^{(T+1)}=1$，平均指数损失恰等于连乘$\prod_{t=1}^T Z_t$。每轮$Z_t$在上述最优$\alpha_t$处取最小值$2\sqrt{\epsilon_t(1-\epsilon_t)}$；记弱优势$\gamma_t=1/2-\epsilon_t$，则$2\sqrt{\epsilon_t(1-\epsilon_t)}=2\sqrt{1/4-\gamma_t^2}\le e^{-2\gamma_t^2}$，于是训练错误率满足
+\begin{equation}
+  \frac1n\sum_i\mathbf1[\hat y(\bm x_i)\neq y_i]
+  \le \prod_{t=1}^T Z_t
+  \le \exp\!\left(-2\sum_{t=1}^T\gamma_t^2\right).
+  \label{eq:ensemble-adaboost-bound}
+\end{equation}
+
+只有当每轮$\gamma_t>0$（弱成员好于随机猜测）时连乘因子才小于$1$；若$\gamma_t$有一致的正下界，训练错误率按指数衰减。$\epsilon_t=0$的可分情形由停止规则处理，不代入发散系数。该界只约束训练样本上的错误率，不假设样本独立或成员复杂度条件，因而不构成对新样本的保证；持续错分的噪声标签会被逐轮放大权重。
 
 \subsubsection{多分类AdaBoost：SAMME}
+\label{sec:ensemble-adaboost-multiclass}
+二分类符号规则不能直接用于$K>2$类：\term{SAMME}（Stagewise Additive Modeling using a Multiclass Exponential loss function）改为对每一类分别累计成员投票，$h_t^{(c)}(\bm x)\in\{0,1\}$为第$t$个成员把输入判给类$c$的指示，最终按各类得分$\sum_t\alpha_t h_t^{(c)}(\bm x)$取最大类决策；投票系数修正为
+\begin{equation}
+  \alpha_t=\frac12\ln\frac{1-\epsilon_t}{\epsilon_t}+\ln(K-1),
+  \label{eq:ensemble-samme-alpha}
+\end{equation}
+其中$\epsilon_t$为多分类加权错误率。额外的$\ln(K-1)$项补偿随机猜测的基准概率$1/K$：只有当加权错误率低于$1-1/K$时$\alpha_t$才为正。成员在加权多分类样本上训练，样本权重更新形式与式\eqref{eq:ensemble-adaboost-update}相同\scite{zhu2009samme}。
 
-二分类中的正负得分不能直接表达多个类别的竞争。SAMME让每个成员输出$1,\ldots,C$中的一个类别，再为各类别累计票数。设$C\geq2$，归一化样本权重为$w_i^{(t)}$，本轮仍训练使加权错误率$\epsilon_t$较小的分类器$h_t$，但其投票系数改为
-\[
- \alpha_t=\log\frac{1-\epsilon_t}{\epsilon_t}+\log(C-1),
- \qquad 0<\epsilon_t<1-\frac1C.
-\]
-随后的更新与最终决策为
-\[
- \begin{aligned}
- w_i^{(t+1)}&\propto w_i^{(t)}
-   \exp\!\bigl(\alpha_t\mathbb I\{y_i\ne h_t(\bm x_i)\}\bigr),\\
- H(\bm x)&\in\argmax_{1\leq c\leq C}
-   \sum_{t=1}^T\alpha_t\mathbb I\{h_t(\bm x)=c\}.
- \end{aligned}
-\]
-每轮重新归一化样本权重，类别平局按预定规则处理。正系数只要求错误率低于均匀随机猜测的$1-1/C$；若沿用二分类的$1/2$门槛，会排除多类情形中仍有用的成员。$\epsilon_t=0$时可返回这个在训练集上全部分对的分类器并停止，避免无穷系数；未达到上述门槛时则停止或重新训练本轮成员。$C=2$时，这里的系数是前述正负编码系数的两倍，但错分相对正确记录的权重变化、以及最终投票决策相同\scite{zhu2009samme}。
-
-\subsubsection{概率预测的牛顿提升：LogitBoost}
-
-如果希望估计事件概率，就要让训练目标比较概率预测，而不只累计类别票数。LogitBoost以二项对数损失训练加法得分。为与后文统一，这里令$F$表示完整对数几率：$p(\bm x)=\sigma(F(\bm x))$，$y_i\in\{0,1\}$。在本轮当前概率$p_i\in(0,1)$处，损失的一阶导和二阶导分别为$p_i-y_i$和$p_i(1-p_i)$。据此定义工作响应与权重
-\[
- \begin{aligned}
- z_i&=\frac{y_i-p_i}{p_i(1-p_i)},\qquad a_i=p_i(1-p_i),\\
- h_t&\in\argmin_{h\in\mathcal H}\sum_i a_i(z_i-h(\bm x_i))^2.
- \end{aligned}
-\]
-平方拟合让成员近似牛顿修正，更新$F_t=F_{t-1}+\eta h_t$后重新计算概率，$\eta\in(0,1]$控制步幅。原论文采用半对数几率记号，更新中相应带$1/2$；两种写法的概率模型一致。概率极接近0或1时工作响应可能过大，需要数值截断或正则化。与AdaBoost相比，LogitBoost改变了训练损失及修正信号；输出概率的样本外校准仍需检验\scite{friedman2000adaboost}。
-
-\Needspace{10\baselineskip}
 \subsection{梯度提升机与GBDT}
 \label{sec:ensemble-gradient-boosting}
 
+固定当前组合后，要为每一条记录定出下一轮该往哪个方向修正、修多少；损失对当前预测的导数正好给出这个方向，把逐点方向拟合成树，新成员就成了可用于新输入的修正。
+
 \subsubsection{模型结构}
-
-AdaBoost用分类错误调整样本权重，但回归还需要描述“错了多少、向哪边修正”。例如，一个响应为100的样本当前预测为80，平方损失下需要向上修正；另一个响应同为100、当前预测为120的样本则需要向下修正。仅给两条记录增加相同权重，没有直接告诉新成员这两个相反方向。
-
-对于关于预测可微的损失，负梯度给出了每个训练预测降低损失的方向。这一想法可以从熟悉的梯度下降类比理解：普通梯度下降调整的是\emph{参数}，沿损失对参数的负梯度走一小步；梯度提升则把每个训练样本上的\emph{预测值}本身看成待调整的量，损失对预测值的负梯度就告诉我们每个样本的预测该往哪个方向、调多少。由于不能逐点随意修改预测（模型还要能推广到新输入），就让一个基学习器去拟合这组“理想修正方向”，再把它加入模型，相当于在函数空间中走了一步梯度下降。\term{梯度提升机}（gradient boosting machine, GBM）正是用基学习器拟合这些负梯度，再把学得的修正加入已有预测。取平方损失$\ell(y,F)=(y-F)^2/2$时，负梯度就是残差$y-F$，即“真值减预测还差多少”，梯度提升退化为“反复拟合残差”这一最直观的形式；其他损失则产生各自的修正信号，例如分类的对数损失给出“真实标签减当前概率”，序贯加法因而可以用于更一般的任务\scite{friedman2001gradientboost}。
-
-GBM沿用式\eqref{eq:ensemble-additive-model}的加法结构，成员输出连续修正量。成员取回归树时，就是\term{梯度提升决策树}（gradient boosting decision tree, GBDT）；每片叶输出一个常数修正，全部树的修正叠加形成最终得分或数值预测。
+\term{梯度提升机}（gradient boosting machine, GBM）以连续加法模型$F_M(\bm x)=F_0+\sum_t f_t(\bm x)$为框架；成员取叶常数回归树时称为\term{梯度提升决策树}（gradient boosted decision tree, GBDT）。同一叶内的样本共享同一个修正值，叶值是该区域的集体修正，不是为单个预测点自由拟合的参数；最终输出经任务链接转为分类概率或回归数值。
 
 \subsubsection{参数学习}
 
-通常从使训练损失最小的常数预测开始：
+\paragraph{负梯度与方向拟合}
+对可微损失$L(y,F)$，第$t$轮在当前组合$F_{t-1}$处的负梯度为
 \begin{equation}
-  F_0(\bm{x})=c_0,
-  \qquad
-  c_0\in\argmin_c\sum_{i=1}^{n}\ell(y_i,c).
-  \label{eq:ensemble-gbm-initialization}
-\end{equation}
-平方损失下$c_0$是响应均值。这里要求存在有限的最小化点；若某种损失与数据组合使最优常数趋于无穷，就需约束预测范围或另定有限初始化。
-
-在第$t$轮，对每个训练样本计算\term{伪残差}（pseudo-residual），即损失在当前预测处的负导数：
-\begin{equation}
-  r_i^{(t)}
-  =
-  -
-  \left.
-  \frac{\partial \ell(y_i,z)}{\partial z}
-  \right|_{z=F_{t-1}(\bm{x}_i)}.
+  r_{ti}=-\left[\frac{\partial L(y_i,F)}{\partial F}\right]_{F=F_{t-1}(\bm x_i)},
   \label{eq:ensemble-pseudo-residual}
 \end{equation}
-这些修正量不能作为$n$个互不相关的自由参数，因为模型还要预测新输入。用树作成员时，同一片叶中的样本必须共享输出，所以通常无法逐点精确实现全部负梯度。下一步让允许的成员尽量逼近这组修正量，得到可用于新输入的函数。
-
-随后用平方误差把这些修正量拟合到成员函数族：
-\begin{equation}
-  h_t\in\argmin_{h\in\mathcal{H}}
-  \sum_{i=1}^{n}\bigl(r_i^{(t)}-h(\bm{x}_i)\bigr)^2.
-  \label{eq:ensemble-gbm-gradient-fit}
-\end{equation}
-此处平方误差衡量成员对负梯度的逼近，即使原任务采用其他损失也使用这一拟合对象。贪心树生长通常给出子问题的近似解。
-
-拟合负梯度是在成员函数族中寻找下降方向，原任务损失仍决定实际步幅。贪心拟合可能只找到近似方向，直接加上整棵树也可能走得过远，因此还要选择增量大小。
-
-固定$h_t$后，可以按原损失做整体线搜索，在最小值存在时取
-\begin{equation}
-  \alpha_t\in\argmin_\alpha
-  \sum_{i=1}^{n}
-  \ell\!\left(y_i,F_{t-1}(\bm{x}_i)+\alpha h_t(\bm{x}_i)\right).
-  \label{eq:ensemble-gbm-line-search}
-\end{equation}
-此处$\alpha_t$是整棵树或整个成员共享的一个标量。加入预先选择的收缩系数$\eta\in(0,1]$后，
-\begin{equation}
-  F_t(\bm{x})
-  =
-  F_{t-1}(\bm{x})
-  +
-  \eta\alpha_t h_t(\bm{x}).
-  \label{eq:ensemble-gradient-boosting-update}
-\end{equation}
-
-
-当$\ell(y,z)=\tfrac12(y-z)^2$时，式\eqref{eq:ensemble-pseudo-residual}给出$y_i-F_{t-1}(\bm{x}_i)$，恰好是普通残差。图\ref{fig:ensemble-boosting-residuals}展示一次这样的更新：新成员拟合的是第二幅图中的残差，再把它的输出加回已有预测。左侧原本偏高的预测随负残差降低，右侧原本偏低的预测随正残差升高；这组数据的平均平方损失也随之下降。
+平方损失$L=\frac12(y-F)^2$对当前得分的导数为$\partial L/\partial F=F-y$，取负即$r_{ti}=y_i-F_{t-1}(\bm x_i)$，恰好是普通残差。回归树以平方误差拟合这组负梯度，得到叶区域$R_{tj}$与叶均值；有限样本下$F_0$取使初始损失最小的常数（平方损失取训练均值）。图\ref{fig:ensemble-boosting-residuals}展示平方损失下的一次更新：新成员拟合的是残差，再把输出加回已有预测，偏高的预测随负残差降低、偏低的随正残差升高。拟合目标是负梯度方向，不是直接拟合原始标签；这一区分在换损失时尤其重要。
 
 \begin{figure*}[tbp]
   \centering
@@ -208,264 +127,183 @@ GBM沿用式\eqref{eq:ensemble-additive-model}的加法结构，成员输出连�
   \label{fig:ensemble-boosting-residuals}
 \end{figure*}
 
-分类时则要先明确得分与概率的关系。例如二分类采用$y_i\in\{0,1\}$，令$F$表示对数几率（logit），相应概率与二项对数损失为
+\paragraph{步幅与模型更新}
+对每个叶区域沿该方向搜索最优步幅
 \[
-  p=\sigma(F)=\frac{1}{1+e^{-F}},\qquad
-  \ell(y,F)=\log(1+e^F)-yF.
+  \rho_{tj}=\arg\min_{\rho}\sum_{\bm x_i\in R_{tj}}L\bigl(y_i,F_{t-1}(\bm x_i)+\rho\bigr),
 \]
-由于$\partial\ell/\partial F=\sigma(F)-y$，第$t$轮的伪残差为
-\[
-  r_i^{(t)}=y_i-p_i^{(t-1)},\qquad
-  p_i^{(t-1)}=\sigma\!\left(F_{t-1}(\bm{x}_i)\right).
-\]
-
-
-例如$y_i=1$而当前概率为$0.3$时，伪残差为$0.7$，表示损失对得分的修正信号。当前得分是$F=\log(0.3/0.7)\approx-0.8473$；假设拟合与步长选择后在该点实际加入的得分增量恰为$0.7$，则新得分约为$-0.1473$，新概率为$\sigma(-0.1473)\approx0.4632$。它不是把概率直接加到1；实际增量还取决于树对伪残差的拟合及步长。
-
-对于GBDT，除了整体线搜索，还可以保留平方拟合得到的叶区域$\bm{R}_1^{(t)},\ldots,\bm{R}_{L_t}^{(t)}$，再按原损失分别求每片叶的增量。当各叶内存在有限最小化点时，
+再更新
 \begin{equation}
-  \begin{aligned}
-    v_j^{(t)}
-      &\in\argmin_v
-        \sum_{i:\,\bm{x}_i\in\bm{R}_j^{(t)}}
-        \ell\!\left(y_i,F_{t-1}(\bm{x}_i)+v\right),\\
-    F_t(\bm{x})
-      &=F_{t-1}(\bm{x})
-        +\eta\sum_{j=1}^{L_t}
-        v_j^{(t)}\mathbb{I}\{\bm{x}\in\bm{R}_j^{(t)}\}.
-  \end{aligned}
-  \label{eq:ensemble-gbm-leaf-update}
+  F_t(\bm x)=F_{t-1}(\bm x)+\sum_j\rho_{tj}\mathbf1[\bm x\in R_{tj}].
+  \label{eq:ensemble-gbdt-update}
 \end{equation}
-$L_t$表示叶数，各叶分别选择$v_j^{(t)}$并替换原树输出；这与整棵树共用一个$\alpha_t$是两种更新方案。有限叶内最小值不存在时，需要限制输出或增加正则后再更新。回归树在这里承担连续修正量的拟合，最终任务也可以是分类。
+逐叶线搜索与单一全局步幅是两种实现，更新形式不同，不要混为一谈。
 
-\subsubsection{收缩、随机采样与DART}
+\paragraph{不同损失及后续调整}
+平方损失关注条件均值；二项对数损失$L=-[y\log p+(1-y)\log(1-p)]$在$p=\sigma(F)$时的导数为$\partial L/\partial F=p-y$，取负得伪响应$r_{ti}=y_i-p_i$（$p_i$为当前概率），叶值修正概率对数几率而非概率本身，不能把实数值修正直接加到概率上。在此基础上，收缩改变增量幅度、随机采样改变本轮样本、DART改变参照的已有组合、分位数提升改变预测目标，分别在下面几小节展开。
 
-\paragraph{控制逐轮更新幅度与模型复杂度}
-Boosting一直在追逐训练误差，如果每轮都把新树的修正全额加进去，模型会很快把训练数据拟合得过分精细，连噪声也一并学进去。学习率（也称收缩系数$\eta$）的作用就是“每次只采纳新树建议的一部分”，比如只加$10\%$，相当于小步慢走：每一步都不至于冲过头，留给后续轮次继续纠正的余地，实践中往往换来更好的样本外表现，代价是需要更多轮。学习率、轮数与单树复杂度因此共同决定加法函数。较小学习率缩小每轮变化，通常需要更多轮才能达到相近训练目标；较深的树可以在单轮表达更高阶交互，也会扩大每轮容量。行采样和列采样进一步引入随机性，早停则依据独立验证轨迹选择轮数——验证误差开始回升时就停下。选择学习率时需同时调整轮数，并在给定树复杂度、采样和早停协议下比较。
+\subsubsection{收缩与早停：控制累积拟合}
+\label{sec:ensemble-shrinkage}
 
-\paragraph{随机梯度提升}
-每轮都使用全部训练样本时，提升树可能反复追踪其中的偶然起伏。随机梯度提升在每轮只用一个随机子样本拟合新成员，使不同轮次面对的记录有所变化。若本轮抽到的索引为$S_t$，就把式\eqref{eq:ensemble-gbm-gradient-fit}的求和范围改为$i\in S_t$，再把所得修正加入完整模型。预测结构仍是全部已训练树的和，采样只发生在训练阶段。子样本比例过低也可能使修正方向更不稳定，因此采样比例需要与学习率、轮数及树复杂度共同选择\scite{friedman2002stochastic}。
+\paragraph{收缩系数与累积模型}
+\term{收缩}（shrinkage）以$\nu\in(0,1]$缩放每轮增量：$F_t=F_{t-1}+\nu\sum_j\rho_{tj}\mathbf1[\bm x\in R_{tj}]$。它减慢累积拟合，降低单轮过大修正的影响；$\nu$越小需要的轮数通常越多，与成员复杂度在同一验证口径下联合选择。
 
-\paragraph{DART：暂时移除已有树后学习}
+\paragraph{验证轨迹与早停}
+在独立验证集上逐轮记录损失，损失连续若干轮不再下降时停止，以验证轨迹确定轮数；早停轮数本身使用了验证信息，最终评价仍需另一份未参与选择的数据。
 
-后期树可能只修正已有组合的少量剩余误差，过度依赖前面树的具体输出。DART先随机移除部分已有树，再让新树补充暂时不完整的组合。把各树当前系数吸收到函数$f_j$中，记当前模型为$F=\sum_{j=1}^{t-1}f_j$。选出非空移除集合$D$，$k=|D|$，根据$\widetilde F=F-\sum_{j\in D}f_j$计算负梯度并拟合新树$u_t$。原始算法的一种归一化为
+\subsubsection{随机梯度提升：改变本轮样本}
+\label{sec:ensemble-stochastic-gb}
+\term{随机梯度提升}（stochastic gradient boosting）每轮按比例对记录自助或无放回采样，只在采样子集上计算负梯度并拟合成员\scite{friedman2002stochastic}。采样既增加成员多样性，也降低单轮计算量；采样比例与轮数、收缩一起配置。
+
+\subsubsection{DART：改变本轮参照的已有组合}
+\label{sec:ensemble-dart}
+普通GBDT在后期参照完整的已有组合拟合负梯度，新增树容易被前面树的贡献掩盖。\term{DART}（Dropout Additive Regression Trees）在计算本轮负梯度前随机丢弃若干已有树，使本轮参照的组合暂时变小，新树被迫补回被丢弃部分；加回时按丢弃比例缩放以保持整体贡献规模\scite{rashmi2015dart}。它改变的是本轮参照的已有组合，不是本轮样本。
+
+\subsubsection{分位数提升：改变预测目标}
+\term{分位数提升}（quantile boosting）把第\ref{sec:regression-quantiles}节的分位数损失$\ell(y,z)=\rho_\tau(y-z)$用于提升，成员学习减少该分位目标的偏差。损失在$z=y$处不可微，修正信号改用负次梯度（损失在尖点不可微时，夹在左右斜率之间的一个可行下降方向），例如约定
 \[
- F_{\mathrm{new}}
- =\sum_{j\notin D}f_j
-   +\frac{k}{k+1}\sum_{j\in D}f_j
-   +\frac{1}{k+1}u_t.
+  r_{ti}=\begin{cases}\tau-1,&y_i<F_{t-1}(\bm x_i),\\ \tau,&y_i\ge F_{t-1}(\bm x_i).\end{cases}
 \]
-新树试图补回被移除部分，旧树放回时便需同时缩放，避免两者重复补偿同一缺口。上式给出不额外加入学习率的原始更新约定；其他收缩方案需相应调整系数。没有旧树的第一轮先正常训练；后续若随机采样没有移除任何树，原算法再随机选一棵。部署时保留所有树及更新后的系数，不再随机移除。随机梯度提升改变本轮样本，DART改变本轮计算梯度时所见的已有预测\scite{rashmi2015dart}。
+平方损失得到条件均值，分位数损失得到条件分位点，预测目标不同，成员修正的对象随之改变。
 
-\subsubsection{分位数提升}
+\subsection{LogitBoost}
+\label{sec:ensemble-logitboost}
 
-平方损失关注条件均值；若希望按允许的缺货概率确定库存阈值，或预测收入分布中的较低分位点，就需要条件分位数。把第\ref{sec:regression-quantiles}节的分位数损失$\ell(y,z)=\rho_\tau(y-z)$用于提升，成员便学习怎样减少这个分位数目标的偏差。由于损失在$z=y$处不可微，修正信号改用负次梯度，例如约定
-\begin{equation}
-  r_i^{(t)}
-  =\tau-\mathbb{I}\{y_i<F_{t-1}(\bm{x}_i)\},
-  \qquad 0<\tau<1.
-  \label{eq:ensemble-quantile-pseudo-residual}
-\end{equation}
-等号处的负次梯度可取$[\tau-1,\tau]$内任意值，这里选端点$\tau$。常数初始化取样本$\tau$分位数，仍用平方误差拟合上述修正量；逐叶更新则最小化原分位数损失，故$v_j^{(t)}$取该叶内普通残差$y_i-F_{t-1}(\bm{x}_i)$的$\tau$分位数，而不是伪残差的均值。
-
-\Needspace{10\baselineskip}
-\subsection{XGBoost}
-\label{sec:ensemble-xgboost}
+指数损失只管把分类推对，输出却不是概率。需要逐轮加法地把事件概率直接学出来时，把AdaBoost的序贯加法框架换成二项对数损失；它与AdaBoost共享加法结构，损失和修正信号都不同，所以单独展开，不附在指数损失算法后面。
 
 \subsubsection{模型结构}
-
-前面介绍的梯度提升用负梯度决定修正方向。用树拟合时，还要选择怎样划分叶区域，以及每个叶应当输出多大的修正。只看当前梯度，没有直接利用损失随修正幅度弯曲的程度；若不断增加叶节点来追逐小幅训练收益，树也可能把样本噪声保留下来。
-
-为什么曲率有用？可以类比一维求极小值：梯度只告诉你“往哪边下山”，却不告诉你该走多远——在平缓的谷底，同样的坡度可能离最低点还很远；在陡峭的窄谷里，同样的坡度可能一步就迈过头。二阶导数（曲率）描述的正是坡度变化的快慢，用“梯度除以曲率”来定步长，就是牛顿法：曲率大的地方步子小、曲率小的地方步子大，因而比只用梯度的固定步长收敛更快、更稳。\term{XGBoost}把这一思想用到每片叶的输出上，同时把叶数和叶权重惩罚写入加法树目标，再用损失的二阶局部近似为叶输出和候选分裂评分。梯度描述向哪边修正，曲率参与决定修正幅度，正则项则限制这次修正使用多复杂的树。大规模训练还要处理稀疏特征、候选阈值与内存访问，原论文围绕这些计算设计了相应系统\scite{chen2016xgboost}。
-
-具体地，第$t$棵树写为$f_t(\bm x)=v_{t,q_t(\bm x)}$：$q_t$由节点分裂把输入映射到某片叶，$v_{t,j}$是该叶的输出。模型仍是$F_T=F_0+\sum_t f_t$，训练需要同时选择分区$q_t$与叶值$\bm v_t$；下面的二阶目标把这两个选择连接起来。
+标签以$y_i\in\{0,1\}$编码，模型对完整logit做加法拟合，经Sigmoid转概率：
+\begin{equation}
+  p(\bm x)=\sigma(F(\bm x))=\frac{1}{1+e^{-F(\bm x)}},
+  \qquad
+  F_M(\bm x)=F_0(\bm x)+\sum_t f_t(\bm x).
+  \label{eq:ensemble-logitboost-model}
+\end{equation}
+初始$F_0$取先验对数几率，成员为实数值修正，最终按阈值决策；不要在完整logit与概率之间来回切换。
 
 \subsubsection{参数学习}
 
-设第$t$棵树为$f_t$，损失在当前预测$F_{t-1}(\bm{x}_i)$处的一阶导与二阶导分别为$g_i^{(t)}$和$s_i^{(t)}$。去掉与$f_t$无关的常数后，本轮目标近似为
+\paragraph{二阶目标与工作响应}
+二项对数损失在当前概率$p_i$处的一阶导为$p_i-y_i$，曲率$v_i=p_i(1-p_i)$（损失对得分的二阶导，反映该点附近曲线弯得多厉害，用于估计一步能迈多大），工作响应与LMT节点学习中从二项损失推出的相同：
 \begin{equation}
-  \widetilde{\mathcal{L}}^{(t)}
-  =
-  \sum_{i=1}^{n}
-  \left[
-    g_i^{(t)}f_t(\bm{x}_i)
-    +\frac{1}{2}s_i^{(t)}f_t^2(\bm{x}_i)
-  \right]
-  +\gamma L
-  +\frac{\lambda}{2}\sum_{j=1}^{L}v_j^2,
-  \label{eq:ensemble-xgboost-objective}
+  z_i=\frac{y_i-p_i}{p_i(1-p_i)},\qquad
+  w_i=p_i(1-p_i).
+  \label{eq:ensemble-logitboost-working}
 \end{equation}
-其中$L$是叶数，$v_j$是第$j$片叶的输出，$\gamma\geq0$惩罚新增叶，$\lambda\geq0$约束叶权重。若$I_j$表示落入第$j$片叶的样本索引，记
-\[
-  G_j=\sum_{i\in I_j}g_i^{(t)},
-  \qquad
-  S_j=\sum_{i\in I_j}s_i^{(t)}.
-\]
-固定树结构后，第$j$片叶对近似目标的贡献为$G_jv_j+\tfrac12(S_j+\lambda)v_j^2+\gamma$。在$S_j+\lambda>0$时，这是严格凸二次函数，令导数$G_j+(S_j+\lambda)v_j$为零，得到最优叶权重
-\begin{equation}
-  v_j^\star=-\frac{G_j}{S_j+\lambda}.
-  \label{eq:ensemble-xgboost-leaf-weight}
-\end{equation}
-例如$G_j=-4$、$S_j=2$时，不加叶权重惩罚得到$v_j^\star=2$；取$\lambda=2$则得到$v_j^\star=1$。惩罚抑制修正幅度，但这里最小化的是二阶近似目标。把最优叶值代回二次式，其最小贡献为$-G_j^2/[2(S_j+\lambda)]+\gamma$。把一个父叶替换为左右两叶，前后相减就得到近似目标下降量
-\begin{equation}
-  \operatorname{Gain}
-  =
-  \frac{1}{2}
-  \left[
-    \frac{G_{\mathrm{L}}^2}{S_{\mathrm{L}}+\lambda}
-    +
-    \frac{G_{\mathrm{R}}^2}{S_{\mathrm{R}}+\lambda}
-    -
-    \frac{(G_{\mathrm{L}}+G_{\mathrm{R}})^2}
-         {S_{\mathrm{L}}+S_{\mathrm{R}}+\lambda}
-  \right]
-  -\gamma.
-  \label{eq:ensemble-xgboost-split-gain}
-\end{equation}
-\looseness=-1
-式\eqref{eq:ensemble-xgboost-split-gain}把当前损失的梯度、曲率与树复杂度放在同一个分裂准则中。增益评价局部二阶目标在当前分裂下的变化；贪心生长只搜索逐步形成的结构。
+这里恢复第3章逻辑模型树（LMT）节点学习已经推出的一阶导、曲率与工作响应，不重复证明；区别在于LMT在局部叶节点内细化祖先模型，LogitBoost对全样本的完整组合拟合下一个成员。以加权最小二乘拟合$z_i$得到成员修正，按学习率加入$F$后重新计算$p_i$。逐轮累积的近似误差与单轮牛顿步的误差分开评价。
 
-图\ref{fig:ensemble-gradient-xgboost}把一阶梯度提升与XGBoost的二阶树评分放在同一计算链中。左图用负梯度定义拟合对象，右图从候选区域的梯度统计计算叶权重和分裂增益；二阶统计扩展了本轮目标的近似信息，但没有改变逐轮加法更新的外层结构。
+\paragraph{停止与数值处理}
+概率接近$0$或$1$时曲率$v_i\to0$，工作响应$z_i$被放大，数值上不稳定；实现中需对概率截断、给权重设下限并约定有限停止规则。这些处理改变了理想牛顿步（用二阶曲率信息一步求出最佳修正的做法），其影响要在共同验证口径下检查；训练得到的概率是否校准另由独立的概率校准评价，不并入拟合误差。
+
+\subsection{XGBoost}
+\label{sec:ensemble-xgboost}
+
+提升树每轮要同时决定两件事：样本如何分到各叶、每叶输出多大。只用一阶信息选分裂时，叶值取多大缺乏准则；XGBoost在当前预测处把损失二阶展开，让叶区域选择与叶值大小由同一个二阶目标决定。
+
+\subsubsection{模型结构}
+\term{XGBoost}沿用回归树加法结构：本轮树把输入映到叶区域$R_j$，叶输出$w_j$，本轮增量$f_t(\bm x)=\sum_j w_j\mathbf1[\bm x\in R_j]$，累积$F_t=F_{t-1}+f_t$。结构（叶划分）与叶输出分开确定；预测时缺失特征按训练时保存的默认方向路由。惩罚包含叶数与叶值平方，一阶导与曲率作为局部近似工具。
+
+\subsubsection{参数学习}
+
+\paragraph{二阶叶目标与叶值}
+叶划分固定后，每一叶该输出多大的修正值由二阶叶目标决定。先在当前预测处二阶展开损失，目标为
+\begin{equation}
+  \mathrm{Obj}^{(t)}=\sum_i[g_i f_t(\bm x_i)+\tfrac12h_i f_t^2(\bm x_i)]+\Omega(f_t),
+  \label{eq:ensemble-xgb-objective}
+\end{equation}
+$g_i=\partial_{\hat y}L(y_i,\hat y)|_{\hat y=F_{t-1}}$为一阶导，$h_i=\partial_{\hat y}^2L|$为曲率。叶$j$内汇总$G_j=\sum_{i\in R_j}g_i$、$H_j=\sum_{i\in R_j}h_i$；把本轮叶常数$f_t(\bm x_i)=w_j$代回二阶目标，叶$j$的贡献为$w_jG_j+\frac12(H_j+\lambda)w_j^2$（$\lambda$是叶值平方罚的系数）。对$w_j$求导并令其为零：$G_j+(H_j+\lambda)w_j=0$，在$H_j+\lambda>0$时解得叶值
+\begin{equation}
+  w_j^*=-\frac{G_j}{H_j+\lambda}.
+  \label{eq:ensemble-xgb-leaf}
+\end{equation}
+代回得到该叶的二阶近似得分。
+
+\paragraph{分裂搜索与缺失路由}
+比较父节点与分裂后两子节点的二阶目标增益，增益高于叶值惩罚才分裂；精确枚举与分位数候选两种搜索方式。缺失记录在分裂时不参与统计，两侧各自尝试并保存默认方向。
+
+\paragraph{增量更新与计算组织}
+按增益贪心生长、定叶值、加增量的顺序更新；式\eqref{eq:ensemble-xgb-leaf}的叶值是未收缩成员二阶代理目标的最优值，再乘学习率是额外保守步，不能把收缩后的叶值称作精确最优，也不要把收缩前后的惩罚混算。遇到负曲率、分母非正或近似误差增大时回退；二阶代理是局部近似，叶值最优不等于全局目标最优。块存储、缓存、并行统计与外存处理改变的是计算组织，受益程度依赖数据规模与硬件。
 
 \begin{figure*}[htbp]
   \centering
   \includegraphics[width=152.739mm]{figures/04-classic-models/00-shared/generated/ensemble-gradient-xgboost/figure.png}
-  \caption{梯度提升与XGBoost中的本轮修正。左图中，损失对当前预测的负梯度形成伪残差，新成员拟合该信号后更新组合；右图中，XGBoost按候选分裂聚合一阶导与二阶导，再由同一组叶统计计算叶权重和分裂增益。图中单叶权重$w^\ast$对应正文的$v_j^\star$，$G$与$H$分别表示叶内一阶导和二阶导之和。复杂度项$\gamma T+\lambda\lVert\bm{w}\rVert_2^2/2$中的$T$为叶数，$\bm{w}$汇集各叶输出；$\lambda$限制叶权重，$\gamma$惩罚新增叶。该图展示当前候选树的局部评分。}
+  \caption{梯度提升与XGBoost二阶叶目标示意（教学构造）。}
   \label{fig:ensemble-gradient-xgboost}
 \end{figure*}
 
-\subsubsection{分裂搜索与稀疏输入}
-
-\paragraph{减少分裂搜索与数据访问}
-
-精确分裂搜索遍历排序后的候选特征值；近似搜索则先用带权分位数草图构造候选切分，再汇总梯度统计。
-
-带权分位数草图用非负二阶导$s_i^{(t)}$作为质量，在总质量为正时按累计曲率选择若干候选位置。例如，排序后四个取值的权重为$1,1,4,4$，一半总质量落在第三个取值；候选因此会随曲率分布改变。草图近似保存累计质量的位置，随后仍用式\eqref{eq:ensemble-xgboost-split-gain}比较候选，而非改变叶目标。
-
-稀疏感知搜索还为缺失值学习默认方向：对同一切分，分别把缺失记录的梯度与曲率统计加入左节点或右节点，计算两次增益，并把较优方向保存在节点中。新输入在该特征上缺失时沿这个方向前进。因此，模型结构除特征和阈值外还包含缺失路由；它由训练数据选择，不是预先规定缺失值一律为零。
-
-块式存储、缓存感知访问、并行统计和外存计算改变的是实现代价，不改变式\eqref{eq:ensemble-xgboost-objective}所定义的学习对象。这些设计在特定硬件和数据规模上的时间收益可通过完整训练测量确认。
-
-\Needspace{10\baselineskip}
 \subsection{LightGBM}
 \label{sec:ensemble-lightgbm}
 
-\subsubsection{模型结构}
+连续特征的切点随样本量线性增多，逐枚枚举统计梯度代价很高；LightGBM的预测结构仍是回归树加法，所有改动都发生在搜索与统计这一层。
 
-LightGBM仍以回归树的加法组合作为预测函数，树叶输出修正量，最终按任务所需把累计得分转换为预测。它主要改变如何在大规模数据上训练这些树。候选分裂的搜索可能成为提升树训练的主要成本。假设当前节点的一个连续特征有十万个不同取值，精确搜索就可能需要比较近十万个切分位置；每棵新树都会再次进行类似计算。\term{LightGBM}以直方图训练为基础，先把连续特征映射到有限个桶，再按桶累计梯度和曲率。如果使用256个桶，分裂评分就只在相邻桶之间比较，原来同桶内的差别被暂时忽略。
+\subsubsection{模型结构}
+\term{LightGBM}的预测结构仍是逐轮回归树加法：本轮树划分叶区域、给出叶输出，累加到当前得分；这与前面的提升树相同。直方图、GOSS与EFB是学习过程中的计算工具，不改变预测模型本身。
 
 \subsubsection{参数学习}
 
-构造直方图仍要访问节点样本，但候选搜索只需扫描桶。已知父节点和一个子节点的直方图时，还可以用差分得到另一个子节点的统计量。分桶减少存储和候选数，也引入离散化误差；桶数决定这种取舍。
+\paragraph{直方图与树的生长}
+把连续特征离散为若干桶，只在桶边界上统计一阶导与曲率，形成直方图；桶内差异被忽略，桶数是精度与成本的权衡。合并父节点与一侧子节点的直方图即得另一侧，减少统计量计算。生长方式为按叶分裂（leaf-wise）：每次选增益最大的叶继续分裂，把容量投向局部收益最大处；叶数、深度与最小叶样本数共同限制失衡。
 
-树的生长顺序进一步改变计算分配。按层生长同时扩展某一深度上的叶，按叶生长则每次选择当前增益最大的叶继续分裂。在相同叶数下，后者把容量集中到训练目标下降较大的局部区域，可能形成深度不均衡的树。叶数、最小叶样本量和深度共同限制这种局部扩展，训练收益再由验证或测试检查其样本外效果。
+\paragraph{样本统计的GOSS近似}
+\term{基于梯度的单边采样}（gradient-based one-side sampling, GOSS）按梯度大小分组：超过阈值的大梯度样本全保留，其余小梯度样本按比例$q$随机采样；被采中小梯度样本的梯度与曲率汇总按$1/q$放大，补偿未采样部分的贡献。分组阈值与采样比例$q$在验证中选择；无偏采样统计量不等于选择后无偏的比率或增益\scite{ke2017lightgbm}。
 
-\subsubsection{样本采样与特征捆绑}
+\paragraph{稀疏特征的EFB编码}
+\term{互斥特征捆绑}（exclusive feature bundling, EFB）把很少同时非零的稀疏列压入同一直方图，为每个原列分配互不重叠的桶位；由桶位反查原列，非零桶计入该列的梯度曲率统计，零桶保留默认计数，候选分裂仍对应原特征。捆绑记录冲突数量与信息损失。直方图、GOSS、EFB分别改变候选阈值、样本统计与特征表示，三者在同一划分与预算下比较。
 
-\paragraph{减少样本统计量}
-
-基本直方图训练仍需统计大量样本和特征。LightGBM论文进一步提出两种针对这些成本的近似。\term{单边梯度采样}（gradient-based one-side sampling, GOSS）保留绝对梯度较大的样本，从绝对梯度较小的样本中随机抽取一部分，并在分裂统计中重新加权后者。例如，在小梯度组内等概率抽取一半样本，就把被抽中者对梯度和的贡献乘二，以补偿未采样部分。一般地，样本以概率$p>0$被保留时，其贡献乘以$1/p$；给定本轮梯度和候选分区，这种逆包含概率加权可无偏估计相应的梯度和，平方、比值及择优得到的增益则是非线性量，其偏差需另行分析。
-
-\paragraph{减少有效特征数}
-
-\term{互斥特征捆绑}（exclusive feature bundling, EFB）把很少同时非零的稀疏特征编码到较少的组合特征中，近似减少有效特征数。GOSS、EFB和直方图分别减少样本统计、特征表示和阈值候选，可按各自近似对象评价误差与计算节省\scite{ke2017lightgbm}。
-
-例如，两列$A,B$的零桶均为0，非零桶均为1、2，且每条记录至多一列非零。可把$A$的非零桶编码为1、2，把$B$的非零桶编码为3、4：$(2,0)$映为2，$(0,1)$映为3。编码区间保留列身份，区间内的位置保留原桶号。统计时按区间恢复各列非零桶的梯度与曲率，零桶则由节点总量扣除该列非零量得到；候选分裂仍属于原特征，不能任意在捆绑编号上切一刀代替原列分裂。两列同时非零便发生编码冲突，因此近互斥时需要分开捆绑或接受受控的信息损失。
-
-图\ref{fig:ensemble-lightgbm-approximations}按近似对象并列这三种机制。直方图压缩候选阈值，GOSS压缩参与分裂统计的样本，EFB压缩稀疏特征表示；这三个对象分别对应数据访问、有效特征数与候选扫描的成本。
-
-\begin{figure*}[t]
+\begin{figure*}[htbp]
   \centering
   \includegraphics[width=130.048mm]{figures/04-classic-models/00-shared/generated/ensemble-lightgbm-approximations/figure.png}
-  \caption{LightGBM中三种作用位置不同的计算近似。直方图把连续取值映射到有限桶，GOSS保留$|g_i|$较大的样本，并抽取、重加权部分$|g_i|$较小的样本，EFB把很少同时非零的特征编码为较少的捆绑特征。图中点数、桶数与非零位置均为机制示意。}
+  \caption{直方图、GOSS与EFB三类近似工具的作用位置示意（教学构造）。}
   \label{fig:ensemble-lightgbm-approximations}
 \end{figure*}
 
-这些近似保留加法树结构，改变的是形成树的统计和搜索过程。桶数、采样比例与冲突处理既影响速度，也影响选中的分裂，需在固定数据划分和训练预算下联合评价。
-
-\Needspace{10\baselineskip}
 \subsection{CatBoost}
 \label{sec:ensemble-catboost}
 
+高基数类别特征做独热编码维度爆炸，直接拿类别当前标签做编码又会偷看部署时拿不到的信息。CatBoost在树加法结构上换成用历史标签平滑得到的有序类别统计。
+
 \subsubsection{模型结构}
-
-类别特征又带来不同的困难。例如商户标识可能有很多取值，全部展开为独热变量会增加特征规模，直接编成整数又会引入原本不存在的次序。用同类别记录的响应均值编码，可以把类别转成一个数，却容易把标签带回输入：某个商户若只有一条记录，包含该记录自身的响应均值恰好就是$y_i$，训练模型于是能直接读到待预测值。新记录的标签还未知，部署时无法提供同样信息。这种把待预测响应用于训练输入的构造称为\term{目标泄漏}（target leakage）。
-
-\term{CatBoost}仍通过逐轮相加的树模型形成预测，并为类别特征安排避免当前标签泄漏的编码过程。它常使用\term{对称树}（symmetric tree），即同一深度的所有节点采用相同分裂条件。深度为$d_{\mathrm{tree}}$的完整对称树至多有$2^{d_{\mathrm{tree}}}$片叶，路径可以编码为固定长度的二进制选择。这种结构便于批量预测，也限制了单棵树可表达的分区形状。
+\term{CatBoost}在树加法结构上增加有序类别统计：类别先由同类别历史标签平滑成数值统计量，再进入树；新输入的类别只按已观测训练记录的统计编码，不使用部署时拿不到的标签。树采用对称结构，同一层使用相同分裂条件，便于路径编码与预测，但便利不等于必然提升精度。
 
 \subsubsection{参数学习}
 
-CatBoost用随机排列建立\term{有序目标统计}（ordered target statistic）。设$c_i$为样本$i$的某个类别值，用$\pi(j)$表示样本$j$在随机排列中的位置；对当前样本只使用排列中位于它之前且类别相同的记录：
+\paragraph{有序类别统计}
+取随机排列前缀，用前缀内同类别样本的标签统计加先验平滑作为该类别的编码：
 \begin{equation}
-  z_i
-  =
-  \frac{
-    \sum_{j:\,\pi(j)<\pi(i)}
-    \mathbb{I}\{c_j=c_i\}y_j
-    +ap
-  }{
-    \sum_{j:\,\pi(j)<\pi(i)}
-    \mathbb{I}\{c_j=c_i\}
-    +a
-  }.
-  \label{eq:ensemble-catboost-ordered-statistic}
+  \hat p_c=\frac{\sum_{i\in\mathrm{prefix},\,x_i=c}y_i+\alpha p}{\#\{i\in\mathrm{prefix},\,x_i=c\}+\alpha},
+  \label{eq:ensemble-catboost-codestat}
 \end{equation}
-其中$a>0$控制平滑，$p$是预先固定或从独立数据估计的先验响应。先验也必须排除当前标签，否则仍会把标签带入输入。没有同类别前驱时，编码等于$p$；部署时则利用已经观测的训练记录形成类别统计。平滑减弱低频类别的波动，但不能消除类别样本不足带来的不确定性。
+先验$p$与平滑系数$\alpha$按数据来源设定，无前驱时退回先验。进入统计的是前缀内同类别标签；低频类别的不确定性由平滑系数控制。
 
-图\ref{fig:ensemble-catboost-ordered-statistics}固定当前样本的排列位置，检查哪些标签进入编码。计算当前类别$A$样本的编码时，只允许排列前缀中同为类别$A$的标签进入统计量；其他类别、当前标签和排列后缀都不参与这次编码。
+\paragraph{有序提升}
+当前预测若直接使用当前标签会造成泄漏（训练时偷看了部署时拿不到的标签信息）。\term{有序提升}（ordered boosting）让每条记录的本轮预测只由排在它之前的样本产生，修正信号也基于该前缀；理想上每条记录应有独立的训练与更新，实际通过共享树结构与状态近似，区分有序（Ordered）与普通（Plain）两种实现\scite{prokhorenkova2018catboost}。
 
 \begin{figure*}[htbp]
   \centering
   \includegraphics[width=150.199mm]{figures/04-classic-models/00-shared/generated/ensemble-catboost-ordered-statistics/figure.png}
-  \caption{CatBoost有序目标统计的前缀约束。这里$\pi(j)$表示样本$j$在随机排列中的位置；计算当前样本$i$的编码时，只有满足$\pi(j)<\pi(i)$且$c_j=c_i$的标签通过实线汇入统计量。其他类别、当前标签和后续记录均不连接到统计量，表示它们在本次编码中被隔离。样本索引与类别符号仅用于说明机制。}
+  \caption{有序类别统计与有序提升的前缀依赖示意（教学构造）。}
   \label{fig:ensemble-catboost-ordered-statistics}
 \end{figure*}
 
-有序提升把前缀思想用于梯度。普通提升先在全部标签上拟合$F_{t-1}$，又在这些记录上计算损失导数，当前预测可能已受到本条标签的影响；新样本却没有这条依赖。CatBoost用未使用当前标签的前缀模型计算当前预测，减弱由此产生的预测偏移。
-
-计算当前样本的预测与梯度时，采用由其前缀记录拟合的相应模型，使该样本的标签与当前预测拟合分离，以减少这一重复使用带来的预测偏移。为把这一约束写成逐轮过程，暂用$(\bm{x}_{[j]},y_{[j]})$表示排列中第$j$个位置的记录；方括号下标表示位置，不是原样本编号。理想算法为每个前缀保留模型$M_m^{(t)}$，它在第$t$轮之后只由前$m$条记录训练。各前缀模型都从不使用该排列标签的同一初始预测开始，例如恒为零；没有记录的模型$M_0^{(t)}$始终保持这个初值。在第$t$轮计算位置$j$的修正信号时，使用上一轮的前缀模型$M_{j-1}^{(t-1)}$：
-\[
-  r_{[j]}^{(t)}
-  =-\left.
-     \frac{\partial\ell(y_{[j]},z)}{\partial z}
-     \right|_{z=M_{j-1}^{(t-1)}(\bm{x}_{[j]})}.
-\]
-标签$y_{[j]}$仍是本条记录计算损失导数所需的监督，隔离的是它进入本条当前预测的路径。用前面的平方方向拟合写出一种理想实现时，每个前缀的本轮成员与更新分别为
-\[
-  \begin{aligned}
-    h_m^{(t)}
-      &\in\argmin_{h\in\mathcal{H}}
-        \sum_{j=1}^{m}
-        \bigl(r_{[j]}^{(t)}-h(\bm{x}_{[j]})\bigr)^2,\\
-    M_m^{(t)}(\bm{x})
-      &=M_m^{(t-1)}(\bm{x})+\eta h_m^{(t)}(\bm{x}).
-  \end{aligned}
-\]
-预测位置$j$时，输入编码、先验和前缀模型都只能使用允许的前缀信息。编码和提升可采用同一排列，初始化与平滑先验可用固定常数或独立数据，避免当前标签通过前驱记录间接回到当前预测。
-
-上述逐前缀公式说明信息约束，实际CatBoost共享树结构并维护前缀预测状态，减少独立训练全部前缀模型的成本。原论文区分Ordered与Plain模式：Ordered使用有序梯度；Plain保留有序目标统计，却按普通GBDT更新。因此，采用有序类别编码不等于采用有序提升\scite{prokhorenkova2018catboost}。
-
-\subsection{模型对比与总结}
+\subsection{本节比较}
 \label{sec:ensemble-boosting-comparison}
+各Boosting方法的修正来源不同：AdaBoost用加权错误率确定投票系数，GBDT用负梯度方向，XGBoost用二阶叶目标；候选搜索、类别编码与标签使用方式也不同。它们共享顺序加法框架，工具（直方图、GOSS、EFB、有序统计）不等于学习目标。比较时使用相同损失、数据划分、树容量与调参预算，记录训练与部署成本；轮次依赖与目标改善不保证通用优劣排序。
 
-各方法仍围绕已有组合加入修正，差别在修正信号和树的学习过程。AdaBoost重加权分类记录，GBM拟合损失的负梯度；XGBoost用曲率和复杂度惩罚确定叶值与分裂，LightGBM减少统计和搜索成本，CatBoost重点处理类别信息与标签重复使用。表\ref{tab:ensemble-boosting-comparison}按这些实际改动比较它们，方法名称本身不决定预测优劣。
-
-\begin{table*}[htbp]
+\begin{table}[htbp]
   \centering
   \small
-  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{19mm}*{6}{>{\raggedright\arraybackslash}X}@{}}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\arraybackslash}p{20mm}>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X>{\RaggedRight\arraybackslash}X@{}}
     \toprule
-    方法 & 本轮修正信号 & 典型成员 & 目标近似 & 树生长或分裂 & 类别特征重点 & 主要约束 \\
+    方法 & 修正信号 & 成员族 & 特点\\
     \midrule
-    AdaBoost & 加权错分 & 树桩或浅分类树 & 指数损失下的解析更新 & 由成员算法决定 & 需另行编码 & 对持续错分记录敏感 \\
-    GBM／GBDT & 负梯度伪残差 & 回归树 & 一阶函数方向与叶内优化 & 通常贪心树生长 & 需随实现处理 & 学习率、轮数与树复杂度耦合 \\
-    XGBoost & 一阶导与二阶导 & 正则化回归树 & 二阶局部目标 & 精确或分位数候选；稀疏默认方向 & 依实现与版本而定 & 轮次串行，近似与系统配置影响成本 \\
-    LightGBM & 桶级梯度统计 & 直方图回归树 & 通常使用二阶统计 & 按叶生长；直方图候选 & 支持类别分组，机制依实现 & 分桶、GOSS与EFB引入近似条件 \\
-    CatBoost & 有序统计与有序梯度 & 对称树 & 梯度或二阶统计 & 同层共享分裂条件 & 有序目标统计与组合 & 多排列和前缀状态增加训练成本 \\
+    AdaBoost & 加权错误率$\to$投票系数 & 二元弱成员 & 指数损失，样本重加权\\
+    GBDT & 负梯度 & 叶常数回归树 & 逐叶步幅，可配收缩/随机/DART/分位数\\
+    LogitBoost & 二阶工作响应 & 实数值logit修正 & 完整logit加权最小二乘\\
+    XGBoost & 一阶导+曲率 & 带罚回归树 & 二阶叶值、缺失路由、计算组织\\
+    LightGBM & 二阶（同XGBoost框架） & 回归树 & 直方图/GOSS/EFB工具\\
+    CatBoost & 二阶（有序前缀） & 对称树 & 有序类别统计、有序提升\\
     \bottomrule
   \end{tabularx}
-  \caption{Boosting代表方法的机制比较。GBM是一般框架，GBDT指使用回归树成员的实例；XGBoost、LightGBM和CatBoost是树提升的具体模型与系统，均属于Boosting框架的具体构造。}
+  \caption{Boosting各方法的修正来源与机制比较。}
   \label{tab:ensemble-boosting-comparison}
-\end{table*}
-
-提升方法都围绕当前组合继续训练，学习率、轮数和单树容量因而需要联合选择。若已有成员来自不同模型族，希望根据它们的样本外表现学习组合方式，就转向Stacking。
+\end{table}

@@ -1,0 +1,42 @@
+\subsection{Huber回归}
+\label{sec:regression-huber}
+
+平方损失把大误差二次放大：一个严重偏离的异常样本会迫使整条直线为它大幅偏转，训练中其他记录的贡献被冲淡。\term{Huber回归}（Huber regression）保留线性均值结构，只把计分函数从平方换成在大误差处线性增长的Huber损失，使异常响应不再主导拟合。Huber在1964年提出这一介于平方与绝对误差之间的稳健计分\scite{huber1964}。
+
+\subsubsection{模型结构}
+\label{sec:regression-huber-structure}
+
+预测仍为$f(\bm{x})=b+\bm{w}^{\top}\bm{x}$，记拟合误差$e_i=b+\bm{w}^{\top}\bm{x}_i-y_i$（与OLS的残差同向），目标为
+\begin{equation}
+  \frac{1}{n}\sum_{i=1}^n\rho_\delta(e_i),
+  \qquad
+  \rho_\delta(e)=
+  \begin{cases}
+    e^2/2,&|e|\leq\delta,\\
+    \delta|e|-\delta^2/2,&|e|>\delta.
+  \end{cases}
+  \label{eq:regression-huber-loss}
+\end{equation}
+残差不超过$\delta$时按平方计分，超过$\delta$后转为线性；两段在$|e|=\delta$处函数值与一阶导数都连续，过渡光滑。常数$\delta$控制切换位置，由训练内验证选择，它不是“删除异常点”的阈值，而是损失曲率从二次变为一次的位置。Huber损失对应尺度固定的Laplace型稳健似然，这里只把它作为计分函数使用，不引入完整概率模型。
+
+\subsubsection{参数学习}
+\label{sec:regression-huber-learning}
+
+固定阈值$\delta$（由训练内验证选择）。记$\psi_\delta(e)=\rho'_\delta(e)$，即$\psi(e)=e$（$|e|\leq\delta$）与$\delta\operatorname{sign}(e)$（$|e|>\delta$）；由于$\partial e_i/\partial\bm{w}=\bm{x}_i$、$\partial e_i/\partial b=1$，目标对斜率的梯度为$\nabla_{\bm w}J=(1/n)\sum_i\psi_\delta(e_i)\bm{x}_i$，对截距的梯度为$\partial J/\partial b=(1/n)\sum_i\psi_\delta(e_i)$。小残差处$\psi_\delta(e_i)=e_i$，梯度与OLS完全相同；大残差处$\psi_\delta(e_i)=\delta\operatorname{sign}(e_i)$，梯度不再随残差增大。按步长$\eta$沿负梯度迭代：
+\[
+  \bm{w}^{(t+1)}
+  =\bm{w}^{(t)}-\frac{\eta}{n}\sum_{i=1}^{n}\psi_\delta(e_i^{(t)})\bm{x}_i,
+  \qquad
+  b^{(t+1)}
+  =b^{(t)}-\frac{\eta}{n}\sum_{i=1}^{n}\psi_\delta(e_i^{(t)}).
+\]
+每轮重算残差$e_i^{(t)}=b^{(t)}+\bm{w}^{(t)\top}\bm{x}_i-y_i$，再统一更新两式。
+
+\paragraph{离群点的数值例}
+
+六个样本的真实直线为$f(x)=1+2x$：$x=0,\ldots,4$处响应为$1,3,5,7,9$，另在$x=5$处放置离群点$y=20$。OLS同时被离群点牵引，拟合为$\widehat f(x)=-0.71+3.29x$，斜率从真实的$2$被抬高到$3.29$。取$\delta=1.5$训练内验证，Huber拟合为$\widehat f(x)=0.40+2.45x$，更接近真实直线：离群点残差大、梯度被压到常数$\delta$，对参数的拉动远小于平方损失。$\delta$越小越接近最小绝对偏差，越大越回到OLS；本例取$\delta=1$时拟合$0.60+2.30x$，与$\delta=1.5$的$0.40+2.45x$都远好于OLS。
+
+\subsubsection{性质与使用条件}
+\label{sec:regression-huber-theory}
+
+式\eqref{eq:regression-huber-loss}的导数在切换点连续，损失处处可微；大误差处斜率为常数$\delta$，误差再大也只按线性累加，而平方损失按$e^2$爆炸。对照两端：$\delta\to\infty$时回到OLS的平方损失，$\delta\to0$时趋近最小绝对偏差（LAD）。Huber处在两者之间：中部高效、尾部稳健。代价是效率——在干净的高斯误差下，Huber的估计方差略高于OLS；换来的是面对非高斯尾部或污染样本时，预测不被个别记录带偏。是否值得这一交换，由训练内验证与任务对异常响应的敏感度决定。

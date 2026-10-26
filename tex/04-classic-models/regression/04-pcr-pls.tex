@@ -1,0 +1,92 @@
+\subsection{主成分回归（PCR）}
+\label{sec:regression-pcr}
+
+共线性与特征数超过样本数时，$\bm X^{\top}\bm X$ 接近或严格不可逆，OLS 解对数据扰动极敏感。带惩罚的OLS（岭）通过收缩缓解这一问题；主成分回归（principal components regression, PCR）走另一条路——先把原始输入投影到少数几个互不相关的方向上，再在这些方向上回归，用降维绕开“小特征值方向”。成分数量少且互相正交，在它们上面估计系数就稳定了；代价是必须决定保留多少、保留哪些方向。
+
+\subsubsection{模型结构}
+\label{sec:regression-pcr-structure}
+
+整个流程四步，全部在训练折内完成：
+
+\begin{enumerate}
+  \item \textbf{中心化与主成分提取}。算训练均值 $\bar{\bm x},\bar y$，中心化设计 $\bm X_c=\bm H\bm X$（$\bm H=\bm I-\frac1n\mathbf 1\mathbf 1^{\top}$）。记 $r=\operatorname{rank}(\bm X_c)$，取只含正奇异值的紧致薄SVD
+  \[
+    \bm X_c=\bm U\bm\Sigma\bm V^{\top},
+    \qquad
+    \bm U\in\mathbb R^{n\times r},\ \bm\Sigma\in\mathbb R^{r\times r},\ \bm V\in\mathbb R^{d\times r},
+  \]
+  其中 $\bm\Sigma$ 对角元 $\sigma_1\geq\cdots\geq\sigma_r>0$ 为降序奇异值；$\bm V$ 的列 $\bm v_j$ 是样本协方差 $\bm S=\tfrac1n\bm X_c^{\top}\bm X_c$ 的单位正交特征向量（主方向），$\bm U$ 的列 $\bm u_j$（左奇异向量）满足 $\bm u_j=\bm X_c\bm v_j/\sigma_j$，是归一化的训练得分。
+  \item \textbf{截断保留前 $k$ 个方向}。取 $\bm V_k$ 为 $\bm V$ 的前 $k$ 列（$k\leq r$）：只按输入方差大小保留，不看响应。
+  \item \textbf{在得分上做OLS}。中心化响应 $\bm y_c=\bm y-\bar y\mathbf 1$，得分矩阵 $\bm T=\bm X_c\bm V_k$ 列满秩，最小二乘系数为
+  \[
+    c_j=\frac{\bm u_j^{\top}\bm y_c}{\sigma_j},\qquad j=1,\ldots,k,
+  \]
+  来源：$\widehat{\bm y}_c=\bm T(\bm T^{\top}\bm T)^{-1}\bm T^{\top}\bm y_c=\bm U_k\bm U_k^{\top}\bm y_c$，即各得分方向上的正交投影。
+  \item \textbf{映射回原空间并还原截距}。原始斜率 $\bm w=\bm V_k\bm c$，截距 $b=\bar y-\bm w^{\top}\bar{\bm x}$。新输入 $\bm x_\star$ 用保存的训练均值中心化 $\bm x_{\star c}=\bm x_\star-\bar{\bm x}$、按同一组训练尺度（若启用标准化）缩放，再投影得分 $\bm t_\star=\bm V_k^{\top}\bm x_{\star c}$，预测
+  \[
+    \widehat f(\bm x_\star)=\bar y+\bm t_\star^{\top}\bm c.
+  \]
+  部署时保存 $\bar{\bm x},\bar y,\bm V_k,\bm c$ 与尺度；$\bm U,\bm\Sigma$ 只是训练中间量，不进入预测。
+\end{enumerate}
+
+\subsubsection{参数学习}
+\label{sec:regression-pcr-learning}
+
+截断数 $k$ 由训练内验证按预测损失选择，累计解释方差只能提供候选，不能替代验证。若选择标准化，各列除以自己的样本标准差（只从训练折估计），避免大量纲特征天然主导成分。
+
+\subsubsection{性质与使用条件}
+\label{sec:regression-pcr-theory}
+
+\paragraph{岭连续收缩 vs PCR硬截断}
+
+与岭对照：岭在每个谱方向乘以连续因子 $\sigma_j^2/(\sigma_j^2+n\lambda)$，小奇异值方向被温和压低但不归零；PCR在 $k$ 处硬截断，被删方向的因子直接为零。两者都在同一组SVD方向上动手，区别只在取舍方式。
+
+\paragraph{无监督选方向会丢掉小方差信号}
+
+PCA只按输入方差选方向，并不检验该方向是否携带响应信息。用确定性构造展示：四个样本中心化输入为
+\[
+  \bm x=(-10\sqrt2,0)^{\top},\ (0,\sqrt2)^{\top},\ (10\sqrt2,0)^{\top},\ (0,-\sqrt2)^{\top},
+\]
+响应 $\bm y_c=(0,\sqrt2,0,-\sqrt2)^{\top}$（只由第二坐标决定）。样本方差恰为 $\operatorname{Var}(X_1)=100$、$\operatorname{Var}(X_2)=1$，奇异值 $\sigma_1=\sqrt{400}=20$、$\sigma_2=\sqrt{4}=2$：第一坐标方差大100倍、却与响应正交，第二坐标方差小、才真正携带信号。取 $k=1$ 时 $\bm v_1=\bm e_1$、$c_1=0$，预测退化为常数 $\bar y=0$，PCR把预测信号整个删掉了。这说明“按输入方差选成分”不等于“按预测贡献选成分”，由这一缺口引出PLS。
+
+\subsection{偏最小二乘回归（PLS）}
+\label{sec:regression-pls}
+
+PCR的成分由输入方差决定，可能删掉真正携带响应信息的低方差方向。\term{偏最小二乘回归}（partial least squares regression, PLS）在构造成分时同时利用输入与响应的关系，属于监督降维，正是为了补救PCR“只按输入方差选方向”这一缺口。
+
+\subsubsection{模型结构}
+\label{sec:regression-pls-structure}
+
+预测形式与PCR同形：$\widehat f(\bm{x})=\bar y+\bm{c}^{\top}\bm{R}_k^{\top}(\bm{x}-\bar{\bm{x}})$，$\bm{R}_k\in\mathbb R^{d\times k}$是有监督的投影矩阵，$\bm{c}\in\mathbb R^k$是得分对响应的系数；展开成原始输入时 $\bm{w}=\bm{R}_k\bm{c}$、截距 $b=\bar y-\bm{w}^{\top}\bar{\bm{x}}$。部署时保存训练均值、$\bm{R}_k$（或逐轮方向与载荷）与 $\bm{c}$。
+
+\subsubsection{参数学习}
+\label{sec:regression-pls-learning}
+
+\paragraph{NIPALS式逐步抽取（单响应）}
+
+整个流程七步，可照做：
+
+\begin{enumerate}
+  \item \textbf{中心化/标准化}。训练折内算 $\bar{\bm{x}},\bar y$（及样本标准差），得中心化残差 $\bm E_0=\bm X_c$、$\bm f_0=\bm y_c$。
+  \item \textbf{求方向}。在 $\|\bm{a}\|_2=1$ 下最大化 $(\bm{a}^{\top}\bm E_{h-1}^{\top}\bm f_{h-1})^2$，由Cauchy--Schwarz取等号得
+  \[
+    \bm{a}_h=\frac{\bm E_{h-1}^{\top}\bm f_{h-1}}{\lVert\bm E_{h-1}^{\top}\bm f_{h-1}\rVert_2};
+  \]
+  方向由样本协方差决定，同乘 $1/n$ 不改变。
+  \item \textbf{得分}。$\bm t_h=\bm E_{h-1}\bm a_h$。
+  \item \textbf{载荷与回归系数}。$\bm p_h=\bm E_{h-1}^{\top}\bm t_h/(\bm t_h^{\top}\bm t_h)$，$c_h=\bm t_h^{\top}\bm f_{h-1}/(\bm t_h^{\top}\bm t_h)$。
+  \item \textbf{扣除}。$\bm E_h=\bm E_{h-1}-\bm t_h\bm p_h^{\top}$，$\bm f_h=\bm f_{h-1}-c_h\bm t_h$。
+  \item \textbf{重复}。回到第2步继续，直到达到指定成分数 $k$，或 $\bm E_{h-1}^{\top}\bm f_{h-1}=\bm 0$（无协方差），或得分退化。
+  \item \textbf{恢复原空间与新点预测}。方向矩阵 $\bm A_k=(\bm a_1,\ldots,\bm a_k)$、载荷矩阵 $\bm P_k=(\bm p_1,\ldots,\bm p_k)$，代入 $\bm R_k=\bm A_k(\bm P_k^{\top}\bm A_k)^{-1}$，则 $\bm X_c\bm R_k$ 的第 $h$ 列就是 $\bm t_h$；新输入 $\bm x_\star$ 先按训练均值/尺度中心化，再 $\bm z_\star=\bm R_k^{\top}\bm x_{\star c}$，预测 $\bar y+\bm z_\star^{\top}\bm c$。标准化时响应按训练标准差乘回、均值加回。
+\end{enumerate}
+
+\paragraph{同一数值例在流程中的走向}
+
+用PCR段同一组构造：$\bm X_c$ 两列方差 $100$ 与 $1$，$\bm y_c=(0,\sqrt2,0,-\sqrt2)^{\top}$。第一步 $\bm E_0^{\top}\bm f_0=\bm X_c^{\top}\bm y_c=(0,4)^{\top}$——第一坐标因与响应正交分量为零，归一化后 $\bm a_1=\bm e_2$；得分 $\bm t_1=(0,\sqrt2,0,-\sqrt2)^{\top}$，$c_1=\bm t_1^{\top}\bm y_c/\bm t_1^{\top}\bm t_1=1$，一步即精确拟合。对比PCR取 $k=1$ 时把同一方向删掉：响应参与构造使PLS第一方向选中了响应相关方向，而PCR按输入方差先选中了无关方向。
+
+成分数 $k$ 由训练内验证确定，每折重新拟合；响应参与方向学习，不能先在全部数据上选方向再报交叉验证。名称“PLS”覆盖一族算法，这里是单响应NIPALS式逐步消去版本。
+
+\subsubsection{性质与使用条件}
+\label{sec:regression-pls-theory}
+
+每步新得分与此前得分在更新前正交，成分顺序由对当前残差的协方差贡献决定。与PCR比较：两者都先降维再拟合响应，PCR按输入方差选方向、不看响应，PLS让响应参与构造方向；与岭比较：PLS是离散成分累积的监督投影，不是连续谱收缩。有限样本、响应噪声、变量尺度和成分数都会影响结果，方向使用响应并不自动带来更低预测误差，应在相同验证目标下比较。

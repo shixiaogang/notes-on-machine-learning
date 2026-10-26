@@ -1,0 +1,164 @@
+\subsection{广义可加模型（GAM）}
+\label{sec:regression-gam}
+
+GLM中每个变量以单个线性项进入$\eta$，特征形式需要事先选定；若希望各变量的弯曲形状由数据在平滑约束下估计，而不是手工指定多项式次数，就把每个变量替换为一个待学的平滑函数，再把它们可加地合起来。\term{广义可加模型}（generalized additive model, GAM）正是这样做：弯曲由数据在基表示内决定。Hastie与Tibshirani在1986年提出这一框架\scite{hastie1986gam}。
+
+\subsubsection{模型结构}
+\label{sec:regression-gam-structure}
+
+在GLM链接下，预测器改为
+\begin{equation}
+  g(\mu_i)=\beta_0+\sum_{j=1}^d f_j(x_{ij}),
+  \label{eq:regression-gam}
+\end{equation}
+其中$\mu_i=\mathbb E[Y_i\mid\bm{x}_i]$，$g$为链接，$\beta_0$为截距，每个$f_j$是只以第$j$个特征为自变量的单变量平滑函数。可加性规定各变量贡献彼此相加：$x_j$对$\eta$的贡献形状不随其他变量取值改变。
+
+每个$f_j$用预定的惩罚样条基表示：设$f_j(x)=\bm{\phi}_j(x)^{\top}\bm{\beta}_j$，$\bm{\phi}_j:\mathbb R\to\mathbb R^{p_j}$为基向量，$\bm{\beta}_j\in\mathbb R^{p_j}$为其系数。\term{样条}把输入分段，段内用低次多项式、段间按指定阶数保证导数连续。一个常用构造是带结点$\xi_1<\cdots<\xi_K$的三次截断幂基：
+\[
+  \bm{\phi}_j(x)=\bigl(1,x,x^2,x^3,(x-\xi_1)_+^3,\ldots,(x-\xi_K)_+^3\bigr)^{\top},
+\]
+其中$(x-\xi_k)_+^3=\max(0,x-\xi_k)^3$；该基在每个结点处函数值、一阶、二阶导数连续，三阶导数允许跳跃。实际计算常换为数值条件更好的B样条基，张成的是同一个三次样条空间，结点约定相同即可。样条越弯曲二阶导数越大，因此用二阶导数的平方积分衡量不平滑程度，把它写成系数的二次型
+\[
+  J_j=\int [f_j''(t)]^2\,dt=\bm{\beta}_j^{\top}\bm{S}_j\bm{\beta}_j,
+\qquad
+  (\bm{S}_j)_{ab}=\int \phi_{j,a}''(t)\phi_{j,b}''(t)\,dt,
+\]
+$\bm{S}_j$是只由基函数决定的$p_j\times p_j$半正定惩罚矩阵。平滑度由$\lambda_j\ge0$控制：$\lambda_j$大则$\bm{\beta}_j^{\top}\bm{S}_j\bm{\beta}_j$代价高，函数被压得平直；$\lambda_j$小则允许曲折。
+
+为排除常数歧义，各条曲线在训练特征上中心化$\sum_i f_j(x_{ij})=0$，把截距$\beta_0$留给整体均值。把全部基行拼成增广设计$\bm{X}\in\mathbb R^{n\times P}$（$P=1+\sum_j p_j$，第$i$行为$(1,\bm{\phi}_1(x_{i1})^{\top},\ldots,\bm{\phi}_d(x_{id})^{\top})$）和总参数$\bm{\beta}=(\beta_0,\bm{\beta}_1^{\top},\ldots,\bm{\beta}_d^{\top})^{\top}$。把各$\bm{S}_j$按其在$\bm{\beta}$中的位置嵌入，得到$P\times P$的块对角惩罚矩阵
+\[
+  \bm{P}=\operatorname{blockdiag}(0,\lambda_1\bm{S}_1,\ldots,\lambda_d\bm{S}_d),
+\]
+零块对应截距（截距不受惩罚），总惩罚为$\frac12\bm{\beta}^{\top}\bm{P}\bm{\beta}=\frac12\sum_j\lambda_j\bm{\beta}_j^{\top}\bm{S}_j\bm{\beta}_j$。
+
+给定训练得到的系数$\widehat{\bm{\beta}}$与各变量的基函数$\bm{\phi}_j$，对新输入$\bm{x}_\star$的实际预测规则为：先用同一组基列算
+\[
+  \eta_\star=\widehat\beta_0+\sum_{j=1}^d\bm{\phi}_j(x_{\star j})^{\top}\widehat{\bm{\beta}}_j,
+\]
+再经链接反变换得$\widehat\mu_\star=g^{-1}(\eta_\star)$；基的结点位置与中心化沿用训练折的同一组定义，不在新点上重排。
+
+\subsubsection{参数学习}
+\label{sec:regression-gam-learning}
+
+\paragraph{惩罚IRLS}
+
+待学目标取为负对数似然（对全部观测求和）加惩罚：
+\[
+  J(\bm{\beta})=-\ell(\bm{\beta})+\frac12\bm{\beta}^{\top}\bm{P}\bm{\beta},
+\]
+似然与惩罚都用同一套求和约定，不再除以$n$。沿用第\ref{sec:regression-glm}节的记号：在当前$\bm{\beta}$处算出$\mu_i,\eta_i$，构造工作响应$z_i=\eta_i+g'(\mu_i)(y_i-\mu_i)$与对角权重$W_{ii}=1/[a(\varphi)V(\mu_i)g'(\mu_i)^2]$。GLM关于$\bm{\beta}$的\term{似然得分}（对数似然梯度）为$\bm{X}^{\top}\bm{W}(\bm{z}-\bm{X}\bm{\beta})$；负对数似然的梯度就是它取负号$\bm{X}^{\top}\bm{W}(\bm{X}\bm{\beta}-\bm{z})$。把得分置零并加入惩罚后得到驻点方程
+\[
+  \bm{X}^{\top}\bm{W}\bm{X}\,\bm{\beta}
+  +\bm{P}\bm{\beta}
+  =\bm{X}^{\top}\bm{W}\bm{z},
+\]
+即每轮解线性方程
+\begin{equation}
+  \left(\bm{X}^{\top}\bm{W}\bm{X}+\bm{P}\right)\widehat{\bm{\beta}}
+  =\bm{X}^{\top}\bm{W}\bm{z}.
+  \label{eq:regression-gam-irls}
+\end{equation}
+
+它等价于令负对数似然梯度$\bm{X}^{\top}\bm{W}(\bm{X}\widehat{\bm{\beta}}-\bm{z})$与惩罚梯度$\bm{P}\widehat{\bm{\beta}}$（$\bm{P}$为块对角，只作用在对应变量的系数段上）之和为零。用新$\widehat{\bm{\beta}}$重算$\mu,\eta,\bm{z},\bm{W}$并迭代，直到参数或得分变化小于容差；线性方程组用直接分解求解。中心化约束已并入基设计（各$\bm{\phi}_j$列已在训练点上正交于常数），不再另加等式约束；$\bm{P}=\bm 0$时系统退回GLM的IRLS正规方程。
+
+\paragraph{高斯恒等链接的backfitting}
+
+高斯恒等链接（$g(\mu)=\mu$、$V(\mu)=1$、$a(\varphi)=\sigma^2$）下$W_{ii}=1/\sigma^2$为常数，式\eqref{eq:regression-gam-irls}退化为单一带惩罚线性最小二乘。此时可按坐标方式交替更新：固定其余$f_k$，把当前部分残差
+\[
+  r_i=y_i-\beta_0-\sum_{k\ne j}f_k(x_{ik})
+\]
+作为第$j$个平滑函数的响应，用惩罚样条拟合$r_i$并在训练点上中心化，得到新的$f_j$；再轮换到下一个变量。各轮更新的对象就是该变量在部分残差中的弯曲形状，循环到曲线变化很小为止。当所有$\lambda_j$固定时，这套逐变量更新与式\eqref{eq:regression-gam-irls}的联合解相同；backfitting只是避免一次拼装大设计矩阵的等价循环。
+
+\paragraph{平滑参数的选择}
+
+每个$\lambda_j$是外层配置：内层系数由式\eqref{eq:regression-gam-irls}解出后，外层按训练内预测误差、GCV（见理论段）或REML选择$\lambda_j$。REML把惩罚项$\frac12\lambda_j\bm{\beta}_j^{\top}\bm{S}_j\bm{\beta}_j$解释为对系数的高斯先验精度，在积分掉系数后估计$\lambda_j$，避免把待估系数误当已知信息\scite{wood2011reml}。对每组$\bm{\lambda}=(\lambda_1,\ldots,\lambda_d)$重新拟合一次，比较外层准则。
+
+\subsubsection{理论分析}
+\label{sec:regression-gam-theory}
+
+\paragraph{惩罚零空间与可识别性}
+
+$\bm{S}_j$是二阶导数积分。在基函数张成$\mathbb R$上仿射函数且无冗余的前提下，其二阶导数为零的方向恰由常数与一次函数组成；等价地说，惩罚不直接惩罚$f_j$的仿射（常数与线性）部分——这些系数仍由数据拟合决定、会随观测改变，只是不被$\lambda_j$压缩，只有弯曲成分受到惩罚。因此$\lambda_j$无论多大，惩罚只压平弯曲成分，保留线性趋势，不会把$f_j$整个压成常数；常数列方向由截距承担、由中心化排除。可加性是明确的结构假设：变量之间的交互不会自动出现，需要显式加入（见后文交互段）。每条$f_j$可单独画出，这是GAM相对黑箱模型的便利；代价是真实强交互被可加结构错过。
+
+\paragraph{留一误差与GCV}
+
+固定给定的基与惩罚矩阵，且全量拟合与留一重拟合对应的线性系统均可逆、$1-S_{ii}\neq0$。此时拟合值可写成$\widehat{\bm{\mu}}=\bm{S}\bm{y}$，$\bm{S}$为由$\bm{X},\bm{W},\lambda_j$决定的平滑矩阵。删除第$i$条记录重拟合时，由Sherman--Morrison公式，新预测与原预测之差只通过杠杆$S_{ii}$起作用，留一残差为
+\[
+  y_i-\widehat{\mu}_{(-i),i}=\frac{y_i-\widehat\mu_i}{1-S_{ii}}.
+\]
+分母$1-S_{ii}$记录第$i$条记录对自身预测的贡献：$S_{ii}$越接近$1$，它几乎自己决定了自己的拟合，修正越大。留一交叉验证准则为
+\begin{equation}
+  \mathrm{LOOCV}=\frac{1}{n}\sum_{i=1}^n
+    \left(\frac{y_i-\widehat\mu_i}{1-S_{ii}}\right)^2,
+  \label{eq:regression-gam-loocv}
+\end{equation}
+不必为每个$i$真的重拟合一次。把各$S_{ii}$近似用其平均$\operatorname{tr}\bm{S}/n$替代，得到GCV
+\begin{equation}
+  \mathrm{GCV}=\frac{n\cdot\mathrm{RSS}}{(n-\operatorname{tr}\bm S)^2},
+  \label{eq:regression-gam-gcv}
+\end{equation}
+其中$\mathrm{RSS}=\sum_i(y_i-\widehat\mu_i)^2$，$\operatorname{tr}\bm S$称为有效自由度。$\lambda_j$小时有效自由度大，曲线可能追着训练噪声跑、倾向过拟合；$\lambda_j$大时有效自由度小，曲线可能被压平、漏掉真实弯曲而欠拟合。GCV的折衷就在两者之间取最优。该近似假设各记录杠杆相近；数据依赖、自适应选基的平滑程序不自动满足这套恒等式。
+
+\subsubsection{交互项}
+\label{sec:regression-gam-interactions}
+
+可加模型无法表示一般乘积关系：$f_j(x_j)+f_k(x_k)$中$x_j$的效应不随$x_k$改变。需要两变量共同作用时，把对应两个可加项替换为双变量平滑
+\[
+  f_{jk}(x_j,x_k)=\sum_{a,b}\beta_{ab}\,\phi_{j,a}(x_j)\phi_{k,b}(x_k),
+\]
+即用两个单变量基的张积构造张量积基。弯曲度分别按两个方向度量，惩罚取
+\[
+  \lambda_{jk}^{(1)}\!\int\!\!\int\!\left(\frac{\partial^2 f_{jk}}{\partial x_j^2}\right)^2 dx_j dx_k
+  +\lambda_{jk}^{(2)}\!\int\!\!\int\!\left(\frac{\partial^2 f_{jk}}{\partial x_k^2}\right)^2 dx_j dx_k,
+\]
+两个平滑参数都以该交互项$(j,k)$为下标，分别控制沿$x_j$与沿$x_k$两个方向的弯折。
+其离散形式仍是系数的二次型，可嵌入$\bm{P}$的对应块（两个方向各一块）后加入式\eqref{eq:regression-gam-irls}。这样$x_j,x_k$的主效应已包含在张积基里，不再另加单变量项；平滑参数同样由CV、GCV或REML选择。双变量需要二维输入覆盖，样本稀疏区域的外推不稳定，解释成本也随变量数上升。
+
+\subsubsection{变化的响应波动：可加位置与尺度模型}
+\label{sec:regression-distributional}
+
+GAM只建模均值$\mu$；方差随输入变化时，同均值、不同波动的两组响应需要分别预测，这就是\term{位置尺度模型}（location-scale model）。以高斯响应为例，设
+\[
+  Y_i\mid\bm{x}_i\sim N(\mu_i,\sigma_i^2),\qquad
+  \log\sigma_i=\gamma_0+\sum_j h_j(x_{ij}),
+\]
+均值与对数尺度各有一套可加预测器（用同一组惩罚样条基），$\mu_i=\beta_0+\sum_j f_j(x_{ij})$。记$r_i=y_i-\mu_i$、令$\nu_i=\log\sigma_i$，共同的负对数似然（对全部观测求和）为
+\[
+  -\ell=\sum_{i=1}^n\left[
+    \frac{r_i^2}{2\sigma_i^2}
+    +\nu_i+\frac12\log(2\pi)\right].
+\]
+对均值的导数为$\partial(-\ell)/\partial\mu_i=-r_i/\sigma_i^2$；对对数尺度$\nu_i$，注意$\sigma_i^2=e^{2\nu_i}$，第一项给出$-r_i^2/\sigma_i^2$、第二项$\nu_i$自身导数为$1$，故
+\[
+  \frac{\partial(-\ell)}{\partial\nu_i}
+  =1-\frac{r_i^2}{\sigma_i^2}.
+\]
+沿链到系数：把梯度乘上预测器对系数的导数。
+
+均值预测器$\eta^\mu_i=\beta_0+\sum_j\bm{\phi}_j(x_{ij})^{\top}\bm{\beta}_j$（恒等链接，$\partial\mu_i/\partial\beta_0=1$、$\partial\mu_i/\partial\bm{\beta}_j=\bm{\phi}_j(x_{ij})$）给出
+\[
+  \frac{\partial(-\ell)}{\partial\beta_0}
+  =-\sum_i\frac{r_i}{\sigma_i^2},
+  \qquad
+  \frac{\partial(-\ell)}{\partial\bm{\beta}_j}
+  =-\sum_i\frac{r_i}{\sigma_i^2}\,\bm{\phi}_j(x_{ij}),
+\]
+对数尺度预测器$\eta^\nu_i=\gamma_0+\sum_j\bm{\phi}_j(x_{ij})^{\top}\bm{\gamma}_j$给出
+\[
+  \frac{\partial(-\ell)}{\partial\gamma_0}
+  =\sum_i\left(1-\frac{r_i^2}{\sigma_i^2}\right),
+  \qquad
+  \frac{\partial(-\ell)}{\partial\bm{\gamma}_j}
+  =\sum_i\left(1-\frac{r_i^2}{\sigma_i^2}\right)\bm{\phi}_j(x_{ij}).
+\]
+
+给均值与尺度各嵌一个块对角惩罚$\bm{P}_\mu,\bm{P}_\nu$（同式\eqref{eq:regression-gam-irls}的构造，截距对应零块、不惩罚），其中$\bm{\gamma}=(\gamma_0,\bm{\gamma}_1^{\top},\ldots,\bm{\gamma}_d^{\top})^{\top}$为含截距的总向量，共同目标为$J=-\ell+\frac12\bm{\beta}^{\top}\bm{P}_\mu\bm{\beta}+\frac12\bm{\gamma}^{\top}\bm{P}_\nu\bm{\gamma}$。
+
+交替迭代：固定$\sigma_i$，令$\beta$的负对数似然梯度与惩罚梯度之和为零，即
+\[
+  (\bm{X}^{\top}\operatorname{diag}(1/\sigma_i^2)\bm{X}+\bm{P}_\mu)\widehat{\bm{\beta}}
+  =\bm{X}^{\top}\operatorname{diag}(1/\sigma_i^2)\bm{y},
+\]
+与式\eqref{eq:regression-gam-irls}同形，权重由当前$\sigma_i^2$给出；固定$\mu_i$，令$\gamma$的负对数似然梯度（即上式的$\partial(-\ell)/\partial\gamma_0$与$\partial(-\ell)/\partial\bm{\gamma}_j$）与惩罚梯度$\bm{P}_\nu\bm{\gamma}$之和为零，按负梯度步或其Newton步对$\gamma_0,\bm{\gamma}_j$更新。两轮交替到两边负对数似然梯度加惩罚的范数小于容差\scite{rigby2005gamlss}。
+
+若不加$\bm{P}_\nu$，尺度曲线就没有任何平滑约束、会直接追着$r_i^2/\sigma_i^2-1$的波动跑。注意尺度段不是“把平方残差当响应走同一IRLS”：它的负对数似然梯度是$1-r_i^2/\sigma_i^2$，没有与之同形的平方损失权重，必须直接按上式更新。更一般的GAMLSS对每个分布参数（位置、尺度、偏度等）各建一套可加预测器并配各自的块惩罚，再写共同负对数似然并逐参数求负对数似然梯度加惩罚、交替置零。响应波动（噪声本身随输入变化）与函数估计的不确定性是两件事：前者由这里的尺度预测器描述，后者由参数或函数后验描述，两者可以结合却承担不同的建模选择。

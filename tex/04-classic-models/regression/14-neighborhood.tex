@@ -1,0 +1,109 @@
+\section{基于邻域的回归}
+\label{sec:regression-instance}
+
+全局线性模型假设同一条直线或平面适用于整个输入空间；真实关系可能在不同区域弯曲、转折，统一参数反而处处拟合不好。基于邻域的回归放弃全局参数，只为查询点$\bm{x}_\star$找出附近的训练记录，用它们的局部信息作预测。近邻表示与检索的基础见第\ref{sec:classic-overview-neighborhood}节。
+
+\subsection{k近邻回归}
+\label{sec:regression-knn}
+
+\subsubsection{模型结构}
+\label{sec:regression-knn-structure}
+
+\term{$k$近邻回归}（$k$-nearest neighbor regression）保存全部训练实例，按距离找出与$\bm{x}_\star$最近的$k$条记录，取其响应平均：
+\begin{equation}
+  \widehat f(\bm{x}_\star)
+  =\frac{1}{k}\sum_{i\in N_k(\bm{x}_\star)}y_i,
+  \label{eq:regression-knn}
+\end{equation}
+其中$N_k$为恰含$k$条记录的邻居集合，输出为数值响应平均；距离可取欧氏距离或\term{马氏距离}（Mahalanobis distance，按各特征方差归一化后的距离，量纲大的特征不会天然占优）。距离计算前先按训练折标准化各特征尺度，避免量纲主导，并列与零距离另有约定。$k=1$逐点跟随最近记录，$k=n$退化为整体均值，两端分别对应高方差与高偏差。
+
+给定训练得到的参考记录集与选定的$k$、距离尺度，对新输入$\bm{x}_\star$的实际预测规则为：计算$\bm{x}_\star$到全部训练记录的距离，按升序取前$k$条组成$N_k(\bm{x}_\star)$，再按式\eqref{eq:regression-knn}聚合它们的响应。距离相同而邻居不足$k$条时，按预先约定的规则取满（如放宽到平局全部纳入）。朴素扫描对每条新查询要算$n$个距离；样本大时可用精确树索引或近似检索加速，但近似检索可能改变邻居集合，速度收益与预测误差要分别核验，它不改变预测规则本身。
+
+\subsubsection{参数学习}
+\label{sec:regression-knn-learning}
+
+\paragraph{训练记录与邻域配置}
+
+kNN没有显式训练参数，训练集本身就是模型：需要保存的是全部训练记录、它们的标准化参数，以及选定的邻居数$k$与距离尺度。$k$和距离配置在训练折内选定，验证点不进入自己的邻居库；没有待拟合的系数，但仍要在训练内确定这些配置并保存可复用的参考记录。
+
+\subsubsection{理论分析}
+\label{sec:regression-knn-theory}
+
+\paragraph{有限邻域的误差分解}
+
+在输入决定邻居、条件独立零均值噪声与方差有界的设定下，把误差分为邻域函数变化与噪声平均两部分：$k$小则局部追随训练波动，估计方差大、偏差小；$k$大则平均平滑，方差小但可能把远处无关记录也平均进来，偏差增大。若真实函数在局部 Lipschitz 连续，邻居半径随$k$增长，偏差量级约为半径，方差量级约为$\sigma^2/k$，两者随$k$此消彼长。高维空间中所有点彼此距离相近，邻居不再“近”，这是维数灾难下kNN失效的原因——特征很多时任意两点距离都差不多，“近邻”不再真的近。重复抽样下的偏差—方差分解与第\ref{sec:regression-regularization}节一致，不给无条件排序。
+
+\paragraph{样本增加时的一致性}
+
+在有限维欧氏输入、独立同分布、有限响应二阶矩及适当并列规则下，只要邻居数$k$随$n$增长但$k/n$趋于零，kNN估计就一致收敛到条件均值：邻居越来越近（$k/n\to0$），而平均的记录越来越多（$k\to\infty$），两者分别压掉偏差与方差。
+
+\subsubsection{支持距离加权}
+\label{sec:regression-knn-weighted}
+
+等权平均忽略邻居远近。给每条邻居一个非负权重并归一化，预测变为加权均值
+\[
+  \widehat f(\bm{x}_\star)=\frac{\sum_{i\in N_k}w_i y_i}{\sum_{i\in N_k}w_i},
+  \qquad
+  w_i=\exp\!\left(-\frac{d_i^2}{2h^2}\right),
+\]
+$d_i$为邻居到查询的距离，$h$控制衰减快慢；查询与某邻居重合时$d_i=0$，权重取$1$，不会除零。$h$大则衰减平缓、接近等权；$h$小则只有极近邻居起作用，相当于把有效样本数降到很少。在独立噪声方差$\sigma^2$下，加权均值的条件方差为$\sigma^2\sum_i w_i^2/(\sum_i w_i)^2$：权重越集中，$\sum_i w_i^2/(\sum_i w_i)^2$越接近$1$（等效样本少），方差越大。衰减宽度$h$与邻居数$k$一起由训练内验证选择；距离更近不自动意味着响应更可靠，检索索引只改变计算。
+
+\subsection{局部加权回归（LOESS）}
+\label{sec:regression-loess}
+
+kNN只对邻居响应作常数平均，在查询位于一段倾斜趋势上时，平均会落在段内中点而非查询处。\term{局部加权回归}（LOESS，局部回归）在邻域内拟合一条局部直线，让查询处的切线反映局部斜率。Cleveland在1979年给出稳健局部回归的系统形式\scite{cleveland1979lowess}。
+
+\subsubsection{模型结构}
+\label{sec:regression-loess-structure}
+
+对查询$\bm{x}_0$，在其邻域内最小化核加权局部多项式目标
+\begin{equation}
+  \sum_{i=1}^n K_h(\bm{x}_i-\bm{x}_0)
+    \left[y_i-b-\bm{w}^{\top}(\bm{x}_i-\bm{x}_0)\right]^2,
+  \label{eq:regression-local-polynomial}
+\end{equation}
+$K_h$为带宽$h$的核权重，距离越近权重越大；常数、一次、二次分别改变局部表达能力，一次局部线性在$\bm{x}_0$处给出预测$b$。距离权重核与特征内积核含义不同，带宽决定局部有效样本范围，新查询会改变局部问题。
+
+\subsubsection{参数学习}
+\label{sec:regression-loess-learning}
+
+对固定查询$\bm{x}_0$，式\eqref{eq:regression-local-polynomial}关于$(b,\bm{w})$是加权最小二乘。令$\widetilde{\bm{X}}_0$为把各邻居记录的$(\bm{x}_i-\bm{x}_0)$拼起、并在第一列补$1$后的$n\times(d+1)$矩阵，$\bm{W}_0=\operatorname{diag}(K_h(\bm{x}_i-\bm{x}_0))$，加权正规方程为
+\[
+  \widetilde{\bm{X}}_0^{\top}\bm{W}_0\widetilde{\bm{X}}_0
+  \begin{pmatrix}b\\\bm{w}\end{pmatrix}
+  =\widetilde{\bm{X}}_0^{\top}\bm{W}_0\bm{y}.
+\]
+查询处的预测就是解出的$b$：它是各邻居响应的线性组合，$\widehat f(\bm{x}_0)=\sum_i l_i(\bm{x}_0)y_i$，权重向量$\bm{l}(\bm{x}_0)$由上述正规方程的第一行系数给出。该矩阵要求有效（权重大于零的）记录数至少为$d+1$且设计列满秩，否则局部斜率无法确定；这时应扩大邻域带宽$h$，或退回到局部常数。带宽$h$、局部多项式阶数和预处理由训练内验证确定，每个新查询都要重新解一次这个局部加权最小二乘。
+
+\subsubsection{理论分析}
+\label{sec:regression-loess-theory}
+
+由式\eqref{eq:regression-local-polynomial}求和可得$\sum_i l_i=1$、$\sum_i l_i(x_i-x_0)=0$。所以对于一次函数$m(x)=a+bx$，即使邻居都在查询的一侧，仍有$\sum_i l_i m(x_i)=m(x_0)$；局部斜率消去了平均输入不等于查询输入带来的一阶偏差。对光滑曲线，Taylor展开的常数项与一次项同样被再现，剩下的是曲率与更高阶变化\scite{fan1996local}。在固定权重与独立噪声方差$\sigma^2$下，预测条件方差为$\sigma^2\sum_i l_i^2$；与局部常数不同，局部线性权重$l_i$可能为负（为了抵消邻域的平均偏移），退化的局部设计会放大这个方差。偏差随带宽减小而下降，但方差同时上升，总误差不保证单调改善。
+
+\subsubsection{局部常数特例：Nadaraya--Watson平滑}
+\label{sec:regression-nadaraya-watson}
+
+邻域中若只有一个有效输入，局部斜率无法确定；即使样本更多，估计斜率也可能带来不需要的噪声放大。只保留局部常数就能减少待估参数，同时保留按距离区别观测的方式。在式\eqref{eq:regression-local-polynomial}中只拟合截距，对截距求导便得到\term{Nadaraya--Watson核平滑}（Nadaraya--Watson kernel smoothing）
+\begin{equation}
+  \widehat f(\bm{x}_0)
+  =\frac{\sum_i K_h(\bm{x}_i-\bm{x}_0)y_i}
+         {\sum_i K_h(\bm{x}_i-\bm{x}_0)},
+  \label{eq:regression-nw}
+\end{equation}
+分子核加权响应和，分母核权重和归一化。Nadaraya与Watson在1964年分别提出这一估计\scite{nadaraya1964,watson1964}。对照局部线性解释单侧偏差与方差取舍，区分距离权重核与内积核；边界处邻居只来自一侧，核权重和偏小，常数估计产生边界偏差，局部线性的一阶再现能缓解这一问题。图\ref{fig:regression-neighborhood}展示邻居搜索与局部平均的关系。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=105.412mm]{figures/04-classic-models/00-shared/matplotlib/regression-neighborhood/figure.pdf}
+  \caption{邻域回归的查询几何。星号为查询点，圆圈为训练样本，浅色圆标出邻域；预测由邻域内记录按距离加权平均或局部拟合得到。远离查询的记录不参与。}
+  \label{fig:regression-neighborhood}
+\end{figure}
+
+\subsubsection{支持异常响应：稳健LOESS}
+\label{sec:regression-loess-robustness}
+
+局部拟合同样会被邻域内的异常响应带偏：距离近不等于响应可靠。\term{稳健LOESS}（robust LOESS）在局部线性拟合之后，按残差大小重新赋权。记当前拟合残差$r_i=y_i-\widehat f(\bm{x}_i)$，取中位数绝对偏差$M=1.4826\,\operatorname{median}|r_i|$作为稳健尺度，对残差小的记录给双权重
+\[
+  u_i=\left(1-\bigl(r_i/(6M)\bigr)^2\right)^2,\qquad |r_i|<6M,
+\]
+超出$6M$的记录$u_i=0$。把这个$u_i$乘进原核权重后重新做局部加权最小二乘，再重算残差、重算$u_i$，迭代若干轮。这样异常点在后续轮次几乎不参与局部直线，而不必在全局删除样本。尺度$M$、双权重截止$6M$与带宽、局部阶数一起由训练内验证控制；响应一旦依赖这些权重，预测权重不再是固定的线性算子结论。

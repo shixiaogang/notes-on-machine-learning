@@ -1,0 +1,69 @@
+\subsection{核岭回归（KRR）}
+\label{sec:regression-krr}
+
+基函数回归与MARS都需要先给出显式基；当特征维数很高甚至无限（例如多项式全部乘积项）时，显式写出基不现实。\term{核岭回归}（kernel ridge regression, KRR）借助核内积在隐式特征空间中做带惩罚的平方拟合，训练目标独立建立；它与高斯过程后验均值的对应留到第\ref{sec:regression-gpr}节，在均值、核与噪声尺度匹配的条件下比较。
+
+\subsubsection{模型结构}
+\label{sec:regression-krr-structure}
+
+采用本卷概述中已经建立的合法核及其特征空间，给$f(\bm{x})=b+\langle\bm{w},\Phi(\bm{x})\rangle$与平均半平方损失加$\lambda\lVert\bm{w}\rVert^2/2$的目标，限定$\lambda>0$。截距不惩罚，待学习量与核配置分别说明；核范数衡量的是特征空间函数，而不是原始输入坐标上的斜率。在RKHS$\mathcal H_k$中，函数$f$的拟合误差加范数惩罚目标为
+\begin{equation}
+  \min_{f\in\mathcal H_k}
+  \frac{1}{2n}\sum_{i=1}^n(y_i-f(\bm{x}_i))^2
+  +\frac{\lambda}{2}\lVert f\rVert_{\mathcal H_k}^2,
+  \qquad\lambda>0.
+  \label{eq:regression-krr-objective}
+\end{equation}
+第一项是半平方拟合（与OLS的$1/(2n)$约定一致），第二项限制函数在核空间中的幅度；取$\lambda/2$因子是为了让对偶正规方程写成$\bm{K}+n\lambda\bm{I}$；惩罚不规定响应分布，也不产生后验方差。
+
+由表示定理，核空间中加范数惩罚时最优函数必是训练点核函数的线性组合，因此只需学这$n$个系数：
+\[
+  f(\bm{x})=b+\sum_{i=1}^n a_iK(\bm{x}_i,\bm{x}),
+\]
+其中核矩阵$\bm{K}_{ij}=k(\bm{x}_i,\bm{x}_j)$由核函数与训练输入直接算出，是数据导出量；真正待学的是对偶系数$\bm{a}$与截距$b$，$\bm{K}$只是它们的载体。平方目标与SVR不敏感损失仍有区别。
+
+给定训练得到的$\bm{a},b$与训练输入$\{\bm{x}_i\}_{i=1}^n$，对新输入$\bm{x}_\star$的实际预测规则为：用同一核函数计算$\bm{x}_\star$到全部训练样本的核向量$k(\bm{x}_i,\bm{x}_\star)$，代入
+\[
+  \widehat f(\bm{x}_\star)=b+\sum_{i=1}^n a_i\,k(\bm{x}_i,\bm{x}_\star).
+\]
+若特征空间也要中心化（中心化的训练估计见参数学习段），则核矩阵按$\bm{H}\bm{K}\bm{H}$改写，新点核向量也减同一个由训练导出的均值；预测时不重新估计任何参数。
+
+\subsubsection{参数学习}
+\label{sec:regression-krr-learning}
+
+\paragraph{最优性条件与核矩阵求解}
+
+从特征空间的一阶最优条件得到
+\[
+  \bm{w}=-n^{-1}\lambda^{-1}\sum_i e_i\Phi(\bm{x}_i),\qquad \sum_i e_i=0,
+\]
+其中$e_i=f(\bm{x}_i)-y_i$。代入表示定理$f=\sum_i a_i k(\cdot,\bm{x}_i)$，惩罚项为$\lambda\lVert f\rVert^2_{\mathcal H_k}=\lambda\bm{a}^{\top}\bm{K}\bm{a}$（$\bm{K}_{ij}=k(\bm{x}_i,\bm{x}_j)$），故对核系数$a_j$的梯度为
+\begin{equation}
+  \frac{\partial J}{\partial a_j}
+  =\frac1n\sum_{i=1}^{n}e_i\,k(\bm{x}_i,\bm{x}_j)+\lambda(\bm{K}\bm{a})_j,
+  \label{eq:regression-krr-grad-a}
+\end{equation}
+惩罚导数含核矩阵$\bm{K}$，不是直接对$\lambda a_j$求导。
+
+令$\nabla_{\bm a}J=\bm 0$（连同截距驻点条件$\sum_i e_i=0$），即得下面的线性方程组；KRR直接解这个线性系统，不走迭代梯度下降。由$\partial J/\partial a_j=0$得$e_i=-n\lambda a_i$，逐步代入训练得分，得到关于$\bm{a},b$的线性方程组
+\[
+  \begin{aligned}
+    (\bm{K}+n\lambda\bm{I})\bm{a}+b\bm{1}&=\bm{y},\\
+    \bm{1}^{\top}\bm{a}&=0,
+  \end{aligned}
+\]
+先分解正定矩阵$\bm{K}+n\lambda\bm{I}$，再结合截距方程解出$\bm{a},b$；也可把两式组成增广系统，或用Schur补先消去$b$再求解。整个过程只做分解与回代，不显式求逆。如果均值已知并固定$b=0$，去掉关于截距的驻点条件，直接解
+\begin{equation}
+  (\bm{K}+n\lambda\bm{I})\bm{a}=\bm{y},
+  \label{eq:regression-krr-dual}
+\end{equation}
+其中$\bm{K}_{ij}=k(\bm{x}_i,\bm{x}_j)$；这与估计未惩罚截距的模型不同，为后面与零均值GP的比较提供同一基准。
+
+\paragraph{核中心化的训练估计与配置选择}
+
+若特征空间也要中心化，则在训练折内算核中心化$\bm{H}\bm{K}\bm{H}$（$\bm{H}=\bm{I}-\frac1n\mathbf{1}\mathbf{1}^{\top}$），即在特征空间里减去训练特征均值，与线性设计的中心化是同一操作的核版本；这组中心化只由训练数据估计，新点核向量的用法见模型结构段。核类型、长度尺度与正则强度$\lambda$在训练内共同选择；核矩阵存储与分解随样本数增长，核方法省去显式坐标，但不会自动减小样本维度上的矩阵问题。
+
+\subsubsection{性质与模型关系}
+\label{sec:regression-krr-theory}
+
+$\lambda>0$使$\bm{K}+n\lambda\bm{I}$正定，最优函数及截距唯一；不同系数$\bm{a}$仍可能表示同一函数（核线性相关时），区分函数唯一与任意核展开系数唯一，正则强度控制的范数与所用核共同决定候选函数。与有限基岭回归对照：两者都是平方损失加二次惩罚，KRR把显式基换成核内积，系数从基坐标变成样本组合；与核SVR对照：KRR用平方损失、全部样本进入解，SVR用$\epsilon$不敏感损失、只有支持向量非零，两者都用核内积与范数惩罚，损失与稀疏机制不同。KRR目标本身没有规定响应分布或后验方差，不能把高斯过程的后验协方差转移给它；与固定零均值GP后验均值的对应，按第\ref{sec:regression-gpr}节给出的参数条件比较。

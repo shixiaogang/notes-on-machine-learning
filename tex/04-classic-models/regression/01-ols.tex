@@ -1,0 +1,74 @@
+\section{线性回归}
+\label{sec:regression-linear}
+
+预测房价的一个起点，是给输入特征各配一个参数，用它们的加权和表示整体趋势。要由数据选出参数，先要规定什么误差值得减小，以及多大的参数变化可以接受。普通最小二乘用平方残差评价拟合；观测精度不同或误差相关时，加权与广义最小二乘调整残差的度量；特征彼此高度相关时，带惩罚项的目标收缩或选择参数，主成分回归与偏最小二乘则先改换回归方向；异常响应、非对称代价与容忍误差分别引出Huber回归、分位数回归与支持向量回归。原始特征的线性关系不足时，基函数回归、MARS与核岭回归改变输入表示；响应的取值范围与分布特征，则由广义线性模型与广义可加模型处理。
+
+本节各模型都保留“对特征作全局线性加权”的骨架，只在三个环节上改变它：误差怎样计分、参数怎样受约束、特征或响应结构怎样表示。这些环节可以组合，下面按“先建立平方拟合，再依次改变误差度量、参数约束、回归方向、残差目标、特征表示与响应结构”的顺序展开，最后在第\ref{sec:regression-linear-relation}节把它们放在一起比较。
+
+\subsection{普通最小二乘（OLS）}
+\label{sec:regression-ols}
+
+同一输入可能对应不同的观测响应，因而很难找到一条穿过所有样本的直线。先看一个教学例子：$x=0$处的响应为$2,4$，$x=1$处的响应为$4,6$。两处各有两个不同数值，精确插值已经不可能；若用平方残差计分，两个位置分别取均值$3,5$最合适，对应直线$f(x)=3+2x$。\term{普通最小二乘}（ordinary least squares, OLS）把这种选择推广为：在仿射函数族中寻找残差平方和最小的参数。平方损失让正、负误差受到相同惩罚，也让大误差付出更高代价。
+
+\subsubsection{模型结构}
+\label{sec:regression-ols-structure}
+
+设输入$\bm{x}\in\mathbb{R}^{d}$，数值响应$y\in\mathbb{R}$。预测取原始输入上的仿射函数
+\begin{equation}
+  f(\bm{x})=b+\bm{w}^{\top}\bm{x},
+  \label{eq:regression-ols-model}
+\end{equation}
+其中$b$为截距，$\bm{w}\in\mathbb{R}^{d}$为斜率参数。在观测模型$y_i=b+\bm{w}^{\top}\bm{x}_i+\varepsilon_i$、$\varepsilon_i$独立同分布$N(0,\sigma^2)$下，写出似然
+\[
+  p(\bm{y}\mid\bm{w},b,\sigma^2)
+  =\prod_{i=1}^{n}\frac{1}{\sqrt{2\pi}\,\sigma}
+    \exp\!\left[-\frac{(y_i-b-\bm{w}^{\top}\bm{x}_i)^2}{2\sigma^2}\right],
+\]
+取对数得
+\[
+  \log p(\bm{y}\mid\bm{w},b,\sigma^2)
+  =-\frac{n}{2}\log(2\pi\sigma^2)
+    -\frac{1}{2\sigma^2}\sum_{i=1}^{n}(y_i-b-\bm{w}^{\top}\bm{x}_i)^2.
+\]
+第一项只含$\sigma$，对$(\bm{w},b)$是常数；第二项中$\sigma^2$也是正的常数因子。因此对$(\bm{w},b)$最大化对数似然，等价于最小化残差平方和，也就是OLS目标（采用与全节一致的$1/2n$约定）
+\begin{equation}
+  (\widehat{\bm{w}},\widehat b)
+  \in\argmin_{\bm{w},b}\ J(\bm{w},b),
+  \qquad
+  J(\bm{w},b)=\frac{1}{2n}\sum_{i=1}^{n}
+    \bigl(y_i-b-\bm{w}^{\top}\bm{x}_i\bigr)^2,
+  \label{eq:regression-ols-objective}
+\end{equation}
+因子$1/(2n)$不改变最优解，只是把梯度写成单记录误差的平均，后续梯度与更新都沿用这一约定。
+
+图\ref{fig:regression-ols-residuals}把这个目标放回输入与响应平面：每条虚线都是固定$x_i$之后，观测$y_i$与直线预测之间的纵向差。OLS选择让这些响应方向上的差的平方和最小的直线，因此拟合线通常不穿过每个样本；图中的距离沿响应轴测量，区别于点到直线的垂直几何距离。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=105.412mm]{figures/04-classic-models/00-shared/matplotlib/regression-ols-residuals/figure.pdf}
+  \caption{一维OLS与响应残差。七个构造样本的最小二乘直线为$\widehat f(x)=1+0.5x$；蓝色实心点表示观测，绿色实线表示预测，红色竖虚线表示$r_i=y_i-\widehat f(x_i)$。横、纵轴均为无量纲教学变量。}
+  \label{fig:regression-ols-residuals}
+\end{figure}
+
+\subsubsection{参数学习}
+\label{sec:regression-ols-learning}
+
+\paragraph{显式梯度与参数更新}
+
+对式\eqref{eq:regression-ols-objective}求导：每条记录$(y_i-b-\bm{w}^{\top}\bm{x}_i)^2$对$\bm{w}$的导数为$-2(y_i-b-\bm{w}^{\top}\bm{x}_i)\bm{x}_i$、对$b$的导数为$-2(y_i-b-\bm{w}^{\top}\bm{x}_i)$，除以$2n$后
+\[
+  \nabla_{\bm w}J
+  =\frac1n\sum_{i=1}^{n}\bigl(b+\bm{w}^{\top}\bm{x}_i-y_i\bigr)\bm{x}_i,
+  \qquad
+  \frac{\partial J}{\partial b}
+  =\frac1n\sum_{i=1}^{n}\bigl(b+\bm{w}^{\top}\bm{x}_i-y_i\bigr).
+\]
+两个梯度用同一轮参数计算。沿负方向按步长$\eta$迭代：
+\begin{align}
+  \bm{w}^{(t+1)}
+  &=\bm{w}^{(t)}-\frac{\eta}{n}\sum_{i=1}^{n}\bigl(b^{(t)}+\bm{w}^{(t)\top}\bm{x}_i-y_i\bigr)\bm{x}_i,\\
+  b^{(t+1)}
+  &=b^{(t)}-\frac{\eta}{n}\sum_{i=1}^{n}\bigl(b^{(t)}+\bm{w}^{(t)\top}\bm{x}_i-y_i\bigr).
+  \label{eq:regression-ols-gradient}
+\end{align}
+以教学例验证：$\widehat b=3$、$\widehat w=2$时，四项$b+wx_i-y_i$分别为$3+0-2=1$、$3+0-4=-1$、$3+2-4=1$、$3+2-6=-1$；$\partial J/\partial b=(1-1+1-1)/4=0$，$\nabla_{\bm w}J$中各项乘$x_i$后为$0,0,1,-1$，和为零，偏导数确实在该处为零。梯度置零给出关于$(\bm{w},b)$的线性方程组（正规方程），也可一次解出闭式参数。

@@ -1,0 +1,51 @@
+\subsection{广义最小二乘（GLS）}
+\label{sec:regression-gls}
+
+WLS只调整每条记录自己的误差方差。另一种常见缺口是误差彼此相关：时间序列中相邻时期的冲击会延续，同一周采集的多次观测共享当天的系统漂移，此时$\operatorname{Cov}(\varepsilon_i,\varepsilon_j)\neq0$。OLS和WLS都把残差逐条独立看待，无法反映这种关联；联合起来看，单看每条残差都很小的拟合，若同向残差成串出现，可能并不自洽。\term{广义最小二乘}（generalized least squares, GLS）把整条误差向量的联合协方差纳入残差度量，同时处理异方差与自相关；预测形式仍保持$f(\bm{x})=b+\bm{w}^{\top}\bm{x}$。
+
+\subsubsection{模型结构}
+\label{sec:regression-gls-structure}
+
+$n$条训练样本构成设计矩阵$\widetilde{\bm X}\in\mathbb{R}^{n\times(d+1)}$（第$i$行为$(1,\bm{x}_i^{\top})$，增广记号与全节一致），响应向量$\bm{y}$，待学参数$\bm\beta=(b,\bm{w}^{\top})^{\top}$。设误差向量$\bm{\varepsilon}=\bm{y}-\widetilde{\bm X}\bm\beta$满足零条件均值$\mathbb{E}[\bm{\varepsilon}\mid\bm X]=\bm 0$，联合协方差
+\[
+  \bm{\Omega}=\operatorname{Cov}(\bm{\varepsilon}\mid\bm X)
+\]
+正定已知：对角元$\Omega_{i,i}$是第$i$条记录的误差方差，非对角元$\Omega_{i,j}$是第$i,j$条误差的协方差；注意$\bm{\Omega}$是误差的协方差，不是输入特征的协方差。
+
+数据白化给出推导：对正定$\bm{\Omega}$作Cholesky分解$\bm{\Omega}=\bm L\bm L^{\top}$，用$\bm L^{-1}$左乘观测模型后，误差$\bm L^{-1}\bm{\varepsilon}$的协方差为$\bm L^{-1}\bm{\Omega}\bm L^{-\top}=\bm I$——同方差且互不相关，恰回到OLS的假设。在变换后的数据$\bm L^{-1}\bm{y}$上对$\bm L^{-1}\widetilde{\bm X}$做OLS，目标为
+\begin{equation}
+  \widehat{\bm\beta}
+  \in\argmin_{\bm\beta}\ J_{\mathrm{GLS}}(\bm\beta),
+  \qquad
+  J_{\mathrm{GLS}}(\bm\beta)=\frac12(\bm{y}-\widetilde{\bm X}\bm\beta)^{\top}
+    \bm{\Omega}^{-1}
+    (\bm{y}-\widetilde{\bm X}\bm\beta),
+  \label{eq:regression-gls-objective}
+\end{equation}
+用了$\bm L^{-1}\bm L^{-\top}=(\bm L\bm L^{\top})^{-1}=\bm{\Omega}^{-1}$。$\bm{\Omega}^{-1}$的非对角项进入目标，意味着残差不再被逐条独立看待：同向残差（都偏大或都偏小）在联合度量下被惩罚得较小，反向残差被惩罚得更大。独立异方差时$\bm{\Omega}=\operatorname{diag}(\sigma_i^2)$，$\bm{\Omega}^{-1}$对角，式\eqref{eq:regression-gls-objective}恰退化为WLS目标。这里先假定$\bm{\Omega}$已知——它可来自仪器标定的测量方差或预先指定的低维相关结构；未知时的估计见参数学习段。
+
+\subsubsection{参数学习}
+\label{sec:regression-gls-learning}
+
+\paragraph{已知协方差时的估计}
+
+二次型对$\bm\beta$求导令其为零，即加权正规方程$\widetilde{\bm X}^{\top}\bm{\Omega}^{-1}\widetilde{\bm X}\widehat{\bm\beta}=\widetilde{\bm X}^{\top}\bm{\Omega}^{-1}\bm{y}$，解得
+\begin{equation}
+  \widehat{\bm\beta}
+  =(\widetilde{\bm X}^{\top}\bm{\Omega}^{-1}\widetilde{\bm X})^{-1}
+    \widetilde{\bm X}^{\top}\bm{\Omega}^{-1}\bm{y}.
+  \label{eq:regression-gls-solution}
+\end{equation}
+在正确线性均值、已知正定$\bm{\Omega}$、零条件均值且设计列满秩的条件下，该估计在所有线性无偏估计中方差最小（Gauss--Markov定理的矩阵形式），其协方差为$(\widetilde{\bm X}^{\top}\bm{\Omega}^{-1}\widetilde{\bm X})^{-1}$。
+
+\paragraph{协方差未知时的可行估计（FGLS）}
+
+$\bm{\Omega}$未知时，单个长度为$n$的残差向量不足以估计$n\times n$的任意矩阵；$\widehat{\bm\Omega}$必须预设低维结构（例如按分组的方差、或只有相邻相关的简单序列结构），否则待估参数比样本还多。可行GLS（feasible GLS）按四步执行：
+
+\begin{enumerate}
+  \item 先用OLS拟合，得到残差$\widehat{\bm\varepsilon}$；
+  \item 用残差估计误差结构：异方差时，对$\widehat{\varepsilon}_i^2$（或$\log\widehat{\varepsilon}_i^2$）关于特征回归，得到每条记录的方差函数估计$\widehat{\sigma}_i^2$；自相关时，由相邻残差估出自回归系数$\widehat\rho$（如AR(1)），再按平稳AR(1)的协方差形式构造$\widehat{\Omega}_{ij}\propto\widehat\rho^{\,|i-j|}$（比例常数在$\bm\Omega^{-1}$的比值中消去，不影响$\widehat{\bm\beta}$）；
+  \item 把$\widehat{\bm{\Omega}}$代入式\eqref{eq:regression-gls-solution}求解$\widehat{\bm\beta}$；
+  \item 可选：用新残差重估$\widehat{\bm{\Omega}}$并重复，直至系数稳定。
+\end{enumerate}
+这样得到的是插件式估计，有限样本下$\widehat{\bm{\Omega}}$的误差会传入系数；最小方差结论以$\bm{\Omega}$已知且均值设定正确为前提，协方差估计有误差或均值模型失配时，GLS不直接继承该性质。
