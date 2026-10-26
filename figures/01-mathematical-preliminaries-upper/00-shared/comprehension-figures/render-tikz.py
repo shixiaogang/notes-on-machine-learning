@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('sources', nargs='*', help='Optional repository-relative fragments')
 args = parser.parse_args()
 sources = [ROOT/p for p in args.sources] if args.sources else sorted(
-    (ROOT/'figures/01-mathematical-preliminaries-upper').glob('*/tikz/comprehension-additions/*.tex'))
+    (ROOT/'figures/01-mathematical-preliminaries-upper').glob('*/tikz/*comprehension-additions/*.tex'))
 failures = []
 for source in sources:
     try:

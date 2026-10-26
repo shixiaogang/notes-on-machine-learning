@@ -130,12 +130,8 @@ def remap_labels(labels):
  return labels
 def main():
  selection=HERE/'restoration-selection.json'
- if selection.exists(): roster=json.loads(selection.read_text())
- else:
-  manifest=json.loads((ROOT/'output/volume-three-figure-comparison/manifest.json').read_text())
-  roster=[r for r in manifest['records'] if r['id'] in IDS]
-  assert len(roster)==51
-  selection.write_text(json.dumps(roster,ensure_ascii=False,indent=2)+'\n')
+ # The archived selection is the reproduction input; page-review exports are disposable.
+ roster=json.loads(selection.read_text())
  prior=json.loads((HERE/'restoration-report.json').read_text())['records'] if (HERE/'restoration-report.json').exists() else []
  redraw=next((r for r in prior if r['id']=='067' and r.get('model_redraw_20261013')),None)
  reports=[]

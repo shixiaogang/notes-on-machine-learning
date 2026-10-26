@@ -6,15 +6,15 @@
 
 ## 现有资源
 
-- `01-mathematical-preliminaries-upper/` 与 `02-mathematical-preliminaries-lower/`：数学两卷图源，各三部分。
+- `01-mathematical-preliminaries-upper/` 与 `02-mathematical-preliminaries-lower/`：数学两卷图源，分别对应卷一七部分和卷二三部分。
   卷二于2026-10-17新增20幅解析教学图，覆盖八章的概率、因果、状态演化、控制、价值与策略比较及学习分析；各部分的`matplotlib/`子目录保存独立源码、解析参数、矢量成图与预览，使用位置登记在共用图像接入清单中。
   同日第二轮另按具体概念障碍增补15幅图，集中解释条件平均、统计推断、跳跃对齐、隐藏位置、机制复合与动态可行性等问题，不设各章数量配额；图源分别归入所属部分的`tikz/`和`matplotlib/`，保留原有推导及既有图像。
   卷一的两集合容斥示意图保留可编辑 TikZ 源、字体已嵌入的 PDF、PNG 预览及解析集合与字体记录，位于第1部分的 `tikz/inclusion-exclusion-overlap.*`。
   卷一第三章另补集合测量与积分的四幅图解：有限与可数覆盖、精确分割、内外逼近（TikZ）及取值分层积分（Matplotlib），图源、解析参数、预览和核验记录随各图保存。
   度量空间节的 `tikz/metric-ball-neighborhood/` 和 `tikz/metric-open-closed-relative/` 分别说明开球与邻域，以及开闭性随母空间改变；保留TikZ图源、字体嵌入PDF与预览。
-  卷一第8章《度量空间》于2026-10-23在第2部分新增13幅TikZ概念图，统一归档于 `02-linear-algebra-and-geometry/tikz/metric-spaces/`：三角不等式、伪距离等价类与商度量、子空间弦长、相对球、内部闭包边界、稠密、有限$\varepsilon$网、连续球刻画、Lipschitz锥、双Lipschitz夹逼带、柯西尾部、完备化嵌入与压缩误差收缩；各图保留可编辑源、独立渲染入口、字体嵌入PDF及逐图生成与核验记录。
+  卷一第8章《度量空间》于2026-10-23在第2部分新增13幅TikZ概念图，统一归档于 `05-space-and-geometry/tikz/metric-spaces/`：三角不等式、伪距离等价类与商度量、子空间弦长、相对球、内部闭包边界、稠密、有限$\varepsilon$网、连续球刻画、Lipschitz锥、双Lipschitz夹逼带、柯西尾部、完备化嵌入与压缩误差收缩；各图保留可编辑源、独立渲染入口、字体嵌入PDF及逐图生成与核验记录。
   集合测量节的 `tikz/measure-abstraction/` 另以关系图对照勒贝格测度的具体构造与一般测度空间的共同结构。
-  卷一第三章于2026-10-21新增26幅概念与过程图：18幅Matplotlib解析图、8幅TikZ几何图，分别位于第1部分的`matplotlib/chapter3-concept-processes/`和`tikz/chapter3-concept-processes/`。覆盖极限与误差、局部线性近似、积分截断和换序、路径与曲面、公共边界抵消；解释放在图注，目录内保留生成器、解析参数、矢量成图、预览与逐图核验记录。
+  卷一原第三章于2026-10-21新增26幅概念与过程图：18幅Matplotlib解析图、8幅TikZ几何图，现随微积分部分归入 `03-calculus/matplotlib/chapter3-concept-processes/` 与 `03-calculus/tikz/chapter3-concept-processes/`。覆盖极限与误差、局部线性近似、积分截断和换序、路径与曲面、公共边界抵消；解释放在图注，目录内保留生成器、解析参数、矢量成图、预览与逐图核验记录。
   卷一第二部分“线性空间”于2026-10-23新增37幅Matplotlib解析教学图（前缀`ls-`），位于 `02-linear-spaces/matplotlib/`，按第4—7章顺序覆盖表示（线性组合张成、坐标、被动换基与主动作用对照、核与像、对偶基读数、商等价类、相似/相抵示意）、运算（Gram系数、单位球、诱导范数、对偶单位球、伴随转移、有向体积、张量积槽位、Kronecker分块、张量缩约）、方程与优化（正交最近点、Givens/Householder、Schur补、最小二乘残差、SVD构造与椭圆作用、正则化偏差方差、二次等值面、球面极值、低秩截断、Procrustes、Sylvester分离）与分析（条件数放大、扰动椭圆、主夹角、谱半径收敛、非正规瞬态增长、Neumann尾项、CG/GMRES搜索空间、停止噪声地板）。每图目录保留`plots.py`、解析参数、PDF/PNG预览与README；使用位置登记在 `00-shared/academic-drawing/integration-manifest.json`。
 - `03-foundations/`：基础、理论与可信性三部分资源。
 - `04-classic-models/` 与 `05-neural-network-models/`：不设部分，按制作方式归档。卷四 2026-10-25 起在 `00-shared/matplotlib/` 增补四幅机制教学图：`regression-lasso-soft-threshold/`（正交设计下岭连续收缩与 Lasso 阈值带内取零的 1D 对比，复现入口同目录 `generate.py`）、`regression-svr-epsilon-tube/`（ε 容忍带内样本乘子为零、带外为支持样本的对偶 KKT 图解，`generate.py` 经 SLSQP 解真实对偶 QP）、`classification-cart-pruning/`（CART 代价复杂度剪枝四棵嵌套子树的分段常值训练/验证误差与 α* 选择，`generate.py`）、`regression-mars-mechanism/`（MARS 41 点确定性一维构造，四面板含铰链对、前向成对 RSS 下降、后向 GCV 删基与交互区域，`generate.py`）。均用 `00-shared/academic-drawing/plot_style.py` 项目字体与低饱和色板，主字 8pt、说明 7.5pt，原生尺寸对齐正文宽度。
@@ -23,9 +23,11 @@
 - `08-knowledge-learning/`：对应正文分部的TikZ图源及记录。
 - `10-image-and-multimodal-processing/`：图像、视频和多模态三部分的31份历史 TikZ 图源，分别位于对应部分的 `tikz/`；迁移保留原图的科学内容与绘制方式，样式仍沿用历史内联接口。
 - `11-recommendation-search-advertising/`：理解、决策、搜索和广告十章使用的 TikZ 图源，按三个正文部分归档。
-- `09-natural-language-processing/`：2026-10-18起按部分归档新图，均为TikZ图源，位于各部分的`tikz/`。`01-language-models/`收第2至8章的图（前缀`classical-`、`llm-`、`sft-`、`align-`、`infer-`、`reason-`、`eval-`）；`02-text-analysis-and-organization/`收第9至11章的图（前缀`analysis-`、`extraction-`、`classification-`）；`03-text-generation-and-interaction/`收第12至14章的图（前缀`generation-`、`dialogue-`、`execution-`）；`04-speech-processing/`收第15章的图（前缀`speech-`）。卷九较早的图仍位于`figures/`根目录的`nlp-*`文件，迁移前保持原路径。
+- `09-natural-language-processing/`：2026-10-18起按部分归档新图，均为TikZ图源，位于各部分的`tikz/`。`01-language-models/`收第2至8章的图（前缀`classical-`、`llm-`、`sft-`、`align-`、`infer-`、`reason-`、`eval-`）；`02-text-analysis-and-organization/`收第9至11章的图（前缀`analysis-`、`extraction-`、`classification-`）；`03-text-generation-and-interaction/`收第12至14章的图（前缀`generation-`、`dialogue-`、`execution-`）；`04-speech-processing/`收第15章的图（前缀`speech-`）。卷九较早的 `nlp-*` 图源及 PDF、SVG、PNG 预览也按当前正文归属保存于各部分的 `tikz/`；未限定单一部分的图组位于卷内 `00-shared/tikz/`。
 - 卷十二尚无独立图像；新增时按实际章节建立目录。
 - `00-shared/mathematical-generators/` 与 `00-shared/model-generators/`：跨卷共用生成器与图组记录。
+
+卷一资源随当前七部分归档：独用图组位于对应部分，跨部分的生成器或图组位于 `00-shared/`，其中图源仍按 `tikz/`、`matplotlib/`、`generated/` 分类。同名而内容不同的教学增补图组保留独立名称，避免相互覆盖。
 
 ## 使用与追溯
 
