@@ -1,0 +1,335 @@
+% 线性方程的定常与非定常迭代
+\section{定常迭代法}
+\label{sec:ls-stationary-iterations}
+
+直接法先分解系数矩阵，再用三角方程求解。当矩阵很大而且稀疏时，分解过程可能产生许多原本为零的元素，存储因子也可能很昂贵。另一条路线是从一个近似解出发，反复用较便宜的计算修正它。能否以较少的计算达到要求的精度，取决于矩阵、修正方式和停止标准。
+
+本节设$\bm A\in\mathbb R^{d\times d}$可逆，$\bm b\in\mathbb R^d$，精确解为$\bm x_\star$。给定初值$\bm x_{0}$，第$k$步的残差$\bm r_{k}=\bm b-\bm A\bm x_{k}$指出当前近似尚未满足的方程。残差可以计算，真正的误差$\bm x_{k}-\bm x_\star$则通常未知。
+
+下面各方法都接收同一组$\bm A,\bm b,\bm x_0$，以及绝对容差、相对容差和最大轮数；只有步长或松弛参数因方法而异。每轮先按本方法计算$\bm x_{k+1}$，再按原方程检查残差。达到容差时返回该向量，达到预算或出现不可用的除数时则返回当前近似并说明原因。迭代矩阵只用于分析，不要求在计算中把它存成一张稠密矩阵。
+
+\subsection{矩阵分裂与定常迭代}
+
+选择易于求解的可逆矩阵$\bm M$，记$\bm A=\bm M-\bm N$。每一步用当前残差求修正量，然后更新近似：
+\begin{equation}
+\begin{gathered}
+\bm M\bm\delta_k=\bm r_{k}\\
+\bm x_{k+1}=\bm x_{k}+\bm\delta_k.
+\end{gathered}
+\label{eq:ls-stationary-correction}
+\end{equation}
+这等价于$\bm x_{k+1}=\bm T\bm x_{k}+\bm c$，其中$\bm T=\bm M^{-1}\bm N=\bm I-\bm M^{-1}\bm A$、$\bm c=\bm M^{-1}\bm b$。
+
+写出逆矩阵只是为了表达线性作用；实际计算时解$\bm M\bm\delta=\bm r$，不必形成$\bm M^{-1}$。若$\bm M$固定，这就是定常迭代。
+
+精确解满足同一个固定点关系。
+
+令$\bm e_{k}=\bm x_{k}-\bm x_\star$，两式相减得到$\bm e_{k+1}=\bm T\bm e_{k}$，所以$\bm e_{k}=\bm T^k\bm e_{0}$。
+
+由矩阵幂的收敛判据，对所有初值收敛到精确解当且仅当$\rho(\bm T)<1$；$\lVert\bm T\rVert<1$是便于检验的充分条件，并非必要条件。特定初始误差可能恰好避开不衰减方向，不能据此判断所有初值都收敛。非正规$\bm T$还可能在最终衰减前暂时放大误差。
+
+下面约定$\bm A=\bm D+\bm L+\bm U$，其中$\bm D$是对角部分，$\bm L$和$\bm U$分别是严格下三角和上三角部分，均保留$\bm A$中元素的符号。为了比较更新顺序，各方法使用同一方程
+\[
+\begin{gathered}
+\bm A=\begin{bmatrix}4&1\\1&3\end{bmatrix}\\
+\bm b=\begin{bmatrix}1\\2\end{bmatrix}\\
+\bm x_{0}=\bm0\\
+\bm x_\star=\begin{bmatrix}1/11\\7/11\end{bmatrix}.
+\end{gathered}
+\]
+
+\subsection{Richardson迭代}
+
+最直接的修正是按固定比例沿残差移动：$\bm x_{k+1}=\bm x_{k}+\alpha\bm r_{k}$，其中$\alpha\ne0$固定。
+
+这对应$\bm M=\alpha^{-1}\bm I$，每轮计算一次$\bm A\bm x_{k}$，再计算残差和更新向量。
+
+若$\bm A$实对称正定，它有标准正交特征基，且特征值均为正。误差在特征方向上的分量每轮乘以$1-\alpha\lambda_i$，因此对所有初值收敛当且仅当$0<\alpha<2/\lambda_{\max}(\bm A)$。若已知最大与最小特征值，令$\alpha=2/(\lambda_{\min}+\lambda_{\max})$可使各方向中最大的收缩因子达到最小，值为$(\kappa_2(\bm A)-1)/(\kappa_2(\bm A)+1)$。这一参数结论依赖对称正定性，不能直接用于一般非对称矩阵。
+
+在上述例子中取$\alpha=1/4$，第一轮得到$\bm x_{1}=(1/4,1/2)^\top$。矩阵特征值为$(7\pm\sqrt5)/2$，故$1/4$位于收敛区间内。对稀疏矩阵，一轮的主要成本是一次矩阵向量乘法，另需线性规模的向量存储。
+
+\subsection{Jacobi迭代}
+
+若对角元均非零，可以从第$i$个方程解出$x_i$。Jacobi方法计算整轮新值时都使用上一轮的分量：
+\begin{equation}
+\begin{gathered}
+x_{i,k+1}=\frac{b_i-\sum_{j\ne i}a_{i,j}x_{j,k}}{a_{i,i}}\\
+\bm T_{\mathrm J}=-\bm D^{-1}(\bm L+\bm U).
+\end{gathered}
+\label{eq:ls-jacobi-update}
+\end{equation}
+各行因而可以并行计算；实现时要区分旧向量和新向量。
+
+例子的第一轮为$(1/4,2/3)^\top$，第二轮为$(1/12,7/12)^\top$。
+
+若每一行严格对角占优，即$|a_{i,i}|>\sum_{j\ne i}|a_{i,j}|$，则$\lVert\bm T_{\mathrm J}\rVert_\infty<1$，故迭代收敛。
+
+对称正定本身却不保证Jacobi收敛。例如$\bm A=\bm I+2\bm1\bm1^\top\in\mathbb R^{3\times3}$的特征值为$7,1,1$，但$\bm D=3\bm I$，迭代矩阵的特征值为$-4/3,2/3,2/3$，其谱半径大于一。
+
+可以用固定参数$\omega$调整修正量，得到加权Jacobi格式$\bm x_{k+1}=\bm x_{k}+\omega\bm D^{-1}\bm r_{k}$。对于对称正定$\bm A$，它收敛当且仅当
+\[
+ 0<\omega<\frac{2}{\lambda_{\max}(\bm D^{-1/2}\bm A\bm D^{-1/2})}.
+\]
+这个条件来自$\bm D^{-1}\bm A$与实对称正定矩阵$\bm D^{-1/2}\bm A\bm D^{-1/2}$相似；选择参数时仍需估计相应谱的范围。
+
+\subsection{Gauss--Seidel迭代}
+
+Jacobi在计算后面的分量时仍使用上一轮数据，即使本轮已经得到更早分量的新值也不利用。若不要求各行同时更新，就可以把这些新值立即代入余下方程。输入与输出不变，改变的是同一轮内的数据依赖：按$i=1,\ldots,d$依次计算，而不是同时生成所有分量。
+
+Gauss--Seidel方法按行顺序更新，并立即使用本轮已经算出的分量：
+\begin{equation}
+\begin{gathered}
+x_{i,k+1}=\frac{b_i-\sum_{j<i}a_{i,j}x_{j,k+1}-\sum_{j>i}a_{i,j}x_{j,k}}{a_{i,i}}\\
+(\bm D+\bm L)\bm x_{k+1}=\bm b-\bm U\bm x_{k}.
+\end{gathered}
+\label{eq:ls-gauss-seidel-update}
+\end{equation}
+
+对同一例子，先得$x_{1,1}=1/4$，再把新值代入第二行，得$x_{2,1}=7/12$。两种方法的一轮结果不同，原因正是第二行使用的数据不同。Gauss--Seidel可以原位更新，但行之间有顺序依赖，改变变量排列也会改变迭代。
+
+严格行对角占优或实对称正定分别足以保证Gauss--Seidel收敛。对后者，可用$\phi(\bm x)=\tfrac12\bm x^\top\bm A\bm x-\bm b^\top\bm x$理解：每次坐标更新都使这个正定二次函数沿当前坐标达到最小。每轮的稀疏工作量与非零元素数同阶；比较它与Jacobi时，还要计入所需轮数和并行程度。
+
+对正定情形还可以把能量论证写成收敛证明。记误差为$\bm e=\bm x-\bm x_\star$，则目标函数与最小值之差为$\frac12\bm e^\top\bm A\bm e$。一次坐标更新的修正为$r_i/a_{i,i}$，能量恰好减少$r_i^2/(2a_{i,i})$。完整一轮若没有减少，说明每次修正均为零，因此原残差为零，误差也为零。
+
+一轮更新是关于误差的线性映射。在能量单位球面上，输出能量是连续函数，且处处严格小于一；有限维闭有界集上的最大值因此也小于一。每轮按同一常数收缩，遂有误差趋于零。这里用到了已建立的有限维紧性结论，不能只由“能量不增”推断收敛到解。
+
+对于严格行对角占优，若迭代矩阵存在模不小于一的特征值$\lambda$及特征向量$\bm v$，取$|v_i|$最大的分量。由$\lambda(\bm D+\bm L)\bm v=-\bm U\bm v$，两边取绝对值并除以$|\lambda|$，得到
+\[
+ |a_{i,i}|\,|v_i|\leq\sum_{j\ne i}|a_{i,j}|\,|v_j|.
+\]
+这与严格对角占优矛盾，故谱半径小于一。
+
+\subsection{SOR迭代}
+
+逐坐标更新还可以调整修正幅度。超松弛法（SOR）在计算第$i$个分量时，用本轮已松弛的前面分量，令
+\begin{equation}
+ x_{i,k+1}=(1-\omega)x_{i,k}+
+ \frac{\omega}{a_{i,i}}\left(b_i-\sum_{j<i}a_{i,j}x_{j,k+1}-\sum_{j>i}a_{i,j}x_{j,k}\right).
+ \label{eq:ls-sor-update}
+\end{equation}
+
+它等价于$(\bm D+\omega\bm L)\bm x_{k+1}=[(1-\omega)\bm D-\omega\bm U]\bm x_{k}+\omega\bm b$。$\omega=1$恢复Gauss--Seidel；小于一的正参数缩小每次坐标修正，大于一的参数放大修正。对实对称正定矩阵，$0<\omega<2$保证收敛，但这个范围内哪个参数最快还取决于矩阵和排列。
+
+正定条件下，一次松弛坐标更新使能量减少$\omega(2-\omega)r_i^2/(2a_{i,i})$。当$0<\omega<2$时，沿用上一小节单位能量球面上的严格收缩论证，就得到整轮收敛。一般矩阵上，迭代矩阵的行列式为$(1-\omega)^d$；若所有特征值模都小于一，则$|1-\omega|<1$，因此这个参数范围仍是必要条件，却未必充分。
+
+例如取$\omega=6/5$，上面的方程第一轮先得到$x_{1,1}=3/10$，再用它算出$x_{2,1}=17/25$。不能先做完整一轮Gauss--Seidel，再把两个向量按$\omega$混合：后一种操作在第二行用的不是已松弛的第一分量。
+
+\subsection{SSOR迭代}
+
+单向扫掠依赖变量排列；在对称问题中，还希望把前向与反向的作用配成一个对称的修正算子。SSOR使用与SOR相同的输入$\bm A,\bm b,\bm x_0,\omega$，一轮包含两次有序更新，而不是把SOR的结果简单乘以一个系数。
+
+对称超松弛法（SSOR）把一次前向SOR扫掠与一次反向扫掠配对。对实对称正定$\bm A$和$0<\omega<2$，整轮可写为式~\eqref{eq:ls-stationary-correction}的修正形式，其矩阵为
+\[
+ \bm M_{\mathrm{SSOR}}=\frac{1}{\omega(2-\omega)}
+ (\bm D+\omega\bm L)\bm D^{-1}(\bm D+\omega\bm U).
+\]
+
+实际执行时，先按SOR公式从$i=1$扫到$d$，把结果记为$\bm y$。再从$i=d$扫到$1$，计算
+\[
+ x_{i,k+1}=(1-\omega)y_i+
+ \frac{\omega}{a_{i,i}}\left(b_i-\sum_{j<i}a_{i,j}y_j-\sum_{j>i}a_{i,j}x_{j,k+1}\right).
+\]
+第二次扫掠中，下标更大的分量已经更新，立即使用新值；更小的分量仍取$\bm y$。两遍完成才产生本轮输出$\bm x_{k+1}$。这给出了从$\bm A\bm x=\bm b$到实际逐分量操作的过程，也解释了为什么应用$\bm M_{\mathrm{SSOR}}$的逆对应两次三角求解。
+
+利用$\bm U=\bm L^\top$可见$\bm M_{\mathrm{SSOR}}$正定。应用它的逆只需两次三角求解及对角缩放；两次扫掠均使正定二次能量下降，因此迭代收敛。例子取$\omega=1$时，前向扫掠得$(1/4,7/12)^\top$，反向扫掠后得$(5/48,7/12)^\top$。一轮SSOR包含两次扫掠，比较成本时不能只数轮数。
+
+\subsection{收敛检验与停止准则}
+
+收敛定理描述无限步的极限，实际计算必须在有限步停止。可设非负的绝对容差$\varepsilon_{\mathrm{abs}}$和相对容差$\varepsilon_{\mathrm{rel}}$，检验
+\[
+ \lVert\bm b-\bm A\bm x_{k}\rVert_2
+ \leq \varepsilon_{\mathrm{abs}}+\varepsilon_{\mathrm{rel}}\lVert\bm b\rVert_2.
+\]
+
+绝对项使$\bm b=\bm0$时规则仍有意义。还应设置计算预算，并区分达到容差、达到预算和停滞；相邻两次近似很接近不一定表示残差小。残差应按原方程重新计算，尤其在递推维护的残差可能积累舍入误差时。即使残差小，病态矩阵也可能使解误差较大，具体关系在后面的敏感性分析中讨论。
+
+\section{非定常迭代法}
+\label{sec:ls-krylov-iterations}
+
+定常迭代固定了每轮的修正规则。另一类方法利用当前残差选择方向和系数，逐步扩大可以搜索的空间。它们同样适合只提供矩阵向量乘法的情形，但其规则随步数变化，不能用一个固定迭代矩阵的谱半径直接判定。
+
+\subsection{Krylov子空间}
+
+给定初值$\bm x_{0}$与残差$\bm r_{0}$，第$k$个Krylov子空间定义为
+\[
+ \mathcal K_k(\bm A,\bm r_{0})=\operatorname{span}\{\bm r_{0},\bm A\bm r_{0},\ldots,\bm A^{k-1}\bm r_{0}\}.
+\]
+候选近似限制在$\bm x_{0}+\mathcal K_k$中。空间随着$k$增长而扩大，方法之间的区别是如何从中选出近似值；实现通常通过递推生成向量，而不是先显式计算所有矩阵幂。若初始残差已为零，初值就是精确解，不需要启动迭代。
+
+\subsection{共轭梯度法}
+
+固定步长可能反复修正同一方向，已经减少的误差也可能在后面的修正中重新出现。对称正定问题允许利用能量内积，选择相互共轭的方向，使新一步不会破坏以前方向上已经达到的最优性。CG仍输入$\bm A,\bm b,\bm x_0$及停止参数，输出原方程的近似解；新增的$\bm p_k$只是搜索方向，不是另一组未知量。
+
+设$\bm A$实对称正定。方程的解也是二次函数$\phi(\bm x)=\tfrac12\bm x^\top\bm A\bm x-\bm b^\top\bm x$的唯一最小点。共轭梯度法（CG）选择彼此关于$\bm A$正交的搜索方向，沿每个方向确定使$\phi$最小的步长。
+
+令$\bm r_0=\bm b-\bm A\bm x_0$、$\bm p_0=\bm r_0$；若$\bm r_0\ne0$，每轮依次计算
+\begin{align*}
+ \alpha_k&=\frac{\bm r_k^\top\bm r_k}{\bm p_k^\top\bm A\bm p_k},\\
+ \bm x_{k+1}&=\bm x_k+\alpha_k\bm p_k,\\
+ \bm r_{k+1}&=\bm r_k-\alpha_k\bm A\bm p_k.
+\end{align*}
+
+若新残差为零则停止；否则令$\beta_k=(\bm r_{k+1}^\top\bm r_{k+1})/(\bm r_k^\top\bm r_k)$，再取$\bm p_{k+1}=\bm r_{k+1}+\beta_k\bm p_k$。正定性保证非零搜索方向的分母$\bm p_k^\top\bm A\bm p_k$为正；若矩阵不满足该条件，不能照搬这一保证。
+
+沿方向$\bm p_k$展开$\phi(\bm x_k+\alpha\bm p_k)$并配方，可以看出上式步长消除了当前方向的导数。精确算术中，各搜索方向相互$\bm A$正交，$\bm x_k$在$\bm x_0+\mathcal K_k$中使误差的$\bm A$范数最小，因而至多$d$步得到精确解。浮点运算会破坏正交关系，实际仍应按原残差和预算停止，不能依赖步数保证。
+
+上述最小化性质可以逐步核验。假设已有方向$\bm p_0,\ldots,\bm p_k$互相$\bm A$正交，且$\bm r_k$与以前的方向正交。由$\bm p_k=\bm r_k+\beta_{k-1}\bm p_{k-1}$，有$\bm r_k^\top\bm p_k=\bm r_k^\top\bm r_k$。选择$\alpha_k$便使新残差与$\bm p_k$正交；与更早方向的正交性由共轭性保留。所以新残差与整个已搜索空间正交，也与以前的残差正交。
+
+再由$\bm A\bm p_i=(\bm r_i-\bm r_{i+1})/\alpha_i$，$\bm r_{k+1}$与$\bm A\bm p_i$在$i<k$时正交。对$i=k$，
+\[
+ \bm r_{k+1}^\top\bm A\bm p_k=-\|\bm r_{k+1}\|_2^2/\alpha_k.
+\]
+代入$\beta_k$与$\bm p_k^\top\bm A\bm p_k=\|\bm r_k\|_2^2/\alpha_k$，可见$\bm p_{k+1}$也与$\bm p_k$共轭。归纳从$\bm p_0=\bm r_0$开始成立。
+
+这些非零共轭方向线性无关，又都在相应Krylov空间中，故张成该空间。将误差沿其中任意方向展开，交叉项由残差正交性消失，剩下正定二次项，证明当前近似是该空间内唯一的能量最小点。空间维数至多为$d$，于是得到精确算术下的有限步结论。
+
+对前面的二阶例子，从零开始有$\bm r_0=\bm p_0=(1,2)^\top$，$\bm A\bm p_0=(6,7)^\top$，故$\alpha_0=1/4$、$\bm x_1=(1/4,1/2)^\top$、$\bm r_1=(-1/2,1/4)^\top$。接着$\beta_0=1/16$、$\bm p_1=(-7/16,3/8)^\top$，第二次更新得到$(1/11,7/11)^\top$。每轮主要进行一次矩阵向量乘法和若干内积、向量更新，不需要保存所有过去的方向。
+
+\subsection{Arnoldi正交化}
+
+CG的短递推依赖对称正定结构。对于一般非对称矩阵，先解决一个较基础的问题：怎样为$\mathcal K_k(\bm A,\bm r_0)$生成可用的标准正交基，而不显式计算矩阵幂。Arnoldi正交化接收矩阵作用$\bm v\mapsto\bm A\bm v$、非零起始残差和所需步数，输出基向量及它们之间的作用系数；它本身尚未选择方程的近似解。
+
+令$\beta=\|\bm r_0\|_2$、$\bm v_1=\bm r_0/\beta$。已有$\bm v_1,\ldots,\bm v_j$时，先计算$\bm w=\bm A\bm v_j$。随后按$i=1,\ldots,j$依次计算并扣除投影：
+\begin{align*}
+ h_{i,j}&=\bm v_i^\top\bm w,\\
+ \bm w&\leftarrow\bm w-h_{i,j}\bm v_i.
+\end{align*}
+每个投影都使用刚更新的$\bm w$。最后令$h_{j+1,j}=\|\bm w\|_2$；若非零，则用$\bm v_{j+1}=\bm w/h_{j+1,j}$补入一个新方向，否则当前空间已经对$\bm A$不变，不再归一化。
+
+把扣除的分量移回，就有$\bm A\bm v_j=\sum_{i=1}^{j+1}h_{i,j}\bm v_i$。因此输出的系数矩阵每列最多延伸到下一行，是上Hessenberg形。一次扩展需一次矩阵向量乘法和$j$次投影；步数越多，保存基与正交化的代价越大。下面的GMRES用这些输出构造小规模残差问题。
+
+\subsection{广义最小残差法}
+
+一般方阵没有正定能量可供最小化，但原残差$\bm b-\bm A\bm x$总可以计算。GMRES的思想是在已经生成的Krylov空间中直接挑选残差最小的近似。输入仍是$\bm A,\bm b,\bm x_0$与停止参数；先算$\bm r_0$，若非零就运行Arnoldi，每扩展一次基就求解一个小问题，并将其解映回原变量。
+
+若尚未发生零量终止，把这些关系按列排列，得到$\bm A\bm V_k=\bm V_{k+1}\overline{\bm H}_k$，其中$\bm V_k$的列标准正交，$\overline{\bm H}_k\in\mathbb R^{(k+1)\times k}$为上Hessenberg矩阵。写$\bm x=\bm x_0+\bm V_k\bm y$，残差变为$\bm V_{k+1}(\beta\bm e_1-\overline{\bm H}_k\bm y)$；正交性把原问题化为规模较小的
+\[
+ \min_{\bm y\in\mathbb R^k}\lVert\beta\bm e_1-\overline{\bm H}_k\bm y\rVert_2.
+\]
+具体地，对$\overline{\bm H}_k$作QR分解，并将同样的正交变换作用于$\beta\bm e_1$。前$k$行给出上三角方程，回代得到$\bm y_k$，再输出
+\[
+ \bm x_k=\bm x_0+\bm V_k\bm y_k.
+\]
+这里$\bm y_k$只有$k$个分量，是修正量在基中的坐标；$\bm x_k$才有$d$个分量，是原问题的近似解。继续迭代时保留已有基与旋转，只处理新的一列，不必从头分解小矩阵。
+
+若$h_{j+1,j}=0$，则不再产生新基向量，应先求解当前小问题并检查真实残差，不能继续除以零。
+
+下面用一个二阶例子检查这些状态怎样传递。取$\bm A=\left[\begin{smallmatrix}1&1\\0&1\end{smallmatrix}\right]$、$\bm b=(1,1)^\top$、$\bm x_0=\bm0$，则$\beta=\sqrt2$、$\bm v_1=(1,1)^\top/\sqrt2$。第一轮$\bm A\bm v_1=(2,1)^\top/\sqrt2$，减去$h_{1,1}=3/2$倍的$\bm v_1$，剩余向量的长度为$h_{2,1}=1/2$，归一化得$\bm v_2=(1,-1)^\top/\sqrt2$。
+
+此时$\overline{\bm H}_1=(3/2,1/2)^\top$，小问题的解为$y_1=3\sqrt2/5$，所以$\bm x_1=(3/5,3/5)^\top$，原残差为$(-1/5,2/5)^\top$，范数为$1/\sqrt5$。若容差尚未达到，就保留已生成的基和小矩阵，继续下一轮。
+
+第二轮$\bm A\bm v_2=(0,-1)^\top/\sqrt2$，依次投影得到$h_{1,2}=-1/2$、$h_{2,2}=1/2$，余量为零。现在不再生成第三个基向量，解已有的二维小问题得到$\bm y_2=(1,-1)^\top/\sqrt2$，恢复$\bm x_2=(0,1)^\top$。代回原方程得到零残差，故此次零量是正常终止；在数值计算中，是否已达到要求仍须检查原残差。
+
+精确算术中候选空间嵌套，最小残差范数不会随步数增加；这并不保证解误差同步下降。保存基需要随步数增长的存储，新向量正交化也需要越来越多的内积。重启GMRES在若干步后从当前近似重新开始，减少存储，却可能发生停滞。非正规矩阵的收敛还受特征方向及其耦合影响，不能仅凭特征值模判断速度。
+
+\subsection{最小残差法}
+
+若$\bm A$对称但不正定，CG的分母可能非正，前面的能量最小化论证不再成立。最小残差法（MINRES）利用对称结构，在同一类Krylov空间中改为最小化$\lVert\bm b-\bm A\bm x\rVert_2$。以下先讨论非奇异方阵；奇异系统是否相容以及是否得到最小范数解需要额外处理。
+
+取$\beta_1=\lVert\bm r_0\rVert_2>0$，$\bm v_0=\bm0$、$\bm v_1=\bm r_0/\beta_1$。第$j$步令$\bm w=\bm A\bm v_j-\beta_j\bm v_{j-1}$，求$\alpha_j=\bm v_j^\top\bm w$，再令$\bm w\leftarrow\bm w-\alpha_j\bm v_j$、$\beta_{j+1}=\lVert\bm w\rVert_2$。若$\beta_{j+1}>0$，取$\bm v_{j+1}=\bm w/\beta_{j+1}$。这是对称情形的Lanczos递推；$\beta_1\bm v_0=0$，不会影响第一步。
+
+三项递推来自Arnoldi与对称性的结合：投影矩阵$\bm V_k^\top\bm A\bm V_k$既对称又是上Hessenberg形，只能是三对角形。因此新向量只需扣除前一个方向和当前方向；更早方向的投影在精确算术中已经为零。这正是MINRES能够节省存储的结构依据。
+
+精确算术中，生成的基标准正交，且$\bm A\bm V_k=\bm V_{k+1}\overline{\bm T}_k$，其中$\overline{\bm T}_k$是由$\alpha_j$和$\beta_j$组成的$(k+1)\times k$三对角矩阵。
+
+令$\bm x_k=\bm x_0+\bm V_k\bm y_k$，只需解$\min_{\bm y}\lVert\beta_1\bm e_1-\overline{\bm T}_k\bm y\rVert_2$。可用Givens旋转更新小问题；标准短递推实现不保存全部基，但若直接按这里的定义构造$\bm V_k$并恢复解，则需保存这些向量。
+
+短递推可以从小问题的QR分解直接读出。依次用平面旋转消去$\overline{\bm T}_k$每列新出现的下对角元，同时将这些旋转作用于右端$\beta_1\bm e_1$。得到的上三角矩阵$\bm R_k$除主对角线外最多有两条上对角线；这是因为原矩阵三对角，每次旋转只混合相邻两行。
+
+记旋转后右端的前$k$项为$g_1,\ldots,g_k$，把$\bm W_k=\bm V_k\bm R_k^{-1}$按列计算。由$\bm W_k\bm R_k=\bm V_k$可得
+\[
+ \bm w_k=\frac{\bm v_k-r_{k-2,k}\bm w_{k-2}-r_{k-1,k}\bm w_{k-1}}{r_{k,k}},
+\]
+缺失的前两列按零处理。已有旋转不会再改变前面已确定的$g_j$，所以近似解只需更新
+\[
+ \bm x_k=\bm x_{k-1}+g_k\bm w_k.
+\]
+这样只保留相邻Lanczos向量、最近两条$\bm w$和旋转系数即可。若三角主元为零或很小，不能继续直接相除；应回到当前小问题检查秩与真实残差。正交性在有限精度下也可能丢失，需要据残差检验而非理想递推保证判断结果。
+
+若新$\beta$为零，先完成当前小问题，再核验原残差，不能继续归一化。
+
+例如$\bm A=\operatorname{diag}(1,-1)$、$\bm b=(1,1)^\top$、$\bm x_0=0$时，$\beta_1=\sqrt2$、$\bm v_1=(1,1)^\top/\sqrt2$，第一步得到$\alpha_1=0$、$\beta_2=1$。
+
+此时小问题为$\min_y\lVert(\sqrt2,0)^\top-(0,1)^\top y\rVert_2$，所以第一步近似仍为零。第二个基向量为$(1,-1)^\top/\sqrt2$，接着$\beta_3=0$，在二维空间中可得到解$(1,-1)^\top$。第一步不改善并不代表系统不可解；它说明对称不定时搜索方向与残差的关系不同于正定情形。
+
+\subsection{双共轭梯度法}
+
+GMRES需要保存越来越多的基；重启可以限制存储，却可能丢掉有用的搜索信息。BiCG尝试用两组互相配对的方向维持短递推：一组由$\bm A$推进，另一组由$\bm A^\top$推进。它仍求原来的$\bm A\bm x=\bm b$，辅助转置过程用于构造系数，并不是要求用户另给一个待求解问题。输入除原数据和停止参数外，还需能够计算$\bm A^\top\bm v$及一个辅助起始残差，通常取它等于非零的$\bm r_0$。
+
+对一般非对称方阵，BiCG同时构造原系统与一个辅助转置系统的方向。取$\bm r_0=\bm b-\bm A\bm x_0$及满足$\widehat{\bm r}_0^\top\bm r_0\ne0$的辅助残差，令$\bm p_0=\bm r_0$、$\widehat{\bm p}_0=\widehat{\bm r}_0$。第$k$步先计算
+\[
+ \begin{gathered}
+\rho_k=\widehat{\bm r}_k^\top\bm r_k\\
+\alpha_k=\frac{\rho_k}{\widehat{\bm p}_k^\top\bm A\bm p_k}\\
+\bm x_{k+1}=\bm x_k+\alpha_k\bm p_k.
+ \end{gathered}
+\]
+
+随后同时更新$\bm r_{k+1}=\bm r_k-\alpha_k\bm A\bm p_k$和$\widehat{\bm r}_{k+1}=\widehat{\bm r}_k-\alpha_k\bm A^\top\widehat{\bm p}_k$。若真实残差达到要求则停止；否则取$\beta_k=\rho_{k+1}/\rho_k$，分别令$\bm p_{k+1}=\bm r_{k+1}+\beta_k\bm p_k$、$\widehat{\bm p}_{k+1}=\widehat{\bm r}_{k+1}+\beta_k\widehat{\bm p}_k$。
+
+辅助向量使两组方向保持双正交关系，每轮需要一次$\bm A$和一次$\bm A^\top$作用。分母或$\rho_k$为零而尚未求解时，递推失效；浮点数中接近零也需要报告并处理，不能简单继续相除。
+
+例如取$\bm A=\left[\begin{smallmatrix}4&1\\2&3\end{smallmatrix}\right]$、$\bm b=(1,0)^\top$、$\bm x_0=0$，并令$\widehat{\bm r}_0=\bm r_0=(1,0)^\top$。第一轮$\bm A\bm p_0=(4,2)^\top$、$\bm A^\top\widehat{\bm p}_0=(4,1)^\top$，因此$\rho_0=1$、$\alpha_0=1/4$，得到$\bm x_1=(1/4,0)^\top$、$\bm r_1=(0,-1/2)^\top$和$\widehat{\bm r}_1=(0,-1/4)^\top$。
+
+由于$\rho_1=1/8$，下一轮的$\beta_0=1/8$，两条新方向分别为$\bm p_1=(1/8,-1/2)^\top$和$\widehat{\bm p}_1=(1/8,-1/4)^\top$。计算$\bm A\bm p_1=(0,-5/4)^\top$，得$\alpha_1=2/5$；更新后$\bm x_2=(3/10,-1/5)^\top$。代回可验证$\bm A\bm x_2=\bm b$，于是停止。这一例子中的影子残差会随转置系统一起更新，不应与下面BiCGSTAB固定的影子残差混同。
+
+\subsection{稳定化双共轭梯度法}
+
+BiCG的残差可能明显振荡，并且每轮需要转置乘法。
+
+BiCGSTAB把一次双共轭方向修正与一次局部残差最小化组合起来，以短递推保留原方法的信息，并缓和中间残差。输入是原来的$\bm A,\bm b,\bm x_0$、停止参数和固定辅助向量$\widehat{\bm r}$，要求$\widehat{\bm r}^\top\bm r_0\ne0$；通常取$\widehat{\bm r}=\bm r_0$。输出仍是原变量的近似，所有辅助量都由这些输入递推得到。
+
+BiCGSTAB保留一个固定的影子残差$\widehat{\bm r}$，并在每轮加入一个沿中间残差的最小化步骤，通常无需应用$\bm A^\top$。
+
+令$\bm p_0=\bm r_0$。计算$\bm v_k=\bm A\bm p_k$、$\rho_k=\widehat{\bm r}^\top\bm r_k$和$\alpha_k=\rho_k/(\widehat{\bm r}^\top\bm v_k)$，得到中间残差$\bm s_k=\bm r_k-\alpha_k\bm v_k$。
+
+若$\bm s_k$已达到容差，更新$\bm x_{k+1}=\bm x_k+\alpha_k\bm p_k$并停止。
+
+否则令$\bm t_k=\bm A\bm s_k$，取$\omega_k=(\bm t_k^\top\bm s_k)/(\bm t_k^\top\bm t_k)$，再令
+\[
+ \begin{gathered}
+\bm x_{k+1}=\bm x_k+\alpha_k\bm p_k+\omega_k\bm s_k\\
+\bm r_{k+1}=\bm s_k-\omega_k\bm t_k.
+ \end{gathered}
+\]
+
+这个$\omega_k$使$\lVert\bm s_k-\omega\bm t_k\rVert_2$在实数$\omega$中最小；它保证相对中间残差的局部改进，不保证不同轮次的残差单调下降。
+
+检查停止条件后，取$\beta_k=(\rho_{k+1}/\rho_k)(\alpha_k/\omega_k)$，并令$\bm p_{k+1}=\bm r_{k+1}+\beta_k(\bm p_k-\omega_k\bm v_k)$。每轮通常需要两次$\bm A$作用；影子配对、$\widehat{\bm r}^\top\bm v_k$、$\bm t_k^\top\bm t_k$或继续递推所需的$\omega_k$为零或接近零时，应区分已经收敛与递推失效。
+
+例如取$\bm A=\left[\begin{smallmatrix}4&1\\2&3\end{smallmatrix}\right]$、$\bm b=(1,0)^\top$、$\bm x_0=0$、$\widehat{\bm r}=\bm r_0$。第一步$\bm v_0=(4,2)^\top$、$\alpha_0=1/4$，中间残差$\bm s_0=(0,-1/2)^\top$；再算$\bm t_0=(-1/2,-3/2)^\top$、$\omega_0=3/10$，得到$\bm x_1=(1/4,-3/20)^\top$与$\bm r_1=(3/20,-1/20)^\top$。
+
+这两个残差分别对应同一轮中的两次修正，需在原方程中复核。
+
+\subsection{预条件}
+
+当原迭代收敛太慢时，可以选一个易于求解的可逆矩阵$\bm M$，每轮通过求解$\bm M\bm z=\bm r$调整残差的尺度或方向。这称为预条件；构造和应用$\bm M$也有成本，不能只比较迭代次数。
+
+最简单的选择是对角缩放：若对角元非零，取$\bm M=\operatorname{diag}(a_{1,1},\ldots,a_{d,d})$，求$\bm M\bm z=\bm r$只需逐项相除。还可以在LU或Cholesky消元中只保存预定位置的因子，得到不完全分解，以少量填充换取更接近原矩阵的修正；它仍需要检查主元是否可用。
+
+对CG与MINRES，所选预条件必须保持对称正定结构，例如正定对角缩放或合适的不完全Cholesky因子，不能使用任意不定的$\bm M$。
+
+
+对于CG，若$\bm A$和固定的$\bm M=\bm C\bm C^\top$都实对称正定，可把方程变成$\bm C^{-1}\bm A\bm C^{-\top}\bm y=\bm C^{-1}\bm b$、$\bm x=\bm C^{-\top}\bm y$。变换后的矩阵仍对称正定，所以可以应用CG；$\bm M^{-1}\bm A$一般不在普通欧氏内积下对称，不能把它直接当成对称矩阵。
+
+实现预条件CG时不必形成$\bm C$。先令$\bm r_0=\bm b-\bm A\bm x_0$，若残差已满足容差则停止；否则解$\bm M\bm z_0=\bm r_0$，取$\rho_0=\bm r_0^\top\bm z_0$、$\bm p_0=\bm z_0$。第$k$轮先计算$\bm q_k=\bm A\bm p_k$、$\alpha_k=\rho_k/(\bm p_k^\top\bm q_k)$，再令
+\[
+ \begin{gathered}
+\bm x_{k+1}=\bm x_k+\alpha_k\bm p_k\\
+\bm r_{k+1}=\bm r_k-\alpha_k\bm q_k.
+ \end{gathered}
+\]
+若新残差达到容差，则回到原方程复核并停止；否则解$\bm M\bm z_{k+1}=\bm r_{k+1}$，计算$\rho_{k+1}=\bm r_{k+1}^\top\bm z_{k+1}$、$\beta_k=\rho_{k+1}/\rho_k$，再以$\bm p_{k+1}=\bm z_{k+1}+\beta_k\bm p_k$进入下一轮。正定性使非零残差对应的$\rho_k$和非零方向对应的$\bm p_k^\top\bm A\bm p_k$为正；浮点运算中若这些量非正或接近零，应检查矩阵条件、数值误差或预条件求解，不能继续除以它们。
+
+以上PCG要求同一个固定的正定线性作用$\bm M^{-1}$贯穿迭代。
+
+若每轮更换预条件，或者内部近似求解使这一作用随输入和轮次改变，就不能直接沿用上述共轭性与收敛论证。
+
+回到贯穿例子，取$\bm M=\operatorname{diag}(4,3)$和$\bm x_0=0$。解对角方程得到$\bm z_0=(1/4,2/3)^\top$、$\rho_0=19/12$；再算$\bm q_0=(5/3,9/4)^\top$，得$\alpha_0=19/23$。第一轮输出$\bm x_1=(19/92,38/69)^\top$和$\bm r_1=(-26/69,13/92)^\top$。
+
+继续用该残差解预条件方程，得到$\bm z_1=(-13/138,13/276)^\top$与$\beta_0=169/6348$，因此$\bm p_1=(-741/8464,1235/19044)^\top$。第二轮$\alpha_1=276/209$，更新后$\bm x_2=(1/11,7/11)^\top$；代回原方程可核对残差为零。预条件每轮多解一次$\bm M\bm z=\bm r$，判断它是否合算要比较总成本及达到目标精度所需轮数。
+
+
+对GMRES，左预条件把搜索目标变成$\lVert\bm M^{-1}(\bm b-\bm A\bm x)\rVert_2$；右预条件通过$\bm A\bm M^{-1}\bm y=\bm b$及$\bm x=\bm M^{-1}\bm y$保持原残差的最小化解释。两者所得迭代近似可能不同，结束时都应重新检查原方程的残差。
+
+对不相容最小二乘，左变换一般改变目标：求解$\min_{\bm x}\lVert\bm M^{-1}(\bm b-\bm A\bm x)\rVert_2$相当于更换残差的度量，不一定给出原目标的解。可逆右变换$\bm x=\bm M^{-1}\bm y$保留原残差目标；但秩亏时，最小$\lVert\bm y\rVert_2$相当于最小$\lVert\bm M\bm x\rVert_2$，未必选出原坐标下的最小范数解。选择预条件时必须同时检查目标和选解准则。

@@ -1,6 +1,6 @@
 # 数学基础五卷章目与文件映射
 
-当前数学正文共37章，五卷章数依次为18、3、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
+当前数学正文共39章，五卷章数依次为20、3、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
 
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
@@ -11,17 +11,19 @@
 | 3 | 1 | 5 | 极限与连续 | tex/01-basic-mathematics/02-real-numbers-and-univariate-functions/02-limits-continuity.tex |
 | 18 | 1 | 6 | 一元函数的微分 | tex/01-basic-mathematics/02-real-numbers-and-univariate-functions/03-univariate-differentiation.tex |
 | 39 | 1 | 7 | 一元函数的积分 | tex/01-basic-mathematics/02-real-numbers-and-univariate-functions/04-univariate-integration.tex |
-| 22 | 1 | 8 | 向量、矩阵与张量 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/02-operations.tex |
-| 5 | 1 | 9 | 线性空间 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/01-representation.tex |
-| 24 | 1 | 10 | 特征值与谱理论 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/04-analysis.tex |
-| 23 | 1 | 11 | 线性方程与矩阵方程 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/03-equations-and-optimization.tex |
-| 21 | 1 | 12 | 多元函数微积分 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/multivariate-calculus/04-multivariate-calculus.tex |
-| 9 | 1 | 13 | 图的对象与表示 | tex/01-basic-mathematics/04-graphs/01-graph-objects-and-representations.tex |
-| 32 | 1 | 14 | 图中的路径与连接关系 | tex/01-basic-mathematics/04-graphs/02-paths-and-connectivity.tex |
-| 33 | 1 | 15 | 图的遍历、分解与简化 | tex/01-basic-mathematics/04-graphs/03-traversal-decomposition-simplification.tex |
-| 34 | 1 | 16 | 图上的约束优化 | tex/01-basic-mathematics/04-graphs/04-constrained-optimization.tex |
-| 35 | 1 | 17 | 图上函数的变换与查询 | tex/01-basic-mathematics/04-graphs/05-functions-transforms-and-queries.tex |
-| 10 | 1 | 18 | 随机变量与概率基础 | tex/01-basic-mathematics/05-probability-and-statistics-basics/01-random-variables.tex |
+| 22 | 1 | 8 | 向量、矩阵与张量的运算 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/01-operations.tex |
+| 5 | 1 | 9 | 线性空间、映射与坐标 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/02-linear-spaces.tex |
+| 40 | 1 | 10 | 赋范空间与内积空间 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/03-normed-inner-product.tex |
+| 24 | 1 | 11 | 谱和奇异值 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/04-spectral-analysis.tex |
+| 23 | 1 | 12 | 线性方程与矩阵方程 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/05-linear-matrix-equations.tex |
+| 21 | 1 | 13 | 多元函数微分 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/06-multivariate-differentiation.tex |
+| 41 | 1 | 14 | 多元函数积分 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/07-multivariate-integration.tex |
+| 9 | 1 | 15 | 图的对象与表示 | tex/01-basic-mathematics/04-graphs/01-graph-objects-and-representations.tex |
+| 32 | 1 | 16 | 图中的路径与连接关系 | tex/01-basic-mathematics/04-graphs/02-paths-and-connectivity.tex |
+| 33 | 1 | 17 | 图的遍历、分解与简化 | tex/01-basic-mathematics/04-graphs/03-traversal-decomposition-simplification.tex |
+| 34 | 1 | 18 | 图上的约束优化 | tex/01-basic-mathematics/04-graphs/04-constrained-optimization.tex |
+| 35 | 1 | 19 | 图上函数的变换与查询 | tex/01-basic-mathematics/04-graphs/05-functions-transforms-and-queries.tex |
+| 10 | 1 | 20 | 随机变量与概率基础 | tex/01-basic-mathematics/05-probability-and-statistics-basics/01-random-variables.tex |
 | 25 | 2 | 1 | 度量空间 | tex/02-abstract-mathematics/01-metric-and-measure/01-metric-spaces.tex |
 | 26 | 2 | 2 | 测度空间 | tex/02-abstract-mathematics/01-metric-and-measure/02-measure-spaces/01-measure-spaces.tex |
 | 7 | 2 | 3 | 函数空间 | tex/02-abstract-mathematics/03-function-spaces/04-functional-analysis-and-approximation.tex |

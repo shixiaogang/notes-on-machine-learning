@@ -2,13 +2,13 @@
 
 所属卷：拟定五卷方案的卷一：数学准备：基础数学。
 
-状态：保留已经讨论的七章及“先谱、后方程”的章序。本稿补齐各章的节、小节与自然段提要，作为下一轮逐章讨论的依据；以下均为目标大纲建议，尚未实施到正文。
+状态：七章及“先谱、后方程”的章序已落实到第三部分正文。本文保留原目标及自然段安排，作为内容核对依据；实际正文的段落标题和提要见当前正文大纲。
 
 本部分先研究向量、矩阵与张量的具体运算，再从共同的运算规则建立线性空间、坐标、范数和内积。利用这些结构研究矩阵的谱、逼近与方程，随后把一元微积分推广到多元输入、向量和矩阵输出，以及区域、路径和曲面上的累计。
 
 前置知识为第一部分的集合、映射、索引与有限求和，第二部分的实数、复数、极限和一元微积分。线性代数的主要论证在有限维空间中完成；多元积分先采用欧氏空间中的黎曼积分与分片光滑几何对象。一般度量、测度、勒贝格积分及无限维函数空间由卷二继续建立。
 
-内容参考当前正文的[线性空间部分](../../../tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/part.tex)及其章内输入，以及[多元函数微积分章](../../../tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/multivariate-calculus/04-multivariate-calculus.tex)。本稿重组后的标题和层级不代表当前正文目录；现有正文提要见[向量、矩阵与多元函数](../../01-basic-mathematics/03-vectors-matrices-and-multivariate-functions.md)。
+内容参考当前正文的[线性空间部分](../../../tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/part.tex)及其章内输入，以及[多元函数微积分章](../../../tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/06-multivariate-differentiation.tex)。节与小节的标题、层级和顺序已按本稿落实；实际段落提要见[向量、矩阵与多元函数](../../01-basic-mathematics/03-vectors-matrices-and-multivariate-functions.md)。
 
 章目标识采用“部分号.部分内章序号”，节、小节采用本部分内的章序号，仅用于讨论定位。小节下的编号条目表示自然段安排；标为“paragraph”的标题才是拟设置的有标题段落单元，不把每个推理步骤另立标题。各章保留独立的“本章小结”。返回[当前正文大纲索引](../../README.md)。
 

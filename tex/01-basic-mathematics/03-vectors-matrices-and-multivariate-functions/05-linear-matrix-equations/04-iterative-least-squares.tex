@@ -1,0 +1,215 @@
+% LSMR recursion checked against Fong and Saunders, SIAM J. Sci. Comput. 33 (2011), Algorithm LSMR.
+% Extended Kaczmarz uses the synchronous old-z update of Zouzias and Freris, arXiv:1205.5770, Algorithm 3.
+\subsection{Golub--Kahan双对角化}
+\label{sec:ls-bidiagonal-iteration}
+
+前面的QR方法适合能够保存分解结果的问题。若$\bm A\in\mathbb R^{m\times d}$很大，或者只能够计算$\bm A\bm v$与$\bm A^\top\bm u$，可以逐步构造低维问题，每一步只使用这两种乘法。下面从零初值说明；非零初值可以先以$\bm b-\bm A\bm x_0$为右端项求修正，但还要单独检查所得解的零空间分量。
+
+以下统一输入$\bm A,\bm b$、两种残差的容差与最大步数，初值固定为$\bm x_0=0$。LSQR与LSMR的最终输出都是$d$维近似解，区别是每个子空间中优化哪一种残差。双对角化只是二者共享的准备过程：它输出基向量及双对角系数，还没有给出近似解。
+
+为什么要交替使用$\bm A$与$\bm A^\top$？$\bm A$把$d$维未知量送入$m$维观测空间，而最优性条件$\bm A^\top\bm r=0$又把观测残差送回未知量空间。分别在两个空间中保持正交基，就能用很少的系数记录这两个作用，并把大问题的残差精确地表示成小问题的残差。
+
+若$\bm b=0$，零向量已是最小范数解。否则令$\beta_1=\lVert\bm b\rVert_2$、$\bm u_1=\bm b/\beta_1$，再计算$\alpha_1=\lVert\bm A^\top\bm u_1\rVert_2$。若$\alpha_1=0$，零向量已满足正规方程。
+
+当$\alpha_1>0$时令$\bm v_1=\bm A^\top\bm u_1/\alpha_1$。Golub--Kahan双对角化按下式交替生成两个空间中的向量：
+\begin{align*}
+ \bm p&=\bm A\bm v_k-\alpha_k\bm u_k,\\
+ \beta_{k+1}&=\lVert\bm p\rVert_2,\\
+ \bm u_{k+1}&=\bm p/\beta_{k+1},\\
+ \bm q&=\bm A^\top\bm u_{k+1}-\beta_{k+1}\bm v_k,\\
+ \alpha_{k+1}&=\lVert\bm q\rVert_2,\\
+ \bm v_{k+1}&=\bm q/\alpha_{k+1}.
+\end{align*}
+
+待归一化向量为零时，不能执行对应除法。
+
+若$\beta_{k+1}=0$，当前$\bm B_k$的最后一个下对角元已知为零；此时可令后续旋转所需的$\alpha_{k+1}=0$作为终止时的约定，不定义$\bm u_{k+1}$或$\bm v_{k+1}$。若$\beta_{k+1}>0$但$\alpha_{k+1}=0$，则已知$\bm B_k$和该零值，也不定义$\bm v_{k+1}$。
+
+两种情形都先用已生成的系数完成当前小问题及$\bm x_k$的更新，再检查原残差和正规残差，不构造后续不存在的基向量。
+
+减去旧方向的分量使所得向量在精确算术中与已有基正交。
+
+当$\beta_{k+1}>0$时，把已生成的$\bm u_i$和$\bm v_i$分别排成列，得到$\bm A\bm V_k=\bm U_{k+1}\bm B_k$，其中$\bm B_k$的主对角为$\alpha_1,\ldots,\alpha_k$，下对角为$\beta_2,\ldots,\beta_{k+1}$。若$\beta_{k+1}=0$，则去掉$\bm B_k$的全零末行，记剩余方阵为$\widehat{\bm B}_k$，此时使用$\bm A\bm V_k=\bm U_k\widehat{\bm B}_k$，无需构造$\bm u_{k+1}$。
+
+\subsection{LSQR算法}
+
+有了双对角化输出，下一步要决定原变量怎样取值。LSQR把候选解限制在$\operatorname{span}\{\bm v_1,\ldots,\bm v_k\}$中，并在其中最小化原残差。也就是说，输入数据未变，只把每轮需要选择的未知量从$d$个原坐标换成$k$个子空间坐标。
+
+选择$\bm x_k=\bm V_k\bm y$，并利用$\bm b=\beta_1\bm u_1$与已生成的$\bm U$的正交性，原残差范数化为$\lVert\beta_1\bm e_1-\bm B_k\bm y\rVert_2$。末行因$\beta_{k+1}=0$而删去时，改用$\widehat{\bm B}_k$及$k$维的$\bm e_1$，结果相同。LSQR在每一步求解这个小型最小二乘问题；因此精确算术下，随着候选空间扩大，原残差范数不增。实现可以用Givens旋转逐步更新小问题，不必每轮重新分解，也不必形成$\bm A^\top\bm A$。避免形成正规矩阵能减少填充及其形成误差，却不能消除原问题的小奇异值。
+
+具体实现时，可将新一行双对角元素用一次平面旋转消去，并同时更新解。初始化$\bm x_0=\bm0$、$\bm w_1=\bm v_1$、$\bar\rho_1=\alpha_1$、$\bar\phi_1=\beta_1$。第$k$轮先做上述双对角化，再依次计算
+\begin{align*}
+ \rho_k&=\sqrt{\bar\rho_k^2+\beta_{k+1}^2},\\
+ c_k&=\bar\rho_k/\rho_k,\\
+ s_k&=\beta_{k+1}/\rho_k,\\
+ \theta_{k+1}&=s_k\alpha_{k+1},\\
+ \bar\rho_{k+1}&=-c_k\alpha_{k+1},\\
+ \phi_k&=c_k\bar\phi_k,\quad \bar\phi_{k+1}=s_k\bar\phi_k,
+\end{align*}
+并更新$\bm x_k=\bm x_{k-1}+(\phi_k/\rho_k)\bm w_k$与$\bm w_{k+1}=\bm v_{k+1}-(\theta_{k+1}/\rho_k)\bm w_k$。这些标量记录逐次旋转，小问题的解通过方向$\bm w_k$累加到原变量中。
+
+这个累加式可以从回代读出，而无需把它当作独立公式记忆。旋转把双对角小矩阵化为上双对角矩阵，当前对角元是$\rho_k$，与下一列的耦合是$\theta_{k+1}$。把三角求解与$\bm V_k\bm y$合在一起，已消去的耦合由$\bm w_{k+1}=\bm v_{k+1}-(\theta_{k+1}/\rho_k)\bm w_k$记录；当前右端分量$\phi_k$除以$\rho_k$后，沿$\bm w_k$加回原解。因而无需每轮保存全部基再重新回代。
+
+若双对角化在本轮产生零量，将所需的零系数代入当前旋转与$\bm x_k$的更新，再检查残差；此时不需要计算下一方向$\bm w_{k+1}$。若$\rho_k=0$，则不能执行相应除法，应直接处理已构造的小问题并检查所得解。
+
+由于零初值下$\bm x_k$位于$\operatorname{range}(\bm A^\top)$，若迭代达到$\bm A^\top(\bm b-\bm A\bm x_k)=0$，它既是最小二乘解，又与$\operatorname{null}(\bm A)$正交，因而是最小范数解。有限精度下向量可能失去正交性，必要时可重正交化，但这需要额外存储与内积。每轮主要成本是一遍$\bm A$与一遍$\bm A^\top$的乘法；实际停止时既检查原残差，也检查正规残差，避免把不相容问题固有的非零残差误判为失败。
+
+\subsection{LSMR算法}
+\label{sec:ls-lsmr}
+
+不相容的最小二乘问题中，原残差一般不能降到零；达到最小二乘解的条件是$\bm A^\top\bm r=\bm0$。LSMR与LSQR使用同一组双对角化向量，但在候选空间中选择使正规残差$\lVert\bm A^\top(\bm b-\bm A\bm x_k)\rVert_2$最小的近似。
+
+当$\beta_{k+1}>0$且$\alpha_{k+1}>0$时，由双对角化关系，$\bm A^\top\bm U_{k+1}=\bm V_k\bm B_k^\top+\alpha_{k+1}\bm v_{k+1}\bm e_{k+1}^\top$。令$\bm x_k=\bm V_k\bm y$，得到
+\[
+ \bm A^\top(\bm b-\bm A\bm x_k)
+ =\bm V_{k+1}\left(\alpha_1\beta_1\bm e_1-
+ \begin{bmatrix}\bm B_k^\top\bm B_k\\
+ \alpha_{k+1}\beta_{k+1}\bm e_k^\top\end{bmatrix}\bm y\right).
+\]
+
+所以可通过一个$(k+1)\times k$的小最小二乘问题选择$\bm y$。若$\alpha_{k+1}=0$而$\beta_{k+1}>0$，省去含$\bm v_{k+1}$的零项，使用已有的$\bm V_k$及小问题的前$k$行。若$\beta_{k+1}=0$，则用$\bm U_k$、$\bm V_k$和$\widehat{\bm B}_k$，正规残差为$\bm V_k(\alpha_1\beta_1\bm e_1-\widehat{\bm B}_k^\top\widehat{\bm B}_k\bm y)$；两种情形都不引入缺失的基向量。
+
+这个矩阵用于解释方法；实际短递推利用双对角化系数和两组旋转，不形成原矩阵的$\bm A^\top\bm A$。候选空间逐步扩大，故精确算术中正规残差范数不增；这不意味着解误差也逐步下降。
+
+具体计算可按下列顺序。
+
+第一组旋转与LSQR一样，先把双对角作用化为三角作用；LSMR还要最小化经过$\bm A^\top$作用的残差，因此再用第二组旋转消去这一作用带来的耦合。下面的带横线标量保存旋转后的系数，$\bm h_k$与$\bar{\bm h}_k$保存将小问题的坐标恢复到原变量时所需的方向。每轮依次完成双对角化、两组旋转和解的更新，不能把某一组旋转单独当作解。
+
+使用上一小节的$\alpha_1,\beta_1,\bm v_1$初始化
+\[
+ \begin{gathered}
+\bar\alpha_1=\alpha_1\\
+\bar\zeta_1=\alpha_1\beta_1\\
+\rho_0=\bar\rho_0=\bar c_0=1\\
+\bar s_0=0\\
+\bm h_1=\bm v_1\\
+\bar{\bm h}_0=\bm0\\
+\bm x_0=\bm0.
+ \end{gathered}
+\]
+
+每轮先继续双对角化，得到$\beta_{k+1}$、$\alpha_{k+1}$和$\bm v_{k+1}$。第一组旋转消去新出现的下对角元：
+\[
+ \begin{gathered}
+\rho_k=\sqrt{\bar\alpha_k^2+\beta_{k+1}^2}\\
+c_k=\frac{\bar\alpha_k}{\rho_k}\\
+s_k=\frac{\beta_{k+1}}{\rho_k}\\
+\theta_{k+1}=s_k\alpha_{k+1}\\
+\bar\alpha_{k+1}=c_k\alpha_{k+1}.
+ \end{gathered}
+\]
+
+第二组旋转处理正规残差小问题中的耦合。它使用上一轮保存的四个量：$\bar c_{k-1}$、$\bar s_{k-1}$、$\rho_{k-1}$和$\bar\rho_{k-1}$。依次计算
+\begin{align*}
+ \bar\theta_k&=\bar s_{k-1}\rho_k,\\
+ \bar\rho_k&=\sqrt{(\bar c_{k-1}\rho_k)^2+\theta_{k+1}^2},\\
+ \bar c_k&=\frac{\bar c_{k-1}\rho_k}{\bar\rho_k},\\
+ \bar s_k&=\frac{\theta_{k+1}}{\bar\rho_k},\\
+ \zeta_k&=\bar c_k\bar\zeta_k,\\
+ \bar\zeta_{k+1}&=-\bar s_k\bar\zeta_k.
+\end{align*}
+
+最后更新辅助方向和近似解：
+\[
+ \begin{gathered}
+\bar{\bm h}_k=\bm h_k-\frac{\bar\theta_k\rho_k}{\rho_{k-1}\bar\rho_{k-1}}\bar{\bm h}_{k-1}\\
+\bm x_k=\bm x_{k-1}+\frac{\zeta_k}{\rho_k\bar\rho_k}\bar{\bm h}_k\\
+\bm h_{k+1}=\bm v_{k+1}-\frac{\theta_{k+1}}{\rho_k}\bm h_k.
+ \end{gathered}
+\]
+
+双对角化产生零量时，使用已知零系数完成本轮旋转和$\bm x_k$更新，再检查原残差与正规残差；不计算需要缺失基向量的下一方向。旋转或归一化的分母为零时，先直接处理当前小问题并核验所得解，不能把递推失效当成求解成功。无完整重正交化时，每轮仍主要使用一次$\bm A$和一次$\bm A^\top$作用，以及线性规模的工作向量。
+
+例如取
+\[
+\begin{gathered}
+\bm A=\begin{bmatrix}1&0\\0&2\\0&0\end{bmatrix}\\
+\bm b=\begin{bmatrix}1\\1\\1\end{bmatrix}\\
+\bm x_0=\bm0.
+\end{gathered}
+\]
+双对角化得到$\beta_1=\sqrt3$，前两步的小矩阵约为
+\[
+\begin{gathered}
+\bm B_1=\begin{bmatrix}1.2910\\1.3166\end{bmatrix}\\
+\bm B_2=\begin{bmatrix}1.2910&0\\1.3166&0.9115\\0&0.8771\end{bmatrix}.
+\end{gathered}
+\]
+
+把第一步的旋转和向量也列出，便能核对递推所得解。初始化时$\alpha_1\approx1.2910$、$\bm v_1\approx(0.4472,0.8944)^\top$；双对角化得到$\beta_2\approx1.3166$、$\alpha_2\approx0.9115$和$\bm v_2\approx(-0.8944,0.4472)^\top$。LSQR据此计算
+\[
+ \begin{gathered}
+\rho_1\approx1.8439\\
+c_1\approx0.7001\\
+s_1\approx0.7140\\
+\theta_2\approx0.6508\\
+\phi_1\approx1.2127\\
+\bar\phi_2\approx1.2367.
+ \end{gathered}
+\]
+将这些数代入解的更新式，得到下文的第一步解。下一步使用的方向为
+\[
+ \bm w_2\approx(-1.0523,0.1315)^\top.
+\]
+
+LSMR第一组旋转使用相同的$\rho_1,c_1,s_1,\theta_2$，但保留$\bar\alpha_2\approx0.6382$。第二组旋转取$\bar\theta_1=0$、$\bar\rho_1\approx1.9554$、$\bar c_1\approx0.9430$、$\bar s_1\approx0.3328$，得到$\zeta_1\approx2.1086$。因为$\bar{\bm h}_1=\bm v_1$，由$\bm x_1=\zeta_1\bar{\bm h}_1/(\rho_1\bar\rho_1)$得到另一组第一步解。这里两种方法各自的带横线标量属于各自的递推，不能混用。
+
+第一步LSQR给出$\bm x_1\approx(0.2941,0.5882)^\top$，原残差与正规残差范数分别约为$1.2367$和$0.7892$；LSMR给出$\bm x_1\approx(0.2615,0.5231)^\top$，两种范数分别约为$1.2440$和$0.7442$。在同一候选直线上，前者取得更小的原残差，后者取得更小的正规残差。
+
+第二步两者都得到$(1,1/2)^\top$，此时正规残差为零，但第三行无法拟合，所以原残差范数仍为$1$。
+
+LSQR侧重原残差，LSMR侧重正规残差，两者在同一步选出的系数可以不同。零初值使它们的近似都留在行空间，若达到最小二乘条件便选出最小范数解；任意初值和右预条件可能改变这一选解准则。数值计算中应重新检查原残差与正规残差，并区分达到容差、停滞、预算耗尽和递推失效。
+
+\subsection{Kaczmarz算法}
+\label{sec:ls-kaczmarz}
+
+前两种方法每步都要遍历矩阵来做乘法。如果数据以单行提供，可以把一行方程当作一次修正的依据。这里先要求$\bm A\bm x=\bm b$相容，输入为各行数据、初值及停止参数；一次更新选择一行，一轮则循环访问全部行。输出仍是原方程的近似解，零初值还规定了多解时的最小范数选择。
+
+当方程按行到达，或者一次只方便读取一行时，可以依次把当前近似投影到各行方程上。记第$i$行为$\bm a_i^\top$，若$\bm a_i\ne\bm0$，则
+\begin{equation}
+ \bm x_{k+1}=\bm x_{k}+
+ \frac{b_i-\bm a_i^\top\bm x_{k}}{\lVert\bm a_i\rVert_2^2}\bm a_i.
+ \label{eq:ls-kaczmarz-update}
+\end{equation}
+
+分子是当前行残差，修正沿超平面的法向量进行。
+
+这一修正可直接从当前行推导：限制新点为$\bm x_k+t\bm a_i$，代入$\bm a_i^\top\bm x=b_i$，得到$t=(b_i-\bm a_i^\top\bm x_k)/\|\bm a_i\|_2^2$。在所有满足该行的点中，法向修正距离当前点最近，因而就是正交投影。
+
+例如取$\bm A=\left[\begin{smallmatrix}1&0\\1&1\end{smallmatrix}\right]$、$\bm b=(1,2)^\top$，从零开始按第一行、第二行循环。第一次投影得$(1,0)^\top$；第二次的行残差为$1$，行向量平方长度为$2$，因此得到$(3/2,1/2)^\top$。下一轮依次得到$(1,1/2)^\top$和$(5/4,3/4)^\top$，逐步接近共同解$(1,1)^\top$。每次投影只保证刚处理的一行成立，是否可以停止仍须检查所有行。
+
+循环访问所有非零行称为循环Kaczmarz法；一次更新只访问该行的非零元素，一轮的工作量约与整个矩阵的非零元素数同阶。
+
+对相容方程，任一共同解都在每个超平面上。投影的勾股关系说明，每次更新到共同解的距离不增；完整循环访问各行时，近似收敛到某个解。零初值的更新始终位于行空间，所以在解不唯一时得到最小欧氏范数解。
+
+若初值含零空间分量，该分量不会被行投影改变。零行若对应右端零可跳过；右端非零则表明方程不相容，不能执行除零更新。
+
+循环收敛还需要把单步距离不增加强为整轮收缩。固定与初值具有相同零空间分量的共同解，误差始终位于行空间。每次正交投影若不减少误差长度，说明误差已与该行法向正交；一整轮均不减少，就意味着误差属于所有行的共同零空间。在行空间中，这只能是零向量。
+
+因此一轮误差映射在行空间单位球面上处处严格缩短长度。该球面紧且映射连续，最大的长度比小于一，重复完整循环便收敛到零。这补足了从单步投影性质到整个算法收敛的论证；只知道距离单调不增，并不能直接得到方程残差趋于零。
+
+不相容时，逐行投影未必得到最小二乘解。例如$\bm A=(1,1)^\top$、$\bm b=(0,1)^\top$，循环投影使$x$在$0$与$1$之间来回，而最小二乘解为$1/2$。固定步长的循环行投影因此不能一般地求解不相容最小二乘。下面介绍一种扩展方法：估计右端在列空间正交补上的分量，再修正行方程的右端。
+
+\subsection{扩展Kaczmarz算法}
+
+不相容时不存在共同超平面交点，必须先从右端中分离掉列空间正交补上的分量。扩展方法为此增加一个$m$维辅助变量$\bm z$，让它逼近不能拟合的残差；与此同时，让$\bm x$去拟合逐步修正的右端$\bm b-\bm z$。
+
+输入仍为同一$\bm A,\bm b$，只是每轮还要访问一列，输出则改为最小范数最小二乘近似。
+
+扩展Kaczmarz法引入辅助向量$\bm z$，初始取$\bm z_{0}=\bm b$、$\bm x_{0}=\bm0$。记$\bm c_j$为第$j$列；每轮独立选一个非零列和一个非零行，并用旧状态同时计算
+\begin{align*}
+ \bm z_{k+1}&=\bm z_{k}-
+ \frac{\bm c_j^\top\bm z_{k}}{\lVert\bm c_j\rVert_2^2}\bm c_j,\\
+ \bm x_{k+1}&=\bm x_{k}+
+ \frac{b_i-z_{i,k}-\bm a_i^\top\bm x_{k}}{\lVert\bm a_i\rVert_2^2}\bm a_i.
+\end{align*}
+
+列投影逐渐去掉$\bm z$的列空间分量，行投影则使用修正后的右端$\bm b-\bm z$。
+
+例如继续使用$\bm A=(1,1)^\top$、$\bm b=(0,1)^\top$，唯一的列投影把$\bm z_{0}=(0,1)^\top$变为$\bm z_{1}=(-1/2,1/2)^\top$。若两轮均选第一行，第一轮行更新使用旧的$\bm z_{0}$，因此$x_1=0$；第二轮使用$\bm z_{1}$，得到$x_2=1/2$。
+
+若按非零行、列的平方范数分别归一化后独立抽取，这一算法在规定条件下以均方意义收敛到最小范数最小二乘解；该概率结论的证明需要后续概率工具。
+
+零行和零列的抽取权重为零；若$\bm A=0$则直接返回最小范数最小二乘解$\bm x=0$，不建立除以零的权重。每轮要访问一列和一行，还要保存长度为$m$的辅助向量。
+
+结束时应检查$\bm A\bm x$与$\bm b-\bm z$的差，以及$\bm A^\top\bm z$是否足够小。
