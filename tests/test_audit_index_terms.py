@@ -154,11 +154,12 @@ class CollectTermsTests(unittest.TestCase):
                 volume_dir = root / "tex" / volume
                 volume_dir.mkdir(parents=True)
                 (volume_dir / "volume.tex").write_text("", encoding="utf-8")
-            first = root / "tex" / "01-mathematical-preliminaries-upper"
+            first_volume = volumes[0]
+            first = root / "tex" / first_volume
             (first / "volume.tex").write_text(
                 "\\input{fragments/root}\n"
-                "\\input{tex/01-mathematical-preliminaries-upper/b}\n"
-                "\\input{tex/01-mathematical-preliminaries-upper/a}\n",
+                f"\\input{{tex/{first_volume}/b}}\n"
+                f"\\input{{tex/{first_volume}/a}}\n",
                 encoding="utf-8",
             )
             fragments = root / "fragments"
@@ -170,7 +171,7 @@ class CollectTermsTests(unittest.TestCase):
                 "\\term{甲}\\term{共享}", encoding="utf-8"
             )
             (first / "b.tex").write_text(
-                "\\term{乙}\\input{tex/01-mathematical-preliminaries-upper/nested}", encoding="utf-8"
+                f"\\term{{乙}}\\input{{tex/{first_volume}/nested}}", encoding="utf-8"
             )
             (first / "nested.tex").write_text(
                 "\\term{共享}\\term{丙}", encoding="utf-8"
@@ -199,7 +200,7 @@ class CollectTermsTests(unittest.TestCase):
             ],
         )
         self.assertTrue(
-            all(item.volume == "01-mathematical-preliminaries-upper" for item in occurrences)
+            all(item.volume == first_volume for item in occurrences)
         )
 
 
@@ -248,7 +249,8 @@ class MappingAndAuditTests(unittest.TestCase):
     def test_parses_balanced_mapping_arguments_and_owner(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shard = root / "tex" / "index-terms" / "01-mathematical-preliminaries-upper.tex"
+            owner = self.audit_index_terms.VOLUMES[0]
+            shard = root / "tex" / "index-terms" / f"{owner}.tex"
             shard.parent.mkdir(parents=True)
             shard.write_text(
                 "\\DeclareBookIndexTerm"
@@ -262,12 +264,13 @@ class MappingAndAuditTests(unittest.TestCase):
         self.assertEqual(len(mappings), 1)
         self.assertEqual(mappings[0].key, "含{嵌套}词条")
         self.assertEqual(mappings[0].translation, "nested {English} term")
-        self.assertEqual(mappings[0].owner, "01-mathematical-preliminaries-upper")
+        self.assertEqual(mappings[0].owner, owner)
 
     def test_parses_semantic_alias_separately_from_base_mappings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shard = root / "tex" / "index-terms" / "01-mathematical-preliminaries-upper.tex"
+            owner = self.audit_index_terms.VOLUMES[0]
+            shard = root / "tex" / "index-terms" / f"{owner}.tex"
             shard.parent.mkdir(parents=True)
             shard.write_text(
                 "% \\DeclareBookIndexTermAlias"

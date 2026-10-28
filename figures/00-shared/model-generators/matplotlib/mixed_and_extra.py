@@ -71,7 +71,7 @@ s=r'''\begin{tikzpicture}[x=1mm,y=1mm,font=\figurefont\footnotesize,
 \end{tikzpicture}
 ''';(dest/'topology.tex').write_text(s);render(dest/'topology.tex',dest)
 t=np.linspace(0,np.pi/2,41);f,a=fig(84,84);axes(a,(-.05,1.35),(-.05,1.4),'$z$','$r$',[0,.5,1],[0,.5,1]);a.set_aspect('equal');a.plot(np.sin(t),np.cos(t),c=MUTED,ls='--');a.annotate('',(.5,1),(0,1),arrowprops={'arrowstyle':'->','color':BLUE});a.annotate('',(.5,.875),(.5,1),arrowprops={'arrowstyle':'->','color':RED});a.scatter([0],[1],c=BLUE,s=22);a.scatter([.5],[.875],c=GREEN,s=22,zorder=4);note(a.text(.25,1.08,'位置整步',ha='center'));note(a.text(.74,1.13,"$z'=0.5$\n$r'=0.875$",va='top'));note(a.text(.5,-.40,r'$H:0.5\to0.5078125$'+'\n接受率 $\\approx0.992218$',transform=a.transAxes,ha='center'));a.set_title('相空间中的一步蛙跳')
-DATA={'trajectory':[[0,1],[.5,1],[.5,.875]],'exact_energy':[.5,.5078125],'acceptance':float(np.exp(-.0078125)),'exact_orbit_z':np.sin(t),'exact_orbit_r':np.cos(t)};PARAMS={'target':'standard normal','M':1,'epsilon':.5,'initial':[0,1],'orbit_samples':41};INPUTS=[ROOT/'figures/06-probabilistic-graphical-models/02-inference/tikz/pgm-sampling-hmc.tex'];panel_export(f,key)
+DATA={'trajectory':[[0,1],[.5,1],[.5,.875]],'exact_energy':[.5,.5078125],'acceptance':float(np.exp(-.0078125)),'exact_orbit_z':np.sin(t),'exact_orbit_r':np.cos(t)};PARAMS={'target':'standard normal','M':1,'epsilon':.5,'initial':[0,1],'orbit_samples':41};INPUTS=[ROOT/'figures/09-probabilistic-graphical-models/02-inference/tikz/pgm-sampling-hmc.tex'];panel_export(f,key)
 compose(key,151,88,[('chart.pdf',[0,0,88,88]),('topology.pdf',[95,0,151,88])])
 
 key='dim-diffusion-walk';dest=destination(key)

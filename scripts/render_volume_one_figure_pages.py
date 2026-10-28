@@ -19,7 +19,7 @@ def main():
     p.add_argument('--extra',nargs='*',default=[])
     p.add_argument('--between',nargs=2,action='append',default=[],metavar=('FROM_LABEL','TO_LABEL'))
     p.add_argument('--dpi',type=int,default=180)
-    p.add_argument('--volume', type=int, choices=range(1, 13), default=1)
+    p.add_argument('--volume', type=int, choices=range(1, 16), default=1)
     a=p.parse_args();root=a.root.resolve();out=a.output.resolve()
     volume = next(v for v in volumes(root) if v["number"] == a.volume)
     pdf=root/'target'/volume["pdf"]

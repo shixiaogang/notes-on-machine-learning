@@ -231,7 +231,7 @@ def main():
         expected = {v["pdf"] for v in volumes(ROOT)}
         actual = {p.name for p in (ROOT / "target").glob("*.pdf")}
         if actual != expected:
-            raise ValueError("target/ 的十二卷 PDF 不完整或存在旧产物；请运行 ./build.sh all。")
+            raise ValueError("target/ 的十五卷 PDF 不完整或存在旧产物；请运行 ./build.sh all。")
         stale = affected(current, state)
         if stale:
             raise ValueError(f"以下卷的构建输入已过期或 PDF 与构建记录不同：{', '.join(stale)}；运行 ./build.sh build。")
@@ -240,7 +240,7 @@ def main():
             for name in [MANIFEST] + ["target/" + n for n in sorted(expected)]:
                 if not staged_matches(name, (ROOT / name).read_bytes()):
                     raise ValueError(f"成品尚未暂存或暂存版本已过期：{name}")
-        print("成品检查通过：十二卷 PDF 与各卷当前输入一致。")
+        print("成品检查通过：十五卷 PDF 与各卷当前输入一致。")
 
 
 if __name__ == "__main__":

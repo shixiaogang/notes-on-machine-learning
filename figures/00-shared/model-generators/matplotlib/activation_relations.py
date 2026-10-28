@@ -14,9 +14,9 @@ OUT = Path(__file__).resolve().parent
 sys.path.insert(0,str(ROOT/'figures/00-shared/academic-drawing'))
 from volume3_style import configure, prepare_figure, style_record, BLUE, RED, MUTED, GREEN, ORANGE, GRID
 configure()
-DATA = ROOT/'figures/05-neural-network-models/00-shared/tikz/feedforward-activation-curves.dat'
+DATA = ROOT/'figures/08-neural-network-models/00-shared/tikz/feedforward-activation-curves.dat'
 values = np.genfromtxt(DATA, names=True)
-OLD = ROOT/'figures/05-neural-network-models/00-shared/tikz'
+OLD = ROOT/'figures/08-neural-network-models/00-shared/tikz'
 names=['feedforward-activation-basics','feedforward-activations','feedforward-activation-rectifiers','feedforward-activation-exponential','feedforward-activation-swish','feedforward-activation-smooth','feedforward-activation-vector']
 COLORS={'NNInput':BLUE,'NNHidden':GREEN,'NNOutput':RED,'NNGradient':ORANGE,'NNInk':MUTED,'ffn reference curve':MUTED}
 records=[]

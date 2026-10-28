@@ -1,0 +1,405 @@
+\section{词法分析与局部标注}
+\label{sec:nlp-analysis-lexical}
+
+“机器学习读书会”可以作为一个活动名称，词性标注却可能需要“机器学习／读书会”两个词，模型输入又可能把每个汉字作为一个词元。\term{词法分析}（lexical analysis）处理词的边界、基本形式、形态属性、词性和浅层短语，它必须先确定采用什么语言单位，再给这些单位赋属性。本节的共同挑战有三项：分析单位本身需要预测，且语言词、模型词元与原文字符三者的边界不一致；同一表面形式在不同语境中有不同切分、基本形式或类别；每个局部决定都受相邻决定约束，例如词内的BMES标签必须连贯、同一词内的字必须属于同一词性。
+
+三个小节分别处理边界、形态和局部类别。分词与词性、组块主要使用第\ref{sec:nlp-analysis-paradigm-tagging}小节的序列标注范式，合法转移掩码在这里有最直接的用途；词形还原把变化规则当作类别做分类，或用字符级生成直接写出基本形式，属于第\ref{sec:nlp-analysis-paradigm-generation}小节的生成范式。所有输出最终都恢复为原文字符跨度，再按所选规范评价。
+
+图~\ref{fig:nlp-analysis-alignment}把位置作为各层共同的参照。图中的模型切分只是教学设定，不对应某个实际词表。分词和组块可以有不同边界，模型词元也不必服从其中任何一种边界。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/02-text-analysis-and-organization/tikz/nlp-analysis-alignment}
+  \caption{原文“研究生命”的字符、语言词、模型词元与标签对应。横向位置均指原文字符；箭头只表示覆盖位置，不表示预测依赖。语言词采用“研究／生命”，模型词元故意采用“研究生／命”。本例把“研究”视为动词、“生命”视为名词，分别形成VP与NP组块；词元标签必须经过位置映射才能恢复这些语言单位。}
+  \label{fig:nlp-analysis-alignment}
+\end{figure}
+
+\subsection{分词与边界确定}
+\label{sec:nlp-analysis-segmentation}
+
+\term{分词}（word segmentation）按照选定规范把字符序列切成词语。中文分词的困难可以归为四项。第一，书写不用空格标出词界，边界本身要预测。第二，歧义有两种形态：字串“研究生命”中“研究生”与“生命”都是词且共享“生”，这类相邻候选词互相重叠的情形称为\term{交集歧义}（overlapping ambiguity）；“他将来北京”中的“将来”在别处是一个词，这里却应切成“将／来”，这类同一字串既可整体成词、又可拆开的情形称为\term{组合歧义}（combinational ambiguity）。第三，人名、机构名、领域术语和新词不断出现，训练语料或词典中没有的\term{未登录词}（out-of-vocabulary word, OOV）是错误的主要来源。第四，各语料的分词规范不一致，同一句话在不同语料中的“正确”切分并不相同。
+
+语言学分词与模型的子词切分目标不同。BPE、WordPiece和Unigram分词模型按压缩或似然组织模型输入（第\ref{sec:nlp-llm-tokenization}小节），不会自动生成所需的语言词界。固定“研究生命”时，语言词可为“研究／生命”，模型词元可为“研究生／命”；后者跨过了语言词界，一个词元的类别不能直接复制给一个完整词。
+
+方法沿以下谱系推进，每一步回应前一方法的一个缺陷。词典最大匹配直接利用词表，规则透明，但无法用语境消歧，也不能发现新词；HMM把分词改写为字符边界标注，用统计代替规则，新词可以由已见的边界模式组合出来，但发射只依赖当前字；CRF允许使用任意重叠的上下文特征，并对整句全局归一化；预训练编码器以上下文表示替代人工特征，提高了未登录词召回；词格模型把被字符模型丢掉的词典信息重新接入；多标准分词让规范不同的语料共享一个模型。
+
+评价把预测词和参考词都恢复为原文跨度集合$P$与$G$，精确率、召回率分别为$|P\cap G|/|P|$与$|P\cap G|/|G|$，F1为二者的调和平均。未登录词召回只在参考词中不属于训练词表$V$的那部分上计算，即$|\{w\in P\cap G:w\notin V\}|/|\{w\in G:w\notin V\}|$，它单独反映新词处理能力。预测“研究生／命”得到$\{[0,3),[3,4)\}$，参考“研究／生命”为$\{[0,2),[2,4)\}$，严格匹配数为0，两个指标都是0。
+
+预训练模型普遍以字或子词为输入后，还需要显式分词吗？对许多端到端任务，例如以字为单位的实体识别或文本分类，模型可以不经分词直接学习，分词错误也就不会传给下游。显式的词界仍有三类用途：需要词作为计数或检索单位的系统（倒排索引、词频统计、术语抽取）；需要语言学单位的分析（词性、依存树都定义在词上）；以及需要人能检查的中间结果。分词的价值因此取决于下游是否消费词这一单位，而不取决于模型能否在内部绕开它。
+
+\subsubsection{词典最大匹配与候选切分图}
+\label{sec:nlp-analysis-dictionary}
+
+设词典包含“研究”“研究生”“生命”“命”，并允许单字兜底。\term{正向最大匹配}（forward maximum matching）从左边当前位置出发，尝试不超过词典最大词长的片段，取最长的已收录词，再移动到其右端，“研究生命”因此得到“研究生／命”。逆向最大匹配从右端寻找最长词，先选“生命”，再选“研究”，得到另一种切分。两种方法都只做局部选择；双向比较还需另行规定冲突时按词数、单字数或其他证据决定。
+
+要同时比较整句候选，可把字符间的边界$0,\ldots,n$作为节点。若$x[s:e]$在词典中，就加入边$s\to e$，边上记该词及其代价$c(s,e)$。所有边都向右，构成有向无环图。令$d(e)$为从0到$e$的最小总代价，递推为
+\begin{equation}
+  d(0)=0,\qquad
+  d(e)=\min_{s:\,s\to e}\{d(s)+c(s,e)\}.
+  \label{eq:nlp-analysis-word-path}
+\end{equation}
+其余初值为$+\infty$，每次保存最优前驱$s$。到达$n$后逆向读取前驱，把各条边的$[s,e)$反转为正序，就得到词跨度；若$d(n)=+\infty$，应报告无合法切分，或明确启用单字兜底。代价取负对数词概率时，最短路径就是词概率乘积最大的切分，即一元语言模型下的最优切分。
+
+设“研究”“生命”“研究生”“命”的代价依次为$1,1,0.7,2$，单字兜底代价均为3（教学设定）。于是$d(2)=1$，$d(3)=0.7$；到达4时，经“生命”的代价是$1+1=2$，经“命”的代价是$0.7+2=2.7$，其余路径更大。回溯$4\leftarrow2\leftarrow0$得到“研究／生命”。正向最大匹配先取了最长的“研究生”，全局路径则因后续代价而放弃它，这正是交集歧义需要整句比较的原因。
+
+这类方法的知识全在词表和代价里：词表缺少“生命”会直接删掉正确候选，错误的长词会使贪心提前走错，两种故障应分别靠补候选和调代价修复。它适合词表稳定、要求能解释词项来源的受限文本，也常作为统计方法的候选来源或特征来源；面对组合歧义和未登录词，它没有可用的语境信息。
+
+\subsubsection{HMM边界标注}
+\label{sec:nlp-analysis-hmm-boundary}
+
+词典不能枚举所有新词，字符在词内的位置却可以在不同词之间共享。\term{BMES标注}（BMES tagging）用B表示词首、M表示词中、E表示词尾、S表示单字词；“研究／生命”转成B、E、B、E，“研究生／命”转成B、M、E、S。分词由此成为字符序列标注，一个未见过的词仍可由已见过的边界模式组成\scite{nlp-analysis-xue2003}。
+
+HMM把边界标签$y_i$当作隐藏状态、字符$x_i$当作观测，模型定义、前向算法和Viterbi见第\ref{sec:nlp-classical-hmm}小节与第\ref{sec:nlp-classical-viterbi}小节；这里只说明参数从何而来。由已分词文本转换出的BMES序列，统计句首状态次数$N_{\mathrm{start}}(a)$、相邻状态次数$N(a,b)$和状态发射字符次数$N(a,c)$，用加$\alpha$平滑在允许后继集合$A(a)$上估计
+\[
+  p(b\mid a)=
+  \frac{N(a,b)+\alpha}
+       {\sum_{b'\in A(a)}N(a,b')+\alpha|A(a)|}.
+\]
+发射概率按状态分别归一化，并在字符表中保留一个未知字符符号。非法转移（如B后接S）概率恒为0，不参与平滑分母，这相当于HMM版本的合法掩码。
+
+两条训练记录“研究／生命”和“研究生／命”贡献B到E两次、B到M一次，因此不加平滑时$p(\mathrm E\mid\mathrm B)=2/3$、$p(\mathrm M\mid\mathrm B)=1/3$。第一条记录中“生”贡献B发射，第二条中“生”贡献E发射：同一字符可以处在不同的词内位置，这一不确定性要靠转移和相邻字符共同消解。设一个已平滑的模型给两条候选路径的连乘因子为（教学参数，依次为起始、发射、转移与发射交替及句末转移）
+\[
+\begin{aligned}
+ p(x,\mathrm{BEBE})&=
+ .8\cdot.5\cdot.6\cdot.3\cdot.6\cdot.3
+ \cdot.6\cdot.4\cdot.2=0.00062208,\\
+ p(x,\mathrm{BMES})&=
+ .8\cdot.5\cdot.4\cdot.5\cdot.9\cdot.2
+ \cdot.2\cdot.2\cdot.8=0.0004608,
+\end{aligned}
+\]
+BEBE胜出，恢复为$[0,2)$、$[2,4)$。要确认整句最优，仍须让Viterbi覆盖所有合法路径，而不是只比较两条手选候选。
+
+HMM的局限来自它的生成式假设：给定状态，字符的出现与其他字符无关。“生”是否是词尾，强烈依赖右邻字是“命”还是“活”，但HMM只能通过状态转移间接利用这一信息，无法直接使用“右邻字是什么”这类特征。它的优点同样来自这一简单结构：参数只有$4\times4$的转移表和每个状态上的字符分布，训练只需一遍计数，解码为$O(4^2n)$，平滑后的参数可以逐项检查。在标注很少或需要快速得到基线时，这些性质仍然有用。
+
+\subsubsection{BMES--CRF边界标注与Viterbi解码}
+\label{sec:nlp-analysis-bmes-crf}
+
+CRF改为直接为“位置$i$取标签$a$”评分，评分可以读取整句。发射分数$\bm E_{i,a}$在传统做法中是特征的线性组合，特征模板包括窗口内的单字与相邻字对（$x_{i-2},\ldots,x_{i+2}$，$x_{i-1}x_i$，$x_ix_{i+1}$）、字符类型（汉字、数字、字母、标点），以及从训练语料统计的构词与未登录词特征\scite{v9a-tseng2005}；在神经做法中是编码器输出经线性层的结果。标签之间的依赖由转移矩阵$\bm T$学习，合法性由固定掩码规定。BMES的合法转移与起止条件为
+\[
+\begin{array}{c|c}
+ \text{位置或前驱}&\text{允许标签或后继}\\ \hline
+ \text{句首}&\mathrm{B,S}\\
+ \mathrm{B}&\mathrm{M,E}\\
+ \mathrm{M}&\mathrm{M,E}\\
+ \mathrm{E}&\mathrm{B,S}\\
+ \mathrm{S}&\mathrm{B,S}\\
+ \text{句末}&\mathrm{E,S}
+\end{array}
+\]
+特征模板怎样变成可学习的参数，可以看“研究生命”的第3个字“生”。窗口特征取值为$x_{i-2}=$研、$x_{i-1}=$究、$x_i=$生、$x_{i+1}=$命、$x_{i+2}=$句末符，字对特征为“究生”“生命”以及跳过当前字的“究命”，字符类型为汉字。每个特征值都与当前标签组合成一个指示特征，例如$\mathbb I[x_ix_{i+1}=\text{生命}\wedge y_i=\mathrm B]$；发射分数是这些指示特征的权重之和，$\bm E_{i,a}=\sum_k w_k f_k(x,i,a)$。在大语料上，仅字对模板与4个标签组合就可产生数以百万计的特征，绝大多数只出现几次，因此要用L2或L1正则约束权重。“生命”这个字对在训练语料中多以“生”为B出现，于是$\mathbb I[x_ix_{i+1}=\text{生命}\wedge y_i=\mathrm B]$获得正权重，这正是HMM无法直接使用的右邻证据。
+
+表外的项在$\bm M$、$\bm m^{\mathrm{start}}$、$\bm m^{\mathrm{end}}$中取$-\infty$，整句得分、训练目标与解码按式~\eqref{eq:nlp-analysis-legal-mask}进行。与HMM相比，CRF在整句上归一化，不受第\ref{sec:nlp-classical-memm}小节所述MEMM标注偏置的影响；与逐位置分类相比，它在训练和解码中都只考虑合法序列。
+
+解码用Viterbi。令$\delta_i(b)$为结束于位置$i$、标签为$b$的最高前缀分数，则$\delta_1(b)=\tilde\pi_b+\bm E_{1,b}$，$\delta_i(b)=\bm E_{i,b}+\max_a[\delta_{i-1}(a)+\tilde{\bm T}_{a,b}]$，其中$\tilde\pi=\bm\pi+\bm m^{\mathrm{start}}$、$\tilde{\bm T}=\bm T+\bm M$；同时记录取得最大值的前驱。末位选$\argmax_b[\delta_n(b)+\tilde\rho_b]$，再沿前驱回溯。两个末标签相同的前缀，未来新增的得分完全相同，因此只保留较大者不会丢掉全局最优；时间为$O(nL^2)$。
+
+对“研究生命”，令所有合法转移和起止得分为0，使用表~\ref{tab:nlp-analysis-viterbi}的位置得分。逐位置选择最大值会得到S、E、B、E，分数为15，但S后不能接E，这一序列不在输出空间中。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{@{}c rrrr rrrr@{}}
+    \toprule
+    &\multicolumn{4}{c}{位置得分$\bm E_{i,\cdot}$}
+    &\multicolumn{4}{c}{最优前缀$\delta_i$}\\
+    字&B&M&E&S&B&M&E&S\\
+    \midrule
+    研&3&0&0&4&3&$-\infty$&$-\infty$&4\\
+    究&0&1&4&0&4&4&7&4\\
+    生&3&1&2&0&10&5&6&7\\
+    命&0&0&4&1&7&10&14&8\\
+    \bottomrule
+  \end{tabular}
+  \caption{BMES的教学得分与Viterbi图表。起止和转移采用正文掩码，合法项为0。右半表按末标签分别保留最优前缀；句末的M虽有10分，但句末掩码不允许以M结束。}
+  \label{tab:nlp-analysis-viterbi}
+\end{table}
+
+例如$\delta_2(\mathrm E)=4+\delta_1(\mathrm B)=7$，而$\delta_3(\mathrm B)=3+\max\{\delta_2(\mathrm E),\delta_2(\mathrm S)\}=10$。句末只比较E的14和S的8，选E；前驱依次为位置3的B、位置2的E、位置1的B，得到BEBE，分数14。恢复程序见算法~\ref{alg:nlp-analysis-bmes-recover}：B开启跨度，M延长跨度，E闭合跨度，S独自成词，结果为“研究”$[0,2)$和“生命”$[2,4)$。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[BMES标签序列到原文字符跨度的恢复]
+  \label{alg:nlp-analysis-bmes-recover}
+  \begin{algorithmic}[1]
+    \Require 合法BMES序列$y_{1:n}$，每个分析位置在原文中的起止偏移$[o_i,o_i')$
+    \Ensure 词跨度列表$\mathcal W$
+    \State $\mathcal W\gets[\,]$；$s\gets\text{未定义}$
+    \For{$i=1,\ldots,n$}
+      \If{$y_i=\mathrm S$}
+        \State 把$[o_i,o_i')$加入$\mathcal W$
+      \ElsIf{$y_i=\mathrm B$}
+        \State $s\gets o_i$
+      \ElsIf{$y_i=\mathrm E$}
+        \State 把$[s,o_i')$加入$\mathcal W$；$s\gets\text{未定义}$
+      \EndIf \Comment{M只延长当前跨度}
+    \EndFor
+    \State \Return $\mathcal W$ \Comment{序列合法时，每个B都有对应的E}
+  \end{algorithmic}
+\end{algorithm}
+
+恢复步骤要求输入合法，这正是掩码在训练与解码中共同起作用的意义：解码器只产生合法序列，恢复程序无须猜测孤立的M或E属于哪个词。若原文在送入模型前做过全角半角转换、空白删除等规范化，偏移$o_i$必须指向规范化之前的原文，否则即使标签正确也会返回错误位置。用有限的大负数近似$-\infty$时，还要确认数值范围足以压过合法路径的分差。
+
+特征CRF的效果取决于特征模板与语料规范的匹配。Tseng等在SIGHAN 2005评测中加入的未登录词特征，只在词较长的AS与MSR语料上带来提高；在HK语料上反而降低了F1，作者把原因追到测试集含有训练集中未见的标点\scite{v9a-tseng2005}。
+
+\subsubsection{预训练编码器分词与词格模型}
+\label{sec:nlp-analysis-pretrained-lattice}
+
+特征CRF的模板要人工设计，窗口之外的信息也用不上。用预训练编码器替换特征层，是第\ref{sec:nlp-analysis-paradigm-tagging}小节三层结构的直接实例。中文BERT类模型的词表对常用汉字基本按单字切分，一句$n$个字的输入加上首尾的[CLS]与[SEP]，编码后得到$(n+2)\times d$的表示（基础规模$d=768$）；去掉两个特殊位置即为$\bm H\in\mathbb R^{n\times d}$。线性层$\bm W\in\mathbb R^{d\times4}$给出$\bm E\in\mathbb R^{n\times4}$，上面接逐位置softmax或带BMES掩码的CRF。CRF层只新增$4\times4$的转移矩阵和两个长度为4的起止向量，与编码器的上亿参数相比可以忽略，代价主要在编码器。整个网络端到端微调，流程见第\ref{sec:nlp-classical-bert-finetuning}小节。
+
+它比特征CRF强在两处。其一，表示由全句自注意力得到，“生”的向量同时受“研究”和“命”影响，不受窗口宽度限制；其二，预训练让模型在大量无标注文本中见过低频字和新词的组合方式，标注语料中从未出现的人名、术语也能得到有用的表示，这直接针对未登录词这一主要错误来源。逐位置softmax与CRF的差距在强编码器上会缩小，因为上下文表示已经隐含了相邻标签的大部分信息；但softmax仍可能输出非法序列，保留带掩码的CRF或至少在解码时施加掩码，才能保证恢复程序收到合法输入。
+
+字与模型词元并非总是一一对应。数字、拉丁字母串和部分符号会被合成一个词元，例如“14:00”可能被切成“14”“:”“00”三个词元。分词标签定义在字上，处理办法是在词元级别预测并规定合成规则：若一个词元覆盖多个字，这几个字被视为必然在同一词内，词元的标签由首字与末字的标签合成：首字为B或S表示词元开启一个词，末字为E或S表示词元闭合一个词，两者都成立记S，只开启记B，只闭合记E，都不成立记M。当参考词界落在一个词元内部时，这种表示无法输出正确答案，应在数据转换时统计并报告这类样本，而不是静默丢弃。以“会议14:00开始”为例，设词元为“会”“议”“14”“:”“00”“开”“始”，参考切分为“会议／14:00／开始”。字级标签中“1”为B、“4”为M，于是词元“14”合成为B；“:”为M；“0”为M、“0”为E，词元“00”合成为E。解码得到的词元级标签序列B、E、B、M、E、B、E仍满足BMES掩码，再按每个词元覆盖的原文偏移恢复出$[0,2)$、$[2,7)$、$[7,9)$。若某规范要求把“14”与“:00”切开，词元“00”内部没有冲突，这种切分仍可表示；若要求把“14”拆成“1／4”，就落在词元内部，无法表示。
+
+预训练编码器仍以字为单位，词典中积累的词语知识只能通过微调数据间接学到。最简单的补救是\term{词典特征}（lexicon feature）：对每个字$x_i$，构造若干二值指示“以$x_i$开头（或结尾）的长度为$k$的片段是否在词典中”，$k=2,\ldots,5$，把这些指示拼到字向量上。它只告诉模型“这里有个词”，却不提供这个词本身的表示，也不能区分同一位置的多个候选词。
+
+\term{词格}（lattice）模型更进一步，把词典匹配到的所有词作为额外单元接入字符序列：字符链上每个匹配词$w_{b,e}$（从第$b$个字到第$e$个字）构成一条从$b$跳到$e$的边，整体形成一个格。Lattice-LSTM是这一思想的代表，最初为中文实体识别提出\scite{nlp-analysis-zhang2018lattice}：它在普通字符LSTM之外，为每个匹配词计算一个词单元$\bm c^{\mathrm w}_{b,e}$，输入是词嵌入和第$b$个字的隐藏状态；在词尾字$e$处，字符单元把自己的候选更新$\tilde{\bm c}_e$与所有以$e$结尾的词单元按门控加权：
+\[
+  \bm c_e=\sum_{b}\bm\alpha_{b,e}\odot\bm c^{\mathrm w}_{b,e}+\bm\alpha_e\odot\tilde{\bm c}_e,
+\]
+其中各门向量$\bm\alpha_{b,e}$与$\bm\alpha_e$由各自的输入门经逐维指数归一化得到，使它们在每一维上相加为1。
+
+图~\ref{fig:nlp-analysis-lattice}以“研究生命”和词典$\{$研究，研究生，生命$\}$为例画出这个格。三个匹配词分别是$w_{1,2}$、$w_{1,3}$与$w_{3,4}$：前两个词单元从第1个字的状态出发，第三个从第3个字的状态出发；它们分别在第2、3、4个字处并入字符链。于是“究”的单元中混入了“研究”的信息，“生”混入了“研究生”，“命”混入了“生命”。交集歧义在格中表现为两条重叠的词边：“研究生”与“生命”都覆盖“生”。门控根据语境决定各个字更依赖哪个候选词，例如在“研究生命的起源”中，模型可以学会在“生”处压低“研究生”的贡献，让后面的“生命”单元主导“命”处的表示，再由CRF输出B、E、B、E。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/02-text-analysis-and-organization/tikz/analysis-ch9a-lattice}
+  \caption{“研究生命”上的词格。下方是字符链，每个字一个LSTM单元；上方的弧是词典匹配到的词，每个词从起始字取状态、计算一个词单元，在词尾字处经门控并入字符单元（实心箭头）。“研究生”与“生命”两条弧在“生”处重叠，对应交集歧义；采用哪一个由门控与上层CRF按语境决定。词典为教学设定。}
+  \label{fig:nlp-analysis-lattice}
+\end{figure}
+
+Yang等把同一结构用于中文分词，并把格中的词典词换成从语料中自动抽取的子词单元，从而不再依赖人工词典\scite{nlp-analysis-yang2019lattice}。词单元的完整门控运算，以及把字与词展平为带头尾位置的序列、从而可以并行计算的FLAT，见第\ref{chap:nlp-information-extraction}章的中文实体识别。
+
+这一谱系的进步在于把词典从硬约束变成软证据：最大匹配必须服从词典，词格模型只把词典词当作可被语境否决的候选。代价有两点。其一，效果依赖词典的覆盖与质量，领域换了往往要换词典；其二，Lattice-LSTM每个位置的输入数随匹配词数变化，难以批量并行，训练与推断明显慢于普通字符模型。
+
+\subsubsection{多标准分词}
+\label{sec:nlp-analysis-multi-criteria}
+
+公开的中文分词语料遵循不同规范。以“姚明进入总决赛”为例，按中文树库的规范应切为“姚明／进入／总决赛”，按北大语料的规范则切为“姚／明／进入／总／决赛”，人名的姓与名、复合词的切分粒度都不同\scite{nlp-analysis-chen2017mccws}。把这些语料直接混合训练，同一字串会收到互相矛盾的标签；每个规范单独训练一个模型，又浪费了各语料共享的大部分边界知识（绝大多数词在各规范下切法一致）。\term{多标准分词}（multi-criteria word segmentation）用一个模型同时学习$K$种规范，并在预测时指定输出哪一种。
+
+把这个例子转成BMES，冲突的位置一目了然：按前一种规范，七个字的标签为B、E、B、E、B、M、E；按后一种为S、S、B、E、S、B、E。第3、4、7个字的标签两边一致，第1、2、5、6个字不一致。若混合训练，同一输入在这些位置上有两种标签，模型最多只能在两者之间分配概率，学到的是两种规范的折中，在任何一个测试集上都会出错；若分开训练，“进入”这类两边一致的边界要在两个模型中各学一遍。理想的模型应当让一致的部分共享，只把不一致的部分交给规范信息决定。
+
+早期做法采用共享—私有结构：一个共享编码器学习各规范共同的边界知识，每种规范另有私有编码器与CRF输出层；再加一个判别共享特征来自哪个语料的分类器，用对抗训练使共享特征不含规范信息\scite{nlp-analysis-chen2017mccws}。参数随规范数线性增长。后来的做法更简洁：所有语料共用一个Transformer编码器和一个输出层，只在输入首位加入一个表示规范的特殊词元$[\mathrm{c}_k]$，规范信息通过自注意力传到每个位置\scite{nlp-analysis-qiu2020mccws}。记第$k$种规范的训练集为$\mathcal D_k$，训练目标是各规范的CRF损失之和：
+\begin{equation}
+  \mathcal L=\sum_{k=1}^{K}\sum_{(x,y)\in\mathcal D_k}
+  \mathcal L_{\mathrm{CRF}}\bigl(y;\ \operatorname{Enc}([\mathrm c_k];x)\bigr),
+  \label{eq:nlp-analysis-multi-criteria}
+\end{equation}
+$\mathcal L_{\mathrm{CRF}}$为式~\eqref{eq:nlp-analysis-legal-mask}中的带掩码条件负对数似然。规范词元在不同语料中取不同值，模型因此能把“同一字串在规范$k$下怎么切”与“字串本身的边界证据”分开学习：在“进入”这类各规范一致的位置，规范词元的影响很小；在人名、复合词等规范分歧处，各位置通过注意力读取规范词元，输出相应的切法。新增一种规范时，只需新增一个规范嵌入，再用该规范的语料继续训练。与共享—私有结构相比，规范词元方法的参数几乎不随$K$增长，并且规范信息可以影响编码器的每一层，而不只是输出层；代价是规范差异完全靠一个嵌入向量传递，规范之间差别很大时，表达能力可能不如独立的输出层。
+
+评价按规范分别进行：在规范$k$的测试集上，输入时也用$[\mathrm c_k]$。多标准模型只能在训练过的规范之间切换；各规范测试集上的F1即使平均成一个数，也只是汇总，不对应某种统一规范。
+
+表~\ref{tab:nlp-analysis-segmentation-methods}按“解决了前一方法的什么问题”归纳本小节的方法。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}>{\raggedright\arraybackslash}p{36mm}XX@{}}
+    \toprule
+    方法&解决的问题&核心机制&新代价或局限\\
+    \midrule
+    最大匹配／候选图&把词典知识直接用于切分&最长匹配，或在候选词图上求最短路径&不能用语境消歧，词典缺项即漏召回\\
+    BMES--HMM&词典无法枚举新词&字符边界标注，计数估计转移与发射&发射只依赖当前字\\
+    BMES--CRF&需要使用重叠的上下文特征&特征发射分＋转移分，带合法掩码全局归一化&特征模板需人工设计\\
+    预训练编码器＋CRF&人工特征覆盖不足，未登录词召回低&上下文表示替代特征，端到端微调&编码代价高；字与词元对齐需处理\\
+    词格模型&字符模型丢失词典信息&词典词作为候选单元，按语境门控融合&依赖词典质量；Lattice-LSTM难并行\\
+    多标准分词&不同规范的语料无法合并&共享编码器＋规范标记或私有输出层&只能输出训练过的规范；须分规范评价\\
+    \bottomrule
+  \end{tabularx}
+  \caption{中文分词方法的谱系。每一行针对上一行的主要局限；比较时须固定分词规范与评价语料，表中不跨语料排列性能。}
+  \label{tab:nlp-analysis-segmentation-methods}
+\end{table*}
+
+\subsection{词形还原与形态属性}
+\label{sec:nlp-analysis-morphology}
+
+得到词界后，同一个词还可能以多种表面形式出现。英语studies与studied通常还原为study，而studies在句中可能是复数名词，也可能是动词第三人称单数。\term{基本形式}（lemma）是词典或标注规范选定的代表形式；\term{形态属性}（morphological features）记录数、时态、人称等语法变化。基本形式不同于词干提取的结果：把studies截成studi是词干提取可能产生的字符串，却不是一个词。中文的“昨天讨论”和“明天讨论”不靠动词屈折区分时间，这类任务主要针对屈折变化丰富的语言。三种输出的区别可以用同一个词看清：studies的词干提取结果可能是studi，基本形式是study，形态属性在名词读法下是“复数”，在动词读法下是“现在时、第三人称、单数”。词干提取只用于把同根词归并（例如检索时让study与studies命中同一索引项），不要求结果是合法词；基本形式要求是词典中的词；形态属性则要求与句法语境一致。
+
+词形还原的挑战包括：屈折往往伴随拼写变化（y变ie、辅音双写）；不规则形式（went到go）无法由规则推出；同形词需要语境才能决定基本形式与属性；低资源语言缺少词典与规则；基本形式与属性彼此相关，需要联合输出。方法谱系依次为：词典加\term{有限状态转导器}（finite-state transducer, FST）精确、可解释，但覆盖受词典与规则限制；编辑树分类从数据中学习“怎样改词形”，能推广到同一变化模式的新词；字符级序列到序列模型直接生成基本形式，可处理较长或不规则的变换。评价分别报告基本形式精确匹配率、逐项属性准确率和整个属性组合的准确率。
+
+\subsubsection{词典与有限状态形态分析}
+\label{sec:nlp-analysis-fst}
+
+只查表面词形会错过大量规则变化，把每种变化形式都写进词典又过于冗余。FST提供了一种紧凑写法：在一条状态路径上同时读入一个符号串、写出另一个符号串，从而把“基本形式＋属性”与表面形式联系起来。形式上，FST是一个五元组$T=(Q,\Sigma,q_0,F,\delta)$\scite{nlp-analysis-mohri1997}：$Q$是有限状态集；$\Sigma\subseteq(\Sigma_{\mathrm{in}}\cup\{\epsilon\})\times(\Sigma_{\mathrm{out}}\cup\{\epsilon\})$是由“输入符号:输出符号”对组成的字母表，$\epsilon$表示空串，允许一侧不读或不写；$q_0\in Q$是初始状态；$F\subseteq Q$是终止状态集；$\delta\subseteq Q\times\Sigma\times Q$是转移关系。从$q_0$到某个终止状态的一条路径，把路径上各符号对的输入侧连起来得到串$u$，输出侧连起来得到串$v$，就说$T$接受$(u,v)$。$T$接受的全部串对构成一个二元关系，交换输入与输出侧即得到逆关系，因此同一个转导器既能从分析生成表面形式，也能从表面形式反查分析。
+
+形态分析器通常由两个转导器\term{复合}（composition）而成。若$T_1$把$u$映射到$v$，$T_2$把$v$映射到$w$，复合$T_1\circ T_2$就把$u$映射到$w$；构造时以状态对$(q_1,q_2)$为新状态，当$T_1$某转移的输出符号与$T_2$某转移的输入符号相同时，合成一条从$(q_1,q_2)$出发的转移，中间符号在结果中消失。词典转导器$T_{\mathrm{lex}}$把\code{study+N+Pl}映射为带语素边界的中间形式\code{study\^{}s}；拼写规则转导器$T_{\mathrm{rule}}$实现“辅音后的y在边界前写作ie，并删去边界符”，把\code{study\^{}s}写成\code{studies}。两者复合后得到从分析到表面形式的单一转导器，拼写规则可以先写成重写规则再编译成FST\scite{nlp-analysis-kaplan1994}。
+
+用一个只处理本例的微型系统把复合过程走一遍。$T_{\mathrm{lex}}$中有一条路径依次读写\code{s:s}、\code{t:t}、\code{u:u}、\code{d:d}、\code{y:y}、\code{+N:}$\epsilon$、\code{+Pl:\^{}s}（最后一个符号对一次写出两个字符，可以拆成两步），它把\code{study+N+Pl}映射为\code{study\^{}s}。$T_{\mathrm{rule}}$有四个状态：在$q_0$上，除y和边界符外的字母原样复制并留在$q_0$；读到y时有两种选择，\code{y:y}留在$q_0$，或\code{y:ie}转到$q_1$；$q_1$只接受\code{\^{}:}$\epsilon$转到$q_2$；$q_2$只接受\code{s:s}转到终止状态$q_3$；另外$q_0$上的\code{\^{}:}$\epsilon$转到$q_2$，处理不以y结尾的词干。复合时，$T_{\mathrm{lex}}$写出的y与$T_{\mathrm{rule}}$读入的y相接，状态对从$(\cdot,q_0)$走到$(\cdot,q_1)$并写出ie；接着$T_{\mathrm{lex}}$写出的边界符被$T_{\mathrm{rule}}$删去，s原样保留。复合结果中这条路径的符号对为\code{s:s}、\code{t:t}、\code{u:u}、\code{d:d}、\code{y:ie}、\code{+N:}$\epsilon$、\code{+Pl:s}，中间形式\code{study\^{}s}不再出现。但若在y处走\code{y:y}分支，$q_0$读边界符后进入$q_2$，这个微型系统同样会接受错误的\code{studys}。可见它缺少语境条件；实际的拼写规则要写明“y前为辅音、后接边界与s时必须改写”，例如boys中元音后的y保持不变，这类必选条件正是重写规则编译成FST时要处理的部分。
+
+沿逆方向查询\code{studies}，得到两条接受路径：
+\[
+\begin{aligned}
+ \code{studies}&\leftrightarrow
+   (\code{study},\mathrm{NOUN},\mathrm{Number=Plur}),\\
+ \code{studies}&\leftrightarrow
+   (\code{study},\mathrm{VERB},\mathrm{Tense=Pres},
+                       \mathrm{Person=3},\mathrm{Number=Sing}).
+\end{aligned}
+\]
+FST只说明两个分析都合乎词典和规则，选哪一个要看语境。在“She studies”中，为两个候选提取“左邻词为代词”“左邻为数词”等特征，设分类器给名词候选$-1$、动词候选2，softmax后动词概率约为0.953；“two studies”中得分若反为2与$-1$，则选复数名词。规则由语言资源提供，消歧分类器由语境与正确分析的配对训练，两种知识来源各自维护。另一种做法是把排序也放进转导器：给每条转移附一个权重（如负对数概率），路径权重为各转移权重之和，查询时按权重给分析排序，这就是加权有限状态转导器；复合与求最短路径在加权情形下仍有高效算法\scite{nlp-analysis-mohri1997}。但转移权重只能反映规则与词干本身的先验频率，读不到句子语境，“She studies”与“two studies”会得到相同的排序，所以同形歧义仍要交给语境分类器。
+
+FST方法的优点是精确与可解释：错误可以追到缺失的词干（词典漏候选）或缺失的规则（拼写变化漏候选），也能保证输出的属性组合合法。缺点是覆盖完全取决于人工资源，新词、外来词和低资源语言都难以处理，这正是下面两种数据驱动方法要弥补的。
+
+\subsubsection{编辑脚本与编辑树预测}
+\label{sec:nlp-analysis-edit-lemma}
+
+大量词语共享相同的变化，可以预测“怎样修改词形”，而不必给每个完整词形单独建类别。\term{编辑脚本}（edit script）是一段可执行的字符修改操作。直接按绝对位置记录的脚本难以推广，因为长度不同的词需要在不同位置修改；\term{编辑树}（edit tree）只记录要保留的公共部分在词首与词尾各留出多少字符，以及两端未对齐部分怎样替换，因此能用于不同长度的词\scite{nlp-analysis-chrupala2008}。
+
+编辑树由词形$w$与基本形式$\ell$递归构造。若两者没有公共子串，就生成一个替换叶节点“把$w$替换为$\ell$”；否则找出最长公共子串，设它在$w$中前面有$a$个字符、后面有$b$个字符，在$\ell$中前面和后面分别是$\ell$的前缀和后缀，生成节点$\operatorname{Split}(a,b)$，再对两侧的前缀对和后缀对递归构造左右子树。应用时，节点$\operatorname{Split}(a,b)$要求输入长度不小于$a+b$，保留中间部分并把两端分别交给子树处理；替换叶节点要求输入恰好等于它记录的串。对studies与study，最长公共子串为stud，前侧为空，后侧为ies对y，得到$\operatorname{Split}(0,3)$，左子树为空串替换，右子树为“ies替换为y”。同理，ties与tie的最长公共子串为tie，得到$\operatorname{Split}(0,1)$，右子树为“s替换为空串”。算法~\ref{alg:nlp-analysis-edit-tree}给出构造与应用两个过程。
+
+\Needspace{16\baselineskip}
+\begin{algorithm}[编辑树的构造与应用]
+  \label{alg:nlp-analysis-edit-tree}
+  \begin{algorithmic}[1]
+    \Require 训练时为词形$w$与基本形式$\ell$；应用时为编辑树$r$与新词形$u$
+    \Ensure 编辑树$r$；或$u$的基本形式，前提不成立时返回失败
+    \Function{Build}{$w,\ell$}
+      \State 求$w$与$\ell$的最长公共子串，记它在$w$中为$w[a:|w|-b]$，在$\ell$中为$\ell[c:|\ell|-d]$
+      \If{公共子串为空}
+        \State \Return $\operatorname{Replace}(w\to\ell)$
+      \EndIf
+      \State 左子树$\gets\Call{Build}{w[0:a],\ell[0:c]}$
+      \State 右子树$\gets\Call{Build}{w[|w|-b:],\ell[|\ell|-d:]}$
+      \State \Return 以左、右子树为孩子的节点$\operatorname{Split}(a,b)$
+    \EndFunction
+    \Function{Apply}{$r,u$}
+      \If{$r=\operatorname{Replace}(s\to t)$}
+        \State \Return $t$，若$u=s$；否则返回失败
+      \EndIf
+      \State 设$r=\operatorname{Split}(a,b)$；若$|u|<a+b$，返回失败
+      \State $p\gets\Call{Apply}{\text{左子树},u[0:a]}$；$q\gets\Call{Apply}{\text{右子树},u[|u|-b:]}$
+      \State \Return $p+u[a:|u|-b]+q$；任一子调用失败则返回失败
+    \EndFunction
+  \end{algorithmic}
+\end{algorithm}
+
+编辑树中只存长度$a,b$和两端的替换串，不存中间的公共部分，所以Apply过程可以把studies的编辑树用到任何以ies结尾、长度不小于3的词上。前提检查就是Apply过程中的两处失败条件。
+
+把编辑树作为类别，词形还原就成了上下文分类：用语境表示$\bm h$对编辑树$r$打分$g_r=\bm w_r^\top\bm h+b_r$，softmax只在前提成立的编辑树上归一化，以正确编辑树的交叉熵训练。对未见过的retries，同一编辑树保留retr并补y，恢复retry；对ties，前提同样成立，却得到错误的ty，正确的tie对应$\operatorname{Split}(0,1)$那棵“删去末尾s”的编辑树；反过来，后者用于studies又会得到studie。两棵树对两个词的前提都成立，只能靠特征区分，例如“候选结果是否在词表中”：study与tie在词表中，ty与studie不在。只在前提成立的编辑树上归一化，与第\ref{sec:nlp-analysis-paradigm-tagging}小节的合法掩码作用相同：它保证分类器选出的类别一定能执行。
+
+Lemming把编辑树候选与形态标注放进一个联合对数线性模型\scite{nlp-analysis-muller2015lemming}：给定词形与语境，模型对“基本形式候选$\ell$（由所有可执行的编辑树生成）、形态标签$m$”联合打分，特征包括编辑树类别、候选是否出现在词表中、候选与形态标签的共现等，形态标签之间仍由序列CRF连接。写成打分形式，对一句中第$i$个词的候选基本形式$\ell_i$与形态标签$m_i$，模型的对数势为
+\[
+  \bm\theta_{\mathrm L}^\top\bm f_{\mathrm L}(\ell_i,w_i)+\bm\theta_{\mathrm J}^\top\bm f_{\mathrm J}(\ell_i,m_i)+\bm\theta_{\mathrm M}^\top\bm f_{\mathrm M}(m_i,w,i)+\bm\theta_{\mathrm T}^\top\bm f_{\mathrm T}(m_{i-1},m_i),
+\]
+四项分别评价“基本形式与词形是否相配”“基本形式与形态标签是否相配”“形态标签与语境是否相配”和“相邻形态标签是否相配”。整句的条件概率在所有候选组合上全局归一化，训练与解码仍是第\ref{sec:nlp-analysis-paradigm-tagging}小节的格点动态规划，只是每个位置的状态从单个标签扩展为“基本形式候选×形态标签”。联合建模让“这是动词第三人称单数”的证据直接支持“去掉s”一类编辑，反之亦然。UDPipe 2在SIGMORPHON 2019共享任务中也采用这一类可执行规则，并以词形字符表示和句子上下文共同预测规则类别，107个语料的平均基本形式准确率为95.78，任务基线为94.17；该系统同时加入了BERT表示与模型集成，差值不能全部归于编辑规则\scite{v9a-straka2019}。
+
+编辑树方法的优点是类别数有限、预测快，并能把常见变化推广到新词；局限是只能选择训练中出现过的编辑树，遇到全新的变化模式或不规则形式（went到go）只能依赖替换叶节点，而这种叶节点几乎不能推广。
+
+\subsubsection{字符级序列到序列还原}
+\label{sec:nlp-analysis-seq2seq-lemma}
+
+当所需变换不在编辑树集合中时，可以直接逐字符生成基本形式。编码器读取词形字符与左右若干字符的语境窗口，得到状态$\bm e_1,\ldots,\bm e_k$；解码器在第$t$步有状态$\bm s_t$，用注意力权重$\alpha_{t,i}=\operatorname{softmax}_i\bigl(\bm v^\top\tanh(\bm W_e\bm e_i+\bm W_s\bm s_t)\bigr)$汇聚出上下文向量$\bm c_t=\sum_i\alpha_{t,i}\bm e_i$，再经线性层与softmax给出字符表上的分布$p_{\mathrm{vocab}}(\cdot)$。Lematus就是这样一个带注意力的编码器—解码器，它不预先输入词性或编辑树，而让模型从语境窗口中学会选择基本形式\scite{v9a-bergmanis2018}。
+
+具体地，输入是一串字符：左语境的若干字符、一个左边界符、词形的字符、一个右边界符、右语境的若干字符，词与词之间的空格也作为字符保留。设字符嵌入维度为$d_{\mathrm{ch}}$，双向循环编码器每个方向的隐藏维度为$d$，则输入长度为$k$时，编码器输出$\bm e_i\in\mathbb R^{2d}$，整体为$k\times2d$；解码器是单向循环网络，状态$\bm s_t\in\mathbb R^{d_s}$，每步输出字符表加结束符上的分布。语境窗口让编码器看到“She”或“two”这类决定词性的线索，边界符告诉注意力哪些字符属于待还原的词。
+
+基本形式的大部分字符原样来自输入，只有词尾少数位置发生变化。让解码器从整个字符表中重新生成每个字符，既浪费模型容量，也容易在长词中途拼错。\term{复制机制}（copy mechanism）把“生成一个字符”与“复制输入中某个位置的字符”混合起来\scite{nlp-analysis-gu2016copynet,nlp-intro-see2017}：
+\begin{equation}
+  \begin{aligned}
+    p_{\mathrm{gen}}&=\sigma\bigl(\bm w_c^\top\bm c_t+\bm w_s^\top\bm s_t+\bm w_y^\top\bm y_{t-1}+b\bigr),\\
+    p(v)&=p_{\mathrm{gen}}\,p_{\mathrm{vocab}}(v)+\bigl(1-p_{\mathrm{gen}}\bigr)\sum_{i:\,x_i=v}\alpha_{t,i}.
+  \end{aligned}
+  \label{eq:nlp-analysis-copy}
+\end{equation}
+$p_{\mathrm{gen}}\in(0,1)$是第$t$步选择生成的概率，由上下文向量、解码器状态和上一步输出的嵌入$\bm y_{t-1}$决定；第二项把注意力权重当作复制分布，对输入中所有等于$v$的位置求和，因为同一字符可以出现在多个位置，它们都支持输出$v$。$v$不在输入中时第二项为0，只能靠生成；$v$不在字符表中时第一项为0，只能靠复制，所以输出空间是字符表与输入字符的并集。后文的复制式三元组抽取、话语改写和关键短语生成都沿用这一形式。
+
+以retries为例，输入字符依次为r、e、t、r、i、e、s。第一步要输出r，设注意力在第1个位置为0.6、第4个位置为0.1、其余位置合计0.3，$p_{\mathrm{vocab}}(\mathrm r)=0.3$，$p_{\mathrm{gen}}=0.4$，则
+\[
+  p(\mathrm r)=0.4\times0.3+0.6\times(0.6+0.1)=0.54.
+\]
+两个r位置的注意力都计入了复制概率。第五步要输出输入中没有的y，复制项为0，模型必须提高$p_{\mathrm{gen}}$并把生成分布集中在y上：若$p_{\mathrm{gen}}=0.9$、$p_{\mathrm{vocab}}(\mathrm y)=0.8$，则$p(\mathrm y)=0.72$。这组教学数值说明了机制的分工：复制负责原样保留的部分，生成负责变化点，$p_{\mathrm{gen}}$在变化点附近升高。
+
+训练对$(w,\ell^\star)$的目标是包括结束符在内的条件负对数似然
+\[
+  -\sum_{j=1}^{|\ell^\star|+1}\log p\bigl(\ell_j^\star\mid w,\text{语境},\ell^\star_{<j}\bigr),
+\]
+按教师强制计算；推断用束搜索，生成到长度上限仍无结束符时应标记截断。束搜索比较的是整条路径的条件概率：设正确路径依次输出r、e、t、r、y、结束符的概率为$.9,.9,.8,.8,.7,.95$，路径概率为$0.344736$；另一条把retries原样复制下来的路径概率为$0.12$（教学数值）。束宽为2时两者都保留到结束，最终选择前者。贪心解码在某一步若被复制分布带偏（例如在第五步复制了i），就无法回头。形态属性另设预测头，从编码器的汇聚表示出发，为时态、人称、数、词性各预测一个含“不适用”的类别，再检查属性组合是否合法；“She retries”应恢复$\mathrm{VERB,Pres,3,Sing}$，“two retries”则是$\mathrm{NOUN,Plur}$，相同的基本形式并不决定属性。
+
+与编辑树相比，字符生成能组合训练中未见过的变化，也能处理不规则形式，并能直接利用语境：Lematus的实验显示，语境窗口对同形歧义词的帮助大于对未见词的帮助\scite{v9a-bergmanis2018}。代价是逐字符串行解码，并可能拼出不存在的词形；编辑树的输出至少总是某个已知变化的结果。
+
+\subsection{词性标注与短语组块}
+\label{sec:nlp-analysis-pos-chunk}
+
+\term{词性标注}（part-of-speech tagging, POS tagging）判定一个词在当前语境中的语法类别：“研究问题”中的“研究”通常是动词，“这项研究”中则是名词。\term{短语组块}（phrase chunking）只标出不重叠的浅层短语范围，例如一个连续的名词短语，不递归恢复完整的嵌套结构。两者分别输出类别序列和带类别的区间，评价分别用词性准确率和组块F1，后者按区间与类别都正确才算命中。
+
+兼类现象在中文里尤其普遍，“研究”“发展”“建设”这类词常同时可作动词和名词，形式上没有屈折标记，只能靠语境：前面有“这项”“他的”时多为名词，后面直接接宾语时多为动词。组块则要在词性之上决定短语范围，例如“校外来宾”是一个名词组块，“须报名”中的“须”不属于它。
+
+这一小节的挑战是：兼类词需要语境决定类别；未知词没有发射统计；相邻标签之间有依赖（限定词后多为名词）；组块标签有BIO合法性；中文若先分词再标注，分词错误会传给词性，而词性证据本可以帮助分词。谱系依次为：HMM用转移建模标签依赖；CRF加入任意上下文特征；BiLSTM-CRF以双向上下文表示代替人工特征；预训练编码器进一步减少特征设计；字符级联合标注把边界与词性放进同一个标签，消除流水线的误差传播。若起点是原始文本而非给定词界，词性与组块都应在原文跨度上比较，不能假定错误切分后的第$i$个词仍对应参考的第$i$个词。
+
+\subsubsection{HMM词性标注}
+\label{sec:nlp-analysis-hmm-pos}
+
+把第\ref{sec:nlp-analysis-hmm-boundary}小节的字符观测换成词、BMES状态换成词性，就得到HMM词性标注。由已标注语料统计$p(t_i\mid t_{i-1})$、$p(w_i\mid t_i)$和起止概率，Viterbi对完整词性路径求最大值。与BMES不同，词性转移没有普适的禁止表，低频组合不应自动视为不可能。未见过的词没有发射统计，最简单的处理是在训练时把低频词替换为若干未知词类别（如“含数字”“以-ed结尾”“首字母大写”），估计这些类别在各词性下的发射概率，测试时把未见词映射到相应类别。替换必须在训练时就做，若只在测试时替换，就会用到一个从未估计过的观测。
+
+考虑给定分词的“研究／问题”，只比较动词—名词（V、N）和名词—名词（N、N）。设起始概率$p(\mathrm V)=.6$、$p(\mathrm N)=.4$，观测概率$p(\text{研究}\mid\mathrm V)=.3$、$p(\text{研究}\mid\mathrm N)=.4$，转移$p(\mathrm N\mid\mathrm V)=.8$、$p(\mathrm N\mid\mathrm N)=.2$，以及$p(\text{问题}\mid\mathrm N)=.5$（教学参数，两条路径的句末因子相同而省略）。两条路径的得分分别为$.6\cdot.3\cdot.8\cdot.5=.072$与$.4\cdot.4\cdot.2\cdot.5=.016$。虽然“研究”的名词发射概率更高，整句仍选V、N，恢复为“研究”$[0,2)$：V，“问题”$[2,4)$：N。
+
+一阶转移只看前一个标签，而许多搭配需要前两个标签才能判断。TnT把转移扩展到二阶，并用插值平滑解决二阶计数稀疏的问题\scite{nlp-analysis-brants2000}：
+\begin{equation}
+  \begin{aligned}
+    p(t_i\mid t_{i-2},t_{i-1})={}&\lambda_1\hat p(t_i)+\lambda_2\hat p(t_i\mid t_{i-1})\\
+    &+\lambda_3\hat p(t_i\mid t_{i-2},t_{i-1}),\qquad\lambda_1+\lambda_2+\lambda_3=1,
+  \end{aligned}
+  \label{eq:nlp-analysis-tnt}
+\end{equation}
+$\hat p$为最大似然估计。三个权重对所有标签三元组共用，用\term{删除插值}（deleted interpolation）估计：遍历每个出现过的三元组$(t_1,t_2,t_3)$，假设把它的这一次出现从语料中删去，分别计算剩余计数下的三元、二元、一元估计$\frac{f(t_1t_2t_3)-1}{f(t_1t_2)-1}$、$\frac{f(t_2t_3)-1}{f(t_2)-1}$、$\frac{f(t_3)-1}{N-1}$（分母为0时记该项为0），哪一项最大，就把$f(t_1t_2t_3)$加到对应的$\lambda$上，最后归一化。“删去一次”模拟了这个三元组在新文本中出现时的情形，避免高阶估计因计入自身而被高估。举一个教学计数：某三元组出现5次，其前两个标签共现10次，后两个标签共现20次而中间标签出现100次，末标签出现500次，语料共$N=10000$个标签，则三项依次为$4/9\approx0.444$、$19/99\approx0.192$、$499/9999\approx0.050$，三元项最大，$\lambda_3$加5。若某三元组只出现1次，删去后三元估计为0，它的计数就会记到二元或一元项上；稀疏的三元组越多，$\lambda_3$越小，模型越依赖低阶估计。未知词按词尾字母估计词性分布。设未知词的字母为$l_1,\ldots,l_n$，从空后缀开始逐步加长后缀，每加一个字母就把新的计数估计与上一级的平滑估计混合：
+\[
+  p(t\mid l_{n-i+1:n})=\frac{\hat p(t\mid l_{n-i+1:n})+\theta\,p(t\mid l_{n-i+2:n})}{1+\theta},
+\]
+其中$l_{a:n}$表示从第$a$个字母到词尾的后缀，$i$从1增加到$m$，递推从$p(t)$开始，$\hat p$只在训练集的低频词上统计（低频词与未知词的分布更接近），$m$取不超过10的最长已见后缀，$\theta$取各词性无条件概率的标准差。直观上，-ing、-tion这样的长后缀一旦在训练中出现，就几乎决定词性，短后缀只提供弱证据。得到的$p(t\mid\text{后缀})$再用贝叶斯公式除以$p(t)$转为与发射概率同尺度的量；首字母大写另作条件，分开统计。二阶模型的Viterbi状态是相邻两个标签，代价为$O(nK^3)$，$K$为词性数。TnT在宾州树库上的标注准确率约为96.7\%，与当时的最大熵标注器相当，而训练只需计数\scite{nlp-analysis-brants2000}。
+
+HMM标注的优点是训练只需计数、速度快、参数可直接检查；局限仍是生成式假设，发射只看当前词，“后缀是-ing且左邻是is”这类重叠特征无法直接使用。
+
+\subsubsection{CRF与BiLSTM-CRF局部标注}
+\label{sec:nlp-analysis-crf-chunk}
+
+特征CRF以左右邻词、词形、后缀和大小写等特征产生发射分数，配合转移矩阵与掩码完成标注，其目标与解码与第\ref{sec:nlp-analysis-bmes-crf}小节相同，只是标签换成词性或BIO组块标签。浅层名词组块采用BIO标签时，句首禁止I-NP，I-NP只能接在B-NP或I-NP之后；多类组块还要求延续标签的类型与开头相同。以“校外／来宾／须／报名”为例，设三种标签的发射分数为
+\[
+\begin{array}{c|rrr}
+ &\mathrm{B\!-\!NP}&\mathrm{I\!-\!NP}&\mathrm O\\ \hline
+ \text{校外}&3&4&0\\
+ \text{来宾}&0&4&1\\
+ \text{须}&0&0&3\\
+ \text{报名}&0&0&3
+\end{array}
+\]
+合法转移为0时，逐位置取最大得到I-NP、I-NP、O、O，首标签非法；带掩码的Viterbi恢复B-NP、I-NP、O、O，总分13。读到第一个O时闭合名词组块，按词的起止偏移得到“校外来宾”$[0,4)$。
+
+BiLSTM-CRF把手工特征换成神经编码\scite{nlp-analysis-huang2015,nlp-analysis-lample2016,v9a-ma2016}。设句长$n$、批大小$B$，逐层运算为：
+\begin{enumerate}
+  \item 词嵌入：每个词查表得到$\bm e^{\mathrm w}_i\in\mathbb R^{d_{\mathrm w}}$，常用预训练词向量初始化，张量形状$B\times n\times d_{\mathrm w}$。
+  \item 字符卷积：把词内字符嵌入排成$B\times n\times\ell_{\max}\times d_{\mathrm{ch}}$（$\ell_{\max}$为最大词长，不足补齐），沿字符维做宽度为3的一维卷积，再在字符维取最大值，得到$\bm e^{\mathrm c}_i\in\mathbb R^{d_{\mathrm c}}$；它捕捉后缀、前缀和大小写等形态信息，对未知词尤其重要。
+  \item 拼接：$\bm x_i=[\bm e^{\mathrm w}_i;\bm e^{\mathrm c}_i]$，形状$B\times n\times(d_{\mathrm w}+d_{\mathrm c})$，训练时对其施加dropout。
+  \item 双向LSTM：前向与后向各有$d$维隐藏状态，拼接得$\bm h_i=[\overrightarrow{\bm h}_i;\overleftarrow{\bm h}_i]\in\mathbb R^{2d}$，即$\bm H$的形状为$B\times n\times2d$。
+  \item 发射层：$\bm E=\bm H\bm W+\bm b$，$\bm W\in\mathbb R^{2d\times L}$，得到$B\times n\times L$的发射分数。
+  \item CRF层：转移矩阵$\bm T\in\mathbb R^{L\times L}$加合法掩码，按式~\eqref{eq:nlp-analysis-legal-mask}训练与解码；批内不同句长用长度掩码处理，填充位置不参与求和。
+\end{enumerate}
+字符卷积学习词形，BiLSTM学习句内用法，CRF学习相邻类别的约束，三者由同一个参考标签端到端训练。Ma与Hovy在英语宾州树库上控制其他设置，词性准确率由仅用BiLSTM的96.93依次升到加字符卷积后的97.33和再加CRF后的97.55，说明字符表示对词性的帮助大于CRF层\scite{v9a-ma2016}。字符表示也可以用字符级双向LSTM代替卷积，取前后两个方向的末状态拼接作为词的字符向量\scite{nlp-analysis-lample2016}；两者都能从后缀与大小写推断未知词的类别，卷积计算更快，双向LSTM对整个词形建模。CRF层的作用随任务而变：词性标签之间的约束较弱，相邻依赖大多已被双向编码捕捉，CRF的增益较小；实体与组块的BIO标签有硬约束（I-$X$必须接在同类之后）和较长的区间，CRF与合法掩码的作用更明显。
+
+改用预训练编码器时，上述第1至4步由编码器替代，输入为子词序列。按第\ref{sec:nlp-analysis-paradigm-tagging}小节的首子词对齐，先从$B\times n_{\mathrm{sub}}\times d$的子词表示中按每个词首子词的下标收集出$B\times n\times d$的词表示，再接发射层与CRF。英语studies若被切成stud和\#\#ies，只有stud的位置产生标签；中文字符模型则通常不需要这一步。
+
+\subsubsection{字符级分词--词性联合标注}
+\label{sec:nlp-analysis-joint-pos}
+
+流水线一旦把“研究生”固定成一个词，后面的词性标注器就无法恢复“研究／生命”。联合标注把边界与词性组合成一个标签，例如B-V、E-V、B-N、E-N，让词性证据参与词界选择\scite{v9a-ng2004}。训练时把每个已标注词展开为字符标签：“研究/V，生命/N”产生B-V、E-V、B-N、E-N，“研究生/N，命/N”产生B-N、M-N、E-N、S-N。
+
+合法转移掩码在这里要同时表达两种约束：B-$t$和M-$t$只能转到M-$t$或E-$t$，保证同一词内词性一致；E-$t$、S-$t$之后才能转到任意词性的B或S。设两条候选的完整得分为8和6（教学设定），其余路径更低，约束解码选择前者；恢复程序在E-V处闭合“研究”$[0,2)$并附V，在E-N处闭合“生命”$[2,4)$并附N。B-V后接E-N这类词内词性不一致的组合，即使局部分数高也被掩码排除。
+
+若有$k$种词性，联合标签数为$L=4k$，转移矩阵按$L^2=16k^2$增长，CRF的$O(nL^2)$代价随之放大；不过合法转移是稀疏的，每个B-$t$只有两个合法后继，按稀疏结构实现递推可以省去大部分无用比较。以中文树库的33个词性为例，$L=132$，稠密转移矩阵有$132^2=17424$项；合法项中B-$t$与M-$t$各有2个后继，E-$t$与S-$t$各有$2k=66$个后继，合计$33\times(2+2+66+66)=4488$项，约占四分之一。联合训练需要同时有词界和词性标注。它消除了分词到词性的误差传播，但组块仍须按自己的边界规范另行预测。
+
+字符级标签并不是唯一的联合方式。另一条路线以词为单位、用转移系统逐步构造“词＋词性”序列：每一步决定当前字是并入上一个词，还是开启一个新词并给出它的词性，词级特征（整个候选词、词与词性的搭配）因此可以直接使用；由于没有可做动态规划的图表，推断用束搜索，训练用结构化感知机\scite{nlp-analysis-zhang2008joint}。两条路线分属第\ref{sec:nlp-analysis-paradigm-tagging}小节与第\ref{sec:nlp-analysis-paradigm-transition}小节的范式：字符标注可以精确解码，但特征只能落在字上；词级转移能用整词特征，代价是只有近似搜索。
+
+表~\ref{tab:nlp-analysis-morph-pos-methods}归纳形态还原与词性、组块标注的方法。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{27mm}>{\raggedright\arraybackslash}p{34mm}XX@{}}
+    \toprule
+    方法&解决的问题&核心机制&新代价或局限\\
+    \midrule
+    词典＋FST&从表面形式恢复基本形式与属性&词典转导器与拼写规则转导器复合，逆向查询；语境分类消歧&覆盖依赖人工资源，新词难处理\\
+    编辑树分类&资源不足时从数据学变化&词形—基本形式的编辑树作为类别，只在前提成立的类别上归一化&只能选训练中出现过的变化\\
+    字符级生成＋复制&不规则与未见变化&注意力编码器—解码器，复制与生成混合&串行解码，可能拼出不存在的形式\\
+    HMM／TnT&标签依赖&一阶或二阶转移，删除插值与后缀模型&发射只看当前词\\
+    特征CRF&需要重叠的上下文特征&特征发射＋转移＋合法掩码&特征需人工设计\\
+    BiLSTM-CRF／预训练编码器&人工特征覆盖不足&字符卷积与双向编码（或预训练编码，首子词对齐）给发射分&编码代价高\\
+    字符级联合标注&分词错误传给词性&边界×词性的组合标签，掩码保证词内一致&标签数与转移规模增大\\
+    \bottomrule
+  \end{tabularx}
+  \caption{形态还原与词性、组块标注的方法谱系。前三行处理基本形式与属性，后四行处理逐词类别；比较时须固定标注规范与词界条件。}
+  \label{tab:nlp-analysis-morph-pos-methods}
+\end{table*}

@@ -1,0 +1,61 @@
+\chapter{问答与对话}
+\label{chap:nlp-question-answering-dialogue}
+
+一份通知能够被准确复述，并不意味着系统已经能够回答围绕它提出的问题。用户问“我明天下午到可以吗”，系统要先在资料中找到时间和报名条件，弄清咨询发生在哪一天、用户属于哪类参加者，再判断哪些条件尚未满足；若下一轮用户更正了日期，系统必须撤掉旧的要求；若查询报名记录失败，回复也不能把预期结果说成已经成立的事实。第\ref{chap:nlp-text-generation}章讨论怎样从给定材料写出文本，本章在此之上增加两种约束：回答必须有可检查的依据，多轮交流必须维护当前有效的目标。
+
+本章的例子均为教学构造。共同通知发布于北京时间2025年4月15日，内容为：“机器学习读书会原定于4月17日举行，现改至4月18日（周五）14:00，地点为海棠楼201。校内师生可直接参加，校外来宾须在4月16日18:00前提交报名信息。”活动编号为\code{ML-0418}。通知没有提供实际报名人数、主讲人或报名成功记录；后文需要这些数据时，另行声明报名快照、统计表或假设的业务状态。三者来源不同：回答的证据来自资料，业务状态来自服务的真实返回，两者不能互换。
+
+围绕这份材料，本章要回答九个问题，见表\ref{tab:nlp-dialogue-challenges}。前五个属于问答：在大规模资料中找到相关证据；从证据中定位答案，或把多个片段、表格单元格与计算组合成答案；证据不足时弃答；回答附上可核对的引用；对已有回答逐项核验事实。后四个属于对话：跨轮记录用户需求，并处理更正与撤回；选择下一步动作并调用真实服务；在没有明确任务的开放交流中，避免“我不知道”一类通用乏味的回复，并保持人物设定与知识一致；在用户目标含混时决定是否澄清、怎样澄清。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{38mm}
+    >{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{24mm}@{}}
+    \toprule
+    挑战 & 通知中的例子 & 主要处理位置\\
+    \midrule
+    在大规模资料中找到证据 & 时间在片段A，报名条件在片段B，干扰片段C词面相近 & 第\ref{sec:nlp-dialogue-evidence}节\\
+    定位或组合答案 & 时间是原文跨度；“截止前校外报名几人”要在表上筛选求和 & 第\ref{sec:nlp-dialogue-evidence}节\\
+    证据不足时弃答 & 通知没有主讲人 & 第\ref{sec:nlp-dialogue-evidence}、\ref{sec:nlp-dialogue-verification}节\\
+    回答附可核对的引用 & 时间引用A，报名截止引用B & 第\ref{sec:nlp-dialogue-evidence}节\\
+    核验已有回答的逐项事实 & 回答把日期写成4月17日 & 第\ref{sec:nlp-dialogue-verification}节\\
+    跨轮记录需求与更正 & 用户先说明天、再改口后天 & 第\ref{sec:nlp-dialogue-task}节\\
+    选择动作并调用真实服务 & 查询报名记录，接口超时 & 第\ref{sec:nlp-dialogue-task}节\\
+    开放交流中避免通用回复、保持一致 & 闲聊读书会时只回答“挺好的” & 第\ref{sec:nlp-dialogue-open}节\\
+    目标含混时澄清 & “把通知改简单些”没有说保留什么 & 第\ref{sec:nlp-dialogue-collaboration}节\\
+    \bottomrule
+  \end{tabularx}
+  \caption{本章的挑战清单。同一份通知在不同任务中暴露不同困难；最后一列给出主要讨论的位置，多项挑战会在后续各节中反复出现。}
+  \label{tab:nlp-dialogue-challenges}
+\end{table*}
+
+方法谱系在问答侧与对话侧各有一条主线。问答侧依次是：给定段落的抽取式阅读，由手工设计的问文交互层走到预训练编码器；检索加阅读，再让检索器与阅读器联合训练；检索增强生成，把检索结果作为生成条件，并在查询、排序、检索时机、多跳与引用各环节逐一改进；证据为数据库、表格或文本与表格混合时，答案由执行查询或数值程序得出。对话侧依次是：模块化流水线，把一轮交流拆成理解、状态追踪、策略与回复生成；各模块的神经化与端到端序列生成；大语言模型加函数调用，把这些模块合进一次生成，再用显式状态与权限约束把它拉回可检查的范围。开放对话与协作对话沿用这些部件，但完成标准不同：前者看相关、信息量与一致性，后者看最终产物是否满足用户确认过的要求。
+
+各节的安排也按这两条线展开。第\ref{sec:nlp-dialogue-evidence}节从资料中取得证据并形成答案；第\ref{sec:nlp-dialogue-verification}节反过来，把一个已有回答拆成主张，逐条检索证据并修订，它处理的正是证据问答留下的“回答对不对”的问题。第\ref{sec:nlp-dialogue-task}节转入多轮，用户需求在轮次之间变化，回答的依据除了资料还有服务返回的业务状态。第\ref{sec:nlp-dialogue-open}节去掉明确任务，第\ref{sec:nlp-dialogue-collaboration}节让目标在交流中逐步确定。第\ref{sec:nlp-dialogue-comparison}节在固定资料、服务与预算下比较各类方法的评价对象与分母。本章用到的预训练编码器与跨度头见第\ref{chap:nlp-classical-models}章，检索器训练见第\ref{chap:nlp-classification-matching-organization}章，编码器—解码器生成见第\ref{chap:nlp-text-generation}章，偏好对齐见第\ref{chap:nlp-preference-alignment}章；各节在首次用到时说明所用结论。
+
+\FloatBarrier
+\input{tex/12-natural-language-processing/03-text-generation-and-interaction/06-question-answering-dialogue/01-evidence-qa}
+\input{tex/12-natural-language-processing/03-text-generation-and-interaction/06-question-answering-dialogue/02-verification}
+\input{tex/12-natural-language-processing/03-text-generation-and-interaction/06-question-answering-dialogue/03-task-dialogue}
+\input{tex/12-natural-language-processing/03-text-generation-and-interaction/06-question-answering-dialogue/04-open-dialogue}
+\input{tex/12-natural-language-processing/03-text-generation-and-interaction/06-question-answering-dialogue/05-collaborative}
+\input{tex/12-natural-language-processing/03-text-generation-and-interaction/06-question-answering-dialogue/06-comparison}
+
+\section*{文献说明}
+\label{sec:nlp-dialogue-literature}
+
+本章的原始资料按支持的内容分为方法与数据两类。各节的数值例子、通知资料、只读报名接口、用户记忆协议、通知差异候选和信息增益基线都是本书的教学实现，不归为下列论文的原算法或实验结果。
+
+阅读理解与检索方面，BiDAF给出字符与词嵌入、双向注意力流与建模层的原始结构\cite{nlp-dialogue-seo2017}，BERT给出联合编码的跨度阅读与空答案阈值\cite{devlin2019}；检索加阅读的流水线始于DrQA\cite{nlp-qa-chen2017drqa}，DPR给出双编码器检索与带片段选择的阅读器\cite{nlp-karpukhin2020dpr}，REALM与Atlas分别给出以答案似然和阅读器蒸馏训练检索器的方法\cite{nlp-qa-guu2020realm,nlp-qa-izacard2023atlas,nlp-qa-izacard2021distilling}。检索增强生成方面，RAG与FiD给出片段边缘化与解码器融合两种接入方式\cite{lewis2020rag,nlp-dialogue-izacard2021}；查询改写、HyDE、monoBERT重排、IRCoT与Self-RAG分别针对查询、排序、多跳与检索时机\cite{nlp-qa-ma2023rewrite,rs-s30,rs-s20,rs-s40,nlp-qa-asai2024selfrag}；ALCE给出带引用生成的引用召回与精确率\cite{nlp-qa-gao2023alce}；长上下文与检索的比较参考位置效应研究与两项对照实验\cite{liu2024middle,nlp-qa-xu2024retrieval-long,nlp-qa-li2024selfroute}。结构化与混合证据方面，TAPAS给出单元格选择、聚合头与软答案损失\cite{nlp-dialogue-herzig2020}，TAGOP与FinQANet分别给出标签加算子与程序生成的做法\cite{nlp-dialogue-zhu2021,nlp-dialogue-chen2021}。核验与对话方面，FActScore给出原子事实精确率\cite{min-etal-2023-factscore}，JointBERT、TRADE与SimpleTOD依次对应轮次理解、复制式状态追踪与序列化任务对话\cite{nlp-dialogue-chen2019,nlp-dialogue-wu2019,nlp-dialogue-hosseini2020}，SC-LSTM给出语义条件的回复生成\cite{nlp-dialogue-wen2015}，Self-Refine给出生成、反馈、修订的提示接口\cite{nlp-dialogue-madaan2023}。
+
+数据与评价入口方面，SQuAD 2.0把不可回答性纳入阅读任务\cite{rajpurkar2018squad2}，Natural Questions以真实搜索查询构成开放域问答\cite{nlp-qa-kwiatkowski2019nq}，HotpotQA为多跳问题标注支持事实\cite{yang2018hotpotqa}，TAT-QA与FinQA分别收集表格—文本混合问题与带程序标注的财报问题\cite{nlp-dialogue-zhu2021,nlp-dialogue-chen2021}，FEVER给出主张核验的三类标签与证据句\cite{nlp-intro-thorne2018}，其共享任务报告定义了FEVER分数\cite{nlp-dialogue-thorne2018shared}。对话方面，MultiWOZ与SGD提供多领域任务型对话的状态标注\cite{budzianowski2018multiwoz,rastogi2020sgd}，$\tau^2$-Bench让用户与执行器共同改变环境\cite{nlp-intro-barres2025}，Wizard of Wikipedia、Persona-Chat与ESConv分别对应知识、人物与情绪支持条件下的交流\cite{nlp-intro-dinan2019,nlp-intro-zhang2018persona,nlp-dialogue-liu2021}。引用原文结果时，各节只保留说明机制所需的个别数字，不能据此对方法作统一排名。
+
+\section{本章小结}
+\label{sec:nlp-dialogue-summary}
+
+回到章首的挑战清单。证据问答把“找到证据”和“形成答案”分开处理：检索器与重排器负责找到证据，稠密检索弥补词汇不匹配，联合训练让检索器学到阅读器真正需要的片段；阅读器、生成器与执行器负责形成答案，抽取式阅读定位跨度，RAG与FiD综合多个片段，SQL、TAPAS与数值程序处理筛选、聚合与计算。弃答阈值与带引用生成划定回答的边界：证据不足时不答，答了就要能逐句追溯到来源。查询改写、迭代检索与Self-RAG分别回答了“用什么查”“查几次”“何时查”，长上下文则提供了另一条以计算换召回的路线。核验从另一端处理同一问题，把已有回答拆成主张，区分支持、反驳与信息不足，只对需要的部分作最小修订。
+
+对话侧的核心是维护随轮次变化的状态。状态追踪记录当前有效的需求，区分缺失、未知、不限定与否定，并在用户更正时撤掉旧值；策略与函数调用把状态连接到真实服务，回复只陈述服务实际返回的结果。开放交流没有任务终态，互信息重排抑制通用回复，知识、人物与情绪条件分别让回复有依据、有一致性、有合适的支持方式；协作交流在目标含混时以澄清、候选讨论与版本化修订逐步确定要求。
+
+这些方法也留下了同一类边界：合法的状态可能已经过期，流畅的回复可能缺少依据，格式正确的函数调用可能尚未执行或执行失败。它们都不等于任务完成。下一章把已明确的语言要求转为数学解答、程序与环境中的行动，以执行结果和外部验证来判断任务是否完成。

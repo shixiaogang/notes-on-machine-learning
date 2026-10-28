@@ -16,8 +16,8 @@ from volume3_style import configure,prepare_figure,style_record,BLUE,RED,YELLOW,
 configure()
 from volume3_style import GREEN
 YELLOW=GREEN # Fine quantitative marks need contrast; pale yellow regions retained.
-C=ROOT/'figures/04-classic-models/00-shared/tikz'
-N=ROOT/'figures/05-neural-network-models/00-shared/tikz'
+C=ROOT/'figures/07-classic-models/00-shared/tikz'
+N=ROOT/'figures/08-neural-network-models/00-shared/tikz'
 records=[]
 def load(path):return np.genfromtxt(path,names=True,delimiter=',' if path.suffix=='.csv' else None)
 def fig(w=112,h=70,nrows=1,ncols=1,**kw):return plt.subplots(nrows,ncols,figsize=(w/25.4,h/25.4),layout='constrained',**kw)

@@ -1,0 +1,272 @@
+\section{条件生成的共同问题}
+\label{sec:nlp-generation-interface}
+
+翻译、摘要、数据描述和改写的输入各不相同，但都要求模型在给定条件下写出一段文本，并为其中的每条信息负责。它们因此共用几项基本问题：条件和目标怎样定义，模型怎样在每一步读取任意长度的条件，名称和数字这类罕见词元怎样原样保留，按参考前缀训练的模型在自己生成的前缀上为什么会出错，以及哪些困难反复出现在所有任务中。本节依次回答这些问题，并把全章共同挑战整理成一张索引表，最后给出各任务共用的结果核验流程；后续各任务节回指这里，只补任务特有的结构与目标。
+
+\subsection{输入内容、要求与目标文本}
+\label{sec:nlp-generation-training}
+
+把输入条件记为$c=(x,u,b)$：$x$是待处理材料，$u$是任务要求，$b$是允许使用的背景。例如$x$为章首通知，$u$可以是“译成英语，保留全部参加条件”，也可以是“为校外来宾生成两句参加指南”；$b$可以给出年份、时区和经确认的名称译法，但不能包含测试参考答案。目标文本$y_{1:T}$采用固定分词器，其中$y_T=\mathrm{EOS}$是结束符；起始符$\mathrm{BOS}$只用于启动生成，不是要交付的文字。
+
+同一材料在不同要求下有不同的合法目标。英文译文“External guests must submit their registration information before 18:00 on April 16”需要保留截止条件；只供日历显示的“读书会改至4月18日14:00，海棠楼201”可以不承担参加指南的职责；面向来宾的易读改写则应写明“校外来宾请在4月16日18:00前提交报名信息”。多参考文本表示同一要求下的表达差异，不同用途的答案不能混在一起充当参考。
+
+在当前材料与要求下，第~\ref{chap:nlp-large-language-models}章的序列概率写成链式分解
+\begin{equation}
+  p_{\bm{\theta}}(y_{1:T}\mid c)
+  =\prod_{t=1}^{T}p_{\bm{\theta}}(y_t\mid c,y_{<t}),
+  \label{eq:nlp-generation-factorization}
+\end{equation}
+其中$\bm{\theta}$是可学习参数，$y_{<t}$是位置$t$之前的目标词元。对$n$个独立训练样本的对数似然取负，得到\term{条件最大似然}（conditional maximum likelihood）的最小化目标
+\begin{equation}
+  L(\bm{\theta})
+  =-\sum_{i=1}^{n}\sum_{t=1}^{T_i}
+  \log p_{\bm{\theta}}(y_{i,t}\mid c_i,y_{i,<t}).
+  \label{eq:nlp-generation-nll}
+\end{equation}
+它让正确词元在同一位置的候选中获得更大概率。先把每条样本的损失除以自身长度再平均，会让各句等权；把全部有效目标词元的损失一起平均，则长句贡献更多。训练记录应写清采用哪一层归一化。
+
+训练时每个位置都以参考前缀为条件，这就是第~\ref{sec:nlp-sft-masked-loss}小节的\term{教师强制}（teacher forcing）。设简化的目标词元为“周五／举行／EOS”，解码输入是“BOS／周五／举行”，预测标签是“周五／举行／EOS”。若三个标签的条件概率为$0.6,0.5,0.8$（教学数值），样本概率为$0.24$，负对数似然为$-\log0.24\approx1.4271$，每个位置平均$0.4757$。结束符参与监督，模型才能学会何时停止。
+
+条件怎样交给模型有两种组织方式。编码器—解码器把$c$交给编码器，解码器读取移位后的目标，只在目标位置计算损失。仅解码器把“条件／分隔符／目标”拼成一条因果序列，条件位置和补齐位置的损失掩码为零，目标及其EOS位置为一；掩掉条件的损失并不掩掉对条件的注意，目标仍须读取条件。评价时模型只能看到$x,u,b$、指定的词典与资料库以及自身生成历史；选择提示、检索资料或阈值时用过的测试参考，不能再充当独立测试。
+
+\subsection{编码器—解码器与交叉注意力}
+\label{sec:nlp-generation-encoder-decoder}
+
+条件生成的第一个结构问题是：解码器每写一个词元，怎样读取长度任意的条件。最早的神经序列到序列模型用循环编码器读完源句，把最后的隐状态作为一个定长向量交给循环解码器\scite{sutskever2014seq2seq,cho2014}。所有源端信息都要挤进这一个向量，句子越长，解码器越难从中取回某个具体的日期或名称。Bahdanau等的比较显示，这类定长编码模型的译文质量随句长增加而明显下降\scite{bahdanau2015}。
+
+注意力改变的是读取方式：解码器在每一步以当前状态为查询，对全部编码器状态打分并加权求和，各步可以读取不同的源位置。设编码器状态为$\bm h_1,\ldots,\bm h_S\in\mathbb R^{d}$，解码器在第$t$步的状态为$\bm s_t$，加性注意力（additive attention）计算
+\begin{equation}
+  \begin{gathered}
+  e_{t,i}=\bm v^{\top}\tanh\bigl(\bm W_h\bm h_i+\bm W_s\bm s_t+\bm b\bigr),\\
+  a_{t,i}=\frac{\exp e_{t,i}}{\sum_{j=1}^{S}\exp e_{t,j}},\qquad
+  \bm h^{*}_t=\sum_{i=1}^{S}a_{t,i}\bm h_i .
+  \end{gathered}
+  \label{eq:nlp-generation-bahdanau}
+\end{equation}
+$e_{t,i}$是第$t$步对源位置$i$的打分，$a_{t,i}$是归一化后的注意力权重，上下文向量$\bm h^{*}_t$随后与$\bm s_t$一起决定输出分布。本章后文只用到这一机制的一点：每一步按当前查询重新加权全部源状态，权重可以作为“正在读哪里”的分布直接使用。循环网络、门控单元以及注意力循环网络的完整结构可参考\BookChapterRef{chap:recurrent-networks}{卷五的循环神经网络章}。
+
+Transformer把同一思想写成交叉注意力，其单头公式、掩码规则和键值缓存已在第~\ref{sec:nlp-llm-objective-cross-attention}小节式~\eqref{eq:nlp-llm-cross-attention}给出：查询来自解码器，键和值来自编码器输出。这里补上条件生成训练时一个批次的张量组织与解码层的计算次序。设批大小为$B$，源长为$S$，目标长为$T$，宽度为$d$，头数为$H$，每头维度$d_h=d/H$，词表大小为$V$。
+\begin{itemize}
+  \item 编码器输入为$B\times S$的词元编号与同形状的填充掩码，嵌入加位置后为$B\times S\times d$，经$L_{\mathrm e}$层双向自注意力与前馈网络得到$\bm H_{\mathrm{enc}}\in\mathbb R^{B\times S\times d}$。
+  \item 解码器输入是右移一位的目标$B\times T$，嵌入后为$\bm H^{(0)}\in\mathbb R^{B\times T\times d}$；标签是未移位的目标$B\times T$。
+  \item 每个解码层的自注意力权重为$B\times H\times T\times T$并带因果掩码；交叉注意力权重为$B\times H\times T\times S$，只对源端填充列加掩码。
+  \item 最后一层输出$B\times T\times d$乘以输出矩阵得到$B\times T\times V$的对数几率，在标签位置计算式~\eqref{eq:nlp-generation-nll}。
+\end{itemize}
+
+按预归一化写法，第$\ell$个解码层依次执行三个子层：
+\begin{equation}
+  \begin{aligned}
+    \bm A&=\bm H^{(\ell-1)}+\operatorname{MaskedSelfAttn}\bigl(\operatorname{Norm}(\bm H^{(\ell-1)})\bigr),\\
+    \bm C&=\bm A+\operatorname{CrossAttn}\bigl(\operatorname{Norm}(\bm A),\,\bm H_{\mathrm{enc}}\bigr),\\
+    \bm H^{(\ell)}&=\bm C+\operatorname{FFN}\bigl(\operatorname{Norm}(\bm C)\bigr).
+  \end{aligned}
+  \label{eq:nlp-generation-decoder-layer}
+\end{equation}
+第一行让目标位置读取已写出的前缀，第二行读取条件，第三行逐位置变换。三个子层的输出都保持$B\times T\times d$，残差连接要求形状不变。
+
+用一个两头的小例子看交叉注意力读到了什么。设源端三个位置为“改至／4月18日／海棠楼201”，解码器正在写下一个词元，两头的缩放后得分（即$\bm q\bm k^{\top}/\sqrt{d_h}$）分别为$(0,2,0)$与$(0,0,1)$（教学数值）。softmax后，第一头权重为
+\[
+  \Bigl(\tfrac{1}{e^{2}+2},\tfrac{e^{2}}{e^{2}+2},\tfrac{1}{e^{2}+2}\Bigr)\approx(0.107,0.787,0.107),
+\]
+第二头为$(1,1,e)/(2+e)\approx(0.212,0.212,0.576)$。若第一头的值向量依次为$(1,0),(0,1),(0,0)$，第二头为$(0,0),(1,0),(0,1)$，两头输出分别为$(0.107,0.787)$和$(0.212,0.576)$，拼接成四维向量$(0.107,0.787,0.212,0.576)$后再乘输出投影。第一头主要读取日期，第二头主要读取地点，同一步的两个头可以从不同位置取回信息；权重全部为正，所以每头的输出仍混入少量其他位置的值。
+
+推断时，每个样本的交叉注意力键值共$2L_{\mathrm d}\times S\times d$个数，在第一步算好后整个生成过程都可复用（第~\ref{sec:nlp-llm-objective-cross-attention}小节）。仅解码器把条件拼成前缀时，条件的键值同样只算一次，但条件位置只能看左侧上下文，条件与目标共用同一组参数；两种结构的取舍见第~\ref{sec:nlp-llm-objective-architecture}小节。对本章任务而言，编码器—解码器的优点是源端双向编码、输入与输出分工明确，在翻译、摘要等输入远长于输出的任务中仍常用；代价是条件更新后需要重新编码，难以像因果前缀那样追加多轮内容。
+
+\subsection{复制与指针机制}
+\label{sec:nlp-generation-copy-pointer}
+
+注意力让解码器读得到“海棠楼201”，却不保证它写得出。输出层只能在固定词表上分配概率，房间号、活动编号、人名和罕见数字往往不在词表中，或在训练中出现次数太少，模型倾向于用常见词替换它们；而这些恰是条件生成最需要准确保留的内容。子词切分（第~\ref{sec:nlp-llm-bpe}小节）让任何字符串都能拼出来，却没有让模型更倾向于照抄输入。复制机制直接给“从输入中取一个位置”分配概率。
+
+最直接的做法是\term{指针网络}（pointer network）：输出不是词表中的词，而是输入的位置\scite{nlp-generation-vinyals2015pointer}。第~\ref{sec:nlp-analysis-pointer-ordering}小节已用它逐步选出下一个句子来排序段落；一般形式是第$t$步对源位置$i$打分后在位置上归一化，
+\begin{equation}
+  u_{t,i}=\bm v^{\top}\tanh\bigl(\bm W_1\bm h_i+\bm W_2\bm s_t\bigr),\qquad
+  p(z_t=i\mid z_{<t},x)=\frac{\exp u_{t,i}}{\sum_{j=1}^{S}\exp u_{t,j}} .
+  \label{eq:nlp-generation-pointer-network}
+\end{equation}
+它与式~\eqref{eq:nlp-generation-bahdanau}的打分相同，区别在于注意力权重不再用于汇聚上下文，而是直接作为输出分布；输出空间的大小随输入长度变化。指针网络适合输出必为输入元素的问题，例如排序、选择记录或抽取片段；第~\ref{sec:nlp-generation-content-planning}小节的内容规划就用它在记录集合上逐步选择。它不能输出输入中没有的词。
+
+条件生成的输出大多是新写的句子夹着照抄的名称，需要在生成与复制之间切换。\term{指针生成网络}（pointer-generator network）用一个生成门把两种分布混合起来\scite{nlp-intro-see2017}。设注意力权重$a_{t,i}$与上下文向量$\bm h^{*}_t$按式~\eqref{eq:nlp-generation-bahdanau}计算，词表分布$P_{\mathrm{vocab}}=\operatorname{softmax}(\bm W_o[\bm s_t;\bm h^{*}_t]+\bm b_o)$，则
+\begin{equation}
+  \begin{aligned}
+    p_{\mathrm{gen},t}&=\sigma\bigl(\bm w_h^{\top}\bm h^{*}_t+\bm w_s^{\top}\bm s_t+\bm w_x^{\top}\bm x_t+b\bigr),\\
+    p_t(w)&=p_{\mathrm{gen},t}\,P_{\mathrm{vocab}}(w)+\bigl(1-p_{\mathrm{gen},t}\bigr)\sum_{i:\,x_i=w}a_{t,i}.
+  \end{aligned}
+  \label{eq:nlp-generation-pointer-generator}
+\end{equation}
+按原文记号，$\bm x_t$是第$t$步解码器输入（即上一目标词元）的嵌入，不要与源端词元$x_i$混淆；$\sigma$是逻辑函数，$p_{\mathrm{gen},t}\in(0,1)$是这一步选择“生成”的概率。第二行的复制项把注意力权重当作复制分布，对源端所有等于$w$的位置求和。第~\ref{chap:nlp-text-analysis}章式~\eqref{eq:nlp-analysis-copy}已在字符级词形还原中给出同一形式及重复字符求和的算例，这里关注它在词级生成中的两处实现细节。
+
+第一处是扩展词表。每个样本把源端出现而固定词表中没有的词临时加入，得到$V_{\mathrm{ext}}=V\cup\{x_i:x_i\notin V\}$，输出分布定义在$V_{\mathrm{ext}}$上。$w\notin V$时$P_{\mathrm{vocab}}(w)=0$，只能靠复制；$w$不在源端时复制项为$0$，只能靠生成。训练标签若是源端未登录词，就用它在扩展词表中的临时编号计算损失；若既不在词表也不在源端，仍记为未知词。第二处是门的输入。$p_{\mathrm{gen},t}$读取上下文、解码器状态和上一词元，模型因此能学到“刚写完‘地点为’之后更可能复制”这类规律，门值本身没有额外监督，随式~\eqref{eq:nlp-generation-nll}一起训练。
+
+图~\ref{fig:nlp-generation-pointer-generator}画出第$t$步的计算。设上一词元为“海棠楼”，对源端“读书会／改至／海棠楼／201”的注意力为$(0.05,0.10,0.25,0.60)$，$p_{\mathrm{gen},t}=0.3$，而“201”不在固定词表中（教学数值）。则$p_t(\text{201})=0.7\times0.60=0.42$；固定词表中最可能的候选“教室”若有$P_{\mathrm{vocab}}=0.5$，混合后只有$0.3\times0.5=0.15$。门值偏向复制时，注意力集中的位置直接成为输出；同一词在源端多处出现时，各处权重相加。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/03-text-generation-and-interaction/tikz/generation-ch12a-pointer-generator.tex}
+  \caption{指针生成网络在解码第$t$步的计算。下方是源端词元与双向编码器状态$\bm h_i$，条形为解码器状态$\bm s_t$作查询得到的注意力$\bm a_t$；注意力一方面汇聚成上下文$\bm h^{*}_t$，与$\bm s_t$一起给出固定词表上的分布，另一方面直接作为复制分布（左侧路径）。生成门$p_{\mathrm{gen}}$读取$\bm h^{*}_t$、$\bm s_t$与解码器输入嵌入（图中略去后者的连线），按式~\eqref{eq:nlp-generation-pointer-generator}混合两路分布。注意力数值为教学示例。}
+  \label{fig:nlp-generation-pointer-generator}
+\end{figure*}
+
+复制机制还有另一种归一化方式。CopyNet不设显式的门，而是给生成模式和复制模式各算一组得分，再在“词表词与源端位置”的并集上统一做softmax\scite{nlp-analysis-gu2016copynet}。两种写法都让输出空间成为词表与源端词的并集；显式门便于观察每步偏向复制还是生成，共享归一化则让两种模式的得分直接竞争。指针生成网络在摘要中还配有覆盖机制，用累计注意力惩罚重复关注同一位置，见第~\ref{sec:nlp-generation-summarization}节。
+
+复制解决的是“写得出”，不解决“该不该写”。模型可以准确复制“海棠楼201”，却把它绑定到另一场活动，或在不需要地点的日历摘要中照抄整句。复制概率高也不说明输出忠实，所以复制机制之后仍需要内容选择（第~\ref{sec:nlp-generation-data-to-text}节）和结果核验（第~\ref{sec:nlp-generation-recovery}小节）。后文的数据到文本、摘要和对话状态追踪都沿用式~\eqref{eq:nlp-generation-pointer-generator}，只说明各自复制的单位（记录值、源句词元或对话历史词元）和门的输入。
+
+\subsection{训练与生成的不一致}
+\label{sec:nlp-generation-exposure-bias}
+
+式~\eqref{eq:nlp-generation-nll}在每个位置都以参考前缀$y^{\star}_{<t}$为条件，生成时模型只能以自己写出的前缀$\hat y_{<t}$为条件。两者在训练初期几乎处处相同，一旦生成早期出错，例如把“4月18日”写成“4月17日”，后续每一步的条件就是训练中从未出现过的前缀，模型在这些状态下的行为没有受过监督，错误可能继续扩散。这就是第~\ref{sec:nlp-sft-on-policy-distillation}小节定义的暴露偏差（exposure bias）：模型训练时只“暴露”在参考前缀上\scite{nlp-generation-ranzato2016mixer}。另一处不一致在目标上：逐词元交叉熵对每个位置独立计分，而任务关心整句的BLEU、ROUGE或事实正确性；一个词的同义替换在交叉熵下与严重错误同样受罚，在序列指标下却几乎不扣分。
+
+第~\ref{chap:nlp-text-analysis}章的动态预言（第~\ref{sec:nlp-analysis-paradigm-transition}小节）和第~\ref{chap:nlp-supervised-finetuning}章在学生分布上的蒸馏处理的是同一类问题：让训练发生在模型自己会到达的状态上。条件生成中的对策分三类，依次放宽对参考前缀的依赖，并逐步把逐词元目标换成整句指标。
+
+\term{计划采样}（scheduled sampling）在训练中逐步把参考前缀换成模型预测\scite{nlp-analysis-bengio2015scheduled}。第$k$个训练步中，解码第$t$个位置时以概率$\epsilon_k$输入参考词元$y^{\star}_{t-1}$，以概率$1-\epsilon_k$输入模型自己的预测$\hat y_{t-1}$（从当前分布采样或取最大值），标签仍是$y^{\star}_t$。$\epsilon_k$从$1$开始随训练步数下降，原文给出三种日程：
+\begin{equation}
+  \begin{gathered}
+  \epsilon_k=\max(\epsilon_{\min},\,\kappa-\gamma k),\qquad
+  \epsilon_k=\kappa^{k}\ (\kappa<1),\\
+  \epsilon_k=\frac{\kappa}{\kappa+\exp(k/\kappa)}\ (\kappa\geq1),
+  \end{gathered}
+  \label{eq:nlp-generation-scheduled-sampling}
+\end{equation}
+分别是线性衰减、指数衰减和逆S形衰减。训练前期接近教师强制，保证模型先学会基本分布；后期更多地以自己的预测为条件，学会从偏离的前缀继续。
+
+计划采样改动很小，但有两个代价。其一，模型偏离参考后，“下一个参考词元”未必仍是合理的标签：若模型漏写了“改至”，参考的下一个词“4月18日”接在漏写之后，标签与前缀已经错位。Huszár指出，这样得到的目标并不对应一个一致的概率估计准则\scite{nlp-generation-huszar2015scheduled}。其二，Transformer的教师强制能在一次前向中计算所有位置，计划采样需要先前向一次得到预测，再用混合后的前缀前向第二次，计算量约翻倍。
+
+\term{序列级训练}（sequence-level training）直接优化整句奖励。设$r(y,y^{\star})$是候选$y$相对参考的句子级指标，例如句子BLEU或ROUGE，目标是最大化模型分布下的期望奖励
+\begin{equation}
+  J(\bm\theta)=\mathbb E_{y\sim p_{\bm\theta}(\cdot\mid c)}\bigl[r(y,y^{\star})\bigr],\qquad
+  \nabla_{\bm\theta}J=\mathbb E_{y\sim p_{\bm\theta}}\Bigl[\bigl(r(y,y^{\star})-\beta\bigr)\nabla_{\bm\theta}\log p_{\bm\theta}(y\mid c)\Bigr].
+  \label{eq:nlp-generation-sequence-reinforce}
+\end{equation}
+指标对词元不可导，梯度用REINFORCE估计：采样一条候选，按奖励减基线$\beta$加权它的对数概率梯度。这就是第~\ref{sec:nlp-align-mdp}小节陈述的策略梯度，把整句看作一个动作；基线不改变梯度期望，只降低方差。因为采样来自模型自身，训练前缀与生成前缀的分布一致，暴露偏差与指标不一致同时得到处理。
+
+纯随机初始化的模型几乎采不到有奖励的句子，梯度方差也很大。MIXER先用交叉熵训练，再从句尾开始逐步扩大用REINFORCE训练的位置数：前$T-\Delta$个位置仍用教师强制，后$\Delta$个位置从模型采样并按奖励更新，$\Delta$随训练增大；基线由一个读取解码器状态的线性回归器估计\scite{nlp-generation-ranzato2016mixer}。自我批判序列训练（self-critical sequence training, SCST）换用更简单的基线：同一输入下贪心解码结果的奖励，$\beta=r(\hat y_{\mathrm{greedy}},y^{\star})$，采样句比贪心句好才被加强\scite{nlp-generation-rennie2017scst}。第~\ref{chap:nlp-preference-alignment}章的RLHF沿用同一梯度，只是把参考指标换成学习到的奖励模型，并加入KL约束。
+
+序列级训练直接针对任务指标，代价是方差高、每步需要完整采样与打分，并且模型会利用指标的漏洞：只看$n$元重合的奖励会鼓励重复高频短语或删去难译部分。实际使用时通常与交叉熵损失加权混合。
+
+REINFORCE每次只用一两个样本估计梯度。\term{最小风险训练}（minimum risk training, MRT）改为在一组候选上精确计算期望代价\scite{nlp-generation-shen2016mrt}。对每个训练样本，把参考译文与从当前模型采样的候选去重后合成候选集合$\mathcal S(c)$（原文每句采样100条），定义锐化后的候选分布与风险
+\begin{equation}
+  \begin{gathered}
+  Q_\alpha(y\mid c)=\frac{p_{\bm\theta}(y\mid c)^{\alpha}}{\sum_{y'\in\mathcal S(c)}p_{\bm\theta}(y'\mid c)^{\alpha}},\\
+  R(\bm\theta)=\sum_{(c,y^{\star})}\ \sum_{y\in\mathcal S(c)}Q_\alpha(y\mid c)\,\Delta(y,y^{\star}),
+  \end{gathered}
+  \label{eq:nlp-generation-mrt}
+\end{equation}
+其中$\Delta(y,y^{\star})$是代价，例如$1-\text{句子BLEU}$，$\alpha>0$调节分布的平滑程度。整句概率之间常相差几个数量级，$\alpha<1$把它们拉近，使集合中多个候选都能分到权重；$\alpha$越大，$Q_\alpha$越集中在概率最高的候选上。
+
+对$\log Q_\alpha$求导再整理，梯度可以写成
+\begin{equation}
+  \nabla_{\bm\theta}R=\alpha\sum_{y\in\mathcal S(c)}Q_\alpha(y\mid c)\Bigl(\Delta(y,y^{\star})-\mathbb E_{Q_\alpha}[\Delta]\Bigr)\nabla_{\bm\theta}\log p_{\bm\theta}(y\mid c).
+  \label{eq:nlp-generation-mrt-gradient}
+\end{equation}
+推导只用到$\nabla\log Q_\alpha(y)=\alpha\bigl(\nabla\log p_{\bm\theta}(y)-\mathbb E_{Q_\alpha}[\nabla\log p_{\bm\theta}]\bigr)$以及$\sum_yQ_\alpha(y)=1$。代价低于集合平均的候选概率被提高，高于平均的被压低。与式~\eqref{eq:nlp-generation-sequence-reinforce}相比，期望代价$\mathbb E_{Q_\alpha}[\Delta]$自动充当基线，且对整组候选求和而不是单样本估计，方差更低。
+
+用三条候选核对式~\eqref{eq:nlp-generation-mrt-gradient}的方向。设$\alpha=1$，集合内归一化后的概率为$(0.5,0.3,0.2)$，代价为$(0.6,0.1,0.9)$（教学数值）。风险为$0.5\times0.6+0.3\times0.1+0.2\times0.9=0.51$，三项梯度权重$Q(\Delta-0.51)$为$(0.045,-0.123,0.078)$。梯度下降压低第一、三条候选，提高代价最低的第二条，尽管它不是当前概率最高的。若取$\alpha=0.5$，$Q$变为$(0.416,0.322,0.263)$，风险升为$0.518$，权重分布更平，三条候选都参与更新。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[最小风险训练的一步更新]
+  \label{alg:nlp-generation-mrt}
+  \begin{algorithmic}[1]
+    \Require 用条件最大似然预训练的模型$p_{\bm\theta}$；小批次$\{(c_b,y^{\star}_b)\}_{b=1}^{B}$；候选数$N$；平滑系数$\alpha$；代价函数$\Delta$
+    \Ensure 更新后的参数$\bm\theta$
+    \For{$b=1,\ldots,B$}
+      \State 从$p_{\bm\theta}(\cdot\mid c_b)$采样$N$条候选，去重后并入参考$y^{\star}_b$，得到$\mathcal S(c_b)$
+      \State 计算每条候选的$\log p_{\bm\theta}(y\mid c_b)$与代价$\Delta(y,y^{\star}_b)$
+      \State 按式~\eqref{eq:nlp-generation-mrt}在$\mathcal S(c_b)$内归一化得到$Q_\alpha$，求$R_b=\sum_yQ_\alpha(y\mid c_b)\Delta(y,y^{\star}_b)$
+    \EndFor
+    \State 对$\frac1B\sum_bR_b$反向传播（梯度即式~\eqref{eq:nlp-generation-mrt-gradient}），更新$\bm\theta$
+  \end{algorithmic}
+\end{algorithm}
+
+算法~\ref{alg:nlp-generation-mrt}中，候选的采样过程不参与求导，梯度只经过各候选的对数概率。MRT与第~\ref{sec:nlp-inference-mbr}小节的最小贝叶斯风险解码形式相同，都是对候选集合上的期望代价求最小：MBR在推断时从候选中选择输出，MRT在训练时调整参数，使低代价的候选获得更多概率。MRT的代价是每个样本要生成$N$条候选并逐一计算概率与代价，训练开销远高于交叉熵；结果也依赖代价函数与$\alpha$的选择。
+
+表~\ref{tab:nlp-generation-exposure-methods}比较三类对策。它们都需要先用条件最大似然训练出可用的模型，再在此基础上修正；大语言模型时代，后两类思路以偏好对齐和基于结果奖励的强化学习的形式继续使用。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{22mm}
+    >{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X
+    >{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价或局限 \\
+    \midrule
+    教师强制 & 并行、稳定地学习条件分布 & 每个位置以参考前缀为条件，逐词元交叉熵 & 训练前缀与生成前缀不同，目标与序列指标不一致 \\
+    计划采样 & 模型从未见过自己的错误前缀 & 按日程以模型预测替换参考前缀 & 标签可能与偏离的前缀错位；Transformer需两次前向 \\
+    序列级训练 & 交叉熵与整句指标不一致 & 采样整句，按奖励减基线的REINFORCE梯度更新 & 方差高，需预训练；模型会利用指标漏洞 \\
+    最小风险训练 & 单样本梯度方差大 & 在候选集合上用锐化分布精确计算期望代价 & 每样本生成并打分$N$条候选，训练慢；依赖$\alpha$与代价函数 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{训练与生成不一致的对策。自上而下，对参考前缀的依赖逐步减少；后三种方法都从教师强制训练的模型出发。}
+  \label{tab:nlp-generation-exposure-methods}
+\end{table*}
+
+\subsection{条件生成的共同挑战}
+\label{sec:nlp-generation-challenges}
+
+有了读取条件、复制和训练的共同机制，还要看清各任务反复遇到哪些困难。以下七项挑战贯穿本章，后续各节按它们组织方法谱系。
+
+\begin{itemize}
+  \item \emph{内容选择}：条件中的信息多于输出能容纳的信息，必须决定说什么。五条活动记录写成一句日历提示时，报名截止条件可以省略；写成校外来宾指南时却必须保留。摘要从长文中选句，数据到文本从记录表中选记录，都属于这一挑战。
+  \item \emph{罕见词与复制}：名称、编号、数字和术语在词表中稀少，却必须原样保留。“海棠楼201”“ML-0418”被写成相近的常见词，句子仍然通顺，信息已经错了。
+  \item \emph{重排与对齐}：输出的顺序和粒度与输入不同。中文“4月18日（周五）14:00”译成英文时，星期、日期和时间的语序都要变化；数据到文本要把无序的记录排成合理的叙述顺序；评价和编辑还需要知道输出的哪一段对应输入的哪一段。
+  \item \emph{忠实性与无依据内容}：输出中出现条件不支持的内容，常称为\term{幻觉}（hallucination）。Maynez等区分两类：与来源矛盾的内在错误，例如把“校外来宾须报名”写成“无需报名”；来源未提及的外在错误，例如补写“主讲人为张老师”\scite{nlp-generation-maynez2020faithfulness}。开放写作允许虚构情节，但仍不得改动题目给定的事实。
+  \item \emph{重复与退化}：模型重复同一短语、在长输出中兜圈子，或写出平淡空泛的句子。第~\ref{sec:nlp-inference-degeneration}小节已从解码角度分析了这一现象及采样对策；本章讨论任务侧的覆盖惩罚和内容规划。
+  \item \emph{无平行数据}：许多转换任务没有成对的输入输出，例如同一内容的正式与口语版本、低资源语言之间的译文。方法需要从单语语料、回译或可分离的属性标记中构造训练信号。
+  \item \emph{长输入}：多文档摘要、篇章翻译和长篇写作的条件超出模型的上下文窗口，或者虽然放得下却难以有效利用。需要分层编码、先选后写或递归规划。
+\end{itemize}
+
+表~\ref{tab:nlp-generation-challenges}把每项挑战对应到负责的方法和所在位置，可作为全章的索引。一种方法常同时回应几项挑战，例如显式规划既做内容选择也缓解长篇中的离题；表中只列主要对应关系。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{24mm}
+    >{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{40mm}@{}}
+    \toprule
+    挑战 & 负责的方法 & 所在位置 \\
+    \midrule
+    内容选择 & 经典流水线的内容确定；内容选择门与指针规划；抽取式摘要与句子打分 & 第~\ref{sec:nlp-generation-data-to-text}节，第~\ref{sec:nlp-generation-summarization}节 \\
+    罕见词与复制 & 复制与指针机制；子词词表；术语与词汇约束解码 & 第~\ref{sec:nlp-generation-copy-pointer}小节，第~\ref{sec:nlp-generation-constraints}节 \\
+    重排与对齐 & 交叉注意力；短语翻译的扭曲模型与词对齐；编辑距离对齐 & 第~\ref{sec:nlp-generation-encoder-decoder}小节，第~\ref{sec:nlp-generation-translation}节，第~\ref{sec:nlp-generation-editing}节 \\
+    忠实性与无依据内容 & 复制与记录回查；规划后生成；蕴含与问答式核验 & 第~\ref{sec:nlp-generation-data-to-text}节，第~\ref{sec:nlp-generation-faithfulness}小节 \\
+    重复与退化 & 覆盖机制；分层与规划后写作；截断采样与候选重排 & 第~\ref{sec:nlp-generation-summarization}节，第~\ref{sec:nlp-generation-open-writing}节，第~\ref{chap:nlp-model-inference}章 \\
+    无平行数据 & 删除—检索—生成与回译式风格转换；回译与无监督翻译；挖掘复述 & 第~\ref{sec:nlp-generation-editing}节，第~\ref{sec:nlp-generation-translation}节 \\
+    长输入 & 长文档与分层摘要；篇章翻译；递归规划与修订 & 第~\ref{sec:nlp-generation-summarization}节，第~\ref{sec:nlp-generation-translation}节，第~\ref{sec:nlp-generation-open-writing}节 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{条件生成的七项共同挑战及其在本章中的对应方法。训练与生成的不一致贯穿所有挑战，其对策集中在第~\ref{sec:nlp-generation-exposure-bias}小节；各项挑战的评价方法见第~\ref{sec:nlp-generation-evaluation}节。}
+  \label{tab:nlp-generation-challenges}
+\end{table*}
+
+\subsection{结果解析、核验与修订}
+\label{sec:nlp-generation-recovery}
+
+模型输出的词元不是最后的交付格式，也不能直接视为正确。交付前要完成三步：把词元恢复成可检查的对象，逐项核对事实，只对出错部分做局部修订并重新核验。
+
+恢复按分词器规则合并子词、处理空格和特殊标记、保留段落边界；结构化输出还要解析字段名、类型和必填项。生成的日期字符串可以解析为2025年4月18日，随后仍要核对它属于\code{ML-0418}的活动时间，而不是报名截止时间：可解析与值正确是两项检查。编辑类任务还需要知道改了哪里，这要用编辑距离对齐源与输出，其递推与回溯见第~\ref{sec:nlp-generation-editing}节。
+
+核验先做硬筛，再在合格候选之间比较。假设任务要求两句校外参加指南，候选甲为“读书会4月18日14:00在海棠楼201举行。校外来宾须在4月16日18:00前报名。”，候选乙为“读书会4月18日14:00在海棠楼201举行。校外来宾无需报名。”即使教学评分分别为$0.78,0.91$，乙因与来源矛盾先被淘汰，分数高不能补偿事实错误。甲进入合格集合后才与其他合格候选比较简洁程度；“提交报名信息”若在业务上不等于报名成功，甲还应修订为原通知的准确动作。
+
+修订要给出可执行的反馈。设另有一份教学记录“资料袋共12份”，而候选写成“已备21份资料袋”。反馈应保存候选位置、错误值21、记录值12及允许的局部替换，而不只是“请检查”。替换后重新核对整段的实体绑定、日期、数量、句数和格式，因为局部修订也可能引入新错误。原始材料本身冲突时，核验器不能擅自选值，应返回待澄清状态。算法~\ref{alg:nlp-generation-verify-revise}给出这一流程。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[结果解析、核验与局部修订]
+  \label{alg:nlp-generation-verify-revise}
+  \begin{algorithmic}[1]
+    \Require 条件$c$；候选$y$；字段解析器；核验器集合（实体绑定、否定、日期、数量、格式）；修订预算$K$
+    \Ensure 通过核验的文本，或失败原因及证据
+    \For{$k=0,1,\ldots,K$}
+      \State 把$y$恢复为文本与字段；解析失败则记录位置并转到修订
+      \State 逐项核验，收集错误集合$E$，每项含位置、错误值、来源值与来源位置
+      \If{$E=\varnothing$}
+        \State \Return $y$
+      \EndIf
+      \If{$E$中某项的来源值本身冲突}
+        \State \Return 待澄清状态与冲突来源
+      \EndIf
+      \State 只对$E$涉及的片段做局部替换或重新生成，得到新的$y$
+    \EndFor
+    \State \Return 失败：最后一轮的$E$与候选
+  \end{algorithmic}
+\end{algorithm}
+
+核验器自身也会出错，需要用独立标注检查其精度和召回，不能只让生成器认可自己的输出。基于蕴含和问答的忠实性检测器见第~\ref{sec:nlp-generation-faithfulness}小节；需要先检索证据再核验的问题留到第~\ref{chap:nlp-question-answering-dialogue}章。

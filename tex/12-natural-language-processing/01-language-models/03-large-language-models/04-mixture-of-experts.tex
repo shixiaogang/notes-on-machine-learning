@@ -1,0 +1,179 @@
+\section{参数规模与计算量的解耦}
+\label{sec:nlp-llm-experts}
+
+第\ref{sec:nlp-llm-computation}节的稠密解码器中，每个词元都经过全部参数，前向计算约为每词元$2N$次浮点运算，参数量与每词元计算量同比例增长。若希望模型容纳更多参数，又不按比例增加每个词元的计算，可以把前馈层换成多个并列的前馈网络，让每个词元只调用其中少数几个。\term{混合专家}（mixture of experts, MoE）层就是这样的结构：它由一个\term{路由器}（router）和$E$个\term{专家}（expert）组成，专家是结构相同、参数各异的前馈网络，路由器根据词元表示决定调用哪几个专家\scite{shazeer2017}。第\ref{sec:nlp-llm-computation}节开头所引卷五的Transformer章已用一个top-2示例说明了选择、执行与加权三个环节，本节写大语言模型中的完整路由、均衡与配置。
+
+把MoE用到大模型上要回答五个问题：路由器怎样选专家、怎样给被选专家加权；专家分布在不同设备上、每个专家只能处理固定数量的词元时，超额的词元怎样处理；怎样防止路由集中到少数专家；怎样划分专家，使有限的激活量能形成更多组合并减少专家之间的重复；以及除了调用子网络之外，能否用查表的方式接入条件参数。对应的方法谱系依次是top-$k$门控、专家容量与丢弃、辅助负载损失与无辅助损失的偏置调整、细粒度专家与共享专家，以及Engram条件记忆。图~\ref{fig:nlp-llm-moe-layer}给出一个MoE层的结构。
+
+\begin{figure*}[!t]
+  \centering
+  \input{figures/12-natural-language-processing/01-language-models/tikz/llm-moe-layer.tex}
+  \caption{带共享专家的稀疏专家层。词元表示$\bm u_t$经路由器得到各路由专家的得分，选择环节取得分（可加上负载偏置$b_i$）最高的$k$个专家，图中$k=2$，被选中的专家以实线框表示，其余专家本次不计算。被选专家的输出按重新归一化的门值加权，与始终激活的共享专家输出相加，再经残差连接回到主干。偏置$b_i$只影响选择，不进入加权。}
+  \label{fig:nlp-llm-moe-layer}
+\end{figure*}
+
+\subsection{稀疏专家层的路由}
+\label{sec:nlp-llm-moe-routing}
+
+MoE层替换的是Transformer层中的前馈子层，注意力子层与残差结构不变。下面先写清一个词元怎样选专家与加权，再讨论专家按设备并行时容量限制带来的丢弃问题。总参数随专家数$E$增长，每词元的专家计算只随被选专家数$k$增长；“专家”只是网络部件的名称，训练后的专家不一定对应可解释的领域分工。
+
+\subsubsection{Top-k门控与权重重新归一化}
+\label{sec:nlp-llm-topk-gating}
+
+设前馈子层的输入为$\bm u_t\in\mathbb R^d$，第$i$个专家为SwiGLU前馈网络$E_i:\mathbb R^d\to\mathbb R^d$，路由器参数为$\bm W_r\in\mathbb R^{E\times d}$。路由器先计算各专家的门值
+\begin{equation}
+ \bm g_t=\operatorname{softmax}(\bm W_r\bm u_t)\in\mathbb R^{E},
+ \label{eq:nlp-llm-moe-gate}
+\end{equation}
+再取门值最大的$k$个专家组成集合$\mathcal K_t$。为使被选专家的权重之和为1，可以在$\mathcal K_t$内重新归一化，$\tilde g_{t,i}=g_{t,i}/\sum_{j\in\mathcal K_t}g_{t,j}$，层输出为
+\begin{equation}
+ \bm y_t=\sum_{i\in\mathcal K_t}\tilde g_{t,i}\,E_i(\bm u_t).
+ \label{eq:nlp-llm-moe}
+\end{equation}
+未被选中的专家不计算，也不接收这个词元的梯度。路由器的梯度来自$\tilde g_{t,i}$对输出的加权作用：若专家$i$的输出有助于降低损失，梯度就提高它相对于其他被选专家的门值。top-$k$的选择本身是离散操作，不可导，模型只能通过已选专家之间的权重比较间接学习“该选谁”。
+
+$k$的取值决定了计算与灵活性的取舍。Shazeer等最早的稀疏门控MoE在门值上加入可学习的噪声再取top-$k$，以增加探索；GShard在Transformer中采用top-2\scite{nlp-llm-gshard2021}；Switch Transformer进一步取$k=1$，每个词元只经过一个专家，路由计算和通信量最小\scite{nlp-llm-switch2022}。$k=1$时若重新归一化，唯一的权重恒为1，路由器便得不到任何梯度，所以Switch直接用未归一化的门值$g_{t,i}$乘专家输出。$k\geq2$时是否重新归一化因模型而异，需要按具体配置判断；第\ref{sec:nlp-llm-bias-balance}小节的DeepSeek-V3在被选专家内归一化。
+
+\begin{example}[四个专家、top-2的路由]
+  \label{ex:nlp-llm-moe-routing}
+  以下数值均为教学示例。设$E=4$、$k=2$，一个批次只有两个词元。路由器给出的门值为
+  \[
+   \bm g_1=(0.50,\ 0.25,\ 0.125,\ 0.125),\qquad
+   \bm g_2=(0.10,\ 0.30,\ 0.10,\ 0.50).
+  \]
+  词元1选择专家1、2，重新归一化的权重为$0.50/0.75=2/3$与$0.25/0.75=1/3$；词元2选择专家4、2，权重为$0.50/0.80=5/8$与$0.30/0.80=3/8$。假设各专家对相应词元的二维输出为$E_1(\bm u_1)=(1,0)^{\top}$、$E_2(\bm u_1)=(0,3)^{\top}$、$E_4(\bm u_2)=(4,0)^{\top}$、$E_2(\bm u_2)=(0,8)^{\top}$，则
+  \[
+   \begin{aligned}
+   \bm y_1&=\tfrac23(1,0)^{\top}+\tfrac13(0,3)^{\top}=(0.67,\ 1)^{\top},\\
+   \bm y_2&=\tfrac58(4,0)^{\top}+\tfrac38(0,8)^{\top}=(2.5,\ 3)^{\top}.
+   \end{aligned}
+  \]
+  专家3在这个批次中没有被调用，专家2被两个词元同时选中。若改用Switch的top-1且不归一化，词元1只经过专家1，输出为$0.5(1,0)^{\top}$；词元2只经过专家4，输出为$0.5(4,0)^{\top}$。第\ref{sec:nlp-llm-expert-capacity}与\ref{sec:nlp-llm-aux-loss}小节继续用这组数值计算容量与负载损失。
+\end{example}
+
+\subsubsection{专家容量与词元丢弃}
+\label{sec:nlp-llm-expert-capacity}
+
+训练大型MoE时，专家通常分布在不同设备上，称为专家并行。每个设备先按路由结果把词元表示发往对应专家所在的设备，专家计算后再发回，这两次全对全通信要求事先确定每个专家接收多少词元，以便分配固定形状的缓冲区。若一个批次有$T$个词元、每个词元选$k$个专家，平均每个专家接收$kT/E$个分配。\term{专家容量}（expert capacity）规定每个专家最多处理的分配数：
+\begin{equation}
+ C=c\cdot\frac{kT}{E},
+ \label{eq:nlp-llm-capacity}
+\end{equation}
+其中$c\geq1$称为\term{容量因子}（capacity factor）。分配数超过$C$的专家会丢弃多出的分配，被丢弃的词元在这个专家处得到零输出，只经由残差连接直接传到下一层；分配不足$C$的专家用空位填充。
+
+延续示例~\ref{ex:nlp-llm-moe-routing}：$T=2$、$k=2$、$E=4$，平均每个专家1个分配。取$c=1$则$C=1$，专家2收到两个分配，按词元顺序处理时词元2对专家2的分配被丢弃，词元2的输出只剩$\tfrac58(4,0)^{\top}=(2.5,0)^{\top}$，与无丢弃时的$(2.5,3)^{\top}$相差明显；与此同时专家3有一个空位被白白计算。取$c=2$则$C=2$，无丢弃，但四个专家共要准备8个位置，实际只用4个。容量因子大，填充浪费计算和显存；容量因子小，丢弃增多、训练信号受损。Switch Transformer的实验采用$1.0$至$2.0$之间的容量因子\scite{nlp-llm-switch2022}。
+
+另一条路线是取消容量上限。MegaBlocks把各专家的计算写成块稀疏矩阵乘法，每个专家处理实际收到的全部词元，不丢弃也不填充\scite{nlp-llm-megablocks2023}；DeepSeek-V3在训练和推断中都不丢弃词元\scite{deepseek2024v3}。无丢弃的代价转移到负载不均上：过载专家所在的设备计算更久，其他设备只能等待。于是两种实现都需要让各专家的负载尽量接近，这是第\ref{sec:nlp-llm-load-balance}小节的问题。
+
+\subsection{专家负载均衡}
+\label{sec:nlp-llm-load-balance}
+
+路由器与专家一起从随机初始化开始训练。早期稍多被选中的专家得到更多梯度更新，输出变得更有用，路由器随之更倾向于选它，这一正反馈可能使路由集中到少数专家，称为\term{路由塌缩}（routing collapse）。塌缩后少数专家过载，其余专家几乎不被训练，总参数虽多，实际可用的容量却很小；专家并行时还会让设备负载严重不均。均衡方法分两类：在损失中加入可微的均衡项，通过梯度调整路由器；或在选择环节直接修改得分，不经过梯度。两者的差别在于是否干扰语言模型目标的梯度。
+
+\subsubsection{辅助负载损失}
+\label{sec:nlp-llm-aux-loss}
+
+我们希望度量“负载有多不均”，并让这个度量能对路由器参数求导。设一个批次有$T$个词元，定义专家$i$的实际负载比例与平均门值
+\[
+ f_i=\frac{1}{kT}\sum_{t=1}^{T}\mathbb 1[i\in\mathcal K_t],\qquad
+ P_i=\frac1T\sum_{t=1}^{T}g_{t,i},
+\]
+$f_i$是分配到专家$i$的比例，$\sum_if_i=1$；$P_i$是路由器给专家$i$的平均门值，$\sum_iP_i=1$。Switch Transformer与GShard使用的\term{辅助负载损失}（auxiliary load-balancing loss）为
+\begin{equation}
+ \mathcal L_{\mathrm{aux}}=\alpha E\sum_{i=1}^{E}f_iP_i ,
+ \label{eq:nlp-llm-aux-loss}
+\end{equation}
+$\alpha$是系数，Switch取$10^{-2}$\scite{nlp-llm-switch2022}。
+
+这个乘积形式的用意在于可微性。$f_i$来自top-$k$计数，对参数不可导；$P_i$是softmax输出的平均，可导。求梯度时把$f_i$当作常数，得$\partial\mathcal L_{\mathrm{aux}}/\partial g_{t,i}=\alpha Ef_i/T$：负载越大的专家，其门值受到的下压越强，于是路由器逐渐把概率从过载专家移向欠载专家，下一步的$f_i$也随之变化。$f$与$P$都均匀等于$1/E$时，损失等于$\alpha$；系数$E$使这一基准值与专家数无关。用示例~\ref{ex:nlp-llm-moe-routing}计算：$f=(1/4,\,1/2,\,0,\,1/4)$，$P=(0.30,\,0.275,\,0.1125,\,0.3125)$，$E\sum_if_iP_i=4\times0.2906\approx1.16$，高于均匀时的1；梯度对专家2的门值压得最重，对从未被选的专家3则为零。
+
+另一个问题是数值稳定。路由器的logits若越来越大，softmax会变得尖锐，bf16下的指数运算容易溢出或产生较大舍入误差。ST-MoE加入\term{路由器z损失}（router z-loss），惩罚logits的对数配分函数\scite{nlp-llm-stmoe2022}：
+\begin{equation}
+ \mathcal L_{z}=\frac1T\sum_{t=1}^{T}\Bigl(\log\sum_{i=1}^{E}\exp\bigl((\bm W_r\bm u_t)_i\bigr)\Bigr)^2 ,
+ \label{eq:nlp-llm-router-z-loss}
+\end{equation}
+原文取系数$10^{-3}$。它不改变各专家门值的相对大小，只把logits的整体尺度压低。第\ref{sec:nlp-llm-zloss}小节对输出层logits使用的z-loss是同一思路，那里写出它的梯度并解释为何不改变预测分布。
+
+辅助损失的代价是它与语言模型目标共享路由器的梯度。$\alpha$过小，均衡不足；$\alpha$过大，路由器被迫按均衡而不是按哪个专家更有用来分配，主目标变差。这一冲突是无辅助损失方法的出发点。
+
+\subsubsection{无辅助损失的偏置调整}
+\label{sec:nlp-llm-bias-balance}
+
+既然均衡只关心“谁被选中”，可以只在选择环节施加调整，而让加权和梯度保持不变。DeepSeek-V3为每个路由专家维护一个偏置$b_i$，它不是可学习参数，只参与top-$k$选择\scite{nlp-llm-lossfree2024,deepseek2024v3}：
+\begin{equation}
+ \mathcal K_t=\operatorname{TopK}_{i}\bigl(s_{t,i}+b_i,\ k\bigr),\qquad
+ \tilde g_{t,i}=\frac{s_{t,i}}{\sum_{j\in\mathcal K_t}s_{t,j}}\quad(i\in\mathcal K_t),
+ \label{eq:nlp-llm-bias-routing}
+\end{equation}
+其中$s_{t,i}=\sigma(\bm u_t^{\top}\bm e_i)$是词元与专家中心向量$\bm e_i$的亲和度，DeepSeek-V3用sigmoid而不是softmax计算它。加权仍用原亲和度$s_{t,i}$，所以偏置不进入前向输出的数值，也不产生梯度。每个训练步结束后，按各专家在本步的负载调整偏置，过程见算法~\ref{alg:nlp-llm-bias-balance}。
+
+\begin{algorithm}[无辅助损失的负载均衡]
+  \label{alg:nlp-llm-bias-balance}
+  \begin{algorithmic}[1]
+    \Require 偏置$b_1,\ldots,b_E$（初始为0），更新速率$\gamma>0$
+    \For{每个训练步}
+      \State 按式\eqref{eq:nlp-llm-bias-routing}为批次中每个词元选专家、计算输出与损失
+      \State 统计各专家本步的分配数$n_i$，平均值$\bar n=kT/E$
+      \For{$i=1,\ldots,E$}
+        \If{$n_i>\bar n$} \State $b_i\gets b_i-\gamma$ \Comment{过载，降低被选机会}
+        \ElsIf{$n_i<\bar n$} \State $b_i\gets b_i+\gamma$ \Comment{欠载，提高被选机会}
+        \EndIf
+      \EndFor
+      \State 用损失的梯度更新模型参数，偏置不参与梯度更新
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+在示例~\ref{ex:nlp-llm-moe-routing}中，专家2过载、专家3欠载，一步之后$b_2=-\gamma$、$b_3=+\gamma$。示例中词元2对专家2与专家3的门值相差0.2，远大于$2\gamma$，一步调整不足以改变选择；若专家2持续过载，偏置逐步累积，直到$s_{t,3}+b_3>s_{t,2}+b_2$时词元2改选专家3。无论选择是否改变，被选专家的加权都只用原亲和度。DeepSeek-V3在大部分训练中取$\gamma=0.001$。只按批次统计负载，仍可能出现单条序列内的极端集中，因此它另保留一个系数仅为$10^{-4}$的序列级均衡损失作为补充。与辅助损失相比，偏置调整对语言模型目标的梯度几乎没有干扰；它的均衡是按步反馈的，响应速度由$\gamma$决定，过大会使选择来回振荡。
+
+\subsection{细粒度专家与共享专家}
+\label{sec:nlp-llm-fine-grained-experts}
+
+专家数少、每个专家很大时，一个专家要兼顾多种不同的模式，被选中的$k$个专家能形成的组合也有限。DeepSeekMoE提出两项改动\scite{nlp-llm-deepseekmoe2024}。第一项是\term{细粒度专家}（fine-grained expert）划分：把每个专家的中间维度缩为原来的$1/m$，专家数增加到$mE$，每个词元激活$mk$个。每词元的专家计算量与参数总量都不变，可选的组合数却从$\binom{E}{k}$增加到$\binom{mE}{mk}$。以$E=16$、$k=2$为例，原有组合为$\binom{16}{2}=120$种；取$m=4$后变为$\binom{64}{8}\approx4.4\times10^9$种。更多组合让不同词元可以调用更贴合自身的专家搭配。
+
+第二项是\term{共享专家}（shared expert）。各类输入都需要的通用变换若由路由专家承担，就会在多个专家中重复学习。设置$K_s$个对所有词元始终激活的共享专家，让它们承担公共部分，路由专家便可以更专门化。加入共享专家后，层输出写为
+\begin{equation}
+ \bm y_t=\bm u_t+\sum_{i=1}^{K_s}E_i^{\mathrm{sh}}(\bm u_t)+\sum_{i\in\mathcal K_t}\tilde g_{t,i}E_i(\bm u_t),
+ \label{eq:nlp-llm-shared-experts}
+\end{equation}
+第一项是残差连接，第二项是共享专家，第三项是式\eqref{eq:nlp-llm-moe}的路由专家。
+
+用DeepSeek-V3的公开配置核算总参数与激活参数\scite{deepseek2024v3}。模型宽度$d=7168$，共61层，前3层使用稠密前馈，其余58层为MoE层；每个MoE层有1个共享专家和256个路由专家，每个专家是中间维度2048的SwiGLU网络，每词元选8个路由专家。一个专家有$3\times7168\times2048\approx4.40\times10^7$个参数，于是专家部分总计$58\times257\times4.40\times10^7\approx6.56\times10^{11}$，每词元激活$58\times9\times4.40\times10^7\approx2.30\times10^{10}$。再加上61层MLA注意力约$1.1\times10^{10}$、前3层稠密前馈约$1.2\times10^9$、嵌入与输出层约$1.9\times10^9$（这些部分每个词元都会用到），合计总参数约$6.7\times10^{11}$、激活参数约$3.7\times10^{10}$，与报告的671B与37B一致。总参数约为激活参数的18倍，每词元计算量则与一个约370亿参数的稠密模型相当。
+
+细粒度与共享专家的代价主要在系统层面：专家越小，单个矩阵乘法越小，硬件利用率越低；每词元选的专家越多，路由计算和跨设备通信越多。DeepSeek-V3为此限制每个词元的专家最多分布在4个节点上，以控制跨节点通信量。
+
+\subsection{条件参数记忆的接入}
+\label{sec:nlp-llm-conditional-memory}
+
+MoE以调用子网络的方式扩充参数：被选专家仍要对输入做完整的矩阵乘法。语言中还有大量反复出现的局部搭配，如固定短语、命名实体的常见写法，每次都由多层计算重新构造它们并不经济。另一种思路是用已读到的词元片段直接索引一张可学习的参数表，读出向量后再由上下文决定是否采用，Engram称之为\term{条件记忆}（conditional memory）。这里的记忆是模型参数的一部分，与生成时检索外部文档不同。
+
+Engram按多个长度的后缀$n$元片段做多头哈希查表\scite{nlp-llm-engram2026}。设$g_{t,n}$是截至位置$t$的$n$元片段，$\varphi_{n,j}$是第$j$个哈希函数，$\bm E_{n,j}$是对应的可学习表，则
+\begin{equation}
+ \bm e_{t,n,j}=\bm E_{n,j}\bigl[\varphi_{n,j}(g_{t,n})\bigr],\qquad
+ \bm e_t=\operatorname{concat}_{n,j}\bigl(\bm e_{t,n,j}\bigr).
+ \label{eq:nlp-llm-engram}
+\end{equation}
+相同的规范化片段总是取到相同的表项，多个哈希头降低了所有读取同时碰撞的概率。取出的向量只依赖局部片段，可能受多义和哈希碰撞影响，因此Engram把它投影为键和值，用已聚合上下文的隐藏状态计算一个门值，决定这段记忆在当前语境中贡献多少，再经短的因果卷积细化后以残差方式接入主干。
+
+与专家调用相比，查表几乎不增加乘法运算，读取的参数量也很小，表可以做得很大；它的容量受哈希冲突和表项更新次数限制，低频片段的表项得到的训练信号很少。两种机制可以共存，分别承担“按输入选择要运行的变换”与“按片段读取要使用的参数”。Engram属于近期的结构探索，参数在专家与记忆表之间怎样分配、对哪些任务有益，还需要在相应设置下检验。
+
+表~\ref{tab:nlp-llm-moe-methods}汇总本节的方法。
+
+\begin{table*}[htbp]
+ \begin{tabularx}{\linewidth}{@{}p{28mm}p{34mm}p{46mm}X@{}}
+  \toprule
+  方法 & 解决的问题 & 核心机制 & 新的代价\\
+  \midrule
+  top-$k$门控 & 参数与每词元计算同比增长 & 路由器选$k$个专家，按门值加权 & 选择不可导；$k=1$时需保留原门值\\
+  容量与丢弃 & 专家并行需固定缓冲区 & 容量$C=ckT/E$，超额分配走残差 & 填充浪费或丢弃损失\\
+  无丢弃实现 & 丢弃损害训练信号 & 块稀疏矩阵乘法处理变长分组 & 负载不均时设备等待\\
+  辅助负载损失 & 路由塌缩 & $\alpha E\sum_if_iP_i$经$P_i$求导 & 与主目标争夺路由器梯度\\
+  路由器z损失 & logits过大、数值不稳 & 惩罚对数配分函数的平方 & 额外超参数\\
+  偏置调整 & 辅助损失干扰主目标 & 偏置只改选择，按负载增减 & 按步反馈，$\gamma$过大会振荡\\
+  细粒度与共享专家 & 组合有限、专家冗余 & 切小专家多选；公共变换由共享专家承担 & 小矩阵效率低，通信增多\\
+  Engram条件记忆 & 局部搭配反复重算 & 片段哈希查表，上下文门控融合 & 哈希冲突，低频表项训练不足\\
+  \bottomrule
+ \end{tabularx}
+ \caption{参数规模与计算量解耦的方法对照。各行按本节出现顺序排列；“新的代价”指引入该机制后需要额外处理的问题。}
+ \label{tab:nlp-llm-moe-methods}
+\end{table*}

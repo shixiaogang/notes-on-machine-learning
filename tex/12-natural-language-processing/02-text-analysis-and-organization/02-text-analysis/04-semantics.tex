@@ -1,0 +1,583 @@
+\section{语义分析}
+\label{sec:nlp-analysis-semantics}
+
+句法可以判定“小王”是“交给”的主语，却没有说明谁接收了什么，也没有给出一个可以拿去计算或查询的表达。\term{语义分析}（semantic analysis）要先约定意义以什么形式交付：一个词义编号、一组谓词论元、一张概念图，或一个能在指定环境中求值的表达式。这几种形式回答的问题不同，预测出其中一种并不自动得到其他几种。表~\ref{tab:nlp-analysis-semantic-outputs}汇总了本节的五类输出。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \setlength{\tabcolsep}{3pt}
+  \begin{tabular}{@{}p{15mm}p{24mm}p{32mm}p{24mm}p{27mm}p{28mm}@{}}
+    \toprule
+    预测对象&教学输入&具体输出&结构检查&意义检查&未覆盖信息\\
+    \midrule
+    词义&river bank&bank的河岸义编号&编号属于候选清单&所选释义符合当前用法&未收录的新义\\
+    语义角色&小王把书交给小李&交给：施事小王、受事书、接受者小李&跨度与角色符合规范&论元与当前谓词对应&事件是否真实发生\\
+    AMR&少年想阅读&want-01、read-01及共享施事节点&引用存在、关系与图合法&意愿与阅读的嵌套正确&实际是否阅读\\
+    逻辑式&并非所有来宾已报名&$\neg\forall x(G(x)\Rightarrow R(x))$&变量作用域与类型正确&区别于所有人均未报名&事实库外的信息\\
+    SQL&已报名校外来宾有几人&连接来宾与报名表后计数&列、连接、聚合合法&条件与计数对象准确&数据库未记录的状态\\
+    \bottomrule
+  \end{tabular}
+  \caption{语义分析的五类输出与核验。向量可以参与评分，但不是这些任务的最终交付；逻辑式和SQL的求值都依赖明确给定的环境。}
+  \label{tab:nlp-analysis-semantic-outputs}
+\end{table*}
+
+五个小节按输出形式由局部到整体排列。每个小节都要说明三件事：输出的合法性怎样检查；监督是完整的结构标注，还是只有答案；以及怎样从模型分数恢复出结构。可执行的表达式还须明确执行环境。
+
+\subsection{词义消歧与词汇意义}
+\label{sec:nlp-analysis-wsd}
+
+“bank”在“deposit money at the bank”和“sit by the river bank”中用法不同。\term{词义消歧}（word sense disambiguation, WSD）先按目标词的基本形式和词性从\term{词义清单}（sense inventory）中检索候选，再选出当前用法对应的那一项。本小节设清单只有金融机构义$F$与河岸义$R$两项，这是教学编号，不是WordNet的正式义项键；真实评测须固定清单及其版本，WordNet 3.0与其他版本的候选不同，准确率不能直接比较。
+
+词义消歧的挑战有三项。一是清单粒度细，WordNet中常用词往往有十几个义项，彼此只差细微的用法；二是标注稀疏且长尾，最常见义项占了大部分样本，少见义项只有个位数甚至零个训练样本；三是语境可能出现清单之外的新义。方法谱系沿着“利用什么证据”展开：Lesk只比较释义与语境的词重叠，不需要标注，但受词面覆盖限制；上下文表示近邻法用预训练表示比较语境，但没有训练样本的义项无从比较；GlossBERT把释义当作输入，让无样本的义项也能被判定；释义双编码检索把释义向量预先算好，降低每次联合编码的成本；个性化PageRank在词汇语义图上传播语境证据。这些方法都只在固定清单中选择身份，新义需要另设检测。
+
+\subsubsection{Lesk与简化Lesk释义重叠}
+\label{sec:nlp-analysis-lesk}
+
+词典释义本身含有可以与语境比较的词。Lesk的原始做法在句中各词的候选释义之间寻找重叠\cite{v9a-lesk1986}；简化Lesk只比较目标词的候选释义与原文语境，不必同时为每个邻词决定词义。设规范化后的语境词集合为$C$，候选义项$s$的释义词集合为$G_s$，打分与选择为
+\[
+  o(s)=|C\cap G_s|,\qquad \hat s=\argmax_{s\in\{F,R\}}o(s).
+\]
+规范化要事先固定小写化、词形还原、停用词表以及是否删除目标词。本例删去目标词与停用词，两条释义为
+\[
+ G_F=\{\code{money},\code{deposit},\code{institution}\},\qquad
+ G_R=\{\code{land},\code{river},\code{edge}\}.
+\]
+两句的语境分别为$C_1=\{\code{deposit},\code{money}\}$与$C_2=\{\code{sit},\code{river}\}$，分数依次为$(2,0)$与$(0,1)$，恢复$F$与$R$。
+
+原始Lesk要为语境中的每个词也选义项，最大化所有释义两两重叠之和$\sum_{i<j}|G_{s_i}\cap G_{s_j}|$。若窗口内有$m$个词、每个词平均有$k$个义项，候选组合有$k^m$种，需要限制窗口或做近似搜索；简化Lesk把这个联合问题拆成只对目标词的独立选择。较长的释义有更多偶然命中的机会，可以改用Jaccard分数$|C\cap G_s|/|C\cup G_s|$，第一句的$F$此时得$2/3$而非2。
+
+Lesk的局限是词面覆盖。语境“withdraw cash”与两条释义都没有共同词，分数同为0；这并不说明两个义项都不成立，只说明释义与语境用了不同的词。零分平局应保留歧义或按事先约定回退到最常见义项，不能把平局的打破方式当作语义证据。Lesk不需要任何标注，判断依据可以逐词追溯，适合作为标注稀少时的起点和下述模型的字面基线。
+
+\subsubsection{上下文表示近邻消歧}
+\label{sec:nlp-analysis-wsd-knn}
+
+Lesk的困难在于同义而不同形的词无法匹配。预训练语言模型给出的上下文表示能缓解这一点：同一个词形在不同语境中得到不同的向量，用法相近的语境向量也相近。第~\ref{sec:nlp-classical-word-vectors}小节的静态词向量做不到这一点，bank在两句话中查到的是同一个向量，混合了两种用法的统计。
+
+近邻法直接利用这种性质。设编码器在语境$x$中目标词位置的输出为$\bm q=f(x)\in\mathbb R^d$（目标词被切成多个子词时取平均）。对义项$s$，取训练集中所有标注为$s$的样本，计算它们目标位置向量的平均，作为\term{义项向量}（sense embedding）：
+\begin{equation}
+ \bm e_s=\frac{1}{|D_s|}\sum_{x\in D_s}f(x),
+ \label{eq:nlp-analysis-sense-centroid}
+\end{equation}
+$D_s$是义项$s$的训练样本集合。测试时按余弦相似度取最近的义项，$\hat s=\argmax_{s}\cos(\bm q,\bm e_s)$。这里没有可训练的分类器参数，编码器也保持冻结；学习只发生在求平均这一步。
+
+用二维向量手算（教学数值）。金融义的两个训练语境向量为$(1,0)$与$(0.8,0.2)$，平均为$\bm e_F=(0.9,0.1)$；河岸义的两个为$(0,1)$与$(0.2,0.8)$，平均为$\bm e_R=(0.1,0.9)$。测试句“sit by the river bank”中bank的向量为$\bm q=(0.2,0.7)$，于是
+\[
+ \cos(\bm q,\bm e_F)=\frac{0.25}{0.906\times0.728}\approx0.38,\qquad
+ \cos(\bm q,\bm e_R)=\frac{0.65}{0.906\times0.728}\approx0.99,
+\]
+选$R$。Peters等用ELMo的上下文表示做了这种一近邻消歧，在统一的英语全词消歧评测上F1为69.0\cite{nlp-classical-peters2018}；第~\ref{sec:nlp-classical-elmo}小节介绍了ELMo的结构。
+
+近邻法的缺口是没有训练样本的义项：式~\eqref{eq:nlp-analysis-sense-centroid}的分母为0，义项向量不存在，这些义项永远不会被选中。Peters等对这类词回退到WordNet的第一义项。Loureiro与Jorge的LMMS改为补全义项向量：沿WordNet的同义词集、上位词和词典类别关系，用邻近义项向量的平均填补缺失者，再把释义文本经同一编码器得到的向量拼接进来，使清单中每个义项都有向量\scite{nlp-analysis-loureiro2019}。没有样本也没有关系邻居的义项，最终只能依赖释义向量，这就自然引出下一种把释义作为模型输入的方法。
+
+\subsubsection{GlossBERT语境--释义判定}
+\label{sec:nlp-analysis-glossbert}
+
+近邻法只在训练时间接用到释义。GlossBERT把释义直接放进输入，让模型判断“这条释义是否适用于这个语境”\scite{huang-etal-2019-glossbert}。对目标词的每个候选义项$s$，构造一个句对样本：
+\[
+ \code{[CLS] context [SEP] gloss}_s\ \code{[SEP]},
+\]
+并在语境中目标词两侧加引号等约定标记，指明是哪一次出现。正确义项的标签为yes，其余为no。BERT的句对编码与分类头见第~\ref{sec:nlp-classical-bert}小节；这里取\code{[CLS]}位置的表示$\bm h_s$，输出$p_s=\operatorname{sigmoid}(\bm w^{\top}\bm h_s+b)$，以所有正负候选的二元交叉熵训练。推断时取$p_s$最大的候选。
+
+设河岸句对两个候选的logit为$-1$与$2$，yes概率约为$.269$与$.881$，选$R$。这两个概率来自两次独立的二分类，不要求相加为1。若句子是“the bank financed repairs to the river bank”，两个bank的位置标记不同，同一语境会得到两组不同的判定；位置标记正是为这种情况准备的。
+
+与近邻法相比，GlossBERT的收益在长尾：没有训练样本的义项也有释义，模型能对它做判定，因为它学到的是“语境与释义是否匹配”这一跨义项共享的能力，而不是每个义项各自的分类器。其带目标标记的句对版本在统一评测ALL上F1为77.0，同一表中最常见义项基线为65.5。代价是计算：一个目标词有$k$个候选就要做$k$次完整的联合编码。
+
+\subsubsection{释义双编码检索}
+\label{sec:nlp-analysis-gloss-retrieval}
+
+GlossBERT每次都要重读语境与释义。候选很多或需要频繁调用时，可以把两边分开编码。Blevins与Zettlemoyer的双编码方法用一个编码器读语境、取目标词位置的表示$\bm q=f(x,\text{目标跨度})$，另一个编码器读释义、取\code{[CLS]}位置的表示$\bm g_s=g(\text{释义}_s)$，按内积在候选义项$S(w)$上做softmax\cite{blevins-zettlemoyer-2020-moving}：
+\[
+ p(s\mid x)=\frac{\exp(\bm q^{\top}\bm g_s)}
+                  {\sum_{t\in S(w)}\exp(\bm q^{\top}\bm g_t)}.
+\]
+两个编码器以交叉熵联合训练。用$\bm g_F=(1,0)$、$\bm g_R=(0,1)$与河岸语境$\bm q=(0,2)$，两候选得分为0与2，概率约为$.119$与$.881$，返回第二个向量所对应的义项$R$；金融语境$\bm q=(2,0)$给出相反的排序。
+
+释义向量与语境无关，可以对整个清单离线算好。推断时语境只编码一次，再付出$|S(w)|$次$d$维内积。这与第~\ref{sec:nlp-analysis-wsd-knn}小节近邻法的计算方式相同，区别是“义项向量”不再由训练样本平均得到，而由释义编码得到，因此天然覆盖没有样本的义项。与GlossBERT相比，它放弃了语境与释义之间的逐词交叉注意力。Blevins与Zettlemoyer报告双编码在ALL上F1为79.0，提升主要来自少见义项：在训练中出现较少的义项上为52.6，而BERT分类基线为37.0。
+
+\subsubsection{词汇语义图上的个性化PageRank}
+\label{sec:nlp-analysis-wsd-ppr}
+
+释义之外，义项之间的关系也携带信息：贷款义与金融机构义相连，河流义与河岸义相连。把义项作为节点、词汇语义关系作为边，再把语境中的词映射到它们的候选节点，就可以从语境出发在图上随机游走，看目标词的哪个候选最容易被走到。\term{个性化PageRank}（personalized PageRank）用非均匀的重启分布表达这种偏置\scite{agirre-soroa-2009-personalizing}。
+
+令$\bm P$为按列归一化的转移矩阵，$\bm v$为非负且和为1的语境重启分布，迭代
+\begin{equation}
+ \bm r^{(t+1)}=\rho\bm P\bm r^{(t)}+(1-\rho)\bm v,
+ \qquad 0<\rho<1.
+ \label{eq:nlp-analysis-personalized-pagerank}
+\end{equation}
+每一步以概率$\rho$沿边走一步，以概率$1-\rho$跳回语境节点。没有出边的节点按约定转向$\bm v$，使每列仍和为1。从$\bm r^{(0)}=\bm v$开始，直到相邻两次的$L_1$差小于阈值。由于$\bm P$是列随机矩阵，映射$\bm r\mapsto\rho\bm P\bm r+(1-\rho)\bm v$在$L_1$范数下是系数为$\rho$的压缩映射，迭代收敛到唯一的不动点，误差每步至少缩小为原来的$\rho$倍。
+
+构造四节点图，顺序为金融义$F$、贷款义$L$、河岸义$R$、河流义$W$，只有无向边$F$--$L$与$R$--$W$。贷款语境映射为$\bm v=(0,.9,0,.1)$，取$\rho=.5$。一次迭代得$(.45,.45,.05,.05)$，第二次为$(.225,.675,.025,.075)$，极限为$(.3,.6,1/30,1/15)$。只在目标词的候选$F,R$之间比较，选$F$。河流语境把$.9$与$.1$的位置交换，极限也相应交换，选$R$；若用均匀重启，四个节点的值都是$.25$，两种语境无法区分。
+
+个性化PageRank不需要逐义项的标注，所需知识是WordNet这类语义关系图和词到节点的映射。它的判断质量取决于图的覆盖：词形映射错误、图中缺边或语境窗口过宽都会改变排序，而且传播只能在已有节点之间进行。表~\ref{tab:nlp-analysis-wsd-methods}把五种方法放在同一“固定清单内选择义项”的任务下比较。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}l XXXX@{}}
+    \toprule
+    方法&解决的问题&核心机制&监督与计算&新代价\\
+    \midrule
+    简化Lesk&无标注时的判定依据&语境与释义的词重叠&无需训练；集合运算&同义而不同形时失效\\
+    上下文近邻&同形词在不同语境中的区分&义项向量取样本平均；余弦近邻&只需标注样本；编码一次&无样本义项缺向量\\
+    GlossBERT&长尾与无样本义项&语境--释义句对二分类&逐候选联合编码&$k$个候选需$k$次编码\\
+    释义双编码&联合编码的计算成本&语境与释义分别编码；内积检索&释义向量可预计算&失去逐词交互\\
+    个性化PageRank&利用义项关系&语境重启的随机游走&无需义项标注；迭代&依赖图的覆盖\\
+    \bottomrule
+  \end{tabularx}
+  \caption{词义消歧方法对照。比较判定结果前，须统一词义清单版本与目标位置。}
+  \label{tab:nlp-analysis-wsd-methods}
+\end{table*}
+
+\subsection{谓词、论元与语义角色}
+\label{sec:nlp-analysis-srl}
+
+在“小王昨天把一本书交给小李”中，“交给”描述一个事件，其他片段说明参与者与时间。\term{谓词}（predicate）是事件或关系的表达，\term{论元}（argument）是与之对应的参与对象，\term{语义角色}（semantic role）说明对象怎样参与。\term{语义角色标注}（semantic role labeling, SRL）对句中每个谓词找出论元并标注角色。
+
+角色体系有两种主要规范。PropBank按谓词义项定义编号角色：每个谓词义项（如“交给.01”）有自己的角色框架，ARG0通常是施事、ARG1通常是受事，但具体含义以该谓词的框架文件为准；时间、地点等附加角色用ARGM-TMP、ARGM-LOC等标签\scite{nlp-analysis-palmer2005}。FrameNet则以\term{语义框架}（semantic frame）组织：一个框架描述一类情境及其参与者，称为\term{框架元素}（frame element），能唤起该框架的词称为词汇单元\scite{nlp-analysis-baker1998}。“交给”唤起Giving框架，框架元素有给予者Donor、接受者Recipient和所给之物Theme，它们对“给”“赠送”“递交”等词共享。本节教学规范采用PropBank式标签：施事A0、受事A1、接受者A2、时间TMP。
+
+给定分词“小王／昨天／把／一本书／交给／小李”，各词的字符跨度依次为$[0,2)$、$[2,4)$、$[4,5)$、$[5,8)$、$[8,10)$、$[10,12)$。期望输出是以“交给”$[8,10)$为谓词的四条记录：A0小王、TMP昨天、A1一本书、A2小李。评价按“谓词、论元跨度、角色”三元组计算F1；是否给定谓词位置是实验条件的一部分，必须说明。
+
+SRL的挑战有五项：谓词识别与谓词义项（或框架）消歧；论元边界；同一谓词下核心角色唯一、论元互不重叠的全局约束；一句多个谓词时各谓词的论元集合不同；以及没有在句中出现的隐含论元。方法谱系为：成分候选分类加整数线性规划依赖句法树，在全局施加约束；BIO--CRF去掉对句法的依赖，端到端标注，但每个谓词要重新编码一次；联合跨度法一次枚举谓词与论元，同时预测所有谓词的角色；依存式只标论元的中心词，框架语义解析把谓词所唤起的框架与框架元素联合预测。这里恢复的是语言层面的参与关系；按业务事件本体组织事实由第~\ref{chap:nlp-information-extraction}章承担。
+
+\subsubsection{成分候选分类与整数线性规划约束}
+\label{sec:nlp-analysis-srl-constituents}
+
+论元大多对应句法树中的一个成分。Gildea与Jurafsky据此把SRL写成成分分类问题：对谓词所在句子的每个成分，预测它承担的角色或NONE\scite{nlp-analysis-gildea2002}。成分数与句长同阶，其中绝大多数与谓词无关。Xue与Palmer的剪枝规则从谓词节点出发，收集它的所有兄弟节点作为候选，然后移到父节点，再收集父节点的兄弟，如此直到根；兄弟是介词短语时，还收集它的孩子\scite{nlp-analysis-xue2004}。这条规则利用了论元通常是谓词路径上某个节点的兄弟这一句法观察。
+
+分类器的经典特征包括：短语类型（NP、PP等）；从候选到谓词的\term{句法路径}（syntactic path），例如$\mathrm{NP}\uparrow\mathrm S\downarrow\mathrm{VP}\downarrow\mathrm V$，记录在树中先向上、再向下经过的类别；候选在谓词之前还是之后；谓词的语态；候选的中心词。神经版本把候选表示与谓词表示拼接，再接softmax。训练标签由参考论元与候选跨度精确匹配得到，未匹配的候选标NONE。
+
+逐候选独立分类会产生冲突的输出。Punyakanok等把这些候选的分类概率交给整数线性规划，在全局约束下联合选择\scite{v9a-punyakanok2008}。设候选集合为$\mathcal A$，角色集合为$\mathcal R$（含NONE），二元变量$z_{a,r}=1$表示候选$a$取角色$r$，$p(a,r)$为分类器给出的概率。问题写为
+\begin{equation}
+ \begin{aligned}
+  \max_{z}\ &\sum_{a\in\mathcal A}\sum_{r\in\mathcal R}p(a,r)\,z_{a,r}\\
+  \text{s.t.}\ &\textstyle\sum_{r\in\mathcal R}z_{a,r}=1,&&\forall a\in\mathcal A,\\
+  &\textstyle\sum_{a\in\mathcal A}z_{a,r}\leq1,&&\forall r\in\mathcal R_{\mathrm{core}},\\
+  &\textstyle\sum_{r\neq\mathrm{NONE}}(z_{a,r}+z_{a',r})\leq1,&&\forall\,a,a'\text{重叠},\\
+  &z_{a,r}\in\{0,1\}.
+ \end{aligned}
+ \label{eq:nlp-analysis-srl-ilp}
+\end{equation}
+第一组约束让每个候选恰取一个标签；第二组要求核心角色（A0至A5）在同一谓词下至多出现一次；第三组禁止两个重叠的候选同时作论元。原文还加入了引用型角色R-AX必须有对应的AX、谓词义项只允许其框架中的角色等约束。目标函数是概率之和，约束都是线性的，可以交给通用整数规划求解器；SRL的候选数不大，求解很快。
+
+用一组教学概率说明两类约束的作用。候选“一本书”取A1的概率为$.7$、NONE为$.3$；包含它的父成分“把一本书”取A1为$.6$、NONE为$.4$；“小王”取A0为$.8$、NONE为$.2$；“小李”取A0为$.55$、A2为$.40$、NONE为$.05$。独立取最大会得到两个A1（还彼此重叠）和两个A0。整数规划比较可行的组合：保留“一本书”的A1、舍去“把一本书”，得$.7+.4=1.1$，优于反过来的$.6+.3=.9$；“小王”取A0、“小李”改取A2，得$.8+.40=1.2$，优于“小王”取NONE、“小李”取A0的$.2+.55=.75$。最终恢复四条期望记录。
+
+若只有不重叠约束而没有角色唯一性，问题退化为加权区间调度，可以精确地动态规划。把候选按右端点排序为$a_1,\ldots,a_m$，令$w_k=\max_{r\neq\mathrm{NONE}}p(a_k,r)-p(a_k,\mathrm{NONE})$为把$a_k$选作论元相对于NONE的收益，$\pi(k)$为右端点不超过$a_k$左端点的最后一个候选，则
+\[
+ \mathrm{OPT}(k)=\max\{\mathrm{OPT}(k-1),\ w_k+\mathrm{OPT}(\pi(k))\},\qquad\mathrm{OPT}(0)=0.
+\]
+总分再加上所有候选的NONE概率之和。核心角色唯一性把不同位置的选择耦合起来，这个递推就不再成立，需要在状态中记录已用的角色，或回到整数规划。
+
+成分路线的上限由句法决定：若解析器漏掉了“一本书”这个成分，即使分类和推断都正确，A1也不可能恢复。Punyakanok等比较了自动句法与参考句法下的结果，句法错误是最终角色错误的重要来源，这正是下一种方法去掉句法依赖的动机。
+
+\subsubsection{BIO--CRF语义角色标注}
+\label{sec:nlp-analysis-srl-crf}
+
+不依赖成分候选时，可以对每个谓词给词序列打BIO角色标签，把SRL变成第~\ref{sec:nlp-analysis-paradigm-tagging}小节的序列标注。标签集为O以及每个角色的B与I；合法转移的约束与第~\ref{sec:nlp-analysis-paradigm-tagging}小节式~\eqref{eq:nlp-analysis-legal-mask}相同，这里的掩码规定I-A1只能跟在B-A1或I-A1之后，其他角色同理。
+
+Zhou与Xu的模型是这一路线的代表\scite{nlp-analysis-zhou2015}。每个词的输入拼接四部分：词嵌入；谓词的词嵌入；谓词前后窗口的词嵌入；以及一个指示当前词是否落在谓词窗口内的标记。这样同一句话对不同谓词得到不同的输入。输入经多层交替方向的LSTM得到每个位置的表示，线性层给出各标签的发射分数，顶层接线性链CRF，训练目标是参考标签序列的条件对数似然。He等的深层BiLSTM去掉了CRF，改用逐位置交叉熵训练、解码时加BIO约束，单模型在CoNLL-2005的WSJ测试集上F1为83.1\scite{nlp-intro-he2018}。
+
+对上面的六个词，目标序列为B-A0、B-TMP、O、B-A1、O、B-A2，谓词自身记O，谓词位置由输入标记提供。设这些目标标签的发射分数均为2，其他标签为0，另外令第四词的I-A1得分为3（教学数值）。逐位置贪心会在第四词取I-A1，但它前面是O，违反约束；带掩码的Viterbi取目标序列，总分12，而把第三词改为B-A1、第四词改为I-A1的合法竞争路径总分为11。回溯后经词到字符的映射恢复四个角色跨度。
+
+一句含多个谓词时，必须为每个谓词生成一个条件序列。“小王答应小李阅读通知”中，对“答应”，小李是被承诺的一方，“阅读通知”是承诺的内容；对“阅读”，小王是阅读者，通知是受事。一个BIO序列无法同时表达这两组关系，所以$p$个谓词要编码$p$次。此外，BIO掩码只约束相邻标签，不禁止远处再出现一个B-A0；核心角色唯一性需要扩展状态或解码后的结构选择。重叠的论元也无法用单层BIO表示。
+
+\subsubsection{联合跨度式语义角色标注}
+\label{sec:nlp-analysis-srl-span}
+
+BIO方法每个谓词编码一次，谓词还要事先给定。He等的联合模型改为一次编码整句，同时枚举候选谓词与候选论元跨度，直接为“谓词、论元、角色”三元组打分\scite{v9a-he2018}。它属于第~\ref{sec:nlp-analysis-paradigm-span}小节的跨度范式：论元跨度$a$的表示用式~\eqref{eq:nlp-analysis-span-representation}，即两端表示、内部注意力汇聚与宽度嵌入的拼接；谓词$p$的表示取其位置的编码器输出。对非空角色$r$，
+\[
+ s(p,a,r)=s_p(p)+s_a(a)+s_r(p,a),\qquad
+ s(p,a,\mathrm{NONE})=0,
+\]
+$s_p$与$s_a$是一元的前馈打分，衡量一个位置像不像谓词、一个跨度像不像论元；$s_r$是对谓词与论元表示拼接后的前馈打分，给出每个角色的分数。以NONE的0分为参照，对每个候选对做角色类别上的交叉熵。
+
+全部配对有$O(n)$个谓词乘$O(n^2)$个跨度，再乘角色数，无法枚举。模型按一元分数剪枝：只保留得分最高的$\lambda_p n$个谓词和$\lambda_a n$个论元跨度，并限制论元的最大宽度。剪枝前要检查训练参考的覆盖，被剪掉的正例不会参与关系学习。原文在CoNLL-2012开发集上用每词0.4个谓词的预算，保留了超过99.7\%带论元的参考谓词，说明一元分数足以在这类语料中控制候选量。
+
+对“交给”与“一本书”，设三项分数为$1,1,2$，A1总分4；与“书”配对为$1,.5,1.5$，总分3；与“把一本书”配对总分2。独立地取标签会保留三个重叠的A1。联合模型本身对每个候选对独立做softmax，并不保证不重叠；本例按A1唯一、论元不重叠的约束选择，保留4分的完整跨度$[5,8)$。这一步可以用第~\ref{sec:nlp-analysis-srl-constituents}小节的整数规划或区间调度实现。
+
+与BIO方法相比，联合跨度法一次编码就能处理全部谓词，并能输出重叠论元；代价是$O(n^2)$的跨度候选和额外的剪枝超参数。连续跨度的假设不覆盖不连续论元，最大宽度限制可能漏掉很长的论元。
+
+\subsubsection{依存式语义角色标注与框架语义解析}
+\label{sec:nlp-analysis-srl-dependency}
+
+前三种方法都输出论元的完整跨度。CoNLL-2009共享任务采用另一种规范：论元只用其句法中心词表示，输出是从谓词词到论元中心词的带角色边，同时还要预测谓词的义项编号\scite{nlp-analysis-hajic2009}。这种规范把边界问题移交给句法，适合以依存树库为基础的多语言资源。
+
+实现上，编码每个词后，用双仿射（第~\ref{sec:nlp-analysis-biaffine}小节）或拼接后的前馈网络计算$s(p,j,r)$，在含NONE的角色上训练交叉熵；谓词义项用谓词位置的表示在其候选义项上分类。把例句细分为“小王／昨天／把／一／本／书／交给／小李”时，完整受事仍是“一本书”，中心词却是“书”。设“交给”到“书”的A1、A2、NONE分数为$3,0,0$，概率约为$.909,.045,.045$，恢复中心词角色边。下游若需要完整短语，要再从中心词的句法子树或另设的边界预测头扩展，扩展本身也需要评价。跨度式与中心词式的F1分母不同，不能直接比较。
+
+\term{框架语义解析}（frame-semantic parsing）把谓词消歧与角色标注都换成FrameNet规范。Das等的SEMAFOR把它分成三步\scite{nlp-analysis-das2014}。第一步识别\term{目标词}（target），即句中唤起框架的词，如“交给”。第二步是框架识别：目标词的词汇单元限定了候选框架集合$\mathcal F(t)$，模型在其中选择，$\hat f=\argmax_{f\in\mathcal F(t)}\bm\theta^{\top}\bm\phi(f,t,x)$；“交给”的候选可能有Giving与Delivery等。第三步是论元识别：对选中框架的每个框架元素，在候选跨度中选择一个跨度或空，并施加同一框架元素不重复、跨度互不重叠的约束，用束搜索或对偶分解联合解码。对本例，Giving框架给出Donor小王、Theme一本书、Recipient小李，“昨天”标为非核心框架元素Time。
+
+框架的收益在于跨谓词共享：“交给”“赠送”“递交”都唤起Giving，其框架元素可以直接对齐，而PropBank的A2在不同谓词下含义未必相同。代价是FrameNet的标注规模远小于PropBank，词汇单元覆盖不全，许多目标词找不到候选框架。表~\ref{tab:nlp-analysis-srl-methods}比较四条路线。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}l XXXX@{}}
+    \toprule
+    方法&解决的问题&核心机制&监督与推断&新代价\\
+    \midrule
+    成分分类+ILP&候选空间与全局角色约束&句法剪枝；路径特征；整数规划&角色／NONE分类；约束下联合选择&受句法错误限制\\
+    BIO--CRF&去掉句法依赖&谓词条件的序列标注；合法转移掩码&参考标签序列；Viterbi&每个谓词编码一次；不能表达重叠\\
+    联合跨度&谓词与论元的联合识别&跨度表示；三项分数相加；一元剪枝&谓词、跨度、角色；配对选择&$O(n^2)$候选；剪枝预算\\
+    依存式／框架语义&中心词规范；跨谓词共享的角色&谓词到论元头的边；框架识别+框架元素&义项或框架分类；约束解码&需恢复完整短语；框架覆盖有限\\
+    \bottomrule
+  \end{tabularx}
+  \caption{语义角色标注方法对照。完整跨度F1、中心词F1与框架元素F1回答不同的问题，比较时须固定谓词是否给定。}
+  \label{tab:nlp-analysis-srl-methods}
+\end{table*}
+
+\subsection{句子语义图}
+\label{sec:nlp-analysis-amr}
+
+多个谓词可能谈到同一个对象。“少年想阅读”中，少年既是“想”的主体，也是所期望的“阅读”的主体。语义角色标注会为两个谓词分别输出一个“少年”，却不说明它们是同一个对象。\term{抽象意义表示}（abstract meaning representation, AMR）把整句的意义写成一张有根有向图：节点是概念，边是带标签的关系，变量标识节点的身份，同一变量可以作为多条关系的端点。共享节点的多条入边称为\term{重入}（reentrancy）\scite{nlp-analysis-banarescu2013}。
+
+采用英语AMR的概念标签，这句话可以用PENMAN记法写成：
+\begin{codeblock}{共享论元的AMR}
+(w / want-01
+   :ARG0 (b / boy)
+   :ARG1 (r / read-01
+            :ARG0 b))
+\end{codeblock}
+斜线后是概念，冒号后是关系，末尾的b引用已经建立的节点。图中有三个概念节点和三条关系；原文只有一次“少年”，图中也只有一个b。AMR抽象掉了时态、冠词等表层形式，也不断言阅读实际发生，\code{read-01}处在意愿的内容中。
+
+AMR的评价指标Smatch先在两张图之间搜索一对一的变量对齐，再比较概念、属性与关系三元组的F1\scite{cai-knight-2013-smatch}。只比较变量名会把相同的图误判为不同，所以对齐是必需的。若预测只省掉了$r\xrightarrow{\mathrm{ARG0}}b$，不计TOP三元组时参考有6个三元组、预测有5个，最佳对齐下匹配5个，精确率1、召回率$5/6$，F1为$10/11$。对齐搜索是NP难的，Smatch用多次重启的爬山法近似，可能错过最佳对齐。
+
+AMR解析的挑战有四项：概念与词不一一对应，一个词可能对应零个或多个概念；重入使输出是图而非树，第~\ref{sec:nlp-analysis-dependency}小节的树解码器不能直接使用；图上没有现成的精确解码算法；训练需要文本与图之间的对齐，而AMR语料并不标注对齐。方法谱系为：CAMR从依存树出发，用转移动作把树改写成图，依赖句法质量；JAMR先识别概念、再求最大生成连通子图，需要外部对齐器；SPRING把图线性化后用预训练的序列到序列模型生成，不需要显式对齐，但须修复生成出的非法序列。
+
+\subsubsection{CAMR转移式AMR解析}
+\label{sec:nlp-analysis-camr}
+
+依存树与AMR图在结构上很接近：多数依存弧对应一条语义关系，主要的差别是功能词要删掉、部分方向要反转、共享论元需要加边。CAMR据此把AMR解析写成对依存树的改写，属于第~\ref{sec:nlp-analysis-paradigm-transition}小节的转移范式\scite{wang-etal-2015-transition}。状态由当前的部分图、按依存树后序排列的待处理节点队列$\sigma$、当前节点$\sigma_0$的待处理孩子边队列$\beta$组成，$\beta_0$是当前孩子。初始时部分图就是依存树，节点与边都还没有语义标签。表~\ref{tab:nlp-analysis-camr-actions}列出全部动作。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}l X X@{}}
+    \toprule
+    动作&前提&效果\\
+    \midrule
+    NEXT-EDGE-$l_r$&$\sigma_0$有待处理的孩子$\beta_0$&把边$\sigma_0\to\beta_0$标为关系$l_r$，转向下一个孩子\\
+    SWAP-$l_r$&同上&把边反转为$\beta_0\to\sigma_0$并标为$l_r$，$\beta_0$成为$\sigma_0$的父节点\\
+    REATTACH$_k$-$l_r$&同上；$k$是图中另一节点，且不产生环&删去边$\sigma_0\to\beta_0$，改接为$k\to\beta_0$并标为$l_r$\\
+    REPLACE-HEAD&同上&删去$\sigma_0$，由$\beta_0$继承$\sigma_0$的全部入边与出边\\
+    REENTRANCE$_k$-$l_r$&同上；$k\to\beta_0$尚不存在&增加边$k\to\beta_0$并标为$l_r$，原边保留，当前孩子不变\\
+    MERGE&同上&把$\sigma_0$与$\beta_0$合并为一个节点，用于多词概念\\
+    NEXT-NODE-$l_c$&$\sigma_0$没有待处理的孩子&把$\sigma_0$标为概念$l_c$，转向队列中的下一个节点\\
+    DELETE-NODE&$\sigma_0$没有待处理的孩子&删去$\sigma_0$及其入边，用于不对应概念的功能词\\
+    \bottomrule
+  \end{tabularx}
+  \caption{CAMR的转移动作。前六个动作处理当前边，后两个处理当前节点；队列为空时得到AMR图。REENTRANCE不推进当前边，需要限制重复使用以免轨迹不终止。}
+  \label{tab:nlp-analysis-camr-actions}
+\end{table*}
+
+对“少年$_1$／想$_2$／阅读$_3$”，依存边为$2\to1$与$2\to3$，后序队列为$[1,3,2]$。节点1没有孩子，执行NEXT-NODE-boy；节点3同样执行NEXT-NODE-read-01。处理节点2的第一条边$2\to1$时，执行REENTRANCE$_3$-ARG0，增加$3\to1$而保留原边，当前边不变；随后NEXT-EDGE-ARG0给$2\to1$标注并推进，NEXT-EDGE-ARG1处理$2\to3$，最后NEXT-NODE-want-01标注节点2，队列清空。把节点1、2、3重命名为b、w、r，即得上面的图。
+
+训练轨迹由oracle产生：先用对齐把参考AMR的概念对应到词，得到与依存树共享节点的“跨度图”，再比较当前部分图与参考图，确定性地选出下一个动作。原文用对数线性（最大熵）分类器在每个状态上选择动作，特征来自当前节点与孩子的词、词性、依存标签和路径。CAMR在LDC2013E117上的Smatch比JAMR高约五个百分点。它的优点是每个动作都对应一次可解释的结构改写；代价是依赖依存解析的质量，依存树中错误的结构会限制可恢复的目标，也依赖对齐来产生oracle。
+
+\subsubsection{JAMR概念识别与最大生成连通子图}
+\label{sec:nlp-analysis-amr-node-edge}
+
+CAMR借用句法树作为图的初稿。JAMR不依赖句法，把解析分成两步：先从词跨度识别概念，再在识别出的概念之间选关系边\scite{v9a-flanigan2014}。
+
+概念识别写成半马尔可夫标注。把句子切成若干段$(b_k,e_k)$，每段标为一个概念片段$c_k$或空，片段可以是单个概念，也可以是一小块子图，例如人名“小王”对应\code{(p / person :name (n / name :op1 "小王"))}。候选片段取自训练集上由对齐抽出的概念词典。整句的分数是各段分数之和$\sum_k\bm\theta^{\top}\bm f(b_k,e_k,c_k)$，用动态规划在所有切分上求最大，复杂度与句长、最大段长和候选片段数成正比。
+
+关系识别在概念节点之间选边。设识别出的节点集合为$V$，每对节点$(u,v)$与每个关系标签$l$都有分数$\psi(u,l,v)=\bm\theta^{\top}\bm g(u,l,v)$，片段内部的边必须保留。目标是选出边集$E$使$\sum_{e\in E}\psi(e)$最大，且图连通、任意两点之间至多一条边。JAMR称这样的图为\term{最大生成连通子图}（maximum spanning connected subgraph, MSCG），求解与Kruskal最小生成树算法相似：
+\begin{enumerate}
+  \item 加入片段内部的边，以及所有分数为正的候选边（同一对节点只取最高分的标签）；
+  \item 计算当前的连通分量；把剩余候选边按分数从高到低排序，依次检查，若一条边连接两个不同的分量，就加入并合并分量；
+  \item 全图连通时停止。
+\end{enumerate}
+第一步加入正分边只会增加总分；第二步要用尽量少、尽量高分的负分边把分量连起来，这与Kruskal的贪心论证相同。原文证明了这一过程给出满足连通约束的最优解。
+
+AMR还要求满足\term{确定性约束}（determinism constraint）：一个节点的ARG0、ARG1等核心关系出边各至多一条。这类约束把不同边的选择耦合起来，MSCG算法无法直接处理。JAMR用拉格朗日松弛：为每条确定性约束引入乘子$\lambda\geq0$，把违反约束的代价并入边分数，用调整后的分数运行MSCG；若结果仍违反约束，按次梯度增大相应乘子，再重复。若某次调整后的解满足全部确定性约束，且取正值的乘子只出现在恰好取等号的约束上，这个解就是原问题的最优解；迭代在预定次数内达不到这一条件时，只能得到近似解。
+
+用三个节点手算（教学分数）。设$w\xrightarrow{\mathrm{ARG0}}b$为$2.2$，$w\xrightarrow{\mathrm{ARG1}}r$为$-0.2$，$r\xrightarrow{\mathrm{ARG0}}b$为$-0.4$，其余边更低。第一步只加入$w\to b$，分量为$\{w,b\}$与$\{r\}$。第二步按分数检查剩余边，$w\to r$连接两个分量，加入；此时已连通，停止。结果有$w\to b$与$w\to r$，却没有重入边$r\to b$：MSCG只加“连通所需”的负分边，模型若没有给重入边正分，它就会丢失。反过来，若$r\to b$得分为$0.3$，第一步就会把它加入，重入得以保留。
+
+JAMR的训练需要概念与词的对齐，而AMR语料不提供对齐。作者设计了基于规则的对齐器，按精确匹配、命名实体、日期、词形变化等规则依次贪心地把概念对齐到词跨度。对齐错误会同时损害概念词典与两个阶段的训练数据；概念阶段漏掉的节点，关系阶段也无从连接。
+
+\subsubsection{SPRING图线性化与序列到序列解析}
+\label{sec:nlp-analysis-spring}
+
+CAMR与JAMR都需要对齐来产生训练信号，又都有多个阶段，前一阶段的错误传给后一阶段。SPRING去掉对齐与分阶段的接口：把AMR图线性化为符号序列，用预训练的编码器--解码器BART直接从句子生成这个序列\scite{nlp-analysis-spring2021}。它属于第~\ref{sec:nlp-analysis-paradigm-generation}小节的约束生成范式。
+
+线性化必须保留节点身份与重入。SPRING按深度优先遍历图，用专用的指针符号代替变量名：
+\begin{codeblock}{带节点指针的图序列}
+( <R0> want-01
+  :ARG0 ( <R1> boy )
+  :ARG1 ( <R2> read-01 :ARG0 <R1> ) )
+\end{codeblock}
+指针第一次与概念一起出现时建立节点，之后单独出现的\code{<R1>}引用同一节点。这个序列与图可以互相恢复；若把末项换成\code{(<R3> boy)}，就变成了另一个少年。指针符号是新加入词表的特殊词元，避免普通字母既可能是常量又可能是变量的混淆。训练目标是参考序列每一步的交叉熵，括号、关系、指针与结束符都计入。
+
+解码完成后，用栈恢复图：读到左括号压栈，建立指针到节点的映射；读到关系时记录源节点，再解析目标子图或指针引用；读到右括号退栈。全部读完后解析所有引用，检查每个指针恰有一个概念定义、图是否连通。生成可能出错：括号不配对、引用了从未定义的指针、出现非法延续。SPRING用轻量的规则修复这些情况，例如补齐括号、删去悬空引用。束搜索比较完整序列的概率；在“正确引用\code{<R1>}”与“新建节点”之间若条件概率为$.8$与$.2$，这一步就偏向共享节点，但最终排名仍取决于整条序列。
+
+SPRING在英语AMR 2.0上的Smatch比当时最强的比较系统高3.6点。同一个模型把输入与输出对调，就成为AMR到文本的生成器，这是名称中“对称”的含义。表~\ref{tab:nlp-analysis-amr-methods}比较三条路线。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}l XXXX@{}}
+    \toprule
+    方法&解决的问题&核心机制&监督与推断&新代价\\
+    \midrule
+    CAMR&从已有句法结构构图&依存树后序队列上的改写动作&对齐产生oracle；逐状态分类&依赖依存解析与对齐\\
+    JAMR&图上的全局选边&半马尔可夫概念识别；MSCG加拉格朗日松弛&两阶段分别训练；精确或近精确解码&需规则对齐器；阶段间错误传递\\
+    SPRING&去掉对齐与多阶段接口&深度优先线性化；指针表示重入；BART生成&序列交叉熵；束搜索后恢复与修复&线性化顺序偏差；需修复非法序列\\
+    \bottomrule
+  \end{tabularx}
+  \caption{AMR解析方法对照。三者的Smatch来自不同版本的AMR语料，不宜按绝对值直接排列。}
+  \label{tab:nlp-analysis-amr-methods}
+\end{table*}
+
+\subsection{语义解析与形式表达}
+\label{sec:nlp-analysis-formal}
+
+如果目标是计算一个数量或执行一次查询，概念图还不够，需要类型、变量作用域和求值规则都明确的形式语言。\term{语义解析}（semantic parsing）在这里指把文本映射为指定形式语言中的表达式。对输出要做三层不同的判断：结构是否合乎形式语言的语法；能否在给定环境中求值；求值的结果是否回答了原问题。前一层成立不蕴含后一层。
+
+本小节固定一个封闭、完整的有限事实环境。实体域$E=\{a,b,c\}$表示三位来宾，$G=E$为来宾集合，$R=\{a,b\}$为已报名者，关系$\mathrm{help}$的外延为$\{(a,b),(c,b)\}$；未列出的事实一律为假。问题是“有几位来宾已报名”。现实资料若不完整，缺记录只能得出未知，不能直接套用这种封闭世界解释。
+
+语义解析的挑战有四项：输出必须是形式语言中合法的表达式；训练中没见过的组合（如新的谓词与量词搭配）要能正确组合，即组合泛化；监督可能是标注好的逻辑式，也可能只有执行答案；只有答案时，存在碰巧得到正确答案的错误表达式。方法谱系为：类型化文法限定可以构造的表达式；CCG让词项同时携带句法范畴与语义函数，组合过程可追踪；Seq2Tree与粗到细解码用神经网络生成树形逻辑式，减少括号与变量错误；答案监督下的边缘似然与策略梯度去掉对逻辑式标注的依赖。
+
+\subsubsection{类型化文法约束的逻辑式构造}
+\label{sec:nlp-analysis-typed-logic}
+
+令$e,t,\mathbb N$分别表示实体、真值和自然数类型。$G,R:e\to t$是一元谓词，$\mathrm{help}:e\to e\to t$是二元关系，$\mathrm{count}:(e\to t)\to\mathbb N$对一元谓词计数；否定只作用于真值，量词绑定实体变量。构造器从类型为$\mathbb N$的槽开始，展开为$\mathrm{count}(P)$，再把类型为$e\to t$的槽$P$展开为$\lambda x.G(x)\land R(x)$。每一步只允许填入类型匹配的节点，变量必须已被绑定。
+
+“有几位来宾已报名”的构造依次建立COUNT、LAMBDA、AND、G、R以及两次变量引用，得到
+\[
+ z_1=\mathrm{count}(\lambda x.G(x)\land R(x)).
+\]
+在三个实体上求值，谓词的真值向量为$(1,1,0)$，计数为2。若有“文本--逻辑式”的标注，可以对参考构造动作做交叉熵训练，束搜索累加动作的对数概率，并屏蔽类型不匹配的展开：COUNT之后不能填实体常量a，因为a不是一元谓词。
+
+类型检查只能排除一部分错误。$\mathrm{count}(\lambda x.G(x))$类型正确，却遗漏了报名条件，得到3。否定的作用域同样改变意义：“并非所有来宾都已报名”是$\neg\forall x(G(x)\Rightarrow R(x))$，在当前环境中为真；“所有来宾均未报名”是$\forall x(G(x)\Rightarrow\neg R(x))$，为假；两者都通过类型检查。量词顺序也如此：若帮助关系为$\{(a,b),(b,c),(c,a)\}$，“每位来宾都帮助某位来宾”$\forall x\exists y\,\mathrm{help}(x,y)$为真，“有一位来宾受到所有人帮助”$\exists y\forall x\,\mathrm{help}(x,y)$为假。文法要能表达这些区别，模型才有可能在监督下学会选择。
+
+\subsubsection{CCG与类型化\texorpdfstring{$\lambda$}{lambda}表达式}
+\label{sec:nlp-analysis-ccg}
+
+类型化文法规定了输出空间，却没有说明逻辑式的各部分来自句中哪些词。\term{组合范畴语法}（combinatory categorial grammar, CCG）给每个词项同时分配句法范畴与语义函数：$A/B$表示向右接收一个B后成为A，$A\backslash B$表示向左接收一个B\scite{nlp-analysis-ccg2005}。函数应用在组合范畴的同时组合语义，最终关系的每一部分都可以追溯到某个词项。
+
+对“小王帮助小李”，两个名字为$\mathrm{NP}:a$与$\mathrm{NP}:b$，“帮助”为
+\[
+ (\mathrm S\backslash\mathrm{NP})/\mathrm{NP}
+ :\lambda y.\lambda x.\mathrm{help}(x,y).
+\]
+先向右应用b，得到$\mathrm S\backslash\mathrm{NP}:\lambda x.\mathrm{help}(x,b)$；再向左应用a，$\beta$归约得到$\mathrm{help}(a,b)$，在给定外延中为真。若词项把两个参数的顺序写反，范畴照样能组合，却得到为假的$\mathrm{help}(b,a)$；句法组合成功不能代替词项语义的核验。
+
+函数组合规则可以推迟参数的接入：
+\[
+ A/B:f,\quad B/C:g
+ \quad\Longrightarrow\quad A/C:\lambda z.f(g(z)).
+\]
+考虑问句“哪些来宾帮助小李”。记$\mathrm{VP}=\mathrm S\backslash\mathrm{NP}$，$\mathrm{S_q}$表示答案为实体集合的问句。“哪些来宾”为$\mathrm{S_q}/\mathrm{VP}:f=\lambda P.\lambda x.G(x)\land P(x)$，“帮助”为$\mathrm{VP}/\mathrm{NP}:g=\lambda y.\lambda x.\mathrm{help}(x,y)$。按组合规则先得到$\mathrm{S_q}/\mathrm{NP}:\lambda y.\lambda x.G(x)\land\mathrm{help}(x,y)$，再对小李的常量b做函数应用，得到$\lambda x.G(x)\land\mathrm{help}(x,b)$，答案集合为$\{a,c\}$。另一条推导先让“帮助”应用b再交给$f$，语义相同。同一逻辑式有多条推导，训练时要把它们合并。
+
+Zettlemoyer与Collins从句子与逻辑式的配对中学习CCG\scite{v9a-zettlemoyer2005}。词项由模板从训练对中生成候选，概率CCG对逻辑式$z$与推导$T$联合打分，$p(z,T\mid x)\propto\exp(\bm w^{\top}\bm f(x,z,T))$；训练只给逻辑式时，对推导求和得到$p(z\mid x)=\sum_Tp(z,T\mid x)$，最大化参考逻辑式的条件对数似然。推断时在跨度图表上保留范畴与语义，束裁剪控制候选数。CCG的优点是组合过程透明，能处理词序变化带来的长距离依赖；代价是词典需要模板或人工设计，缺少词项时整句无分析。
+
+\subsubsection{Seq2Tree与粗到细解码}
+\label{sec:nlp-analysis-logic-generation}
+
+CCG依赖人工设计的词项模板。神经语义解析把逻辑式当作目标序列，由编码器--解码器直接生成，例如把$z_1$写成\code{count(and(guest,registered))}。扁平的序列到序列模型容易犯两类错误：括号不配对，以及把变量或常量填到错误的位置。Dong与Lapata的Seq2Tree用层次解码器应对前一类\scite{nlp-analysis-dong2016}。
+
+Seq2Tree按层生成。解码器先生成顶层序列，遇到需要展开的子树时输出一个非终结符标记$\langle n\rangle$，例如顶层为\code{count(}$\langle n\rangle$\code{)}。顶层结束后，对每个$\langle n\rangle$启动一次子序列解码，以该标记处的隐状态作为子解码器的初始状态，并在每一步输入中拼接父节点的隐状态，使子树记住自己处在什么位置。子序列\code{and(guest,registered)}中若还有$\langle n\rangle$，再递归展开。每一层的序列都以结束符终止，括号由层次结构隐含给出，不会不配对。训练目标是所有层序列的交叉熵之和，编码器对输入的注意力在每一层都可用。
+
+粗到细解码应对后一类错误\scite{nlp-analysis-dong2018}。它先生成一个\term{意义骨架}（meaning sketch），即去掉变量名、常量与参数的逻辑式框架，再以输入和骨架为条件生成完整的逻辑式：
+\[
+ p(z\mid x)=p(a\mid x)\,p(z\mid x,a),
+\]
+$a$是骨架。对本例，骨架为\code{count(and(@,@))}，其中@是待填的谓词槽；细解码器读取骨架的编码，在每个@处从“guest”“registered”等谓词中选择，在骨架的固定符号处直接复制。两步分别以参考骨架与参考逻辑式的交叉熵训练。骨架只表达结构，模型可以先在较小的空间中确定“计数一个合取”，不被具体谓词的选择干扰；细节生成又能利用已确定的结构。
+
+两种方法都可以与文法约束结合：解码器只在类型允许的位置生成相应的符号，括号与变量作用域由第~\ref{sec:nlp-inference-grammar}小节的约束机制维护。它们的共同前提是有“文本--逻辑式”的标注，而这类标注需要专家编写，成本很高。
+
+\subsubsection{答案监督下的边缘似然与策略梯度}
+\label{sec:nlp-analysis-answer-supervision}
+
+标注逻辑式昂贵，标注答案便宜得多：问“有几位来宾已报名”，只需写下“2”。Berant等在Freebase问答上系统地研究了这种只用问题--答案对训练语义解析器的设置\scite{nlp-analysis-berant2013}。逻辑式$z$成了隐变量，监督只告诉我们执行结果$\operatorname{eval}(z,D)$应当等于答案$y$，$D$是固定的事实环境。
+
+第一种目标是\term{边缘似然}（marginal likelihood）：把所有执行出正确答案的逻辑式的概率加起来，
+\begin{equation}
+ \mathcal J_{\mathrm{ML}}=\log\sum_{z\in\mathcal Z(y)}p_\theta(z\mid x),\qquad
+ \mathcal Z(y)=\{z:\operatorname{eval}(z,D)=y\}.
+ \label{eq:nlp-analysis-marginal-likelihood}
+\end{equation}
+这个和无法枚举，实际只在束搜索找到的候选中计算。它的梯度为
+\[
+ \nabla_\theta\mathcal J_{\mathrm{ML}}=\sum_{z\in\mathcal Z(y)}q(z)\,\nabla_\theta\log p_\theta(z\mid x),\qquad
+ q(z)=\frac{p_\theta(z\mid x)}{\sum_{z'\in\mathcal Z(y)}p_\theta(z'\mid x)},
+\]
+即对每个正确候选的对数概率梯度按它在正确候选中的相对概率加权。
+
+第二种目标把语义解析看作一步决策：采样一个逻辑式，执行正确得奖励1，否则得0，最大化期望奖励$\mathcal J_{\mathrm{RL}}=\mathbb E_{z\sim p_\theta}[R(z)]$。这里用到策略梯度的基本结论：期望奖励对参数的梯度等于奖励加权的对数概率梯度的期望，$\nabla_\theta\mathbb E_{z\sim p_\theta}[R(z)]=\mathbb E_{z\sim p_\theta}[R(z)\nabla_\theta\log p_\theta(z)]$，用样本平均估计时无偏但方差大，常减去一个基线来降低方差。这一结论及其推导可参考\BookChapterRef{chap:rl-learning}{卷七的强化学习方法章}。用这一估计更新参数即REINFORCE\scite{rl1-williams1992-reinforce}。代入0/1奖励，
+\[
+ \nabla_\theta\mathcal J_{\mathrm{RL}}=\sum_{z\in\mathcal Z(y)}p_\theta(z\mid x)\,\nabla_\theta\log p_\theta(z\mid x)
+ =p_\theta(\mathcal Z(y)\mid x)\cdot\nabla_\theta\mathcal J_{\mathrm{ML}}.
+\]
+两种梯度的方向相同，只差一个标量：策略梯度多乘了正确候选的总概率$p_\theta(\mathcal Z(y)\mid x)$。训练初期这个总概率很小，策略梯度几乎为零，学习很慢；边缘似然先做归一化，不受这一影响。Guu等据此分析了两者的关系，并提出在两者之间插值的权重$q(z)^\beta$与带随机探索的束搜索，缓解两种目标都容易锁定在早期找到的伪解上的问题\scite{nlp-analysis-guu2017}。
+
+沿用报名计数的例子（教学数值）。设束中有三个候选：正确的计数式$z_1$概率$.4$；常量表达式\code{2}概率$.3$；遗漏报名条件的$\mathrm{count}(\lambda x.G(x))$概率$.3$，执行得3。观察答案为2时，$\mathcal Z(y)=\{z_1,\code{2}\}$，边缘似然损失为$-\log .7\approx.357$，梯度权重为$q(z_1)=.4/.7\approx.571$、$q(\code{2})\approx.429$；策略梯度的权重是未归一化的$.4$与$.3$。两种目标都在提高常量\code{2}的概率，因为它碰巧给出了正确答案。这类执行正确而语义错误的表达式称为\term{伪解}（spurious program）。
+
+伪解要靠额外的信息排除。把报名集合改为$\{a\}$，参考答案变为1，正确的计数式仍然成立，常量\code{2}则失败；同一逻辑式在多个环境中都正确，才能说明它不是碰巧对。多环境的答案、对逻辑式形状的先验，以及要求表达式使用问题中出现的词对应的谓词，都能减少伪解。单次答案相等不构成语义正确的证明。
+
+\subsection{文本到SQL}
+\label{sec:nlp-analysis-text-to-sql}
+
+\term{文本到SQL}（text-to-SQL）是语义解析在关系数据库上的实例：输入自然语言问题与数据库模式，输出一条SQL查询。与上一小节的逻辑式相比，SQL的执行环境是真实的数据库，形式语言有固定的方言，问题中的词还要先对应到具体的表和列。
+
+本小节使用表~\ref{tab:nlp-analysis-sql-db}中的两张教学表。people的主键是pid；registrations的主键是$(\code{event},\code{pid})$，其中pid是引用people的外键，OTHER表示另一个活动。问题是“活动ML-0418中已确认报名的校外来宾有几人”，期望答案为1。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \multicolumn{3}{@{}l}{\code{people}}\\
+    \code{pid}&\code{name}&\code{affiliation}\\
+    \midrule
+    1&小王&\code{external}\\
+    2&小李&\code{internal}\\
+    3&小赵&\code{external}\\
+    \bottomrule
+  \end{tabular}\qquad
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    \multicolumn{3}{@{}l}{\code{registrations}}\\
+    \code{event}&\code{pid}&\code{status}\\
+    \midrule
+    \code{ML-0418}&1&\code{confirmed}\\
+    \code{ML-0418}&3&\code{pending}\\
+    \code{OTHER}&3&\code{confirmed}\\
+    \bottomrule
+  \end{tabular}
+  \caption{文本到SQL的教学数据库。两表通过pid连接；同一人在同一活动至多一条报名记录，状态均非空。}
+  \label{tab:nlp-analysis-sql-db}
+\end{table}
+
+文本到SQL的挑战有五项。一是\term{模式链接}（schema linking）：确定问题中的“校外”“已确认”对应哪张表的哪一列、哪个取值。二是跨数据库泛化：测试时的数据库在训练中从未出现，模型不能记住特定的列名。三是多表连接与嵌套查询。四是值绑定：条件中的常量要从问题中恢复，并与库中的实际取值一致。五是两层正确性：查询合法可执行，与执行结果回答了原问题，是两件不同的事。
+
+评测基准体现了这些挑战的演进。WikiSQL只含单表查询，按表划分训练与测试\cite{nlp-analysis-zhong2017}；Spider按数据库划分，测试库在训练中从未出现，查询含连接、嵌套与集合运算\cite{yu-etal-2018-spider}；BIRD使用大规模、取值较脏的真实数据库，并提供外部知识说明\cite{nlp-analysis-li2023bird}；Spider 2.0进一步纳入企业数据仓库中的复杂模式、方言与多步工作流\cite{nlp-analysis-spider2025}；SParC与CoSQL考查多轮上下文中的查询与澄清\scite{yu-etal-2019-sparc,yu-etal-2019-cosql}。常用指标有两种：精确匹配把预测与参考SQL拆成子句集合比较，不要求值正确；执行准确率比较两者在数据库上的执行结果，但不同的查询可能碰巧返回相同结果。Zhong等的测试套件方法在多个自动构造的数据库变体上比较执行结果，减少这种碰巧一致\scite{nlp-analysis-zhong2020testsuite}。
+
+多轮基准还要求承接上下文。上一轮问“ML-0418已确认报名的校外来宾有几人”，下一轮“那校内呢”应当保留活动与confirmed条件，只把affiliation改为internal，结果为0；若上一轮问的是“活动何时举行”，同一句话就没有足够的条件恢复计数查询，应当请求澄清。省略的恢复方式见第~\ref{sec:nlp-analysis-utterance-rewriting}小节。
+
+方法谱系为：SQLNet用固定骨架和槽填充处理单表查询；RAT-SQL用关系感知编码解决模式链接与跨库问题，并以语法树解码保证合法；PICARD给预训练生成模型加增量解析约束；执行引导用试运行剔除出错的候选；大语言模型以模式提示、任务分解、自一致性与执行反馈完成任务。第~\ref{chap:nlp-question-answering-dialogue}章的表格问答回指本小节，跨步骤的执行与恢复见第~\ref{chap:nlp-solving-and-execution}章。
+
+\subsubsection{SQLNet查询骨架与槽填充}
+\label{sec:nlp-analysis-sqlnet}
+
+WikiSQL上早期的Seq2SQL把查询当作序列生成，遇到一个问题：WHERE中AND连接的条件交换顺序不改变结果，但逐词交叉熵会惩罚与参考顺序不同的正确查询。Seq2SQL为此用强化学习以执行结果为奖励训练条件部分\scite{nlp-analysis-zhong2017}。SQLNet换了一种做法：既然条件是集合，就直接预测集合，不再生成序列\scite{nlp-analysis-sqlnet2017}。
+
+SQLNet固定单表查询的骨架：
+\begin{codeblock}[language=SQL]{SQLNet的查询骨架}
+SELECT $AGG $COL FROM $TABLE
+WHERE $COL $OP $VALUE (AND $COL $OP $VALUE)*
+\end{codeblock}
+其中聚合\$AGG取自$\{\text{无},\mathrm{MAX},\mathrm{MIN},\mathrm{COUNT},\mathrm{SUM},\mathrm{AVG}\}$，运算\$OP取自$\{=,<,>\}$。每个槽由一个专门的小网络预测，共享问题与列名的编码。核心机制是\term{列注意力}（column attention）：对每一列$c$，用列名的编码$\bm c$对问题各位置的编码$\bm h_i$做注意力，得到“与这一列相关的问题表示”：
+\[
+ \alpha_{c,i}=
+ \frac{\exp(\bm c^{\top}\bm W\bm h_i)}
+      {\sum_j\exp(\bm c^{\top}\bm W\bm h_j)},\qquad
+ \bm q_c=\sum_i\alpha_{c,i}\bm h_i.
+\]
+event列会关注“ML-0418”，status列会关注“已确认”。WHERE的列用多标签方式预测：每列独立给出入选概率$\operatorname{sigmoid}(\bm u_1^{\top}\bm c+\bm u_2^{\top}\bm q_c)$，另有一个分类器预测条件个数$K$，取概率最高的$K$列。这就是“序列到集合”的预测，与条件顺序无关。每个选中的列再预测运算符，值则用指针网络从问题中复制一段词。SELECT的列在全部列上做softmax，聚合由分类器预测。
+
+先在registrations表上问“ML-0418有几条已确认报名记录”。设条件数预测为2，event、status、pid的入选概率为$.9,.8,.1$，取前两列；运算符均为等号，值从问题复制出ML-0418，并按给定的状态词典把“已确认”规范化为confirmed（这是本例补充的元信息）。SELECT列为pid、聚合为COUNT，得到
+\begin{codeblock}[language=SQL]{骨架恢复的单表查询}
+SELECT COUNT(pid) FROM registrations
+WHERE event = 'ML-0418' AND status = 'confirmed';
+\end{codeblock}
+三行中只有第一行满足两个条件，结果为1。交换两个条件的顺序结果不变，集合预测也不会惩罚这种交换。
+
+SQLNet在WikiSQL上的测试执行准确率为68.0，Seq2SQL为59.4。它的局限也来自骨架：原问题需要检查“校外来宾”，要访问people表并做连接，而单表骨架中没有这样的槽；嵌套与分组同样无法表达。增加训练数据不能弥补骨架没有覆盖的结构。
+
+\subsubsection{RAT-SQL模式关联与语法树解码}
+\label{sec:nlp-analysis-ratsql}
+
+Spider要求跨数据库的多表查询。模型面对从未见过的模式，必须在推断时自己确定问题中的词对应哪张表、哪一列，以及表之间怎样连接。RAT-SQL把这些已知或可计算的关系显式地注入编码器\scite{v9a-wang2020ratsql}。
+
+RAT-SQL把问题词、列和表共同看作一张图的节点，图~\ref{fig:nlp-analysis-ratsql-graph}画出了本例的部分节点与关系。节点之间的关系分三类。模式内部的关系来自数据库定义：两列是否同表、某列是否为某表的主键、外键指向哪一列、列属于哪张表。问题与模式之间的关系由字符串匹配计算：问题中的$n$元组与列名或表名完全匹配、部分匹配或不匹配；问题中的词是否出现在某列的取值中（值匹配）。问题词之间的关系是相对距离，截断到$\pm2$。每种关系类型都有一个可学习的嵌入。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/02-text-analysis-and-organization/tikz/analysis-ch9b-ratsql-graph.tex}
+  \caption{RAT-SQL编码时使用的部分关系。左列是问题词，中列是数据库的列，右列是表；粗线为问题与列之间的值匹配，细线为列属于表的关系，虚线箭头为外键。图中只画出与本例相关的关系；实际上每一对节点都有一种关系类型（包括“无匹配”），并在全部节点之间做自注意力。“校外来宾”与external的对应来自本例补充的业务词典。}
+  \label{fig:nlp-analysis-ratsql-graph}
+\end{figure*}
+
+关系通过\term{关系感知自注意力}（relation-aware self-attention）进入编码。设输入共有$N$个节点（问题词、列、表），初始表示$\bm x_i\in\mathbb R^{d_x}$由BiLSTM分别编码问题和各列名、表名得到（或由BERT联合编码）。$\bm r^K_{i,j},\bm r^V_{i,j}\in\mathbb R^{d_z/H}$是节点$i$与$j$之间关系类型的嵌入。第$h$个头的计算为
+\begin{equation}
+ \begin{aligned}
+  e^{(h)}_{i,j}&=\frac{\bm x_i\bm W^{(h)}_Q\bigl(\bm x_j\bm W^{(h)}_K+\bm r^K_{i,j}\bigr)^{\top}}{\sqrt{d_z/H}},\qquad
+  \alpha^{(h)}_{i,j}=\operatorname{softmax}_j\bigl(e^{(h)}_{i,j}\bigr),\\
+  \bm z^{(h)}_i&=\sum_{j=1}^{N}\alpha^{(h)}_{i,j}\bigl(\bm x_j\bm W^{(h)}_V+\bm r^V_{i,j}\bigr),
+ \end{aligned}
+ \label{eq:nlp-analysis-rat-attention}
+\end{equation}
+其中$\bm W^{(h)}_Q,\bm W^{(h)}_K,\bm W^{(h)}_V\in\mathbb R^{d_x\times d_z/H}$，$\bm x_i$按行向量书写。各头输出拼接为$\bm z_i\in\mathbb R^{d_z}$，再接残差、层归一化与前馈网络：
+\[
+ \tilde{\bm y}_i=\operatorname{LayerNorm}(\bm x_i+\bm z_i),\qquad
+ \bm y_i=\operatorname{LayerNorm}\bigl(\tilde{\bm y}_i+\mathrm{FC}(\operatorname{ReLU}(\mathrm{FC}(\tilde{\bm y}_i)))\bigr).
+\]
+这样的层堆叠多层（原文为8层）。与普通自注意力相比，唯一的改动是在键和值上加了关系嵌入：两个节点即使内容表示相近，只要关系类型不同，注意力分数和传递的信息就不同。所有节点之间仍然两两交互，关系是偏置，不是只允许沿外键边传递的硬约束。
+
+手算一个分数（教学数值）。设问题词“校外来宾”对affiliation与status两列的内容点积都是0，affiliation与它之间有值匹配关系，使$\bm x_i\bm W_Q\bm r^{K\top}_{i,j}$一项为2，status之间为无匹配，该项为0。两列的注意力分数为2与0，归一化后为$.881$与$.119$：关系让“校外来宾”的表示主要从affiliation列获取信息。原始RAT-SQL的值匹配只看问题与库中取值的字面重合，中文“校外”到external的对应要由业务词典或翻译提供。
+
+解码器按Yin与Neubig的语法树解码方式，以深度优先顺序生成SQL的抽象语法树\scite{nlp-analysis-yin2017}。每一步执行三类动作之一：ApplyRule$[\,r\,]$按SQL文法的一条产生式展开当前非终结符；SelectColumn$[\,c\,]$在当前列槽中选择一列；SelectTable$[\,t\,]$在当前表槽中选择一张表。查询的概率是各步动作概率之积，训练最小化参考动作序列的负对数似然。解码器是LSTM，每步输入拼接上一步动作的嵌入、对编码器输出的注意力上下文、父节点的状态与动作嵌入，以及当前节点类型的嵌入。ApplyRule在可用产生式上做softmax；SelectColumn先让解码器状态对编码器输出的全部节点（问题词、列与表）做注意力，再经一个“节点到列”的对齐矩阵把这一注意力转成列上的分布，SelectTable同理；对齐矩阵本身也由关系感知注意力算出。指针指向的是模式中唯一的列身份，而不是列名字符串，同名的两列不会混淆。
+
+本例的查询按一种简化文法展开为如下动作序列：ApplyRule[查询$\to$选择 来源 条件]；ApplyRule[选择$\to$COUNT(DISTINCT 列)]，SelectColumn[people.pid]；ApplyRule[来源$\to$表 表]，SelectTable[people]，SelectTable[registrations]；ApplyRule[条件$\to$AND(条件,条件,条件)]；三次ApplyRule[条件$\to$列 = 值]，分别接SelectColumn[registrations.event]、SelectColumn[registrations.status]、SelectColumn[people.affiliation]。连接条件\code{r.pid = p.pid}可以在序列化时由外键关系补出，三个常量值由值链接填入。确定性的序列化得到
+\begin{codeblock}[language=SQL]{连接与聚合的语义恢复}
+SELECT COUNT(DISTINCT p.pid)
+FROM people AS p
+JOIN registrations AS r ON r.pid = p.pid
+WHERE r.event = 'ML-0418'
+  AND r.status = 'confirmed'
+  AND p.affiliation = 'external';
+\end{codeblock}
+连接得到3条记录，活动条件留下2条，状态条件留下1条，该人的affiliation为external，计数为1。语法树解码保证每条输出都符合SQL文法，但不保证语义正确：遗漏活动条件时，小赵在OTHER中的确认记录会被计入，结果变成2，查询依然合法。
+
+RAT-SQL的消融直接支持模式链接的作用：在Spider开发集上，去掉问题与模式之间的匹配关系后，精确匹配从55.1降到40.4。它的代价是需要大量“问题--SQL”的标注来训练编码器与解码器，SQL文法与值链接规则也要针对目标方言设计。
+
+\subsubsection{PICARD增量解析约束}
+\label{sec:nlp-analysis-picard}
+
+RAT-SQL的合法性来自专门设计的语法树解码器。另一条路线直接微调T5这样的预训练模型，把模式与问题拼成文本输入，逐词元生成SQL；这样能利用预训练的语言知识，但输出可能不合法，非法候选还会占据束中的位置。PICARD在解码时加入增量解析，拒绝不可能完成为合法查询的扩展\scite{scholak-etal-2021-picard}。其机制与第~\ref{sec:nlp-inference-grammar}小节的文法约束解码相同：在每一步用解析器检查候选前缀，把不能继续的候选分数设为$-\infty$；本小节只说明它针对SQL做了哪些检查。
+
+PICARD有三档检查。词法档只检查关键字、列名与表名能否被识别；语法档检查前缀能否按SQL文法继续；带守卫的档还检查作用域，例如引用的列必须属于FROM中出现的某张表，别名必须先定义。为了控制开销，它不屏蔽整个词表，而是在每步只检查模型给出的前$k$个候选词元。
+
+设前缀为\code{SELECT COUNT(}，模型提出\code{FROM}、\code{*}、\code{pid}，概率为$.50,.30,.20$。当前解析状态需要聚合函数的参数，\code{FROM}不能使前缀继续合法，被拒绝；保留另两项的原有分数，束宽为1时选择\code{*}。词元可能只是SQL单词的一部分，解析器要区分“尚未读完”与“已经不可能完成”。带守卫的检查会拒绝\code{SELECT p.status FROM people AS p}：status虽然存在，却不属于p所指的people表。但\code{SELECT COUNT(*) FROM people}完全合法，它回答的是“共有几人”，不是原问题。
+
+PICARD的同模型对照隔离了约束的作用：在Spider开发集上，T5-3B产生执行错误的查询比例由12\%降到2\%。代价是每步的解析检查，以及正确词元不在前$k$个候选中时无法挽回。
+
+\subsubsection{执行引导查询解码}
+\label{sec:nlp-analysis-execution-guided}
+
+语法与作用域检查发现不了所有运行期问题，例如类型不匹配的比较、对不存在函数的调用，或在当前数据上必然为空的条件。Wang等的执行引导解码把数据库的反馈接入候选筛选：对束中已经完整的查询（或可以独立执行的子句）试运行，排除执行出错的候选，在任务保证答案非空时也排除结果为空的候选\scite{v9a-wang2018execution}。试运行使用只读连接、固定的数据快照，并设置超时和行数上限；未写完的SQL前缀不能直接交给数据库，否则“尚未写完”的语法错误会被误当作候选不可行。它不需要重新训练生成器，可以接在任何能给出多个候选的模型之后，原文在WikiSQL上把它接到多种已有模型，执行准确率都有提升。
+
+固定本节数据库，设三个候选为：把COUNT误写成不存在的函数的查询；连接正确但漏掉活动条件的查询；完整的参考查询。第一项在数据库中报错，被排除；后两项可运行，结果分别为2与1。执行引导无法仅凭“成功执行”判断后两项哪个回答了原问题。非空约束也只在任务保证答案非空时才合理：“有多少已确认的校内来宾”的正确答案在当前表中就是0。
+
+碰巧相同的结果更隐蔽。若删去OTHER那条记录，漏掉活动条件的错误查询也会返回1；只有在含OTHER记录的数据库上，两者才显出差别。这正是本小节开头所述测试套件评测的出发点：在多个数据库变体上执行，才能区分语义不同而结果碰巧相同的查询。
+
+\subsubsection{大语言模型文本到SQL}
+\label{sec:nlp-analysis-llm-text-to-sql}
+
+前四种方法都需要在目标任务上训练。大语言模型在预训练中见过大量SQL与代码，可以通过提示直接完成文本到SQL，把工作重心从训练转到“给模型看什么、让它分几步做、怎样检查结果”。
+
+第一个问题是怎样把模式写进提示。Rajkumar等比较了多种模式表示，发现直接给出建表语句（\code{CREATE TABLE}，含列类型、主键与外键），并附上每张表的前三行样例数据，效果最好\scite{nlp-analysis-rajkumar2022}。建表语句与模型在预训练中见过的代码格式一致；样例行让模型看到取值的实际形式，例如status列存的是confirmed而不是“已确认”。在此之上可以加入少样本示例，Gao等的DAIL-SQL按问题相似度与SQL骨架相似度两方面选择示例，并比较了多种问题表示方式\scite{nlp-analysis-gao2024dail}。示例的选择与顺序对结果的影响见第~\ref{sec:nlp-inference-icl-shots}小节。数据库很大时，全部模式放不进上下文，需要先检索与问题相关的表和列，这一步本身就是模式链接。
+
+第二个问题是复杂查询。一次生成连接与嵌套查询时错误较多，Pourreza与Rafiei的DIN-SQL把任务分解为四个依次执行的提示模块\scite{nlp-analysis-pourreza2023}。模式链接模块用逐步推理的提示找出问题涉及的表、列和值，例如把“校外来宾”对应到条件\code{people.affiliation = 'external'}。分类与分解模块把问题分为三类：单表无嵌套的简单查询、需要连接但无嵌套的查询、含子查询或集合运算的嵌套查询，对嵌套类再拆出子问题。生成模块按类别使用不同的提示与示例，连接类先生成一种省去连接条件的中间表示再转为SQL，嵌套类先解决子问题。自修正模块把生成的SQL交回模型，要求它检查并修正错误。四步都只靠提示，不训练参数；它用GPT-4在Spider测试集上达到85.3的执行准确率。
+
+第三个问题是单次采样的随机错误。第~\ref{sec:nlp-execution-self-consistency}小节的自一致性在这里有一个自然的实现：以较高温度采样$K$条SQL，全部在数据库上执行，按执行结果分组，选择最大的一组中的一条\scite{nlp-llm-selfconsistency2023}。执行出错的候选直接丢弃。投票的对象是执行结果而不是SQL字符串，因为写法不同的查询可以等价。若$K=5$条候选中有3条返回1、1条返回2、1条报错，就输出返回1的那组。这种投票同样受“碰巧相同”的限制：多数候选犯同一种错误时，投票会把错误选出来。
+
+第四个问题是怎样利用执行反馈修正。Chen等的自调试让模型先逐行解释自己生成的SQL，再结合执行结果或错误信息判断是否需要修改，迭代若干轮\scite{nlp-analysis-chen2024selfdebug}。例如数据库返回“no such function: COUNTT”，模型据此改写；即使没有报错，解释过程也可能让模型发现漏掉了活动条件。反馈的上限是可观测的信号：报错与空结果能直接看到，语义遗漏则只能靠模型自己的检查。
+
+最后，也可以微调专门的代码模型。Li等的RESDSQL先用交叉编码器给表和列打相关性分数，只把排名靠前的模式项放进输入，再让解码器先生成SQL骨架、后填细节，这与第~\ref{sec:nlp-analysis-logic-generation}小节的粗到细解码思路相同\cite{nlp-analysis-li2023resdsql}；Li等的CodeS在开源代码模型上继续以SQL相关语料预训练，再在文本到SQL数据上微调，得到可以本地部署的较小模型\scite{nlp-analysis-li2024codes}。微调模型的推断成本低、行为稳定，但需要标注数据，迁移到新方言或新领域时要重新适配。
+
+与RAT-SQL相比，大语言模型方法几乎不需要目标任务的训练数据，能处理更多样的SQL写法，并能利用模式说明与外部知识；代价是可控性：输出合法性要靠解析检查或约束解码补上，提示与示例的细微变化会改变结果，调用成本也高得多。在Spider 2.0这类企业级数据仓库任务上，模式规模、方言差异与多步工作流仍使成功率明显下降。表~\ref{tab:nlp-analysis-text-to-sql-methods}比较本小节的方法。
+
+\begin{table*}[htbp]
+  \centering
+  \begin{tabularx}{\linewidth}{@{}l XXXX@{}}
+    \toprule
+    方法&解决的问题&核心机制&监督与推断&新代价\\
+    \midrule
+    SQLNet&条件顺序无关性&固定单表骨架；列注意力；集合预测&槽位监督；各槽独立预测&无法表达连接与嵌套\\
+    RAT-SQL&模式链接与跨库泛化&关系感知自注意力；语法树动作解码&参考动作序列；语法合法的束搜索&需大量标注；文法与值链接需定制\\
+    PICARD&预训练生成模型的非法输出&每步对前$k$个候选增量解析&不改训练；推断时屏蔽&解析开销；正确词元须在前$k$内\\
+    执行引导&运行期错误&只读快照上试运行完整候选&不改训练；候选过滤&执行开销；无法识别碰巧正确\\
+    大语言模型&减少任务训练；复杂查询&模式提示；分解；执行投票；执行反馈&提示或微调；多次调用&可控性弱；成本高；对提示敏感\\
+    \bottomrule
+  \end{tabularx}
+  \caption{文本到SQL方法对照。PICARD、执行引导与自一致性都是推断阶段的附加机制，可以与不同的生成器组合，并不互斥。}
+  \label{tab:nlp-analysis-text-to-sql-methods}
+\end{table*}
