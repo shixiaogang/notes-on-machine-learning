@@ -14,6 +14,7 @@
   度量空间节的 `tikz/metric-ball-neighborhood/` 和 `tikz/metric-open-closed-relative/` 分别说明开球与邻域，以及开闭性随母空间改变；保留TikZ图源、字体嵌入PDF与预览。
   卷一第8章《度量空间》于2026-10-23在第2部分新增13幅TikZ概念图，统一归档于 `06-space-and-geometry/tikz/metric-spaces/`：三角不等式、伪距离等价类与商度量、子空间弦长、相对球、内部闭包边界、稠密、有限$\varepsilon$网、连续球刻画、Lipschitz锥、双Lipschitz夹逼带、柯西尾部、完备化嵌入与压缩误差收缩；各图保留可编辑源、独立渲染入口、字体嵌入PDF及逐图生成与核验记录。
   集合测量节的 `tikz/measure-abstraction/` 另以关系图对照勒贝格测度的具体构造与一般测度空间的共同结构。
+  卷一第2部分“实数与一元函数”于2026-10-28新增7幅Matplotlib解析图与1幅TikZ复数平面图，位于 `02-real-numbers-and-univariate-functions/`，生成入口、正文位置与记录见该目录README；原微积分部分的 `analysis-continuity-counterexamples/` 随一元微分迁入该部分。
   卷一原第三章于2026-10-21新增26幅概念与过程图：18幅Matplotlib解析图、8幅TikZ几何图，现随微积分部分归入 `04-calculus/matplotlib/chapter3-concept-processes/` 与 `04-calculus/tikz/chapter3-concept-processes/`。覆盖极限与误差、局部线性近似、积分截断和换序、路径与曲面、公共边界抵消；解释放在图注，目录内保留生成器、解析参数、矢量成图、预览与逐图核验记录。
   卷一“线性空间”部分于2026-10-23新增37幅Matplotlib解析教学图（前缀`ls-`），位于 `03-linear-spaces/matplotlib/`，按第4—7章顺序覆盖表示（线性组合张成、坐标、被动换基与主动作用对照、核与像、对偶基读数、商等价类、相似/相抵示意）、运算（Gram系数、单位球、诱导范数、对偶单位球、伴随转移、有向体积、张量积槽位、Kronecker分块、张量缩约）、方程与优化（正交最近点、Givens/Householder、Schur补、最小二乘残差、SVD构造与椭圆作用、正则化偏差方差、二次等值面、球面极值、低秩截断、Procrustes、Sylvester分离）与分析（条件数放大、扰动椭圆、主夹角、谱半径收敛、非正规瞬态增长、Neumann尾项、CG/GMRES搜索空间、停止噪声地板）。每图目录保留`plots.py`、解析参数、PDF/PNG预览与README；使用位置登记在 `00-shared/academic-drawing/integration-manifest.json`。
 - `03-foundations/`：基础、理论与可信性三部分资源。
