@@ -26,7 +26,7 @@ CURRENT_VOLUMES = (
     Path("tex/05-control-decision-and-games"),
 )
 OUTLINE_DIRECTORIES = tuple(Path("plans") / volume.name for volume in CURRENT_VOLUMES)
-MIGRATED_CHAPTER_COUNTS = {1: 20, 2: 3, 3: 9, 4: 4, 5: 3}
+MIGRATED_CHAPTER_COUNTS = {1: 21, 2: 3, 3: 9, 4: 4, 5: 3}
 CONTRACT = Path("tests/fixtures/math-reading-structure/chapter-map.md")
 RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter17-retired-labels.json")
 CHAPTER17_DELETION = Path("tests/fixtures/math-reading-structure/chapter17-deletion.json")
@@ -132,8 +132,9 @@ def assignments(root: Path) -> list[dict]:
     # Historical audit identities stay stable when current chapters merge.
     # In particular, ID 17 remains the source governed by the retirement file.
     # Independent one-variable and multivariable calculus retain IDs 18 and 21.
+    # The six-chapter graph part retires ID 32 (paths merged into ID 9) and adds IDs 42 and 43.
     migrated = bool(modern and any(row["volume"] > 2 for row in rows if "volume" in row))
-    expected_identities = ([n for n in range(1, 42) if n not in {17, 37}] if migrated else list(range(1, 36))) if modern else list(range(1, 18))
+    expected_identities = ([n for n in range(1, 44) if n not in {17, 32, 37}] if migrated else list(range(1, 36))) if modern else list(range(1, 18))
     count = len(expected_identities)
     if modern and len(modern) != len(rows):
         raise ValueError("Chapter assignments must not mix current and legacy formats")
