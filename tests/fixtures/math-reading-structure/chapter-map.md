@@ -1,6 +1,6 @@
 # 数学基础五卷章目与文件映射
 
-当前数学正文共43章，五卷章数依次为24、3、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
+当前数学正文共44章，五卷章数依次为25、3、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；概率与统计基础改为五章后，42至45对应新增的四章；图部分改为六章后，32（原路径与连接章）并入9不再单列，46、47分别对应集合函数章与图上的动态规划章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
 
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
@@ -18,16 +18,17 @@
 | 23 | 1 | 12 | 线性方程与矩阵方程 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/05-linear-matrix-equations.tex |
 | 21 | 1 | 13 | 多元函数微分 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/06-multivariate-differentiation.tex |
 | 41 | 1 | 14 | 多元函数积分 | tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/07-multivariate-integration.tex |
-| 9 | 1 | 15 | 图的对象与表示 | tex/01-basic-mathematics/04-graphs/01-graph-objects-and-representations.tex |
-| 32 | 1 | 16 | 图中的路径与连接关系 | tex/01-basic-mathematics/04-graphs/02-paths-and-connectivity.tex |
-| 33 | 1 | 17 | 图的遍历、分解与简化 | tex/01-basic-mathematics/04-graphs/03-traversal-decomposition-simplification.tex |
-| 34 | 1 | 18 | 图上的约束优化 | tex/01-basic-mathematics/04-graphs/04-constrained-optimization.tex |
-| 35 | 1 | 19 | 图上函数的变换与查询 | tex/01-basic-mathematics/04-graphs/05-functions-transforms-and-queries.tex |
-| 10 | 1 | 20 | 随机变量与概率分布 | tex/01-basic-mathematics/05-probability-and-statistics-basics/01-random-variables-and-distributions.tex |
-| 42 | 1 | 21 | 随机向量与联合分布 | tex/01-basic-mathematics/05-probability-and-statistics-basics/02-random-vectors-and-joint-distributions.tex |
-| 43 | 1 | 22 | 样本、统计量与参数估计 | tex/01-basic-mathematics/05-probability-and-statistics-basics/03-samples-statistics-and-estimation.tex |
-| 44 | 1 | 23 | 抽样分布与估计误差 | tex/01-basic-mathematics/05-probability-and-statistics-basics/04-sampling-distributions-and-errors.tex |
-| 45 | 1 | 24 | 区间估计、假设检验与预测 | tex/01-basic-mathematics/05-probability-and-statistics-basics/05-intervals-tests-and-prediction.tex |
+| 9 | 1 | 15 | 图与连接结构 | tex/01-basic-mathematics/04-graphs/01-graphs-and-connectivity.tex |
+| 33 | 1 | 16 | 图的遍历与结构计算 | tex/01-basic-mathematics/04-graphs/02-traversal-and-structure.tex |
+| 34 | 1 | 17 | 图上的组合优化 | tex/01-basic-mathematics/04-graphs/03-combinatorial-optimization.tex |
+| 46 | 1 | 18 | 集合函数与子集选择 | tex/01-basic-mathematics/04-graphs/04-set-functions-and-subset-selection.tex |
+| 47 | 1 | 19 | 图上的动态规划 | tex/01-basic-mathematics/04-graphs/05-dynamic-programming-on-graphs.tex |
+| 35 | 1 | 20 | 图上的谱方法 | tex/01-basic-mathematics/04-graphs/06-spectral-methods.tex |
+| 10 | 1 | 21 | 随机变量与概率分布 | tex/01-basic-mathematics/05-probability-and-statistics-basics/01-random-variables-and-distributions.tex |
+| 42 | 1 | 22 | 随机向量与联合分布 | tex/01-basic-mathematics/05-probability-and-statistics-basics/02-random-vectors-and-joint-distributions.tex |
+| 43 | 1 | 23 | 样本、统计量与参数估计 | tex/01-basic-mathematics/05-probability-and-statistics-basics/03-samples-statistics-and-estimation.tex |
+| 44 | 1 | 24 | 抽样分布与估计误差 | tex/01-basic-mathematics/05-probability-and-statistics-basics/04-sampling-distributions-and-errors.tex |
+| 45 | 1 | 25 | 区间估计、假设检验与预测 | tex/01-basic-mathematics/05-probability-and-statistics-basics/05-intervals-tests-and-prediction.tex |
 | 25 | 2 | 1 | 度量空间 | tex/02-abstract-mathematics/01-metric-and-measure/01-metric-spaces.tex |
 | 26 | 2 | 2 | 测度空间 | tex/02-abstract-mathematics/01-metric-and-measure/02-measure-spaces/01-measure-spaces.tex |
 | 7 | 2 | 3 | 函数空间 | tex/02-abstract-mathematics/03-function-spaces/04-functional-analysis-and-approximation.tex |
