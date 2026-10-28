@@ -103,7 +103,7 @@ def lasalle():
 
 def quadratic_variation():
     size=[169,75];n=4096;dt=1/n;seed=20261006
-    retained=ROOT/"figures/02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/matplotlib/teaching-dynamics/brownian-increments.csv"
+    retained=ROOT/"figures/00-shared/mathematical-preliminaries-lower/01-random-variables-distributions-and-causality/matplotlib/teaching-dynamics/brownian-increments.csv"
     table=np.genfromtxt(retained,delimiter=",",names=True)
     increments=table["increment"]
     path=np.r_[0,table["cumulative_path"]];t=np.r_[0,table["time"]]

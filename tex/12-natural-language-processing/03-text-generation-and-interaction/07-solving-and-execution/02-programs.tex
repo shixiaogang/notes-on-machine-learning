@@ -1,0 +1,438 @@
+\section{程序任务}
+\label{sec:nlp-execution-programs}
+
+第\ref{sec:nlp-execution-pal}小节的PAL把程序当作求解题目的中间工具，程序写错了，最终答案也会错，但程序本身不交付给用户。程序任务则直接交付软件产物或对其行为的说明：解释一个现有函数做了什么，按规格写出新函数，把代码迁到另一种语言或接口，或者修复仓库中的错误。验收依据也随之改变：数学题核对一个答案，程序要核对约定输入上的全部行为。
+
+这类任务有四个挑战，本节各用一个小节处理：理解既有代码，函数名和注释只提供意图线索，真实行为要从跨文件的代码、语法结构和运行中恢复；生成正确代码，单次采样的正确率有限，输出须能被解析，功能错误只有执行才能暴露；在语言间转换并保持行为，平行代码稀少，两种语言的运算语义又有细微差别；在大型仓库中定位并修复问题，相关代码散落在许多文件中，修改须解决目标问题而不破坏其余行为。
+
+方法谱系按“证据从哪里来、候选怎样形成、怎样筛选”展开。程序理解的证据从文本检索走向语法结构，再走向运行轨迹。代码生成由代码语言模型提供候选，再沿三条互补的路线提高交付质量：大规模采样后按测试和行为筛选，解码时用文法约束排除语法错误，生成后把执行结果写回提示让模型修订。代码转换从人工编写的语法树规则走向只用单语代码训练的回译式翻译。仓库级修复先有让模型自主浏览、编辑与测试的智能体，再有用固定流程替代自主决策的Agentless。表\ref{tab:nlp-execution-program-methods}按同一口径列出这些方法。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价或依赖 \\
+    \midrule
+    检索、AST与运行轨迹 & 从代码恢复当前行为 & 符号与语义检索取证据，语法树追踪控制流与数据流，执行记录实际返回 & 静态分析不覆盖动态调用，运行只覆盖所测输入 \\
+    代码语言模型与FIM & 获得能写代码、能按光标两侧补全的模型 & 去重与许可过滤后的代码语料，中间填充重排，仓库级拼接 & 数据治理成本；FIM比例过高损害左到右续写 \\
+    AlphaCode & 单次采样正确率低而提交次数有限 & 大量采样，示例测试过滤，在生成输入上按输出聚类后每类取一个 & 采样与执行的计算量；依赖生成输入区分行为 \\
+    SynCode & 自由生成可能语法错误 & 增量解析得到接受序列，按终结符DFA状态查预计算的词表掩码 & 文法须为LR(1)/LALR(1)；只保证语法 \\
+    Self-Debugging & 重采样丢弃了失败候选中的信息 & 测试结果、执行轨迹或代码解释写回提示，多轮修订 & 多轮调用；无测试时反馈来自模型自己 \\
+    AST规则转换 & 精确地做接口迁移 & 匹配语法树节点并重写 & 规则须人工编写，覆盖有限 \\
+    TransCoder & 缺少平行代码 & 跨语言掩码语言模型预训练、去噪自编码、回译 & 无行为保证，须用单元测试评价 \\
+    SWE-agent & 模型直接用命令行浏览编辑仓库易出错 & 为模型设计的查看、搜索、带检查的编辑命令和简洁反馈 & 长轨迹的调用成本，错误会沿轨迹累积 \\
+    Agentless & 自主智能体的决策复杂、成本高、难分析 & 固定的分层定位、局部修复与补丁验证流程 & 流程之外的情形无法自行调整 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{程序任务的方法谱系。“新代价或依赖”指相对于前一种做法新增的计算、数据或适用条件。}
+  \label{tab:nlp-execution-program-methods}
+\end{table*}
+
+各方法共用一个前提：固定代码版本、运行环境、依赖和允许修改的范围，才能知道解释针对哪份程序、测试实际执行了什么。图\ref{fig:nlp-execution-program-loop}将开发反馈与独立验收分开。开发测试的结果可以进入候选修订；独立验收只能在候选冻结后评价，否则它也成为开发信息。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/03-text-generation-and-interaction/tikz/nlp-execution-program-loop}
+  \caption{程序候选、实际执行与修订。实线给出从规格到验收的处理路径，虚线把开发失败反馈给修订；点线划开开发与独立评价。每个候选使用相同环境和测试协议，测试结论只覆盖约定的行为范围。}
+  \label{fig:nlp-execution-program-loop}
+\end{figure*}
+\FloatBarrier
+
+\subsection{程序理解与规格恢复}
+\label{sec:nlp-execution-understanding}
+
+“这个函数按通知发布时间排序吗？”不能只读函数名作答。程序理解先检索与问题相关的代码并连接跨文件依赖，再借语法结构和真实运行恢复当前行为。三类证据从文本相似到结构到运行逐步加强；由代码恢复的是当前行为的说明，它是否符合原始意图，还要对照需求、接口契约或有效测试等独立规格。
+
+\subsubsection{符号检索与BM25、嵌入检索}
+\label{sec:nlp-execution-code-retrieval}
+
+对仓库提问时，检索单位宜是路径、限定符号名、函数签名、注释和代码片段组成的记录，而不是任意字符窗口。问题“通知排序为何忽略同一天内的先后”可以拆成符号查询\code{sort\_notices}以及“发布时间、日期解析、排序键”等词。三种检索互补：名称匹配取得直接定义，BM25按词项召回候选（打分公式见第\ref{sec:nlp-classification-bm25}小节），双塔嵌入检索补充措辞不同而语义相关的辅助函数（训练方法见第\ref{sec:nlp-classification-dpr}小节）。
+
+设仓库同时有\code{notices.py:sort\_notices}和测试文件中的同名辅助函数，仅按名称会召回两者；检索器若经监督训练，这种同名干扰项正是有用的困难负例。读取生产入口的导入关系可以确认它调用了\code{time\_utils.py:parse\_local}，再扩展到该定义，就能看到时间字段是否在解析中被截断。交给模型的材料应带路径、行号和版本，并注明尚未读到的依赖。排名靠前的片段只回答“可能在哪里”，沿调用链取得的跨文件证据才开始回答“为什么会这样”。
+
+\subsubsection{AST与控制流、数据流证据}
+\label{sec:nlp-execution-ast}
+
+取得代码后，需要追踪条件和数据怎样影响返回值。\term{抽象语法树}（abstract syntax tree, AST）把源码解析为函数、条件、调用、运算与返回等语法节点，Python标准库的\code{ast.parse}提供这一结构。对代码\ref{code:nlp-execution-sort-trace}，AST显示一个空输入分支、一个类型检查分支，以及由\code{set}传给\code{sorted}的嵌套调用。
+
+\begin{codeblock}[language=Python,label={code:nlp-execution-sort-trace}]{需要核对去重行为的排序函数}
+def unique_sorted(values):
+    if not values:
+        return []
+    if any(type(x) is not int for x in values):
+        raise TypeError("integers required")
+    return sorted(set(values))
+\end{codeblock}
+
+在AST上连接条件的真假出口、返回与异常出口，得到控制流：空列表直接返回；非空输入检查全部元素类型，不合格时抛出异常。跟踪变量的定义与使用，得到数据流：\code{values}先进入集合构造，重复值在排序之前已被合并，注释若声称“保留重复项”就与实际计算不符。类型判断用\code{type(x) is not int}，所以布尔值也被拒绝，尽管Python中布尔类型是整数的子类。导入名被重新赋值或调用目标来自运行时注册表时，静态调用边只能标为“可能”，这类不确定性应写进解释的限制。
+
+\subsubsection{运行轨迹与边界输入}
+\label{sec:nlp-execution-traces}
+
+把具体输入绑定到程序并执行，可以记录实际返回、异常与关键中间变量。代码\ref{code:nlp-execution-sort-trace}对空列表返回\code{[]}，对\code{[3,1,3]}经集合\code{\{1,3\}}返回\code{[1,3]}，对\code{[1,"2"]}在类型检查处抛出\code{TypeError}。三个输入分别走过空分支、重复项合并和异常分支，使“排序并去重、只接受整数”的说明落到具体代码位置。
+
+轨迹须来自运行时采集（脚本捕获的返回值与异常、调试器中的变量快照），并保留环境版本；模型写出的“第三行得到两个元素”只能引导核查。三个样本没有覆盖生成器、自定义容器等输入，分支覆盖也不衡量输入空间是否穷尽，所以恢复的行为说明只适用于所测输入范围。
+
+\subsection{代码生成}
+\label{sec:nlp-execution-generation}
+
+代码生成以规格为输入、以程序为输出。以通知排序为例，规格约定输入为记录列表，每条记录含唯一业务标识和带时区的发布时间；输出按时间升序，保留重复记录与相同时刻记录的原次序，不修改输入；缺失时区、无效日期和不合格记录应报错而非猜测。正常、边界与无效输入的测试预期都从这份规格推出，不从候选代码反推。
+
+这里有三个挑战：单次采样的正确率有限，正确程序往往要在许多候选中才找得到；输出须符合目标语言的语法，否则无法运行；功能错误多数只有执行才能暴露。下面先说明候选来自怎样训练的代码语言模型，再依次讨论针对这三个挑战的采样筛选、文法约束与执行反馈修订。多候选方法常用pass@$k$评价（无偏估计见式\eqref{eq:nlp-eval-passk}），它衡量候选覆盖，不衡量从候选中选对的能力，后者正是筛选与修订要解决的问题。
+
+\subsubsection{代码语言模型的训练数据与目标}
+\label{sec:nlp-execution-code-lm}
+
+通用语言模型的语料里代码占比有限，而写代码需要熟悉大量库接口、语法细节和跨文件引用。\term{代码语言模型}（code language model）用以代码为主的语料预训练或继续训练，结构仍是第\ref{chap:nlp-large-language-models}章的仅解码器Transformer，主要差别在数据和训练样本的构造。Codex在GPT-3基础上用公开代码仓库继续训练\cite{nlp-intro-chen2021}，StarCoder、DeepSeek-Coder等开放模型公开了更完整的数据流程\cite{nlp-execution-li2023starcoder,nlp-execution-guo2024deepseekcoder}。下面依次说明数据怎样处理、目标怎样改造、仓库结构怎样进入样本。
+
+数据处理在第\ref{sec:nlp-llm-data}节的通用流程上增加了代码特有的步骤。第一步是许可证筛选：The Stack只收录宽松许可证（如MIT、Apache-2.0）下的公开代码，并提供让作者查询和申请删除自己代码的退出机制\scite{nlp-execution-kocetkov2022stack}。第二步是去重：开源代码中复制、派生和自动生成的文件极多，按第\ref{sec:nlp-llm-data-minhash}小节的MinHash做近重复去除，The Stack的实验中近重复去除在全部设置下都提高了下游效果。第三步是质量过滤：删去行过长、字母字符比例过低或明显自动生成的文件，并移除密钥、邮箱等个人信息。第四步是去污染：评测题目和参考解常被上传到公开仓库，需按第\ref{sec:nlp-eval-contamination}小节的$n$元重叠检测删去与HumanEval、MBPP等测试集重合的代码，DeepSeek-Coder的阈值是10元组。语料中还混入自然语言，DeepSeek-Coder的配比为87\%源代码、10\%与代码相关的英文文本和3\%与代码无关的中文文本，与代码相关的文本帮助模型读懂用自然语言写的规格。
+
+训练目标仍是下一词元预测。编辑器中的补全需要同时利用光标两侧的代码，这由第\ref{sec:nlp-llm-objective-fim}小节的中间填充（FIM）解决：把文档在字符级随机切成前缀$\bm p$、中间$\bm m$、后缀$\bm s$，用哨兵词元重排为前缀—后缀—中间（PSM）顺序；推断时以光标前、后的文件内容作为$\bm p$与$\bm s$。例如光标停在代码\ref{code:nlp-execution-sort-trace}的类型检查分支处时，模型可以读到后文的\code{sorted(set(values))}，得知输入应是可哈希的整数。用于代码模型时还要确定两点。其一是FIM比例：DeepSeek-Coder的消融中，全部样本都做FIM时填充指标最好，左到右的代码补全却最弱，最终取50\%的PSM样本。其二，FIM在打包成固定长度序列之前按文档施加，使三段来自同一个文件。
+
+单个文件仍不足以写对代码：调用另一个模块的函数时，需要知道它的签名和返回类型。\term{仓库级上下文}（repository-level context）指同一仓库中与当前文件有依赖关系的其他文件。DeepSeek-Coder在构造预训练样本时，用正则表达式提取文件间的导入关系（Python的\code{import}、C的\code{\#include}等），按依赖拓扑排序后把同一仓库的文件拼成一个样本，每个文件前加一行路径注释；去重也改在拼接后的仓库级样本上做，以免破坏仓库结构。这样，被依赖的定义总出现在使用它的代码之前，模型在预训练中就学会了“先读依赖、再写调用”。算法\ref{alg:nlp-execution-repo-order}给出排序过程，其中按最小入度而非零入度取节点，是为了处理循环依赖。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[仓库级预训练样本的依赖排序]
+  \label{alg:nlp-execution-repo-order}
+  \begin{algorithmic}[1]
+    \Require 一个仓库的文件集合$F$，各语言的导入语句模式
+    \Ensure 若干按依赖顺序拼接的训练样本
+    \State 对每个文件$b\in F$解析导入语句；若$b$引用$a$，加有向边$a\to b$，记录每个文件的入度
+    \For{依赖图的每个弱连通分量$G$}
+      \State $L\gets$空列表
+      \While{$G$非空}
+        \State 取$G$中入度最小的文件$a$（存在环时入度可能都大于零）
+        \State 把$a$追加到$L$，从$G$中删去$a$并减小其后继的入度
+      \EndWhile
+      \State 按$L$的顺序拼接文件内容，每个文件前加路径注释，得到一个样本
+    \EndFor
+    \State 在拼接后的样本层面做近重复去除，再按需施加FIM与打包
+  \end{algorithmic}
+\end{algorithm}
+
+推断时仓库往往远超上下文窗口，常按导入关系与第\ref{sec:nlp-execution-code-retrieval}小节的检索取出相关片段，放在当前文件之前；训练时见过“依赖在前”的格式，这种拼接才与训练分布一致。代码语言模型的收益来自数据与样本构造，代价是许可证审查、去重和去污染的治理成本。它提供候选，但单次采样的正确率仍然有限，这引出下面的筛选与修订方法。
+
+\subsubsection{大规模采样、聚类与过滤}
+\label{sec:nlp-execution-alphacode}
+
+竞赛编程题的题面长、算法要求高，即使较强的代码模型，单次采样的正确率也很低。另一方面，pass@$k$随$k$近似按对数线性增长：多采样确实能覆盖到正确程序。问题在于实际提交次数有限，竞赛对每次错误提交都有罚时，评价协议只允许每题提交少量程序。于是任务变成：给定$n$个采样和至多$K$次提交，怎样从中挑出$K$个，使至少一个通过隐藏测试的概率尽量高。AlphaCode用记号$K$@$k$表示这一指标\cite{nlp-execution-li2022alphacode}：每题采样$k$个、只能提交其中$K$个时的解题比例，原文取$K=10$。pass@$k$相当于允许把$k$个全部提交，是$K$@$k$的上界。
+
+AlphaCode的主要思想是以采样计算换提交正确率，分三步缩小候选集，流程见图\ref{fig:nlp-execution-alphacode}。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/03-text-generation-and-interaction/tikz/execution-ch14b-alphacode.tex}
+  \caption{AlphaCode的候选筛选流程。从左到右，候选数由$n$个采样经示例测试降到$n'$个，再按在新输入上的输出聚成$C$类，最后从最大的类开始每类取一个代表提交。下方的测试输入生成模型以题面为条件产生新输入，只用于区分程序行为，不需要知道正确输出。}
+  \label{fig:nlp-execution-alphacode}
+\end{figure*}
+
+第一步是大规模采样，并主动制造多样性。模型是编码器—解码器结构，编码器读1536个词元的题面，解码器生成至多768个词元的程序；编码器浅、解码器深，并使用多查询注意力（所有头共享一组键值）以降低采样时的显存与带宽开销。它先在约715\,GB的GitHub代码上预训练，再在CodeContests竞赛题数据上微调。每题采样可达百万个：一半要求生成Python、一半要求生成C++，在提示中随机填入题目的算法标签和难度评分，并使用较高的采样温度。随机元数据在测试时本来就无法得知，把它们当作控制变量随机设置，增加了候选之间的差异。
+
+第二步是用题面中的示例测试过滤。示例只有一两组输入输出，却能淘汰约99\%的采样；即便如此，许多题仍剩下成千上万个候选，约10\%的题则一个通过示例的程序都没有。第三步是按行为聚类。剩下的程序大多是写法不同、语义等价的变体，随机挑选会把有限的提交浪费在同一种行为上。若有更多测试输入，就能把行为相同的程序归为一类。设另一模型以题面为条件生成$m$个新输入$u_1,\ldots,u_m$，对每个程序$f$定义其\emph{行为签名}
+\begin{equation}
+ \bm b(f)=\bigl(\operatorname{run}(f,u_1),\ldots,\operatorname{run}(f,u_m)\bigr),
+ \label{eq:nlp-execution-behavior-signature}
+\end{equation}
+其中$\operatorname{run}(f,u)$是程序在输入$u$上的输出字符串，出错或超时记为特殊标记。签名相同的程序归为一类。这里不需要知道新输入的正确输出，只比较程序之间是否一致；因此生成的输入即使不满足题目约束，只要能把不同行为分开，也有用处。提交时按类的大小从大到小，每类取一个代表；类数少于$K$时回到最大的类，跳过已提交的程序继续取。算法\ref{alg:nlp-execution-alphacode}汇总了这一选择过程。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[AlphaCode式的采样、过滤与聚类选择]
+  \label{alg:nlp-execution-alphacode}
+  \begin{algorithmic}[1]
+    \Require 题面$x$及示例测试$E$，代码模型，测试输入生成模型，采样数$n$，提交上限$K$
+    \Ensure 至多$K$个待提交程序
+    \State 采样$n$个程序：语言、标签与难度在提示中随机设置
+    \State $S\gets$通过$E$中全部示例的程序
+    \State 由测试输入生成模型以$x$为条件生成输入$u_1,\ldots,u_m$
+    \State 对每个$f\in S$执行得到签名$\bm b(f)$（式\eqref{eq:nlp-execution-behavior-signature}），按签名相等划分为类，类按大小降序排列
+    \State $R\gets$空列表
+    \While{$|R|<K$且$S$中仍有未提交的程序}
+      \For{按大小降序的每一类}
+        \If{该类中有未提交的程序且$|R|<K$}
+          \State 取一个未提交的程序加入$R$
+        \EndIf
+      \EndFor
+    \EndWhile
+    \State \Return $R$
+  \end{algorithmic}
+\end{algorithm}
+
+为什么优先取大类？原文的解释是，错误程序可以错得各不相同，正确程序在任何输入上都给出相同输出，因而容易汇聚成大类。一个教学示例可以说明这一点及其边界。题目要求输出整数列表去重后的升序结果，示例为\code{[3,1,3]}$\to$\code{[1,3]}。设100个采样中29个通过示例，生成的新输入为\code{[]}与\code{[2,-1,2,5]}。其中18个正确，7个在空输入上出错，4个错误地按绝对值排序。按绝对值排序在这两个新输入上恰好也输出\code{[]}和\code{[-1,2,5]}，于是与正确程序同签名，类大小为22、7。取$K=2$时，第一次提交从22个程序中取一个，正确的概率为$18/22$；第二次取空输入出错的那一类，不会再补救。若新输入中有\code{[-3,1]}，按绝对值排序会输出\code{[1,-3]}，两类就被分开。这说明聚类的效果取决于生成输入区分行为的能力。
+
+与其他方法相比，按签名聚类后取大类，相当于在程序行为上做多数投票：第\ref{sec:nlp-execution-self-consistency}小节的自一致性对最终答案字符串投票，这里对整组输出投票，所比较的对象从一个答案变成了一个函数在多个输入上的取值。它的优点是不需要训练额外的评分器，执行结果也比模型打分更客观；代价是采样与执行的计算量巨大，且依赖示例测试和生成输入的质量。原文的对照显示，过滤加聚类使解题率随采样数持续增长，不过滤时几乎不随采样数增长，但与“允许提交全部候选”的上界之间仍有很大差距。
+
+\subsubsection{语法约束解码：SynCode}
+\label{sec:nlp-execution-syncode}
+
+即使规格清楚，自由生成仍可能漏括号、缩进错误或在JSON字段之间遗漏逗号，语法错误的程序连测试都无法运行。第\ref{sec:nlp-inference-grammar}小节已经说明文法约束解码的一般机制：在每一步算出可以接续当前前缀的合法词元集合，把其余词元的对数分数设为$-\infty$后再选择。SynCode是面向编程语言文法的一种实现\scite{nlp-execution-ugare2024syncode}，这里只讲它怎样处理模型词元与文法终结符不对齐的问题。
+
+编程语言的文法分两层。词法层用正则表达式定义\term{终结符}（terminal），例如标识符、整数、字符串、关键字和各种括号，每个终结符对应一个确定有限自动机（DFA）；语法层用上下文无关文法规定终结符怎样组合。模型的词元却是按频率切出的子词，与终结符没有对应关系：一个词元可能只是某个标识符的一半，也可能跨越两个甚至三个终结符。例如已生成的JSON前缀为
+\begin{quote}
+\code{\{"date":"2025-04-}
+\end{quote}
+一个词元可能解码为\code{18","}，同时补完日期字符串、产生逗号并开启下一个字段名的字符串。只知道“下一个终结符是字符串”不足以判断这个词元是否合法。
+
+SynCode把判断拆成语法层的在线计算和词法层的离线查表。在线部分先对当前前缀做词法分析，把它分成已经确定的终结符序列和\emph{剩余后缀}$r$：若前缀以一个尚未闭合的字符串结束，$r$就是这段未完成的字符串\code{"2025-04-}；若前缀以一个完整的词法单元结束，$r$取这个单元，因为它可能被继续延长而改变类型，例如\code{retu}之后可能变成关键字\code{return}。确定的终结符序列交给增量的LR(1)解析器，解析器状态直接给出当前位置和下一位置可接受的终结符。由此构造\term{接受序列}（accept sequence）集合$\mathcal A$：每个接受序列$\Lambda=(\tau_1,\ldots,\tau_\alpha)$是一串终结符，把它接在已确定部分之后仍是合法前缀，其中$\tau_1$是$r$所属或将要成为的终结符。实现中只用长度为1和2的接受序列。
+
+离线部分是\term{DFA掩码表}（DFA mask store）$\mathcal M_{\alpha}$。对终结符DFA中的每个状态$q$和后续终结符序列$\Lambda'$（长度为$\alpha$），表项$\mathcal M_{\alpha}(q,\Lambda')$是一个长为词表大小$|V|$的布尔向量。词元$t$的位置为真，当且仅当从状态$q$读入$t$的字符串时满足以下之一：读完后仍停在当前终结符DFA的活状态（可以继续扩成合法单元）；或者在中途某处到达当前终结符的接受状态，剩余字符能被$\Lambda'$中的下一个终结符继续匹配，依此递归；或者$\Lambda'$已用完，剩余字符不再检查。最后一种情形保证了不会误删合法词元，也是不完备的来源。生成第$k+1$个词元时，掩码为
+\begin{equation}
+ \bm m=\bigvee_{\Lambda\in\mathcal A,\ q_r\ \text{为活状态}}\mathcal M_{|\Lambda|-1}\bigl(q_r,\Lambda_{2:}\bigr),
+ \qquad q_r=\delta^*_{\tau_1}\bigl(q_0^{\tau_1},r\bigr),
+ \label{eq:nlp-execution-syncode-mask}
+\end{equation}
+其中$\delta^*_{\tau_1}$是终结符$\tau_1$的DFA在读入字符串后的转移，$q_0^{\tau_1}$是它的初始状态，$\Lambda_{2:}$是去掉第一个终结符后的序列，$\vee$为按位或。式\eqref{eq:nlp-execution-syncode-mask}的含义是：先让剩余后缀在所属终结符的DFA中走到状态$q_r$，再按每条可能的终结符接续查表，把所有可行接续允许的词元合并。在线代价只是解析器查询和若干次布尔向量合并，词表上的逐词元字符串匹配都在离线完成。算法\ref{alg:nlp-execution-syncode}给出一步解码的过程。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[SynCode的一步约束解码]
+  \label{alg:nlp-execution-syncode}
+  \begin{algorithmic}[1]
+    \Require 当前前缀$C_k$，LR(1)解析表，各终结符的DFA，离线构造的$\mathcal M_0,\mathcal M_1$，模型对数分数$\bm z\in\mathbb R^{|V|}$
+    \Ensure 下一词元$t$
+    \State 对$C_k$做词法分析，得到已确定的终结符序列与剩余后缀$r$
+    \State 从缓存的解析器状态出发，增量解析新确定的终结符，得到当前与下一位置可接受的终结符
+    \State 构造长度为1或2的接受序列集合$\mathcal A$
+    \State $\bm m\gets\bm 0$
+    \For{$\Lambda\in\mathcal A$}
+      \State $q_r\gets\delta^*_{\tau_1}(q_0^{\tau_1},r)$
+      \If{$q_r$是活状态}
+        \State $\bm m\gets\bm m\vee\mathcal M_{|\Lambda|-1}(q_r,\Lambda_{2:})$
+      \EndIf
+    \EndFor
+    \State 对$m_v=0$的词元令$z_v\gets-\infty$，按第\ref{chap:nlp-model-inference}章的选择规则得到$t$
+    \State 缓存解析器状态，令$C_{k+1}\gets C_kt$
+  \end{algorithmic}
+\end{algorithm}
+
+回到JSON例子。剩余后缀\code{"2025-04-}使字符串DFA停在“字符串内部”状态；若接受序列为（字符串，逗号），查表时\code{18","}先在\code{18"}处闭合字符串，再由逗号匹配\code{,}，余下的\code{"}因序列已用完不再检查，于是被放行；\code{18"]}则在闭合字符串后遇到\code{]}，与逗号或右花括号都不匹配而被屏蔽。设$A(C_k)$为真正能扩成合法程序的下一词元集合，$M(C_k)$为掩码放行的集合。SynCode证明了在接受序列取到全部长度为$d$的序列时$A(C_k)\subseteq M(C_k)$，即不误删合法词元（原文称可靠性）；当$d$大于所有词元的字符长度时反向包含也成立（完备性）。实现只用长度1和2，所以是可靠而不完备的：偶尔放行的非法词元会在下一步的解析中暴露。
+
+与第\ref{sec:nlp-inference-grammar}小节XGrammar那类直接在字符级下推自动机上判断词元的做法相比，SynCode把上下文无关部分交给LR解析器、把词法部分预编译为DFA状态上的掩码，适合文法已写成LR(1)形式的编程语言。离线构造代价与DFA状态数、词表大小和终结符数成正比，原文对每一组文法与模型可在数分钟内完成。它的局限也来自分层：文法须是无歧义的LR(1)或LALR(1)文法，Python缩进这类不能由上下文无关文法表达的部分，要靠额外的缩进跟踪机制屏蔽违规词元；更根本的是，语法正确不判断语义，\code{"2025-02-30"}是合法字符串而不是有效日期，函数能被解析也可能在测试中失败。
+
+\subsubsection{执行反馈修订：Self-Debugging}
+\label{sec:nlp-execution-self-debugging}
+
+候选能被解析以后，测试才能揭示行为错误。AlphaCode丢弃失败候选并继续采样，但失败候选往往只差一处比较或一个边界条件，失败信息本身指出了该改哪里。Self-Debugging把执行结果写回提示，让同一个模型看到自己的代码和反馈后修订\scite{nlp-analysis-chen2024selfdebug}。它用少样本提示实现，示例演示“代码—反馈—解释—修订”的过程，模型参数不变；原文把其中的代码解释类比为\term{橡皮鸭调试}（rubber duck debugging），即程序员向他人（哪怕是一只橡皮鸭）逐行讲解代码时，常会自己发现错误。
+
+原文比较了四种反馈格式，信息量依次增加：简单反馈只说“上面的代码不正确，请修正”；单元测试反馈给出失败用例的调用、预期输出与实际输出或异常；代码解释反馈在此基础上要求模型先逐行解释自己的代码，再判断与任务描述哪里不符；执行轨迹反馈则要求模型逐行描述代码在失败输入上的执行过程。后两种格式中的解释和轨迹描述都由模型生成，只有测试结果来自真实执行。在没有单元测试的任务（如原文中的文本到SQL）上，修订的依据完全来自模型自己的解释。
+
+以本节的截止判断为例，设候选把“4月16日18:00前提交”实现为\code{<=}。代码\ref{code:nlp-execution-feedback}是一轮单元测试加解释的反馈格式。
+
+\begin{codeblock}[label={code:nlp-execution-feedback}]{一轮Self-Debugging的提示内容（教学示例）}
+[任务] 校外来宾须在截止时刻之前提交；恰好在截止时刻提交应拒绝。
+[代码]
+def eligible(kind, submitted_at, deadline):
+    ...
+    return to_time(submitted_at) <= to_time(deadline)
+[执行反馈]  # 由测试运行器生成
+test_exact_deadline 失败:
+  eligible("external", "2025-04-16T18:00:00+08:00",
+           "2025-04-16T18:00:00+08:00")
+  预期 False, 实际 True
+[解释]  # 由模型生成
+最后一行在两个时刻相等时返回 True, 而任务要求“之前”, 即严格小于。
+[修订后的代码]
+\end{codeblock}
+
+模型据此把比较符改为\code{<}，再运行同一失败用例和17:59允许、次日拒绝等回归用例。反馈应包含输入、预期、实际返回和测试来源；“边界不对”过于含糊，“请改成小于”则已直接给出补丁，二者都不适合用来比较自主修订能力。若时间解析器此前已把时刻截成日期，只改比较符会把17:59也拒绝，下一轮反馈会要求继续追踪调用链（第\ref{sec:nlp-execution-repair}小节）。算法\ref{alg:nlp-execution-self-debugging}给出轮次结构。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[Self-Debugging的多轮修订]
+  \label{alg:nlp-execution-self-debugging}
+  \begin{algorithmic}[1]
+    \Require 规格$x$，开发测试$T$（可为空），带调试示例的少样本提示，反馈格式，轮数上限$R$
+    \Ensure 候选程序及其状态
+    \State $y^{(0)}\gets$模型以$x$为条件生成的程序
+    \For{$i=0,1,\ldots,R-1$}
+      \State 在$T$上运行$y^{(i)}$，记录每个用例的输入、预期、实际输出或异常
+      \If{$T$非空且全部通过}
+        \State \Return $y^{(i)}$，状态为通过开发测试
+      \EndIf
+      \State 按反馈格式组装$f^{(i)}$：失败用例；可选地请模型逐行解释$y^{(i)}$或其在失败输入上的执行过程
+      \If{$T$为空且模型的解释判定$y^{(i)}$正确}
+        \State \Return $y^{(i)}$，状态为模型自评正确
+      \EndIf
+      \State $y^{(i+1)}\gets$模型以$(x,y^{(i)},f^{(i)})$为条件生成的修订
+      \If{$y^{(i+1)}=y^{(i)}$}
+        \State \textbf{break}\Comment{修订不再改变代码}
+      \EndIf
+    \EndFor
+    \State \Return 最后一个候选，状态为未解决
+  \end{algorithmic}
+\end{algorithm}
+
+Self-Debugging与AlphaCode代表了利用执行信息的两种方式：后者并行采样、只用测试做筛选，前者串行修订、把测试结果当作改写的条件；二者可以组合，例如先采样若干候选，再对失败者分别修订。比较两者时应固定总的模型调用、生成词元和测试执行预算，否则多轮的收益会被误归因于反馈机制。Self-Debugging对失败候选的信息利用更充分；局限是修订受限于模型理解反馈的能力，没有测试时模型自评“现在正确”不增加独立证据。
+
+\subsection{代码转换}
+\label{sec:nlp-execution-transformation}
+
+转换任务的输入多了一份原程序，目标是把它迁到另一种语言或接口，同时保持约定的行为。难点首先在于“保持行为”不能从文本外观判断。对$-3$和2，C++与Java的整数除法向零截断得到$-1$，Python的\code{-3 // 2}向下取整得到$-2$，用\code{/}则得到浮点数$-1.5$；固定宽度无符号32位加法把$2^{32}-1+1$回绕为0，Python整数则得到$2^{32}$，需要按目标契约决定是否显式取模。异常类型、时区库和可变对象的别名也可能改变行为。所以转换后要在同一组输入上比较返回、异常和副作用，结论仅限于所测输入范围。
+
+方法上有两条路线。基于语法树的规则转换精确、可审查，但规则须人工编写；学习式翻译能处理任意构造，但平行代码（同一功能在两种语言下的实现）稀少。回译式无监督翻译则只用两种语言各自的单语代码训练。
+
+\subsubsection{AST规则转换}
+\label{sec:nlp-execution-ast-rewrite}
+
+接口迁移和版本升级往往只需改动少数有固定模式的构造，例如把记录键\code{published\_at}改为新接口的\code{publishedAt}，同时保持按时刻排序的行为。规则转换先限定原代码与可改的接口，再在AST上按模式匹配节点并重写：这里只匹配目标函数中以该字符串常量为下标的访问节点，替换常量后重新生成源码；全局文本替换则可能误改文档示例或另一个业务对象中的同名字段。Python可以用\code{ast.NodeTransformer}按条件替换下标节点，再用\code{ast.unparse}生成代码。
+
+转换后要检查语法是否正确、目标键是否替换完整、允许范围外的节点是否保持原样。规则转换的知识完全来自人工编写的匹配与重写条件，行为可预测、可逐条审查；代价是每类迁移都要写规则，规则覆盖之外的构造（例如通过变量间接传入的键名）需人工处理。跨语言的整体迁移涉及大量语义差异，手写规则的转译器（transcompiler）成本高，产生的代码也常不符合目标语言习惯，这引出学习式翻译。
+
+\subsubsection{回译式无监督代码翻译}
+\label{sec:nlp-execution-transcoder}
+
+学习式翻译若用平行数据监督训练，需要大量“同一函数的C++版与Python版”，这类数据很少。TransCoder把第\ref{sec:nlp-generation-unsupervised-mt}小节的无监督机器翻译搬到代码上，在C++、Java和Python之间翻译函数，只用GitHub上的单语代码训练\scite{nlp-execution-lachaux2020transcoder}。无监督翻译的三个要素在代码上各有对应的实现。
+
+模型是一个在三种语言间共享的编码器—解码器Transformer，词表是在三种语言代码上联合学习的子词词表，每种语言先用各自的词法分析器切分，使字符串和注释的处理符合该语言规则。跨语言初始化采用跨语言掩码语言模型预训练：把三种语言的源代码混在一起，随机遮蔽词元并预测，用得到的编码器初始化翻译模型的编码器与解码器。代码之所以能在没有平行数据的情况下对齐，是因为三种语言共享大量锚点：\code{for}、\code{while}、\code{if}等关键字，数字、运算符，以及\code{min}、\code{max}这类同名库函数，它们在不同语言中出现的上下文相近，把周围的词元拉到同一表示空间。
+
+第二个要素是去噪自编码，对应式\eqref{eq:nlp-generation-unsup-dae}。加噪函数随机遮蔽、删除词元并在小窗口内打乱顺序，模型须恢复原函数；解码器开头的语言标记指定输出语言。单纯复制无法完成这个任务，解码器因此学会生成合乎该语言语法的代码，对输入噪声也更稳健。第三个要素是回译，对应式\eqref{eq:nlp-generation-unsup-bt}：用当前模型把Python函数译成C++，再训练模型从这份可能不完美的C++恢复原Python函数，反之亦然。随着训练进行，正向翻译变好，产生的伪平行对质量也提高，二者相互促进。
+
+评价上，TransCoder的作者认为BLEU或参考匹配不足以衡量代码翻译：变量改名或等价写法会被判错，一个比较符的错误却只扣很少的分数。他们从GeeksforGeeks网站收集了852个有三种语言实现的函数，配上单元测试，以\term{计算准确率}（computational accuracy）评价，即翻译结果在相同输入上与参考实现输出一致的比例。束搜索给出多个译文时，至少一个通过测试即记为正确，这与pass@$k$的思路相同。
+
+回译式翻译与规则转换互补：它不需要写规则，能处理库调用的映射和惯用写法；但翻译只受语言模型与回译的统计约束，不保证行为一致，本小节开头的整数除法就是典型错误。学习式翻译的结果因此须经单元测试核验，负数、溢出和异常等边界输入应写进测试。
+
+\subsection{仓库级程序修复}
+\label{sec:nlp-execution-repair}
+
+仓库修复以既有仓库和问题描述为输入，交付一个补丁，与从零生成的区别在于大部分行为必须保持不变。SWE-bench从真实的GitHub问题及其修复提交中构造任务：模型看到问题描述和修复前的仓库版本，生成的补丁要使修复提交附带的失败测试转为通过，同时使原本通过的测试保持通过\scite{nlp-intro-jimenez2024}。挑战有三个：在成百上千个文件中定位应修改的位置；正确编辑跨文件的代码，不引入语法或缩进错误；在没有标准答案的情况下验证补丁。下面先介绍让模型自主完成这三件事的SWE-agent，再介绍改用固定流程的Agentless，最后说明多候选补丁怎样借测试选择。
+
+本小节以一个两文件教学仓库作为共同基线。按其业务接口，校内人员直接返回允许，函数\code{eligible}只判断校外来宾提交信息是否早于截止时刻；时间字符串必须带时区，比较前统一到北京时间。共同通知发布于2025年4月15日，活动\code{ML-0418}改至4月18日周五14:00，校外提交截止为4月16日18:00。问题报告为“截止当刻仍被允许，同一天的通知排序也不正确”。相关代码如下。
+
+\begin{codeblock}[language=Python,label={code:nlp-execution-repair-base}]{两个文件中相互关联的日期错误}
+# time_utils.py
+from datetime import datetime, timedelta, timezone
+LOCAL = timezone(timedelta(hours=8))
+
+def parse_local(value):
+    timestamp = datetime.fromisoformat(value)
+    if timestamp.tzinfo is None:
+        raise ValueError("timezone required")
+    return timestamp.astimezone(LOCAL).date()
+
+# notices.py
+from time_utils import parse_local
+
+def eligible(kind, submitted_at, deadline):
+    if kind == "internal":
+        return True
+    if kind != "external":
+        raise ValueError("unknown participant kind")
+    return parse_local(submitted_at) <= parse_local(deadline)
+
+def sort_notices(rows):
+    def key(row):
+        return parse_local(row["published_at"])
+    return sorted(rows, key=key)
+\end{codeblock}
+
+这里有两处独立错误：\code{.date()}使09:00与14:00都变成4月15日，排序只能保留输入次序；\code{<=}即使收到完整时刻，也会接纳恰好18:00的提交。正确修订需要去掉日期截断，并把报名比较改成\code{<}，排序函数本身无需修改。
+
+\subsubsection{智能体–计算机接口：SWE-agent}
+\label{sec:nlp-execution-swe-agent}
+
+让语言模型修仓库，最直接的办法是给它一个命令行，在第\ref{sec:nlp-execution-react}小节的ReAct式循环中交替写出思考与命令，读取命令输出后继续。问题在于命令行是为人设计的：\code{cat}一个两千行的文件会把上下文塞满；用\code{sed}编辑时行号或缩进稍有差错就悄悄写坏文件；命令成功时常常什么也不输出，模型无法确认操作是否生效。人类程序员靠编辑器和集成开发环境克服这些不便，SWE-agent的观点是，语言模型也是一类新的用户，同样值得为它专门设计界面\scite{nlp-execution-yang2024sweagent}。
+
+\term{智能体–计算机接口}（agent-computer interface, ACI）指智能体与计算机之间的一组命令及其反馈格式。SWE-agent的接口遵循几条设计原则：命令简单、少而易懂，带简洁的文档和示例；常用操作（如查看、搜索、编辑）合并为一条命令完成，减少多步操作；反馈信息简洁而完整，让模型知道环境当前状态和刚才操作的效果；内置防护，在错误扩散之前拦截。表\ref{tab:nlp-execution-aci}列出主要命令。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.3\linewidth}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    命令 & 作用与反馈 \\
+    \midrule
+    \code{find\_file}、\code{search\_dir}、\code{search\_file} & 按文件名、目录内或文件内搜索字符串；返回匹配的文件与行号摘要，超过50条时不返回结果而提示缩小查询 \\
+    \code{open}、\code{goto}、\code{scroll\_up}、\code{scroll\_down} & 文件查看器，每次显示100行并带行号，注明文件路径、总行数及窗口上下省略的行数 \\
+    \code{edit}、\code{create} & 替换当前文件中指定行区间的内容或新建文件；编辑后自动运行代码检查器，若引入语法、缩进或未定义名称错误则撤销编辑，返回错误类型及编辑前后的片段 \\
+    \code{submit} & 以当前工作区相对基线版本的差分作为补丁提交 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{SWE-agent接口的主要命令。普通命令行命令（如运行测试脚本）仍可使用；命令成功而无输出时，接口明确告知这一点。}
+  \label{tab:nlp-execution-aci}
+\end{table}
+\FloatBarrier
+
+三类命令分别针对定位、查看和编辑中的典型失误。搜索命令只返回摘要并限制条数；查看器的窗口大小经过消融选择，原文的对照中100行窗口的解题率高于30行窗口和整文件显示：30行窗口要反复滚动才能看全一个函数，整文件显示则带入大量无关内容。编辑命令与\term{代码检查器}（linter）绑定，在写坏文件之前拦截错误，模型据此重试，不必等到测试失败后才回头查找原因。上下文管理也是接口的一部分：只保留最近5次观察的完整内容，更早的观察折叠为一行占位。代码\ref{code:nlp-execution-aci-trace}是在教学仓库上的一段示意轨迹。
+
+\begin{codeblock}[label={code:nlp-execution-aci-trace}]{SWE-agent式轨迹片段（教学示意）}
+思考: 问题涉及截止时刻, 先找 eligible 的定义。
+动作: search_dir "def eligible"
+观察: Found 1 matches for "def eligible" in /repo:
+      /repo/notices.py (1 matches)
+思考: 打开该文件查看比较逻辑。
+动作: open notices.py
+观察: [File: /repo/notices.py (13 lines total)]
+      1:from time_utils import parse_local
+      ...
+      8:    return parse_local(submitted_at) <= parse_local(deadline)
+思考: parse_local 的返回类型决定比较粒度, 先看它的定义。
+动作: open time_utils.py
+观察: ...
+      8:    return timestamp.astimezone(LOCAL).date()
+思考: .date() 丢掉了时刻; 去掉它, 再把比较改为严格小于。
+动作: edit 8:8
+          return timestamp.astimezone(LOCAL)
+      end_of_edit
+观察: File updated. ...
+\end{codeblock}
+
+算法\ref{alg:nlp-execution-swe-agent}概括了整个循环。模型每一步输出一段思考和一条命令；格式不合法时，接口返回错误信息让模型重写。循环在模型调用\code{submit}或耗尽预算时结束。
+
+\Needspace{12\baselineskip}
+\begin{algorithm}[SWE-agent的交互循环]
+  \label{alg:nlp-execution-swe-agent}
+  \begin{algorithmic}[1]
+    \Require 基线版本的仓库与执行环境，问题描述，接口命令及其文档，完整保留的观察数$h=5$，调用预算
+    \Ensure 补丁或未完成状态
+    \State 历史$H\gets$（系统提示：命令文档与一条示范轨迹；问题描述）
+    \While{预算未耗尽}
+      \State 模型以$H$为条件输出（思考，命令）
+      \If{输出格式不合法}
+        \State 把格式错误信息作为观察，要求重写；\textbf{continue}
+      \EndIf
+      \If{命令为\code{submit}}
+        \State \Return 工作区相对基线的差分
+      \EndIf
+      \State 在环境中执行命令，按接口格式化观察（查看窗口、搜索摘要、检查器结果，或“成功且无输出”）
+      \State 把（思考，命令，观察）追加到$H$；把最近$h$次之前的观察折叠为一行
+    \EndWhile
+    \State \Return 未完成，附当前差分与轨迹
+  \end{algorithmic}
+\end{algorithm}
+
+SWE-agent说明接口设计本身就是提升智能体能力的一个维度：同一模型、同一循环，只改变命令与反馈格式，解题率就有明显差别。它的优点是通用，模型可以按需复现问题、运行测试、多次尝试；代价是轨迹长、调用次数多，早期的错误判断（如打开了错误文件）会沿轨迹累积，整个流程依赖模型自己决定下一步做什么。
+
+\subsubsection{分层定位与局部修复：Agentless}
+\label{sec:nlp-execution-agentless}
+
+Agentless针对的正是自主智能体的这些问题\scite{nlp-execution-xia2024agentless}。它的作者指出，当前模型的规划与自我纠错能力有限：一旦走错方向，长轨迹中的后续动作难以回到正轨；每一步都要读写上下文，成本高；轨迹又长又多样，出错后难以分析原因。Agentless不让模型做流程决策，把修复拆成定位、修复、补丁验证三个固定阶段，模型只在每个阶段内部完成定义明确的子任务。
+
+定位分三层逐步缩小。第一层，把仓库的目录结构交给模型，请它列出最可疑的文件，并用嵌入检索补充文件候选；第二层，只给出这些文件的骨架，即类、函数和全局变量的声明，请模型选出相关元素；第三层，读取这些元素的完整代码，确定具体的编辑位置。分层的好处是每一层的输入都较短，又不会过早丢弃跨文件的线索。在教学仓库上，目录与问题描述指向\code{notices.py}，骨架中的\code{eligible}和\code{sort\_notices}都调用\code{parse\_local}，于是第三层定位到\code{time\_utils.py}的返回语句和\code{notices.py}的比较。若定位器只提供\code{eligible}，修复器就看不到辅助函数的返回类型，容易写出下一小节中的回归补丁。
+
+修复阶段给出编辑位置附近的上下文，请模型以“搜索—替换”的差分格式写出局部补丁，即指明要被替换的原代码片段和替换后的代码，并多次采样得到多个候选。差分格式比重写整个文件短，也比按行号编辑更不容易错位。补丁验证阶段用测试筛选候选：模型先生成一个复现问题的测试，并在原仓库上运行确认它能复现失败；随后对每个候选运行复现测试和仓库原有的回归测试，再对规范化后的补丁做多数投票。
+
+与SWE-agent相比，Agentless以灵活性换取可控性：流程固定，每一步的输入输出都可检查，调用次数和成本可以预先估计；代价是流程之外的情形无法自行调整，例如问题需要先安装依赖、运行脚本才能定位时，固定流程就没有对应步骤。两者都离不开多候选补丁与测试选择，这是下一小节的内容。
+
+\subsubsection{多候选补丁与测试选择}
+\label{sec:nlp-execution-patch-selection}
+
+在相同基线上构造三个教学候选：$P_1$只保留完整时刻，$P_2$只改严格比较，$P_3$同时修正两处。目标测试有两项：截止当刻应拒绝，同日通知应按时刻排序。七项回归分别检查截止前允许、次日拒绝、校内直接允许、空列表、重复项与稳定次序、缺时区报错以及未知人员类型报错。每个候选在独立子进程中导入自己的两文件副本（Python 3.9.6，5秒超时），避免模块缓存把上一候选带入下一候选。表\ref{tab:nlp-execution-patches}记录实际运行结果。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{lcc}
+    \toprule
+    候选 & 目标测试通过 & 回归通过 \\
+    \midrule
+    原程序 & 0/2 & 7/7 \\
+    $P_1$：仅保留时刻 & 1/2 & 7/7 \\
+    $P_2$：仅严格比较 & 1/2 & 6/7 \\
+    $P_3$：两处共同修正 & 2/2 & 7/7 \\
+    \bottomrule
+  \end{tabular}
+  \caption{跨文件日期修复的教学运行结果。分母固定，失败均为行为断言不符，不是导入或依赖故障。}
+  \label{tab:nlp-execution-patches}
+\end{table}
+\FloatBarrier
+
+$P_2$通过了截止当刻拒绝，却因日期截断把17:59也变成与截止同一天的日期，严格小于为假，回归测试“截止前允许”失败。可见“原失败测试转为通过”不足以选择补丁。教学选择器要求目标测试全部通过、约定回归全部保持，并检查差分只修改允许的位置，因而选出$P_3$；多个候选都通过时，再按预定的修改范围与平局规则选择。把$P_1$收到的边界失败反馈接入第\ref{sec:nlp-execution-self-debugging}小节的修订也会得到$P_3$，但顺序修订与独立多候选采样应作为不同协议记录。
+
+冻结$P_3$后另运行四个预先留出的验收用例：等价UTC偏移的截止时刻、截止前一微秒、无效日历日期和无效记录类型，四项全部通过。Agentless原文的选择规则与教学选择器不同：先保留回归失败最少的候选，再用复现测试过滤，最后做多数投票，复现测试不可靠时有回退策略。无论采用哪种规则，模型生成的测试的预期都应对照问题独立审查；还应限制补丁可修改的文件范围、拒绝删改测试，以免候选通过改变验收条件来消除失败。

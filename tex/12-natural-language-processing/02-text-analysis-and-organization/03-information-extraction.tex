@@ -1,0 +1,91 @@
+\chapter{信息抽取与知识构建}
+\label{chap:nlp-information-extraction}
+
+读出通知中的“4月18日”，还不能直接填写活动日期：原文也可能说“原定4月18日，现已取消”。找出两个组织名称，也不能据此建立合作关系。上一章的词法、句法、语义和篇章分析帮助我们辨认语言结构，本章进一步问：怎样把这些结构转成可查询、可核验，并能随新材料更新的记录？
+
+沿用本部分的教学通知：活动编号为\code{ML-0418}，通知发布于2025年4月15日，时间均为北京时间。编号和发布日期是给定元数据，不是从下列正文中猜出的字段。
+\begin{quote}
+机器学习读书会原定于4月17日举行，现改至4月18日（周五）14:00，地点为海棠楼201。校内师生可直接参加，校外来宾须在4月16日18:00前提交报名信息。
+\end{quote}
+本章所有通知、知识库和数值例子均为教学构造，不表示真实活动或模型实测结果；需要额外的组织、人物或业务状态时，会在当地明确给出补充材料。
+
+\term{信息抽取}（information extraction, IE）按照给定的类型、角色和字段规范，把原文表达的对象与事实恢复为结构化结果。这份规范通常称为\term{模式}（schema），它规定本次要抽取哪些实体类型、关系和事件角色；规定对象类型、关系含义和角色约束的概念体系称为\term{本体}（ontology），模式通常取本体的一部分。模式可以要求输出地点，却不能替原文补出地点；模型判断“改至”指向新日期时，还要留下它依据哪个句子、哪个位置。
+
+从这段通知到一组可用的记录，要依次跨过几类困难。表~\ref{tab:nlp-extraction-challenges}把它们列成清单，并给出各节的方法谱系。第一组困难出在实体本身：实体可以嵌套或不连续，中文没有词边界，新类型缺少标注，同一名字又可能指不同对象。第二组出在实体之间：候选实体对的数量随实体数平方增长，多个三元组共享实体时互相重叠，远程监督自动生成的关系标签带噪，关系的证据又常分散在不同句子。第三组出在事件：触发词与论元要绑定到同一次事件，同一文档的多个事件共享论元，事件之间的时间与因果关系还需全局一致。最后，多来源的记录需要对齐、消解冲突，并按时间更新。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{40mm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{14mm}@{}}
+    \toprule
+    挑战 & 方法谱系 & 所在节\\
+    \midrule
+    实体嵌套与不连续；中文缺少词边界 & BIO--CRF与分层标注$\to$词汇增强（Lattice-LSTM、FLAT）$\to$跨度与阅读理解式$\to$超图与词对网格$\to$指针与结构化生成 & \ref{sec:nlp-extraction-entities}\\
+    新类型标注稀缺 & 原型网络$\to$近邻标注与抽象转移$\to$大语言模型提示与实体级投票 & \ref{sec:nlp-extraction-entities}\\
+    同名实体身份歧义；库外实体 & 别名先验$\to$双编码召回与交叉编码重排$\to$文档全局一致性$\to$生成式名称预测 & \ref{sec:nlp-extraction-linking}\\
+    实体对平方增长；三元组重叠 & 流水线$\to$统一标注$\to$复制生成$\to$级联指针$\to$词对表格填充 & \ref{sec:nlp-extraction-relations}\\
+    远程监督标签带噪 & 多示例学习与句子级注意力 & \ref{sec:nlp-extraction-relations}\\
+    关系与事件论元跨句分布 & 文档级图与上下文池化；文档级事件表填充 & \ref{sec:nlp-extraction-relations}、\ref{sec:nlp-extraction-events}\\
+    同一文档多事件共享论元 & 流水线$\to$联合打分与束搜索$\to$约束生成$\to$文档级路径扩展 & \ref{sec:nlp-extraction-events}\\
+    事件间时间与因果需全局一致 & 局部分类$\to$全局约束推断与联合学习 & \ref{sec:nlp-extraction-event-relations}\\
+    多来源记录的对齐、冲突与更新 & 记录匹配$\to$合并与冲突处理$\to$知识图谱嵌入补全$\to$核验与版本更新 & \ref{sec:nlp-extraction-records}\\
+    \bottomrule
+  \end{tabularx}
+  \caption{本章的挑战清单与方法谱系。箭头表示每一步针对前一方法的一项限制，不表示后一方法在所有条件下都更好。所在节一列给出主要讨论的位置。}
+  \label{tab:nlp-extraction-challenges}
+\end{table*}
+
+各节的方法沿一条共同的主线推进：流水线把任务拆成依次执行的子任务，简单但误差逐级传递；联合抽取让实体、关系或事件共享表示并统一解码；生成式统一抽取把各类结构写成同一种目标序列；少样本方法与大语言模型提示则应对标注稀缺。这条主线贯穿实体、关系与事件三节，读者可以在各节对照同一种思路在不同对象上的形式。
+
+这些方法的通用机制已在第\ref{sec:nlp-analysis-paradigms}节的五种结构预测范式中写出，本章只写任务特有的部分。标注类方法（BIO实体、触发词标注、统一标注的关系抽取）沿用第\ref{sec:nlp-analysis-paradigm-tagging}小节的合法转移掩码与CRF；跨度类方法（双仿射实体、阅读理解式实体、实体对与论元跨度分类）沿用第\ref{sec:nlp-analysis-paradigm-span}小节的跨度表示与冲突解码；超图、词对网格和表格填充属于第\ref{sec:nlp-analysis-paradigm-graph}小节的图方法，结构得分分解到节点、边或网格单元上；指针生成、结构化生成、生成式实体链接与事件生成属于第\ref{sec:nlp-analysis-paradigm-generation}小节的约束生成，其约束解码的掩码计算见第\ref{sec:nlp-inference-grammar}小节。范式只说明输出怎样表示和解码；同一任务常有多种范式的实现，比较时应固定编码器与评价口径。
+
+\input{tex/12-natural-language-processing/02-text-analysis-and-organization/03-information-extraction/01-entities}
+\input{tex/12-natural-language-processing/02-text-analysis-and-organization/03-information-extraction/02-relations}
+\input{tex/12-natural-language-processing/02-text-analysis-and-organization/03-information-extraction/03-events}
+\input{tex/12-natural-language-processing/02-text-analysis-and-organization/03-information-extraction/04-event-relations}
+\input{tex/12-natural-language-processing/02-text-analysis-and-organization/03-information-extraction/05-knowledge-records}
+
+\section*{文献说明}
+
+本章使用两类资料。数据资料界定任务与监督对象：ACE定义了实体、关系与事件的标注体系；Few-NERD扩展了细粒度实体类型并提供少样本划分；DocRED把关系抽取推进到文档级；MAVEN扩大了事件类型覆盖，MAVEN-ERE在同一语料上标注了共指、时间、因果与子事件四类事件关系；HiEve标注了子事件层级，TimeBank-Dense与MATRES提供了稠密或按起点比较的时间关系。方法资料说明具体的预测机制：实体识别部分的Lattice-LSTM、FLAT、超图、W2NER、BARTNER、UIE与少样本近邻标注，实体链接部分的BLINK、全局一致性与GENRE，关系抽取部分的PURE、PCNN、CasRel、TPLinker、ATLOP与EIDER，事件抽取部分的OneIE、Text2Event与Doc2EDAG，以及知识构建部分的Ditto与TransE系列。正文中的教学模式、数值例子与额外的核验规则是本书为说明机制而设，以正文为准，不代表原论文的设置或结果。以下给出主要资料的完整出处。
+\begin{fullwidth}
+  \small
+  \noindent\fullcite{doddington2004ace}\par\medskip
+  \noindent\fullcite{ding2021fewnerd}\par\medskip
+  \noindent\fullcite{nlp-analysis-zhang2018lattice}\par\medskip
+  \noindent\fullcite{li2020flat}\par\medskip
+  \noindent\fullcite{lu2015hypergraph}\par\medskip
+  \noindent\fullcite{li2022w2ner}\par\medskip
+  \noindent\fullcite{yan2021bartner}\par\medskip
+  \noindent\fullcite{lu2022uie}\par\medskip
+  \noindent\fullcite{yang2020structshot}\par\medskip
+  \noindent\fullcite{wu2020blink}\par\medskip
+  \noindent\fullcite{ganea2017deep}\par\medskip
+  \noindent\fullcite{decao2021genre}\par\medskip
+  \noindent\fullcite{yao2019docred}\par\medskip
+  \noindent\fullcite{zhong2021pure}\par\medskip
+  \noindent\fullcite{zeng2015pcnn}\par\medskip
+  \noindent\fullcite{wei2020casrel}\par\medskip
+  \noindent\fullcite{wang2020tplinker}\par\medskip
+  \noindent\fullcite{zhou2021atlop}\par\medskip
+  \noindent\fullcite{xie2022eider}\par\medskip
+  \noindent\fullcite{wang2020maven}\par\medskip
+  \noindent\fullcite{nlp-extraction-lin2020oneie}\par\medskip
+  \noindent\fullcite{lu2021text2event}\par\medskip
+  \noindent\fullcite{nlp-extraction-zheng2019doc2edag}\par\medskip
+  \noindent\fullcite{wang2022mavenere}\par\medskip
+  \noindent\fullcite{nlp-extraction-glavas2014hieve}\par\medskip
+  \noindent\fullcite{nlp-extraction-cassidy2014dense}\par\medskip
+  \noindent\fullcite{nlp-extraction-ning2018matres}\par\medskip
+  \noindent\fullcite{nlp-extraction-li2020ditto}\par\medskip
+  \noindent\fullcite{nlp-extraction-bordes2013transe}
+\end{fullwidth}
+
+\section{本章小结}
+\label{sec:nlp-extraction-summary}
+
+章首的挑战清单在各节得到了逐项回答。实体结构方面，标注、跨度、超图、词对网格与生成五条路线依次扩大可表达的结构：BIO--CRF只表示平面实体，跨度与阅读理解式方法加入嵌套，超图以线性代价编码重叠组合但带有结构歧义，W2NER用词对关系统一平面、嵌套与不连续实体，指针与结构化生成则用一个序列模型覆盖全部结构，代价是串行解码与原文对齐。中文词边界由Lattice-LSTM与FLAT把词典词作为可被语境否决的候选接入字符模型；新类型的标注稀缺由原型与近邻方法、大语言模型提示部分缓解，后者仍需格式核验与原文对齐。实体身份由别名先验、双编码召回与交叉编码重排、文档全局一致性和生成式名称预测逐步确定，库外实体则需要单独的拒绝判断。
+
+关系与事件方面，联合抽取从统一标注、复制生成到级联指针和词对表格，逐步解决了三元组重叠；远程监督以多示例学习容忍噪声；文档级方法用图或上下文池化聚合分散的提及；事件抽取从流水线走向联合打分与结构生成，文档级方法处理多事件共享论元；事件之间的时间、因果与组成关系，以局部分类加全局约束保证一致。知识构建把这些结果对齐、合并、补全，并按来源与时间更新。
+
+回到章首通知，4月17日应作为旧排期保留，4月18日14:00是当前活动开始时刻，4月16日18:00则限定校外报名。三项日期并不竞争同一个字段，只有先明确对象、角色与状态，才能回答何时举行、如何参加，以及答案依据是什么。下一章转向整篇文本的属性、文本之间的关系与文本集合的组织；本章得到的实体、关系和带来源的记录可以作为其中的结构化输入，其不确定性也应一并传递。

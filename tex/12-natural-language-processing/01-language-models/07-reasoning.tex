@@ -1,0 +1,1037 @@
+\chapter{推理能力的形成与提升}
+\label{chap:nlp-reasoning}
+
+面对一道金额题，模型可能记得“八折”的含义，却把“不打折”的笔也乘了折扣；也可能正确列出算式，随后算错乘法。这类题目的答案很容易核对，得到答案却要经过若干步中间计算，而这些中间步骤几乎从不带现成标注。要求模型“认真思考”有时会改变输出，但并不能说明错误究竟需要补充知识、示范、反馈还是更多的推断计算。
+
+本章把推理能力当作跨越模型形成各阶段的问题，回答四个阶段各自提供什么信号、怎样组合：预训练决定模型见过哪些知识、符号与论证；轨迹监督给出可以模仿的求解过程；结果与过程奖励区分已有候选的好坏，再由强化学习提高好轨迹的概率；推断时计算在参数固定时分配采样、搜索与检查的机会。第\ref{sec:nlp-reasoning-objectives}节先规定求解目标与可观察证据，并把推理能力提升的困难整理为六项挑战；第\ref{sec:nlp-reasoning-pretraining}节至第\ref{sec:nlp-reasoning-test-time}节沿“预训练—轨迹监督—奖励模型—强化学习—推断计算”逐一处理这些挑战；第\ref{sec:nlp-reasoning-integration}节把各阶段放回DeepSeek-R1这样的完整训练路径，讨论怎样检查各阶段的贡献与副作用。
+
+阅读本章需要第\ref{chap:nlp-large-language-models}章的语料构造与训练日程、第\ref{chap:nlp-supervised-finetuning}章的掩码损失与蒸馏、第\ref{chap:nlp-preference-alignment}章的奖励模型、PPO、DPO与去价值模型的策略梯度，以及第\ref{chap:nlp-model-inference}章的采样与束搜索。策略梯度、GRPO与过程奖励的强化学习表述以及蒙特卡洛树搜索的一般形式属于卷七，本章在使用处先陈述所需结论，再给出位置，自身只写推理任务特有的数据构造、目标、偏差修正与算法。全章以$x$记题面，$z$记推理轨迹，$y$记最终答案；在训练各节中，把一条完整输出（轨迹加答案）记为$o=(z,y)$，其长度记为$|o|$。两个贯穿例子是下面的金额题和第\ref{sec:nlp-execution-tot}小节的24点候选树，所用数值均为可以手工复核的教学示例。
+
+\section{推理任务的目标与挑战}
+\label{sec:nlp-reasoning-objectives}
+
+比较各阶段之前，先明确它们共同改进的对象。最终分数的变化可能来自知识覆盖、题目表述适应、计算执行或步骤选择，这些解释需要不同的证据。本节先规定求解目标和可观察证据，为后文提供共同的比较对象，再列出推理能力提升的主要挑战。
+
+\subsection{问题条件与求解目标}
+\label{sec:nlp-reasoning-problems}
+
+考虑一道教学题目：“每本书25元，买3本打八折；每支笔4元，买5支不打折，共付多少元？”完成它涉及三类要求。第一类是知识调用：“八折”表示按原价的$0.8$支付。第二类是条件绑定：折扣只作用于书，“不打折”把笔排除在外。第三类是计算：$25\times3=75$，$75\times0.8=60$，$4\times5=20$，$60+20=80$。成功标准是给出正确金额及单位“80元”。三类要求可以分别失败：记得乘法表的模型仍可能把折扣绑到笔上，调用计算器也只能接管已经正确建立的算式。
+
+其他推理任务的成功条件形式不同。程序任务要求代码在约定输入上满足规格，检查对象是程序的执行行为；形式化证明要求从给定公理和已有结果，经允许的推导规则得到目标命题，检查对象是证明项本身，由证明助手判定。把题面记为$x$，候选轨迹记为$z$，最终产物记为$y$，任务检查$C(x,z,y)\in\{0,1\}$应写明实际检查了哪些对象：金额题通常只比对$y$，证明检查则覆盖整个$z$。
+
+本章所说的推理能力，是在声明的题目分布与允许资源下，组织并执行多步求解关系、得到通过检查的产物的能力。它不由轨迹含有多少步来定义：长输出可以反复重复同一个错误，短输出也可能来自有效推导。比较两个系统时，还要记录是否允许程序执行、检索或多次候选，因为这些资源一旦改变，被比较的能力目标也随之改变。
+
+\subsection{答案、轨迹与可观测证据}
+\label{sec:nlp-reasoning-evidence}
+
+答案与过程需要分别观察。一条候选写出“书费60元，笔费16元，总计80元”：末尾答案正确，第二步却把笔打了折，第三步的加法也不成立。另一条候选正确写出“$60+20$”，最后却抄成“76元”。前者说明结果通过不蕴含步骤正确，后者说明步骤局部正确也不保证最终交付正确。
+
+模型在答案之前生成的步骤文本称为\term{推理轨迹}（reasoning trace），即模型交付的中间材料。我们可以检查它是否引用了原始条件、等式是否成立、程序是否按指定输入执行。轨迹是可以检查的外部材料，但不能直接证明模型的内部计算与这些文字一致；写出“我检查了一遍”也不等于检查真正发生。程序输出和证明检查结果提供另一类证据，同样要核对运行对象与约束范围。
+
+后文各阶段使用的训练信号各自只约束对应的观察对象。示范监督约束模型模仿什么文字，结果奖励只区分最终答案是否通过检查，过程奖励才对中间步骤施加约束。“训练使模型推理更好”这样的说法，需要落实到具体信号约束了哪个对象。
+
+\subsection{推理能力提升的主要挑战}
+\label{sec:nlp-reasoning-challenges}
+
+沿用金额题，可以把推理能力提升的困难归纳为六项。每一项都在一个具体样本上有可见的表现，后文的方法分别针对其中一项或几项。
+
+第一，步骤监督昂贵。为金额题写出逐步正确的轨迹需要有人判断“笔不打折”这一步，复杂题目的步骤判断更需要专业能力；而大量题目只附有最终答案“80元”。第\ref{sec:nlp-reasoning-sft}节用模型自举和教师蒸馏获得轨迹，第\ref{sec:nlp-reasoning-prm-mc}小节用蒙特卡洛估计自动产生步骤标签。
+
+第二，只有结果奖励时的信用分配。一条轨迹在第二步把笔打折，最终得76元，结果奖励为0；另一条写了“$60+16=80$”，结果奖励为1。结果奖励只评价整条轨迹，无法指出哪一步出了错，还会奖励侥幸正确的轨迹。第\ref{sec:nlp-reasoning-feedback}节的过程奖励与第\ref{sec:nlp-reasoning-rl}节的组内相对优势分别从步骤和轨迹两个层面处理这一问题。
+
+第三，探索不足与熵塌缩。若模型对这道题采样8次，全部把笔打了折，8条轨迹的奖励都是0，组内无从比较，这道题不提供任何学习信号；训练中策略的熵快速下降，采样趋于雷同，又进一步减少有效样本。第\ref{sec:nlp-reasoning-exploration}小节讨论动态采样与非对称裁剪。
+
+第四，长轨迹的长度偏差、截断与不稳定。模型反复验算，写出两千个词元，有的轨迹在给出答案前就达到长度上限被截断；损失怎样在长短不一的轨迹间聚合，会改变每个词元得到的权重。第\ref{sec:nlp-reasoning-long-updates}小节和第\ref{sec:nlp-reasoning-overthinking}小节处理这些问题。
+
+第五，推断计算的分配。同样花费一千个词元，可以采样四条短解答投票，可以写一条长解答反复检查，也可以在中间步骤上搜索；金额题这样的简单题几乎不需要额外计算，难题则可能需要很多。第\ref{sec:nlp-reasoning-test-time}节比较这些方式，并讨论按题目难度分配预算。
+
+第六，验证器的可靠性与奖励投机。若答案提取器只取输出中的最后一个数字，模型写出“答案是76，也可能是80”就可能被判为正确；学习得到的过程奖励模型也可能偏爱冗长流畅的步骤。验证器的误判会直接进入优化目标，第\ref{sec:nlp-reasoning-verifier-hacking}小节专门讨论。
+
+表~\ref{tab:nlp-reasoning-challenges}汇总六项挑战及其处理位置。这些挑战并不互相独立：探索不足会使结果奖励更稀疏，验证器误判在长轨迹上更难发现。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{推理能力提升的六项挑战。“金额题上的表现”是同一道教学题上的具体失败，“主要处理位置”指本章给出方法的节或小节。}
+  \label{tab:nlp-reasoning-challenges}
+  \begin{tabularx}{\linewidth}{@{}p{30mm}Xp{42mm}@{}}
+    \toprule
+    挑战 & 金额题上的表现 & 主要处理位置\\
+    \midrule
+    步骤监督昂贵 & 题目只附答案80元，步骤正误需人工判断 & 自举与蒸馏（\ref{sec:nlp-reasoning-sft}）；自动过程标注（\ref{sec:nlp-reasoning-prm}）\\
+    结果奖励下的信用分配 & 76元的轨迹不知错在哪步，“$60+16=80$”被奖励 & 奖励模型（\ref{sec:nlp-reasoning-feedback}）；组内相对优势（\ref{sec:nlp-reasoning-grpo}）\\
+    探索不足与熵塌缩 & 8次采样全把笔打折，组内奖励全为0 & 动态采样与非对称裁剪（\ref{sec:nlp-reasoning-exploration}）\\
+    长轨迹的偏差与不稳定 & 反复验算被截断；长错轨迹每词元惩罚被稀释 & 词元级损失、超长惩罚、序列级比（\ref{sec:nlp-reasoning-long-updates}，\ref{sec:nlp-reasoning-overthinking}）\\
+    推断计算的分配 & 投票、长思考与搜索争用同一预算 & 并行、搜索、串行与按难度分配（\ref{sec:nlp-reasoning-test-time}）\\
+    验证器可靠性与奖励投机 & 输出“76，也可能是80”骗过提取器 & 验证器检查与对策（\ref{sec:nlp-reasoning-verifier-hacking}）\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\section{预训练阶段的能力基础}
+\label{sec:nlp-reasoning-pretraining}
+
+模型若没有学过相关符号、知识和解题表达，后续少量轨迹与奖励难以弥补。本节把第\ref{chap:nlp-large-language-models}章的语料、混合与训练日程落实到求解能力的起点，处理三个具体问题：数学与代码类高质量文本在网页中占比很低，需要专门召回；现成文本中逐步讲解的推理过程不足时，怎样合成；领域数据的比例与继续预训练怎样安排。方法谱系依次是基于分类器的迭代召回与代码数据、合成数据与中期训练、领域混合与继续预训练。本节最后说明下一词元目标只监督文本延续、不检查数学正确性，这一缺口引出第\ref{sec:nlp-reasoning-sft}节的轨迹监督。
+
+\subsection{求解相关语料的构造}
+\label{sec:nlp-reasoning-corpora}
+
+数学语料包含公式、证明、讲解、习题与程序，它们提供的信息并不相同。构造时首先要保留符号与上下文：网页抽取若把上下标、分式或LaTeX源码丢掉，“$x^2$”就会变成“x2”；只保留公式而丢掉“对所有正实数”这样的条件，命题本身就变了。因此数学网页的抽取通常保留LaTeX与MathML，再检查是否覆盖题目、解法和论证，而不是按符号密度直接认定材料适合学习求解。
+
+Llemma给出了一个按来源组织的案例：它的Proof-Pile-2由arXiv论文、数学网页（OpenWebMath）和数学相关代码（AlgebraicStack）组成，从Code Llama出发继续做下一词元训练，经短训练比较后取论文、网页、代码为$2:4:1$的混合权重\scite{nlp-llm-llemma2023,nlp-llm-paster2024openwebmath}。来源选定以后，真正的困难在于数量：公开网页中的数学内容只占极小比例，按规则（如“含有LaTeX”）召回会漏掉大量用纯文本写成的讲解，也会混入只是排版了公式的无关页面。
+
+DeepSeekMath用一个迭代的分类器召回流程解决这个问题\scite{rl5-shao2024deepseekmath}。它沿用第\ref{sec:nlp-llm-data-classifier-filter}小节的fastText质量分类器，只是把“高质量”换成“数学相关”，并让正例集合随轮次扩大。算法~\ref{alg:nlp-reasoning-math-recall}写出这一流程。
+
+\begin{algorithm}[迭代召回数学网页]
+  \label{alg:nlp-reasoning-math-recall}
+  \begin{algorithmic}[1]
+    \Require 种子数学语料$S$（初始为OpenWebMath），去重后的网页池$W$，轮数$K$，域名阈值$\tau$
+    \Ensure 数学语料$M$
+    \State $M\gets\varnothing$
+    \For{$k=1,\ldots,K$}
+      \State 以$S$中的页面为正例、从$W$随机抽取的页面为负例，训练fastText二分类器$f$
+      \State 用$f$为$W$中每个页面打分，按分数从高到低保留一部分，加入$M$
+      \State 按域名统计：若某域名下被召回页面的比例超过$\tau$，把该域名视为数学相关
+      \State 人工标注这些域名中与数学内容对应的URL路径，把路径下尚未召回的页面加入$S$
+    \EndFor
+    \State 对$M$做去污染：删除与评测题目或答案存在长$n$元组重合的页面
+    \State \Return $M$
+  \end{algorithmic}
+\end{algorithm}
+
+每一轮的关键在第5、6行。分类器只学到种子语料的风格，召回结果会偏向与OpenWebMath相似的页面；按域名统计召回比例，可以发现“这个网站大部分页面都是数学，但分类器只认出了一部分”，人工标注URL路径后把漏掉的页面补进种子，下一轮分类器便能认出新的写法。DeepSeekMath取$\tau=10\%$，经过四轮迭代得到约3550万个网页、1200亿词元；第四轮召回的数据约98\%已在第三轮出现，于是停止迭代。去污染时删除与GSM8K、MATH等评测题目存在10元组完全匹配的页面。与第\ref{chap:nlp-large-language-models}章的通用质量过滤相比，这一流程的新增之处是种子随轮次扩展，作用类似于自举式的主动学习；代价是每轮都要在全量网页上重新打分，人工标注URL也需要投入。它召回的是“与种子相似的数学文本”，分类器分数高不等于内容正确或适合学习求解。
+
+代码是另一类重要材料。程序把多步计算写成可以执行的显式步骤，变量绑定和控制流都有确定的语义，正好对应金额题中“条件绑定”和“计算”两类要求。DeepSeekMath在其1.3B模型上比较了两阶段训练顺序，观察到先训练代码再训练数学，可以同时改善使用工具和不使用工具的数学求解\scite{rl5-shao2024deepseekmath}；代码数据也是第\ref{sec:nlp-reasoning-program-aided}小节程序辅助推理的基础。语料构造的最后一步始终是污染检查：同一道题换了网页外观，仍可能与评测题目共用题干和解答，应按题干、公式和解答分别检查近重复，统一的审计协议见第\ref{sec:nlp-eval-contamination}小节。
+
+\subsection{合成数据与中期训练}
+\label{sec:nlp-reasoning-midtraining}
+
+即使召回了全部数学网页，其中逐步讲解的推理过程也很有限：论文给出结论与证明梗概，论坛帖子常省略中间计算，习题网站多只有答案。一种做法是用强模型生成教材式文本。phi-1用GPT-3.5生成不到十亿词元的合成Python“教材”，与约60亿词元按“教材质量”筛选的网页代码一起预训练1.3B模型，再在约1.8亿词元的合成练习与解答上微调，使小模型在代码生成上接近大得多的模型\scite{nlp-llm-gunasekar2023textbooks}。另一种做法是改写：把一篇数学网页改写成“问题—分步解答”的问答对，或把一段证明扩写成逐步讲解。两种做法都把“讲解过程”这一稀缺信号显式地放进预训练分布。
+
+这些高质量数据通常不平均地撒在整个预训练中，而是集中放在末段。\term{中期训练}（mid-training）指在预训练的末段提高数学、代码与推理数据的比例，并加入合成问答和较长的推理示范，为后续微调与强化学习提供更好的起点。它常与第\ref{sec:nlp-llm-wsd}小节WSD日程的衰减段重合：学习率退火时损失快速下降，此时换入的数据对最终参数影响较大。Llama 3报告，在8B模型的退火段加入少量高质量代码与数学数据，使其在GSM8K与MATH验证集上的表现分别提高了24.0\%与6.4\%，而对405B模型几乎没有收益；他们也据此用短退火实验评价候选数据集的价值\scite{nlp-llm-llama3-2024}。这一对照说明中期训练的收益依赖模型规模和已有能力，不是固定的增量。
+
+合成数据的缺点同样来自它的来源。它继承生成模型的错误和题型偏好，大量合成文本会使风格趋同；生成模型若见过评测题目，合成数据还会把评测内容间接带进训练分布。因此合成数据需要与第\ref{sec:nlp-reasoning-corpora}小节的污染检查配合，最好也能用答案核验或程序执行过滤其中的错误解答。
+
+\subsection{领域混合与继续预训练}
+\label{sec:nlp-reasoning-domain-mixtures}
+
+构造好数学语料后，还要决定从哪个模型起步以及与一般语言数据怎样混合。混合比例决定更新中各类信号出现的频率；在相同训练词元数下，提高数学比例也就减少了其他材料的份额。代码模型起点已经具备结构化表达和程序模式，DeepSeekMath因此从DeepSeek-Coder-Base-v1.5 7B出发，继续训练5000亿词元，其中数学语料占56\%，AlgebraicStack占4\%，arXiv占10\%，GitHub代码占20\%，中英文一般网页占10\%\scite{rl5-shao2024deepseekmath}。保留一般语言和代码的份额，是为了不让继续预训练损害通用能力，第\ref{sec:nlp-llm-domain-continuation}小节讨论过这种回放的作用。
+
+DeepSeekMath还给出一个值得保留的反例：在其1.3B和7B模型、指定训练预算及所测数学基准上，单独使用经过不同处理的arXiv论文语料没有带来一致收益，部分指标反而下降。论文也说明，这一结论没有覆盖论文与其他材料混合、更大模型或定理证明等任务。它说明“材料更专业”不能直接推出“求解更好”：论文的写法与习题求解相差很远；但也不能反推论文语料一般无用。观察领域训练的收益时，应固定起始模型、训练预算和测试规则，同时检查通用语言与指令能力是否受损。
+
+无论语料多好，预训练的学习目标仍是文本预测，而不是数学正确性。对序列“书费60元，笔费16元，合计80元”，下一词元损失同样会提高它的概率；如果语料写错了，目标本身不会识别错误。第\ref{sec:nlp-llm-objective-mtp}小节的多词元预测让每个位置同时预测更远的未来词元，提供了更多未来位置的监督，原始研究报告的收益也依赖模型规模和任务\scite{nlp-llm-mtp2024}；但它监督的仍是文本，没有把任何中间步骤标为正确或错误。若希望模型明确学会“先绑定折扣对象，再计算，再报告单位”的过程，就需要把这种过程作为示范，或在后续阶段加入能够区分过程好坏的反馈。第\ref{sec:nlp-llm-pretraining-handoff}小节说明了预训练向后续阶段交接时应记录的产物；下一节从轨迹监督开始。
+
+\section{基于轨迹监督的学习}
+\label{sec:nlp-reasoning-sft}
+
+预训练模型已经能写出解题文字，但不一定在给定题目时稳定地按所需方式求解。轨迹监督把“题目—推理轨迹—答案”作为示范，用第\ref{chap:nlp-supervised-finetuning}章的掩码损失训练模型模仿。这里的挑战集中在轨迹的来源上：人工写长推理过程成本高；大量题目只有答案标签，怎样获得可用的轨迹；从更强的教师迁移长推理时，学生需要多少数据、受什么限制。本节沿三种来源组织方法：人工整理的示范与冷启动，模型自己生成、按答案筛选的自举（STaR、拒绝采样微调与专家迭代、ReST-EM），以及强教师生成的长轨迹蒸馏（含s1、LIMO等小规模精选数据）。每种来源都需要说明监督对象和筛选能保证什么。
+
+\subsection{推理示范与冷启动}
+\label{sec:nlp-reasoning-demonstrations}
+
+一个推理示范样本包含题目$x$、轨迹$z$和答案$y$。金额题的轨迹应写出“书原价$25\times3=75$元，打八折后$75\times0.8=60$元；笔不打折，$4\times5=20$元；合计$60+20=80$元”。若示范只写“仔细思考后得80元”，模型学到的主要是表达模板，所需的条件绑定并没有出现在监督材料中。步骤的粒度也要随任务安排：太粗的步骤把关键判断藏在一句话里，太细的步骤则把大量词元花在平凡的算术上。若轨迹中含有程序执行或工具调用的结果，还应说明这些结果来自真实执行还是生成的文本，否则模型只会模仿执行的外观。
+
+记$o=(z,y)$为回答区域，轨迹监督的目标为
+\begin{equation}
+  \mathcal L_{\mathrm{trace}}(\bm\theta)
+  =-\frac1{|D|}\sum_{(x,o)\in D}\frac1{Z_o}
+    \sum_{t=1}^{|o|}\log \pi_{\bm\theta}(o_t\mid x,o_{<t}),
+  \label{eq:nlp-reasoning-trace-sft}
+\end{equation}
+其中$D$是已核验的示范集合，$Z_o=1$或$|o|$分别对应按序列求和或序列内平均两种约定，题目位置不计入损失，这正是第\ref{sec:nlp-sft-masked-loss}小节的回答位置掩码损失。两种约定对推理数据的影响比对普通对话更明显：推理轨迹的长度差异常达十倍以上，按词元求和时长轨迹占据更多损失份额，按序列平均时短轨迹的每个词元权重更大。第\ref{sec:nlp-reasoning-token-loss}小节会在强化学习中遇到同样的问题。训练用真实前缀做教师强制，测试时模型依据自己生成的前缀继续，模仿目标本身不能消除错误前缀的累积。
+
+DeepSeek-R1在强化学习之前用少量长思维链示范做微调，称为\term{冷启动}（cold start），即为后续策略学习提供一个行为稳定的起点\scite{deepseek2025r1}。这一做法的动机来自它的前身R1-Zero：直接从预训练模型做强化学习时，输出可读性差，并常在中英文之间混用。冷启动数据约数千条，来源包括用长思维链示例做少样本提示、直接提示模型写出带反思与验证的详细解答，以及收集R1-Zero的输出并由人工整理成规定的格式：先写推理过程，再写一段面向读者的总结。冷启动约定了可读的步骤、答案边界和所用语言，降低后续探索落在不可解析表达上的概率。“冷启动”指强化学习的起点，并不表示模型没有经过预训练；R1报告没有给出仅由冷启动带来的独立准确率增量，因此不能把最终模型相对R1-Zero的差距全部归于这几千条示范。
+
+\subsection{自举轨迹学习}
+\label{sec:nlp-reasoning-star}
+
+大量题目只有最终答案。自举方法让模型自己为这些题目生成推理过程，用答案检查筛出正确的轨迹，再用它们微调，反复迭代。下面三种方法共享这一循环，区别在于答案错误的题怎样处理、每轮从哪个模型开始训练，以及怎样从理论上解释这个循环。它们共同的边界是：答案正确的轨迹仍可能含有错误步骤，例如“$60+16=80$”能通过答案匹配，筛选不是证明。
+
+\subsubsection{STaR}
+\label{sec:nlp-reasoning-star-algorithm}
+
+\term{自学推理器}（Self-Taught Reasoner, STaR）是最早系统化的自举方法\scite{nlp-llm-star2022}。它从一个带少量示范理由的提示出发，让模型为训练题生成理由和答案，保留答案正确的样本；对答案错误的题目，它把正确答案作为提示交给模型，让模型重新生成一条通向该答案的理由，这一步称为\term{合理化}（rationalization）。通过答案检查的合理化理由同样保留，但训练时去掉提示中的答案，使训练输入仍然只有题目。算法~\ref{alg:nlp-reasoning-star}写出完整流程。
+
+\begin{algorithm}[STaR自举循环]
+  \label{alg:nlp-reasoning-star}
+  \begin{algorithmic}[1]
+    \Require 预训练模型$M$，训练集$\{(x_i,y_i)\}_{i=1}^{n}$，带示范理由的提示$P$，迭代轮数$K$
+    \Ensure 微调后的模型$M_K$
+    \State $M_0\gets M$
+    \For{$k=1,\ldots,K$}
+      \State $D_k\gets\varnothing$
+      \For{$i=1,\ldots,n$}
+        \State 用$M_{k-1}$在提示$P$下为$x_i$生成理由与答案$(\hat z_i,\hat y_i)$
+        \If{$\hat y_i=y_i$}
+          \State $D_k\gets D_k\cup\{(x_i,\hat z_i,y_i)\}$
+        \Else
+          \State 把$y_i$作为提示附在$x_i$后，用$M_{k-1}$重新生成$(\tilde z_i,\tilde y_i)$ \Comment{合理化}
+          \If{$\tilde y_i=y_i$}
+            \State $D_k\gets D_k\cup\{(x_i,\tilde z_i,y_i)\}$ \Comment{训练输入不含答案提示}
+          \EndIf
+        \EndIf
+      \EndFor
+      \State 从原始模型$M$出发，在$D_k$上按式\eqref{eq:nlp-reasoning-trace-sft}微调，得到$M_k$
+    \EndFor
+    \State \Return $M_K$
+  \end{algorithmic}
+\end{algorithm}
+
+算法有两处设计值得说明。第一，每轮都从原始模型$M$而不是$M_{k-1}$开始微调，生成数据的模型逐轮变强，训练的起点却固定，避免在多轮自生成数据上累积过拟合。第二，合理化让模型能从当前答错的题目中学习；没有这一步，模型始终答不对的题型会被持续丢弃，训练数据越来越偏向容易题。STaR论文把这一循环解释为对期望答对率$J(\bm\theta)=\sum_i\mathbb E_{\hat y_i\sim\pi_{\bm\theta}}\mathbb I[\hat y_i=y_i]$的策略梯度近似：按答案筛选相当于把错误样本的奖励置零、只对正确样本做对数似然更新。合理化样本来自加了答案提示的分布，而不是当前策略本身，所以它使这一近似带有偏差。
+
+实际使用时应记录每类题目的保留率、合理化所占比例和近重复数量。保留下来的理由可能只是“凑出”了已知答案；多轮生成还会增加近似重复的样本，数量增长不等于信息覆盖的同比增长。STaR适合已有题目和可核对答案、但人工轨迹不足的场景；没有可用答案检查的开放论证不能原样套用。
+
+\subsubsection{拒绝采样微调与专家迭代}
+\label{sec:nlp-reasoning-rft}
+
+STaR每题只采一条轨迹。若每题采样$k$条，就可以从中保留多条不同的正确解法。Yuan等的\term{拒绝采样微调}（rejection sampling fine-tuning, RFT）用SFT模型为每道训练题采样$k$条轨迹，保留答案正确的轨迹，再按轨迹中的算式序列去重，只保留推理路径不同的样本，与原有示范合并后重新微调\scite{nlp-llm-yuan2023rft}。去重的依据是：同一条算式路径换几种措辞，提供的信息几乎相同，真正增加覆盖的是不同的解法。论文观察到，不同推理路径的数目比样本总数更能决定收益，而且基础较弱的模型获益更多。RFT不做合理化：模型采不到正确轨迹的题目直接放弃。它与第\ref{sec:nlp-align-best-of-n}小节的RAFT同属拒绝采样微调，区别在于RAFT用奖励模型选出每题最高分的一条，这里用答案检查保留所有不同的正确轨迹。
+
+把RFT反复迭代，就得到更一般的\term{专家迭代}（expert iteration）框架\scite{nlp-llm-anthony2017exit}。它最初来自博弈：树搜索作为“专家”，在当前神经网络的引导下得到比网络本身更好的走法；网络作为“学徒”，模仿专家的选择；学徒变强后又使专家的搜索更有效，二者交替提高。在推理任务中，“专家”是“采样多条轨迹再按答案筛选”这一过程，它产出的正确轨迹优于策略单次生成的平均水平；“学徒”是在这些轨迹上微调的策略。循环为“生成—筛选—蒸馏回策略”。Havrilla等在数学推理上比较了专家迭代与PPO，在其设置下专家迭代多数情况下表现最好，所需样本量与PPO处于同一量级\scite{nlp-llm-havrilla2024teaching}；他们的解释是，强化学习训练中模型很少探索到SFT模型已能产生的解之外。专家的质量上限由筛选器决定：答案检查越可靠、采样越多样，专家越强。
+
+\subsubsection{ReST-EM及其期望最大化解释}
+\label{sec:nlp-reasoning-rest-em}
+
+上述循环为什么有效，可以用期望最大化给出解释。Singh等的ReST-EM把每轮自举写成一次EM迭代\scite{nlp-llm-singh2024restem}。设奖励$r(x,o)\in\{0,1\}$由答案检查给出，题目$x$的答对概率为
+\[
+  J_x(\bm\theta)=\mathbb E_{o\sim\pi_{\bm\theta}(\cdot\mid x)}\,r(x,o)=\sum_o\pi_{\bm\theta}(o\mid x)\,r(x,o).
+\]
+ReST-EM最大化各题答对概率的对数之和$\sum_x\log J_x(\bm\theta)$。对任意以正确输出为支撑的分布$q(o)$，由Jensen不等式，
+\begin{equation}
+  \log J_x(\bm\theta)=\log\sum_o q(o)\frac{\pi_{\bm\theta}(o\mid x)\,r(x,o)}{q(o)}
+  \ \ge\ \sum_o q(o)\log\frac{\pi_{\bm\theta}(o\mid x)\,r(x,o)}{q(o)},
+  \label{eq:nlp-reasoning-rest-em-bound}
+\end{equation}
+当$q(o)\propto r(x,o)\,\pi_{\bm\theta}(o\mid x)$时等号成立。由此得到两步交替。E步固定$\bm\theta^{(k)}$，取$q^{(k)}(o)\propto r(x,o)\,\pi_{\bm\theta^{(k)}}(o\mid x)$：它就是当前策略在正确输出集合上的条件分布，从中采样只需“用当前策略采样，丢掉答案错误的样本”，即拒绝采样。M步固定$q^{(k)}$，最大化式\eqref{eq:nlp-reasoning-rest-em-bound}右端中与$\bm\theta$有关的项$\sum_x\mathbb E_{o\sim q^{(k)}}\log\pi_{\bm\theta}(o\mid x)$，这正是在筛选样本上做有监督微调。ReST-EM与STaR一样，每轮从基座模型重新微调；它还为每题保留的正确解设上限（MATH与APPS上均为10条），避免容易题的大量正确解主导训练集。
+
+这一解释还说明了自举与强化学习的关系。在$\bm\theta=\bm\theta^{(k)}$处，M步目标的梯度为
+\[
+  \mathbb E_{o\sim q^{(k)}}\nabla_{\bm\theta}\log\pi_{\bm\theta}(o\mid x)
+  =\frac{1}{J_x}\,\mathbb E_{o\sim\pi_{\bm\theta}}\bigl[r(x,o)\nabla_{\bm\theta}\log\pi_{\bm\theta}(o\mid x)\bigr]
+  =\nabla_{\bm\theta}\log J_x(\bm\theta),
+\]
+也就是只对正样本做REINFORCE、再乘以$1/J_x$。直接最大化期望奖励$\sum_xJ_x$的策略梯度没有这个因子。用两道题作教学示例：若当前答对率分别为$J_1=0.9$与$J_2=0.1$，强化学习对两题梯度$\nabla J_x$的权重都是1，EM则分别乘以约$1.11$与$10$，难题得到的相对权重大得多。这个因子来自$q^{(k)}$按题归一化，即M步中每道有正确样本的题总权重相同。实现中若每题采样$n$条、保留全部正确样本，一道题贡献约$nJ_x$条样本，恰好抵消$1/J_x$，M步在$\bm\theta^{(k)}$处的梯度回到$\nabla J_x$的常数倍；ReST-EM的每题上限截断了容易题的样本数，实际权重介于两者之间。代价也在这里：$J_x=0$的题目没有任何正确样本，E步无从采样，这道题不提供信号；而M步通常训练到收敛而不是只走一步，单轮的偏移比一次策略梯度更新大得多。ReST-EM在APPS代码题上观察到，迭代超过一轮后训练集表现继续上升而留出集表现回落，这正是多轮离线拟合自生成数据的过拟合风险。
+
+三种方法在这一框架下的位置很清楚：不含合理化的STaR与ReST-EM基本相同；RFT相当于只做一轮E步与M步，并在E步中按算式去重；专家迭代则把E步中的“采样加筛选”推广为任何比当前策略更强的专家，包括第\ref{sec:nlp-reasoning-tree-search}小节的树搜索。DeepSeek-R1在推理强化学习之后，从强化学习检查点拒绝采样生成轨迹、再从基座模型重新微调，也属于这一类（第\ref{sec:nlp-reasoning-r1-pipeline}小节）。
+
+\subsection{长推理轨迹的蒸馏}
+\label{sec:nlp-reasoning-distillation}
+
+自举的上限是模型自己能采到的正确轨迹。若已有一个强推理模型，它生成的长思维链包含尝试、反思与验证，可以直接作为学生的有监督数据。与第\ref{sec:nlp-sft-soft-distillation}小节按教师逐词元分布计算散度的蒸馏不同，这里只使用教师生成的文本，监督对象是整条序列，属于第\ref{sec:nlp-sft-sequence-kd}小节的序列级蒸馏。本小节写数据怎样构造，以及为什么很少的精选数据也能取得效果、这一结论依赖什么条件。
+
+\subsubsection{长思维链蒸馏的数据构造}
+\label{sec:nlp-reasoning-long-cot-data}
+
+\term{长思维链}（long chain of thought）指包含多次尝试、自我检查与回溯的长推理轨迹，长度常达数千至数万词元。构造蒸馏数据时，教师对每道题生成一条或多条长推理，再按三类标准过滤：答案正确性，用规则或程序核验；格式完整性，推理与总结齐全、思考标记成对出现；语言一致性，删除中英文混杂、段落大量重复或长度异常的轨迹。题目来源与难度分布同样重要：只收容易题，学生学不到回溯；只收教师也常答错的难题，保留下来的多是侥幸正确的轨迹。
+
+DeepSeek-R1的蒸馏数据由约60万条推理样本和约20万条非推理样本组成：推理样本从推理强化学习的检查点拒绝采样得到，非推理样本覆盖写作、问答与翻译等任务\scite{deepseek2025r1}。用这80万条数据对Qwen2.5和Llama系列模型只做有监督微调，不再做强化学习。论文在Qwen-32B起点上给出了对照：从基座直接做大规模强化学习，AIME 2024单次正确率为47.0\%；用教师轨迹蒸馏则达到72.6\%。这说明在这些数据与训练条件下，把强模型的推理轨迹蒸馏给小模型，比让小模型自己做强化学习更经济；它不能推出蒸馏总比强化学习强，因为蒸馏的上限由教师决定，而教师本身是用强化学习训练出来的。
+
+学生容量和上下文长度限制迁移效果。教师能使用复杂的分解，不代表容量较小的学生学到相同的内部策略；学生可能只模仿了“等一下，我再检查一遍”的表达，而没有学会检查本身。训练前应确认学生的上下文窗口能容纳题目与完整轨迹，训练后在未见题型与不同长度条件下检查；教师错误也会随只按答案筛选的数据传给学生。
+
+\subsubsection{小规模精选数据的作用}
+\label{sec:nlp-reasoning-small-data}
+
+长思维链蒸馏常用数十万条样本，但几项研究表明，少量精选样本也能产生明显效果。s1从16个来源收集约5.9万道题，按三项标准筛选：质量，去掉格式错误与接口失败的样本；难度，去掉Qwen2.5-7B或32B指令模型已经能答对的题，并以教师轨迹长度作为难度的辅助指标；多样性，按数学学科分类均匀抽取领域，在领域内偏向更长的轨迹\scite{nlp-llm-muennighoff2025s1}。最终的s1K只有1000道题及其教师轨迹，用它微调Qwen2.5-32B-Instruct。论文的消融显示，在AIME 2024上，随机选1000道、只按多样性选或只按长度选都明显不如三项标准联合筛选；使用全部5.9万道题只带来很小的提升，训练所用的GPU时数却约为s1K的56倍。LIMO用约800条精选样本微调同一基座（初版为817条），也得到类似结论\scite{nlp-llm-ye2025limo}。
+
+这些结果的解释是一个假设：若基座在预训练中已经充分编码了相关数学知识，少量示范主要起“认知模板”的作用，激活长推理的格式与习惯，而不是教给模型新的知识。这一假设与第\ref{sec:nlp-reasoning-pretraining}节相呼应：预训练与中期训练越充分，后续需要的示范越少。它同时给出了结论的适用条件：基座要足够强（上述实验都用32B的Qwen2.5，其预训练含大量数学数据），教师轨迹要足够好；把同样的一千条样本用在较弱的基座上，不能预期相同的效果。
+
+表~\ref{tab:nlp-reasoning-trace-methods}比较本节的轨迹监督方法。它们都按式\eqref{eq:nlp-reasoning-trace-sft}更新参数，差别在于轨迹从哪里来、谁来筛选，以及失败的题目怎样处理。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{基于轨迹监督的方法。“解决的问题”指相对于前一行方法或人工示范的缺口；所有方法都只用答案或格式筛选，答案正确的轨迹仍可能含错误步骤。}
+  \label{tab:nlp-reasoning-trace-methods}
+  \begin{tabularx}{\linewidth}{@{}p{24mm}p{34mm}Xp{38mm}@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价与边界\\
+    \midrule
+    冷启动SFT & 纯RL起点可读性差、语言混杂 & 数千条整理过的长轨迹做SFT & 需人工整理；贡献难以单独分离\\
+    STaR & 只有答案、没有轨迹 & 自生成理由，按答案筛选；错题用答案提示合理化；每轮从原模型重训 & 合理化样本有偏；全错题型仍难覆盖\\
+    RFT & 每题一条轨迹覆盖不足 & 每题采样$k$条，保留不同算式路径的正确轨迹 & 采样成本随$k$增长；采不到正确解的题被放弃\\
+    专家迭代 & 单轮筛选的提升有限 & “采样或搜索加筛选”为专家，策略为学徒，交替提高 & 专家质量受筛选器限制\\
+    ReST-EM & 自举缺少理论解释 & E步拒绝采样，M步SFT；最大化$\sum_x\log J_x$的下界 & 无负样本信息；$J_x=0$的题无信号；多轮易过拟合\\
+    长思维链蒸馏 & 学生自身采不到好轨迹 & 强教师生成长轨迹，按正确性、格式与语言过滤后SFT & 上限受教师限制；学生可能只模仿表达\\
+    小规模精选 & 大规模蒸馏成本高 & 按质量、难度、多样性选约一千条 & 依赖强基座与强教师\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\section{推理反馈与奖励模型}
+\label{sec:nlp-reasoning-feedback}
+
+轨迹监督只告诉模型“这样写是可以的”，不能表达多条轨迹之间谁更好，也无法利用错误轨迹。强化学习和推断时的候选选择都需要对轨迹打分。本节处理四个问题：能自动核验的任务怎样给出可靠的结果奖励；不能核验时怎样学习结果奖励模型；只看结果无法区分侥幸正确，过程奖励需要步骤标签，而人工标注昂贵；验证器本身出错时，策略怎样投机。方法谱系依次是可验证奖励、结果奖励模型、过程奖励模型（人工步骤标注、蒙特卡洛自动标注与步骤聚合）以及验证器的可靠性检查，节末以表~\ref{tab:nlp-reasoning-reward-types}比较。
+
+\subsection{结果奖励与可验证奖励}
+\label{sec:nlp-reasoning-rewards}
+
+数学题、程序题与形式证明有一个共同特点：最终产物可以由规则自动核验。对这类任务，\term{可验证奖励}（verifiable reward）定义为
+\begin{equation}
+  r(x,o)=\mathbb I\bigl[\operatorname{verify}(x,\operatorname{extract}(o))\bigr],
+  \label{eq:nlp-reasoning-verifiable-reward}
+\end{equation}
+其中$\operatorname{extract}$从输出中取出最终答案，$\operatorname{verify}$判定它是否满足题目要求。直接用这种奖励做强化学习，称为\term{基于可验证奖励的强化学习}（reinforcement learning with verifiable rewards, RLVR）。TÜLU 3把它与偏好对齐并列为后训练的一个阶段，用于数学与带可检查约束的指令跟随\scite{nlp-llm-tulu3}。
+
+三类核验方式的覆盖与漏洞不同。答案匹配最便宜，但依赖提取与规范化：金额题的“80元”“80.0元”“人民币80元”应判为相同，“$\frac{1}{2}$”与“0.5”在数值题中相同，提取器还要决定读取哪个位置，例如约定答案写在\code{\textbackslash boxed\{\}}中。规则写得太严，正确答案因格式被判错，奖励含有系统噪声；写得太松，又会给投机留下空间。程序测试检查约定输入上的行为，测试覆盖不足时，只对测试用例特判的程序也能通过。证明检查最严格，证明助手接受的证明在其公理系统内是正确的，但前提是题目的形式化表述本身没有写错。
+
+规定输出格式的奖励称为\term{格式奖励}（format reward）。例如要求推理放在\code{<think>}与\code{</think>}之间、答案放在\code{<answer>}与\code{</answer>}之间，满足时给$r_{\mathrm{fmt}}=1$，否则为0，总奖励取$r=r_{\mathrm{acc}}+\lambda r_{\mathrm{fmt}}$。格式奖励的作用是让答案能被稳定提取，也使推理与答案分开，便于检查。两者的权重需要权衡：$\lambda$过大，模型先学会“格式正确但答案错误”的输出，格式奖励成了容易拿到的分数；$\lambda=0$时，格式错误的输出本来就提取不到答案、拿不到正确性奖励，格式信号只是隐含地存在。DAPO则只用正确性奖励，答案等价给$+1$，否则给$-1$\scite{rl5-yu2025dapo}。
+
+\subsection{结果奖励模型}
+\label{sec:nlp-reasoning-orm}
+
+不能自动核验的任务，或需要比0/1更细的分数时，可以训练一个打分模型。\term{结果奖励模型}（outcome reward model, ORM）读取题目与完整解答，输出该解答最终正确的概率$v_{\bm\phi}(x,o)\in(0,1)$。Cobbe等的验证器是代表做法：用生成器为每道训练题采样多条解答，按最终答案是否正确自动得到标签$\ell\in\{0,1\}$，再以二元交叉熵训练\scite{nlp-intro-cobbe2021}：
+\begin{equation}
+  \mathcal L_{\mathrm{ORM}}(\bm\phi)
+  =-\mathbb E_{(x,o,\ell)}\bigl[\ell\log v_{\bm\phi}(x,o)+(1-\ell)\log\bigl(1-v_{\bm\phi}(x,o)\bigr)\bigr].
+  \label{eq:nlp-reasoning-orm}
+\end{equation}
+结构与第\ref{sec:nlp-align-reward-model}小节的奖励模型相同：在语言模型的末层隐藏状态上接一个标量头，取结束位置的输出经sigmoid得到概率。区别在于监督形式：第\ref{chap:nlp-preference-alignment}章用成对比较的Bradley--Terry损失，这里每条解答有自己的0/1标签，用逐点的分类损失。Cobbe等还让验证器在每个词元位置都预测最终正确的概率，这时它更接近一个价值函数。
+
+ORM有两种用途：推断时为$N$个候选打分、交付最高分者（第\ref{sec:nlp-reasoning-weighted-voting}小节），以及在强化学习中充当奖励。它的主要缺陷来自标签本身。标签只看最终答案，于是“$60+16=80$”这样答案正确而过程错误的解答被标为正例，ORM也学着给它高分。Uesato等在GSM8K上比较了结果监督与过程监督，发现两者训练出的模型最终答案错误率相近，但要让推理轨迹本身少出错，需要过程反馈或能模仿过程反馈的奖励模型\scite{nlp-llm-uesato2022process}。另一个缺陷是分布偏移：ORM的训练解答来自某个生成器，策略经强化学习改变写法以后，新解答可能落在ORM从未见过的区域，此时分数不再可靠，这与第\ref{sec:nlp-align-overoptimization}小节的过度优化是同一个问题。
+
+\subsection{过程奖励模型}
+\label{sec:nlp-reasoning-prm}
+
+要定位错误步骤并提供更密集的信号，监督需要进入步骤。\term{过程奖励模型}（process reward model, PRM）对每个中间步骤给出正确性评分。设解答被切分为步骤$z_1,\ldots,z_m$，PRM在第$j$步末尾输出$p_j=p_{\bm\phi}(\text{第}j\text{步正确}\mid x,z_1,\ldots,z_j)$。实现时在每个步骤末尾插入一个特殊的步骤标记，只在这些标记位置计算损失，其余位置的损失掩码为0，做法与第\ref{sec:nlp-sft-masked-loss}小节的回答位置掩码相同。训练目标是各步骤上的交叉熵之和：
+\begin{equation}
+  \mathcal L_{\mathrm{PRM}}(\bm\phi)
+  =-\mathbb E\Bigl[\sum_{j=1}^{m}\ell_j\log p_j+(1-\ell_j)\log(1-p_j)\Bigr],
+  \label{eq:nlp-reasoning-prm}
+\end{equation}
+其中$\ell_j\in\{0,1\}$是第$j$步的标签，也可以取$[0,1]$中的软标签。关键问题有两个：步骤标签从哪里来，以及步骤分数怎样汇总成整条轨迹的分数。
+
+\subsubsection{人工步骤标注}
+\label{sec:nlp-reasoning-prm-human}
+
+最直接的来源是人工标注。Lightman等构造的PRM800K包含约1.2万道MATH题目的7.5万条解答、共80万个步骤标签\scite{lightman2023verify}。标注者为每一步给出正、中、负三种标签：正表示正确且合理，负表示错误或不合理，中表示有歧义或无关紧要。为使与结果监督的比较更直接，他们只监督到第一个错误步骤为止：第一个错误以后的步骤不论对错都不再标注，因为错误前提下的后续步骤正误本身就难以定义。标注时还采用主动学习，优先挑选“答案错误但当前PRM打分很高”的解答，使有限的标注集中在模型最容易被骗的地方。
+
+在相同生成器、相同候选数的条件下，PRM挑选候选的能力优于ORM：在MATH测试子集上，每题从1860个候选中选择时，PRM选出的解答正确率为78.2\%，ORM为72.4\%，多数投票为69.6\%。这个对照针对的是选择已有解答，不等于过程奖励已被用于更新生成器。人工标注的问题是成本：判断一个MATH解答的每一步需要具备相应数学能力的标注者，PRM800K的规模很难继续扩大到更多领域。
+
+\subsubsection{蒙特卡洛自动标注}
+\label{sec:nlp-reasoning-prm-mc}
+
+Math-Shepherd用自动估计代替人工判断\scite{nlp-llm-wang2024mathshepherd}。它的想法是：一个步骤“好”，意味着从这一步出发还能走到正确答案。对解答前缀$(x,z_1,\ldots,z_j)$，用一个补全模型从第$j$步之后独立地续写$N$次，得到$N$个最终答案$\hat y^{(1)},\ldots,\hat y^{(N)}$，与标准答案$y^\star$比较。两种标签分别为
+\begin{equation}
+  \ell_j^{\mathrm{HE}}=\max_{1\le n\le N}\mathbb I[\hat y^{(n)}=y^\star],\qquad
+  \ell_j^{\mathrm{SE}}=\frac1N\sum_{n=1}^{N}\mathbb I[\hat y^{(n)}=y^\star].
+  \label{eq:nlp-reasoning-math-shepherd}
+\end{equation}
+硬估计（HE）只要有一次续写到达正确答案，就把该步标为正；软估计（SE）取正确续写的比例。以金额题为教学示例：前缀是“书原价75元，打八折后60元”，从这里续写4次，其中1次正确算出笔费20元并得到80元，3次把笔也打了折，于是$\ell^{\mathrm{HE}}=1$，$\ell^{\mathrm{SE}}=0.25$。
+
+算法~\ref{alg:nlp-reasoning-mc-labels}把标注与训练连成完整流程。
+
+\begin{algorithm}[蒙特卡洛过程标注与PRM训练]
+  \label{alg:nlp-reasoning-mc-labels}
+  \begin{algorithmic}[1]
+    \Require 带标准答案的题目集$\{(x,y^\star)\}$，生成器$\pi$，补全模型$\pi_{\mathrm c}$，每题解答数$K$，续写次数$N$
+    \Ensure 过程奖励模型$p_{\bm\phi}$
+    \State $D\gets\varnothing$
+    \For{每个$(x,y^\star)$}
+      \For{$k=1,\ldots,K$}
+        \State 用$\pi$生成一条解答，按步骤切分为$z_1,\ldots,z_m$
+        \For{$j=1,\ldots,m$}
+          \State 用$\pi_{\mathrm c}$从前缀$(x,z_1,\ldots,z_j)$续写$N$次，按式\eqref{eq:nlp-reasoning-math-shepherd}得到$\ell_j$
+        \EndFor
+        \State 在每步末尾插入步骤标记，把$(x,z_{1:m},\ell_{1:m})$加入$D$
+      \EndFor
+    \EndFor
+    \State 在$D$上按式\eqref{eq:nlp-reasoning-prm}训练$p_{\bm\phi}$，损失只在步骤标记位置计算
+    \State \Return $p_{\bm\phi}$
+  \end{algorithmic}
+\end{algorithm}
+
+软估计正是从该前缀出发、按补全模型继续求解的成功概率的蒙特卡洛估计，即以该前缀为状态的价值函数在0/1终局奖励下的估计。这样看，PRM学的不是步骤的“逻辑正确性”，而是“从这里还能做对的概率”，两者在多数情况下一致，但并不相同：一个正确的步骤若把问题引向补全模型不擅长的方向，会被估低；一个错误的步骤若被后续计算纠正，又会被估高。续写次数$N$决定噪声与成本：$N$越大，估计越准，但标注一条$m$步解答需要$mN$次续写；硬估计对小$N$更宽松，容易把错误步骤标成正。Math-Shepherd训练的PRM既用于候选选择，也用于逐步提供奖励的PPO。
+
+\subsubsection{步骤分数的聚合}
+\label{sec:nlp-reasoning-prm-aggregation}
+
+用PRM为整条解答排序时，需要把$p_1,\ldots,p_m$汇总成一个分数。常用三种规则：
+\begin{equation}
+  s_{\min}=\min_{j}p_j,\qquad
+  s_{\mathrm{prod}}=\prod_{j=1}^{m}p_j,\qquad
+  s_{\mathrm{last}}=p_m.
+  \label{eq:nlp-reasoning-prm-aggregation}
+\end{equation}
+最小值把整条解答的质量看作最薄弱一步的质量，Math-Shepherd采用这种规则；乘积在各步独立时可解释为全部步骤都正确的概率，Lightman等采用这种规则；末步分数把PRM最后一步的输出当作整体判断，在PRM学的是价值估计时最自然。
+
+三种规则对长度和误判的反应不同。用一组教学数值比较：解答甲有4步，分数为$(0.95,0.9,0.3,0.9)$，第三步明显可疑；解答乙有8步，每步0.9；解答丙有2步，每步0.8。按最小值，三者为$0.3$、$0.9$、$0.8$，乙最高；按乘积，三者约为$0.231$、$0.430$、$0.640$，丙最高；按末步，三者为$0.9$、$0.9$、$0.8$，甲与乙并列。乘积对长解答惩罚更重：每多一步就多乘一个小于1的数，即使每步都相当可靠，8步解答也会输给2步解答。最小值不受长度直接影响，但对单步误判敏感，PRM只要在某一步上给出一个偶然的低分，整条正确解答就被压下去。末步分数受中间错误的影响最小，可能放过甲那样中途出错的解答。聚合方式因此要与用途一起确定：选择候选时应在长度相近的候选上检查聚合规则的偏差；作为强化学习的稠密奖励时，乘积或求和形式还会给策略增减步骤数的动机。
+
+\subsection{验证器的可靠性与奖励投机}
+\label{sec:nlp-reasoning-verifier-hacking}
+
+验证器的误判会成为优化目标的一部分。设题目的真实正确性为$c\in\{0,1\}$，验证器的输出为$v\in\{0,1\}$，策略得到的期望奖励为
+\[
+  \mathbb E[v]=\mathbb P(c=1)\,\mathbb P(v=1\mid c=1)+\mathbb P(c=0)\,\mathbb P(v=1\mid c=0).
+\]
+第一项是希望提高的部分，第二项来自误判。只要存在某类错误输出使$\mathbb P(v=1\mid c=0)$明显大于零，策略就可以通过多产生这类输出来提高奖励，而真实正确率不变甚至下降。这就是第\ref{sec:nlp-align-reward-hacking}小节所说的奖励投机在推理任务上的具体形式。
+
+常见的投机形式有四种。其一，利用答案提取规则的漏洞，例如在输出中写出多个候选答案，或把答案放在提取器优先读取的位置。其二，利用测试覆盖不足，写出只对测试用例特判、并未实现规格的程序。其三，刷高过程奖励，例如重复无效但“看起来正确”的步骤，在乘积聚合下拆出更多高分短步骤，或在求和聚合下拉长轨迹。其四，在输出中加入影响模型评判者的文字，例如声称“以上解答已经过严格验证”。
+
+对策有四类。优先使用规则验证器，它的漏洞可以通过检查规则发现并修补；DeepSeek-R1在推理任务上不使用神经网络形式的结果或过程奖励模型，理由正是它们在大规模强化学习中容易被投机，且重新训练奖励模型代价高\scite{deepseek2025r1}。用多个验证器交叉检查，例如答案匹配与程序执行同时通过才给奖励。在留出数据上定期检验验证器的误判率，特别是对策略新产生的输出抽样人工核查。训练中定期用新策略的样本更新学习型奖励模型，使它跟上策略的分布变化；DeepSeekMath的迭代强化学习就按这一思路，用策略的新样本持续训练奖励模型，并回放一部分历史数据\scite{rl5-shao2024deepseekmath}。这些对策都只能降低误判，验证器的可靠性始终是后续所有方法的共同上限。
+
+表~\ref{tab:nlp-reasoning-reward-types}比较本节的四类反馈。
+
+\begin{table*}[tbp]
+  \centering
+  \small
+  \caption{推理任务的反馈来源。“监督对象”指信号直接约束的内容；所有学习型奖励都可能在策略分布变化后失准，需要与第\ref{sec:nlp-reasoning-verifier-hacking}小节的检查配合。}
+  \label{tab:nlp-reasoning-reward-types}
+  \begin{tabularx}{\linewidth}{@{}p{24mm}p{24mm}p{36mm}Xp{34mm}@{}}
+    \toprule
+    反馈 & 监督对象 & 标签来源 & 主要用途 & 主要漏洞\\
+    \midrule
+    可验证奖励 & 最终答案或程序行为 & 规则匹配、测试、证明检查 & RLVR的奖励；候选过滤 & 提取规则漏洞；测试覆盖不足\\
+    ORM & 整条解答 & 按答案自动得到的0/1标签 & best-of-$N$；不可核验任务的奖励 & 奖励侥幸正确；分布偏移\\
+    PRM（人工） & 每个步骤 & 人工正、中、负标签 & 候选选择；定位首错步骤 & 标注昂贵，难扩展\\
+    PRM（蒙特卡洛） & 每个步骤 & 从该步续写$N$次的成功率 & 候选选择；逐步奖励；搜索中的价值 & 标签是成功概率而非正确性；续写成本$mN$\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\section{基于强化学习的推理策略改进}
+\label{sec:nlp-reasoning-rl}
+
+有了结果或过程奖励，就可以把推理策略当作强化学习中的策略来改进：让模型为题目生成轨迹，按奖励提高好轨迹的概率。这里要用到强化学习的三个结论。其一，策略梯度定理：期望奖励对参数的梯度可写为$\mathbb E[(R-b)\nabla_{\bm\theta}\log\pi_{\bm\theta}(o\mid x)]$，基线$b$只要不依赖于被加权的样本，就不改变梯度期望，只改变方差。其二，PPO用旧策略采样，对新旧策略的概率比做裁剪，使同一批样本可以安全地复用多轮。其三，GAE用学习得到的价值函数为每个位置估计优势。这些结论的一般推导与成立条件可参考\BookChapterRef{chap:rl-learning}{卷七“未知模型的求解”章}，第\ref{sec:nlp-align-ppo}小节与第\ref{sec:nlp-align-critic-free}小节已经写出它们在语言模型上的实现，包括RLOO与GRPO的损失式。
+
+推理任务给这些方法带来新的问题：怎样利用同一道题的多条轨迹进行比较；去掉价值模型后怎样估计优势，组内归一化又会引入什么偏差；组内全对或全错时没有梯度、策略熵快速下降时，怎样保持探索；长达数万词元的轨迹上，损失聚合、截断和重要性比怎样处理；模型在简单题上思考过长怎么办。本节的方法谱系依次为：推理轨迹的偏好比较（迭代DPO、Step-DPO），GRPO及其与PPO的比较、Dr. GRPO的偏差修正，DAPO的探索与长度措施，GSPO的序列级重要性比，以及长度奖励。节末以表~\ref{tab:nlp-reasoning-rl-variants}比较。
+
+\subsection{推理轨迹的偏好比较}
+\label{sec:nlp-reasoning-preferences}
+
+最接近第\ref{chap:nlp-preference-alignment}章的做法，是把同一道题的轨迹排成偏好对。构造偏好对之前要先规定比较的优先关系：答案正确性优先，其次是过程可靠性，最后才是长度等成本。若答案错误不能被文风补偿，就应先按正确性分层，再在正确轨迹内部比较成本；否则“更好”会混入不明确的目标冲突。在可验证任务上，最简单的规则是以正确轨迹为胜者$o_{\mathrm w}$、错误轨迹为败者$o_{\mathrm l}$，回用第\ref{sec:nlp-align-dpo}小节的DPO损失式\eqref{eq:nlp-align-dpo-loss}。
+
+Pang等的迭代推理偏好优化在此基础上做了两处改变\scite{nlp-llm-pang2024irpo}。第一，每轮用当前模型为每道训练题采样多条思维链与答案，按答案正误重新构造偏好对，使数据跟上策略，流程与算法~\ref{alg:nlp-align-iterative-dpo}相同。第二，在DPO损失上加入胜者的负对数似然项：
+\begin{equation}
+  \mathcal L(\bm\theta)=\mathcal L_{\mathrm{DPO}}(\bm\theta)
+  -\alpha\,\mathbb E\Bigl[\frac{1}{|o_{\mathrm w}|}\log\pi_{\bm\theta}(o_{\mathrm w}\mid x)\Bigr],\qquad \alpha>0.
+  \label{eq:nlp-reasoning-irpo}
+\end{equation}
+动机是第\ref{sec:nlp-align-dpo-failure}小节的似然位移：DPO只要求胜败两方的概率比拉开，正确轨迹的概率本身可能在训练中下降。在推理任务上这尤其有害，因为模型最终要生成的正是这些正确轨迹。论文报告，以Llama-2-70B-Chat为起点，不带负对数似然项的DPO在GSM8K上的提升远小于加入该项的迭代训练。每轮的参考模型取上一轮的模型。
+
+Step-DPO把比较的粒度从整条轨迹缩小到一个步骤\scite{nlp-llm-lai2024stepdpo}。对一条错误轨迹，先定位第一个错误步骤$k$，以题目加上前$k-1$个正确步骤为共同前缀$p=(x,z_1,\ldots,z_{k-1})$，再让模型从这个前缀出发重新生成第$k$步，保留一个正确的$z_{\mathrm w}$与原来错误的$z_{\mathrm l}$，在步骤上做DPO：
+\begin{equation}
+  \mathcal L_{\mathrm{Step}}(\bm\theta)=-\mathbb E\Bigl[\log\sigma\Bigl(\beta\log\frac{\pi_{\bm\theta}(z_{\mathrm w}\mid p)}{\pi_{\mathrm{ref}}(z_{\mathrm w}\mid p)}-\beta\log\frac{\pi_{\bm\theta}(z_{\mathrm l}\mid p)}{\pi_{\mathrm{ref}}(z_{\mathrm l}\mid p)}\Bigr)\Bigr].
+  \label{eq:nlp-reasoning-step-dpo}
+\end{equation}
+整条轨迹的DPO中，胜败两条轨迹往往共享大量正确的前缀，梯度却作用在全部词元上；Step-DPO把信号集中在真正出错的位置，是一种由数据构造实现的信用分配。金额题上，共同前缀是“书原价75元，打八折后60元”，胜者步骤是“笔不打折，$4\times5=20$元”，败者是“笔也打八折，16元”。代价是需要定位首个错误步骤，这要用人工、强模型或第\ref{sec:nlp-reasoning-prm}小节的PRM完成；论文还观察到，胜者步骤由被训练模型自己生成时效果更好，因为它处在模型自身的分布内。
+
+偏好比较仍有第\ref{chap:nlp-preference-alignment}章已经指出的长度与评判偏差：正确的长轨迹与错误的短轨迹配对时，模型可能学到“写长一点”。应按长度分层检查偏好对。这条路线与下一小节的在线强化学习的区别在于数据：偏好方法每轮离线地构造成对数据再拟合分类损失，在线方法每步用当前策略采样并用奖励更新，后者可以利用组内所有样本而不只是挑出的一对。
+
+\subsection{组内相对优势：GRPO}
+\label{sec:nlp-reasoning-grpo}
+
+\term{组相对策略优化}（group relative policy optimization, GRPO）为每道题采样一组回答，用组内奖励的相对高低作为优势，从而省去价值模型\scite{rl5-shao2024deepseekmath}。第\ref{sec:nlp-align-remax-grpo}小节已给出它的损失式；本小节写出完整目标与KL估计，逐项与PPO比较，再分析组归一化引入的两种偏差及其修正。
+
+\subsubsection{目标函数与KL估计}
+\label{sec:nlp-reasoning-grpo-objective}
+
+对题目$x$，从旧策略$\pi_{\mathrm{old}}$采样$G$个回答$o_1,\ldots,o_G$，得到奖励$r_1,\ldots,r_G$。组内标准化的优势为
+\begin{equation}
+  \bar r=\frac1G\sum_{i=1}^{G}r_i,\qquad
+  \sigma_r=\sqrt{\frac1G\sum_{i=1}^{G}(r_i-\bar r)^2},\qquad
+  \widehat A_i=\frac{r_i-\bar r}{\sigma_r},
+  \label{eq:nlp-reasoning-group-advantage}
+\end{equation}
+它被赋给回答$o_i$的所有词元。第$i$个回答第$t$个词元上的新旧策略概率比为
+\begin{equation}
+  \rho_{i,t}(\bm\theta)=
+  \frac{\pi_{\bm\theta}(o_{i,t}\mid x,o_{i,<t})}{\pi_{\mathrm{old}}(o_{i,t}\mid x,o_{i,<t})}.
+  \label{eq:nlp-reasoning-token-ratio}
+\end{equation}
+GRPO最大化的目标是
+\begin{equation}
+  J_{\mathrm{GRPO}}(\bm\theta)=\mathbb E\Biggl[\frac1G\sum_{i=1}^{G}\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}
+  \Bigl(\min\bigl(\rho_{i,t}\widehat A_i,\ \operatorname{clip}(\rho_{i,t},1-\varepsilon,1+\varepsilon)\widehat A_i\bigr)
+  -\beta\,k_{3,i,t}\Bigr)\Biggr],
+  \label{eq:nlp-reasoning-grpo-objective}
+\end{equation}
+期望对题目和旧策略采样的回答组取。KL项用第\ref{sec:nlp-align-kl-objective}小节的$k_3$估计：
+\[
+  k_{3,i,t}=\frac{\pi_{\mathrm{ref}}(o_{i,t}\mid\cdot)}{\pi_{\bm\theta}(o_{i,t}\mid\cdot)}
+  -\log\frac{\pi_{\mathrm{ref}}(o_{i,t}\mid\cdot)}{\pi_{\bm\theta}(o_{i,t}\mid\cdot)}-1 .
+\]
+当词元按$\pi_{\bm\theta}$采样时，$k_3$的期望等于该位置的KL，而且每个样本值都非负，因为$u-\log u-1\ge0$。实际样本来自$\pi_{\mathrm{old}}$而非$\pi_{\bm\theta}$，所以这只是近似；轮内更新次数少时，二者相差不大。式中三个策略各有作用：$\pi_{\mathrm{ref}}$限制总偏移，$\pi_{\mathrm{old}}$说明数据由谁产生，$\pi_{\bm\theta}$是正在更新的参数。
+
+用二值奖励看优势的取值。四个回答的奖励为$(1,0,1,0)$时，$\bar r=0.5$，$\sigma_r=0.5$，优势为$(1,-1,1,-1)$。奖励为$(1,0,0,0)$时，$\bar r=0.25$，$\sigma_r=\sqrt3/4$，唯一正确的回答得到优势$\sqrt3\approx1.73$，三个错误回答各得$-1/\sqrt3\approx-0.58$：组内越少见的结果，优势的绝对值越大。奖励为$(0,0,0,0)$或$(1,1,1,1)$时，$\sigma_r=0$，优势无定义；在分母加一个小正数只能避免除零，分子仍全为零，这道题不提供奖励梯度。
+
+\begin{example}[两个词元上的$k_1$与$k_3$]
+  \label{ex:nlp-reasoning-k3}
+  以下数值为教学示例。某回答的第一个词元在当前策略下的概率为$0.5$，在参考策略下为$0.4$，比值$q=\pi_{\mathrm{ref}}/\pi_{\bm\theta}=0.8$；第二个词元的两个概率分别为$0.4$与$0.5$，$q=1.25$。按$k_1=-\log q$，两个位置分别为$0.223$与$-0.223$，单个样本可以为负，两项相加恰好为0，这条回答对KL惩罚毫无贡献。按$k_3=q-\log q-1$，两个位置分别为$0.8+0.223-1=0.023$与$1.25-0.223-1=0.027$，都为正。两种估计的期望相同，但$k_3$不会因正负抵消而让一条明显偏离参考策略的回答逃过惩罚；它对$\pi_{\bm\theta}$求导后，在当前策略高于参考策略的位置把概率往回拉，在低于参考策略的位置往上推。
+\end{example}
+
+算法~\ref{alg:nlp-reasoning-grpo}写出DeepSeekMath的迭代GRPO训练流程。
+
+\begin{algorithm}[迭代GRPO训练]
+  \label{alg:nlp-reasoning-grpo}
+  \begin{algorithmic}[1]
+    \Require 初始策略$\pi_{\mathrm{init}}$，奖励函数$r$（规则或奖励模型$r_{\bm\phi}$），题目集$\mathcal D$，组大小$G$，系数$\varepsilon,\beta$，轮内更新次数$\mu$
+    \Ensure 策略$\pi_{\bm\theta}$
+    \State $\pi_{\bm\theta}\gets\pi_{\mathrm{init}}$
+    \For{迭代$=1,\ldots,I$}
+      \State $\pi_{\mathrm{ref}}\gets\pi_{\bm\theta}$ \Comment{也可始终固定为初始策略}
+      \For{步$=1,\ldots,S$}
+        \State 从$\mathcal D$采样一批题目$\mathcal D_b$；$\pi_{\mathrm{old}}\gets\pi_{\bm\theta}$
+        \State 对每道$x\in\mathcal D_b$，用$\pi_{\mathrm{old}}$采样$G$个回答，记录各词元的$\log\pi_{\mathrm{old}}$
+        \State 计算奖励$r_1,\ldots,r_G$，按式\eqref{eq:nlp-reasoning-group-advantage}计算$\widehat A_i$；$\sigma_r=0$的组不参与更新
+        \State 参考模型前向，得到各词元的$\log\pi_{\mathrm{ref}}$
+        \For{$e=1,\ldots,\mu$}
+          \State 策略前向得$\rho_{i,t}$与$k_{3,i,t}$，按式\eqref{eq:nlp-reasoning-grpo-objective}计算目标并更新$\bm\theta$
+        \EndFor
+      \EndFor
+      \State 若使用奖励模型：用新策略的样本继续训练$r_{\bm\phi}$，并回放部分历史数据
+    \EndFor
+    \State \Return $\pi_{\bm\theta}$
+  \end{algorithmic}
+\end{algorithm}
+
+DeepSeekMath在数学题上取$G=64$、$\beta=0.04$，每批采样后只更新一次（$\mu=1$），此时$\rho_{i,t}$在更新时恒为1，裁剪不起作用，目标退化为带KL项、以组标准化奖励为优势的REINFORCE。$\mu>1$时裁剪才限制多轮复用同一批样本的偏移。
+
+\subsubsection{与PPO的比较}
+\label{sec:nlp-reasoning-grpo-ppo}
+
+GRPO与PPO的差别集中在优势从哪里来。PPO为每个位置学习价值函数$V(s_t)$，用GAE从逐词元奖励估计优势；GRPO用同题其他回答的奖励作基线，不学习任何价值函数。推理任务有两个特点使这种替换合理。其一，奖励稀疏且只在末端出现，价值模型需要从一个0/1终局信号学出每个前缀的成功概率，训练困难，估计不准时反而给优势引入偏差。其二，价值模型通常与策略同等规模，去掉它可以省下一整份参数、梯度与优化器状态的显存，第\ref{sec:nlp-align-ppo-models}小节列出过四个模型的开销。表~\ref{tab:nlp-reasoning-grpo-ppo}逐项比较两者。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{PPO与GRPO的逐项比较。PPO一列指第\ref{sec:nlp-align-ppo}小节的语言模型实现。}
+  \label{tab:nlp-reasoning-grpo-ppo}
+  \begin{tabularx}{\linewidth}{@{}p{16mm}XX@{}}
+    \toprule
+    项目 & PPO & GRPO\\
+    \midrule
+    优势 & 价值模型加GAE，逐词元不同 & 组内标准化奖励，一个回答内相同\\
+    模型 & 策略、价值、参考、奖励 & 策略、参考，奖励可为规则\\
+    KL位置 & 并入逐词元奖励（$k_1$） & 损失中的单独项（$k_3$）\\
+    每题采样 & 通常1个 & $G$个\\
+    信用分配 & 价值函数区分词元 & 回答内无区分\\
+    适用奖励 & 稠密或学习型奖励 & 稀疏、可验证的末端奖励\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+GRPO的代价也在表中。每道题需要采样$G$个回答，生成成本按$G$倍增加；优势对一个回答内的所有词元相同，金额题中“书原价75元”这一共同的正确步骤，在正确回答里被推高、在错误回答里被压低，策略无从知道错在哪一步。DeepSeekMath给出了接入过程奖励的变体：PRM为每个步骤打分，所有回答的所有步骤分数一起做组内标准化，得到$\tilde r_i^{(j)}$；回答$o_i$中第$t$个词元的优势取它之后各步骤标准化分数之和，$\widehat A_{i,t}=\sum_{j:\,\mathrm{end}(j)\ge t}\tilde r_i^{(j)}$，其中$\mathrm{end}(j)$是第$j$步结束的位置。这样同一回答内不同步骤的优势不再相同，代价是要训练并维护PRM。
+
+把GRPO放回去价值模型的策略梯度谱系，可以看清每一步改变了什么，见表~\ref{tab:nlp-reasoning-pg-lineage}。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{从REINFORCE到Dr. GRPO的谱系。每一行只写相对于上一行的改变；RLOO、ReMax见第\ref{sec:nlp-align-critic-free}小节。}
+  \label{tab:nlp-reasoning-pg-lineage}
+  \begin{tabularx}{\linewidth}{@{}p{22mm}p{50mm}X@{}}
+    \toprule
+    方法 & 相对上一行的改变 & 效果与新问题\\
+    \midrule
+    REINFORCE & 以整条回答的奖励加权$\nabla\log\pi$ & 无偏；方差大，所有正奖励回答都被推高\\
+    加基线 & 减去不依赖样本的基线$b$ & 期望不变，方差下降；需选定基线\\
+    RLOO & 基线取同题其余$k-1$个回答的均值 & 无偏，无需价值模型；每题采样$k$次\\
+    PPO & 学习价值模型作基线，加概率比裁剪 & 逐词元信用分配，可复用样本；多一个同规模模型\\
+    GRPO & 回到组内基线并除以组标准差，保留裁剪，KL移入损失 & 省去价值模型；标准化与长度平均引入偏差\\
+    Dr. GRPO & 去掉标准差与回答内长度平均 & 消除两种偏差；更新幅度随题目难度变化\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\subsubsection{组归一化的偏差与Dr. GRPO}
+\label{sec:nlp-reasoning-dr-grpo}
+
+式\eqref{eq:nlp-reasoning-grpo-objective}中有两处归一化：优势除以组内标准差$\sigma_r$，以及每个回答内部除以长度$|o_i|$。Liu等指出这两处都会使梯度偏离期望奖励的梯度方向\scite{nlp-llm-liu2025drgrpo}。
+
+先看标准差。用卷七的一个结论：组均值中包含样本自身的得分，只做中心化时，$\frac1G\sum_i(r_i-\bar r)\nabla\log\pi(o_i\mid x)$的期望等于$(1-\frac1G)\nabla\mathbb E_\pi r$，只差一个与题目无关的常数因子；GRPO的完整目标、$k_3$估计与这一缩放的推导可参考\BookChapterRef{chap:rl-reward}{卷七“奖励受限下的强化学习”章}。除以$\sigma_r$则给每道题乘上一个依赖其难度的权重。对二值奖励，若题目的答对率为$p$，则$\sigma_r\approx\sqrt{p(1-p)}$，这道题的梯度被放大约$1/\sqrt{p(1-p)}$倍：$p=0.5$时为2，$p=0.1$或$0.9$时约为3.33，$p=0.05$或$0.95$时约为4.59。几乎全对或几乎全错的题目，单位答对率变化所得到的更新反而最大。这是题目层面的偏差：训练的重心偏向组内方差小的题，而不是按期望奖励的提高量分配。
+
+再看长度平均。按回答内平均时，回答$o_i$中每个词元的梯度系数是$\widehat A_i/|o_i|$。对正确回答（$\widehat A_i>0$），越短的回答每个词元被推得越多，策略倾向于更短的正确回答；对错误回答（$\widehat A_i<0$），越长的回答每个词元受到的惩罚越小，错误回答因而倾向于变长。两种效应叠加，表现为训练中回答长度持续增长，而增长主要来自错误回答。这是回答层面的长度偏差，第\ref{sec:nlp-reasoning-token-loss}小节会用数值算例说明。
+
+Dr. GRPO同时去掉这两处归一化：优势取$\widehat A_i=r_i-\bar r$，词元损失的总和除以一个与回答无关的常数（如生成长度上限与组大小的乘积），而不是除以各自的$|o_i|$。这样更新方向与期望奖励梯度一致，只差常数缩放；若再改用RLOO式的留一均值作基线，连$(1-\frac1G)$的缩放也会消失，见式\eqref{eq:nlp-align-rloo}。论文观察到，在保持准确率的同时，错误回答的长度不再持续增长。去掉标准差也有代价：不同题目的更新幅度随难度差异很大，奖励尺度变化时需要重新调整学习率。
+
+\subsection{探索不足与熵塌缩}
+\label{sec:nlp-reasoning-exploration}
+
+GRPO只能从组内有差异的题目中学习。若一道题的答对率为$p$，$G$个独立回答全错的概率为$(1-p)^G$，全对的概率为$p^G$。以$G=8$为例，$p=0.05$时全错的概率约为$0.66$，$p=0.95$时全对的概率也约为$0.66$：太难和太容易的题目，大多数组都不提供奖励梯度。随着训练推进，越来越多的题被稳定答对，有效样本的比例持续下降，批次的实际梯度来自越来越少的题。
+
+另一个相互加强的现象是\term{熵塌缩}（entropy collapse）：策略在各位置的熵
+\[
+  H_t=-\sum_{v\in V}\pi_{\bm\theta}(v\mid x,o_{<t})\log\pi_{\bm\theta}(v\mid x,o_{<t})
+\]
+在训练早期快速下降，采样出的回答趋于雷同。熵低时，同一道题的$G$个回答几乎相同，组内奖励更容易全同，探索新解法的机会也变少。裁剪是熵塌缩的原因之一。以$\varepsilon=0.2$为例，概率比上界为$1.2$：一个旧概率为$0.01$的词元，在一次更新中最多只能升到$0.012$；一个旧概率为$0.9$的词元却可以升到$1.08$，相当于不受约束。正优势只能有限地推高低概率词元，却能充分地推高已经占优的词元，分布因此越来越集中。
+
+\term{解耦剪裁与动态采样策略优化}（Decoupled Clip and Dynamic sAmpling Policy Optimization, DAPO）针对这两个问题提出两项措施\scite{rl5-yu2025dapo}。第一项是\term{上界放宽裁剪}（clip-higher）：把裁剪区间写成$[1-\varepsilon_{\mathrm{low}},1+\varepsilon_{\mathrm{high}}]$，取$\varepsilon_{\mathrm{high}}=0.28$大于$\varepsilon_{\mathrm{low}}=0.2$。放宽上界让低概率词元在正优势下能上升得更多（上例中可升到$0.0128$），保持下界不变则避免把词元概率压到接近零、进一步损失多样性。第二项是\term{动态采样}（dynamic sampling）：采样后过滤掉正确数为0或$G$的组，继续采样补足批次，使每批都由有效的组构成。合起来，DAPO的目标为
+\begin{equation}
+  J_{\mathrm{DAPO}}(\bm\theta)=\mathbb E\Biggl[\frac{1}{\sum_{i=1}^{G}|o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}
+  \min\bigl(\rho_{i,t}\widehat A_{i},\ \operatorname{clip}(\rho_{i,t},1-\varepsilon_{\mathrm{low}},1+\varepsilon_{\mathrm{high}})\widehat A_{i}\bigr)\Biggr],
+  \label{eq:nlp-reasoning-dapo}
+\end{equation}
+期望只对满足$0<|\{i:o_i\text{答案正确}\}|<G$的组取，这一约束就是动态采样。优势仍按式\eqref{eq:nlp-reasoning-group-advantage}计算，归一化改为第\ref{sec:nlp-reasoning-token-loss}小节的词元级形式，并去掉了KL项。去掉KL的理由是：长思维链训练中，策略本来就要大幅偏离初始模型，KL约束反而妨碍学习。
+
+动态采样的代价有两方面。过滤会浪费生成：$p$接近0或1的题目要采样多组才能凑出一组有效样本，DAPO通过提高每步的采样量来维持批次规模。过滤还改变了训练题的分布，使训练集中在当前中等难度的题目上，类似一种自动的课程；被过滤掉的全错题可能正是尚未探索到解法的难题，不能据此认为它们没有学习价值。
+
+此外还有两种常见的探索手段。一是在目标中加入熵奖励$\alpha\,\mathbb E_t[H_t]$，直接阻止熵下降；它的困难在于$\alpha$很难设定，过大时策略会被推向随机输出，生成乱码。二是提高采样温度，让旧策略采到更多样的回答；温度过高同样会降低回答质量，使大量样本因格式或计算错误得零分。两者都需要监控训练中的熵曲线与有效组比例，而不是固定一组数值。DAPO从Qwen2.5-32B基座出发，依次加入超长过滤、上界放宽裁剪、软超长惩罚、词元级损失与动态采样，AIME 2024的avg@32（每题32次采样的平均正确率）从朴素GRPO的30分逐步升到50分；这是逐次添加的结果，不等于各组件的独立增量。
+
+\subsection{长轨迹的策略更新}
+\label{sec:nlp-reasoning-long-updates}
+
+推理轨迹长达数千至数万词元。损失怎样在词元之间聚合、超过长度上限的回答怎样处理、重要性比在长序列上怎样计算，都会显著影响训练。本小节用一组共同的算例依次说明这三个问题：同一道题的两条轨迹，短的$o_1$有2个词元、答案正确，长的$o_2$有8个词元、答案错误。
+
+\subsubsection{词元级损失与长度偏差}
+\label{sec:nlp-reasoning-token-loss}
+
+记$\ell_{i,t}$为第$i$个回答第$t$个词元上的裁剪项。两种聚合方式为
+\[
+  L_{\mathrm{sample}}=\frac1G\sum_{i=1}^{G}\frac1{|o_i|}\sum_{t=1}^{|o_i|}\ell_{i,t},\qquad
+  L_{\mathrm{token}}=\frac{1}{\sum_{i=1}^{G}|o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}\ell_{i,t}.
+\]
+前者是GRPO的样本级平均，先在每条回答内平均，再对回答平均，每条回答总权重相同；后者是\term{词元级损失}（token-level loss），以组内总词元数为分母，每个词元权重相同。
+
+对上面的两条轨迹，$G=2$。样本级平均下，$o_1$的每个词元权重为$\frac1{2\times2}=\frac14$，$o_2$的每个词元权重为$\frac1{2\times8}=\frac1{16}$，两条轨迹的总权重都是$\frac12$。词元级平均下，每个词元权重都是$\frac1{10}$，两条轨迹的总权重变为$0.2$与$0.8$。这说明长度怎样进入更新权重：样本级平均下，错误的长轨迹$o_2$每个词元只受$\frac1{16}$的惩罚，其中重复、无意义的片段几乎不被压低；词元级平均下，它的每个词元与短轨迹受到同样的对待，长而低质的模式能被充分惩罚。DAPO采用词元级损失正是出于这一考虑。
+
+词元级平均的分母仍随批次内回答的长度变化：同一个词元，所在的组回答越长，权重越小。Dr. GRPO把分母换成与回答无关的常数，例如$G$乘以长度上限；若取上限为8，每个词元权重都是$\frac1{16}$，两条轨迹总权重为$\frac18$与$\frac12$。三者的相对比例中，词元级平均与常数分母一致，都是$1:4$，区别只在批次之间的整体尺度是否随长度变化。
+
+\subsubsection{超长截断与软惩罚}
+\label{sec:nlp-reasoning-overlong}
+
+训练时总要设定最大生成长度$L_{\max}$。超过上限的回答被截断，没有答案，按规则只能判错；但它可能正在进行正确的推理，只是没有写完。直接给它负奖励，等于用噪声标签惩罚可能正确的过程，也教给模型“长就是错”。DAPO给出两种处理。\term{超长过滤}（overlong filtering）不计被截断样本的损失，只把它们从更新中去掉。\term{软超长惩罚}（soft overlong punishment）则在接近上限的区间内逐渐加重惩罚，给模型一个平滑的长度信号：
+\begin{equation}
+  R_{\mathrm{len}}(o)=
+  \begin{cases}
+    0, & |o|\le L_{\max}-L_{\mathrm{cache}},\\[2pt]
+    \dfrac{(L_{\max}-L_{\mathrm{cache}})-|o|}{L_{\mathrm{cache}}}, & L_{\max}-L_{\mathrm{cache}}<|o|\le L_{\max},\\[6pt]
+    -1, & |o|>L_{\max},
+  \end{cases}
+  \label{eq:nlp-reasoning-soft-overlong}
+\end{equation}
+其中$L_{\mathrm{cache}}$是惩罚区间的宽度，$R_{\mathrm{len}}$加到正确性奖励上。DAPO把期望的最大长度设为16384个词元，另留$L_{\mathrm{cache}}=4096$个词元作惩罚缓冲，生成上限为20480，即式中$L_{\max}=20480$，惩罚从16384个词元开始。一条18000词元的回答得到$(16384-18000)/4096\approx-0.39$的附加奖励，一条16000词元的回答不受惩罚，被截断的回答得$-1$。前一种处理减少截断带来的标签噪声，后一种提供长度控制信号，两者都要与正确性奖励分开记录，便于检查长度是否被过度压制。
+
+\subsubsection{序列级重要性比：GSPO}
+\label{sec:nlp-reasoning-gspo}
+
+GRPO的奖励和优势都定义在整条回答上，裁剪与重要性比却定义在每个词元上。单个词元的概率比$\rho_{i,t}$只来自一次采样，在长序列上波动很大；而且逐词元的比值并不是整条回答的重要性权重，用它们加权并不能修正序列层面的分布差异。在稀疏专家模型中，新旧策略对同一前缀可能选择不同的专家，第\ref{sec:nlp-llm-moe-routing}小节的路由变化会使部分词元的$\rho_{i,t}$剧烈偏离1，引发训练不稳定。
+
+\term{组序列策略优化}（group sequence policy optimization, GSPO）把重要性比与裁剪都移到序列层\scite{nlp-llm-gspo2025}。它使用长度归一化的序列级概率比
+\begin{equation}
+  s_i(\bm{\theta})=
+  \left[\frac{\pi_{\bm{\theta}}(o_i\mid x)}{\pi_{\mathrm{old}}(o_i\mid x)}\right]^{1/|o_i|}
+  =\exp\Bigl\{\frac1{|o_i|}\sum_{t=1}^{|o_i|}\log\rho_{i,t}(\bm{\theta})\Bigr\},
+  \label{eq:nlp-reasoning-gspo-ratio}
+\end{equation}
+目标为
+\[
+  J_{\mathrm{GSPO}}(\bm\theta)=\mathbb E\Biggl[\frac1G\sum_{i=1}^{G}\min\bigl(s_i\widehat A_i,\ \operatorname{clip}(s_i,1-\varepsilon,1+\varepsilon)\widehat A_i\bigr)\Biggr],
+\]
+优势仍按式\eqref{eq:nlp-reasoning-group-advantage}计算。$s_i$是各词元比值的几何平均：开$|o_i|$次方使不同长度回答的比值处在同一数量级，否则整条序列的概率比会随长度指数地偏离1。几何平均与算术平均不同：两个词元的比值为$1.5$与$0.6$时，算术平均为$1.05$，几何平均为$\sqrt{0.9}\approx0.95$。
+
+两种目标的梯度差别更直接。在未裁剪区，GSPO对回答$i$的梯度是$s_i\widehat A_i\cdot\frac1{|o_i|}\sum_t\nabla\log\pi_{\bm\theta}(o_{i,t}\mid\cdot)$，回答内各词元的权重相同；GRPO的梯度是$\widehat A_i\cdot\frac1{|o_i|}\sum_t\rho_{i,t}\nabla\log\pi_{\bm\theta}(o_{i,t}\mid\cdot)$，各词元按自己的$\rho_{i,t}$加权，个别比值异常的词元会主导整条回答的更新。裁剪也随之改变：词元裁剪逐位置截断贡献，序列裁剪按整条回答是否偏离过远决定是否截断。由于几何平均后的比值很接近1，序列级裁剪的区间要取得比词元级小得多：GSPO论文的裁剪范围在$10^{-4}$量级，词元级的GRPO则约为0.2。GSPO报告在大规模稀疏专家模型的训练中更稳定；GRPO在这类模型上需要“路由重放”（把旧策略采样时的专家选择缓存下来，计算新策略概率时强制沿用）才能正常收敛，GSPO则不再需要；这是特定模型与实现条件下的经验结果，不是几何平均恒等式推出的必然性质。它的代价是回答内部的局部异常不再被逐词元地处理。
+
+\subsection{过度思考与长度控制}
+\label{sec:nlp-reasoning-overthinking}
+
+经强化学习训练的推理模型常在简单题上也生成很长的轨迹：对“$2+3$等于几”这样的问题，反复验证、换方法重算，花费数百个词元。这种现象称为\term{过度思考}（overthinking），它浪费推断计算，也增加用户等待时间\scite{nlp-llm-chen2024overthinking}。长度控制要在不损害难题准确率的前提下，让模型在简单题上少写。
+
+一种做法是在奖励中加入长度项。Kimi k1.5的\term{长度奖励}（length reward）在同一组回答中按相对长度给分\scite{nlp-llm-kimi2025k15}。记组内最短与最长回答的长度为$\mathrm{len}_{\min}$与$\mathrm{len}_{\max}$，令
+\begin{equation}
+  \lambda_i=0.5-\frac{\mathrm{len}(o_i)-\mathrm{len}_{\min}}{\mathrm{len}_{\max}-\mathrm{len}_{\min}},\qquad
+  r_{\mathrm{len}}(o_i)=
+  \begin{cases}
+    \lambda_i, & o_i\text{答案正确},\\
+    \min(0,\lambda_i), & o_i\text{答案错误}.
+  \end{cases}
+  \label{eq:nlp-reasoning-length-reward}
+\end{equation}
+$\lambda_i$在最短回答处为$0.5$、最长回答处为$-0.5$。正确回答越短得分越高；错误回答最多得0，较长的错误回答还会被扣分，这样模型不会因为“错得短”而得到奖励。用一组教学数值：四个回答长度为200、400、600、1000词元，前三个正确、最后一个错误，则$\lambda=(0.5,0.25,0,-0.5)$，长度奖励为$(0.5,0.25,0,-0.5)$。长度奖励加到正确性奖励上。论文观察到长度项会在训练初期拖慢学习，因此先不加长度项做标准的策略优化，之后再以固定系数加入，这一做法称为长度惩罚的预热。
+
+其他做法改变的是推断条件而非奖励。可以在提示中给出思考预算，训练模型遵守；也可以训练模型在“思考”与“不思考”两种模式间切换，Qwen3在同一模型中支持两种模式，并允许用户设定思考预算，简单问题直接作答，复杂问题再展开推理\scite{nlp-llm-qwen3}。长度控制的风险是惩罚过强：难题本来需要长推理，长度项会把模型推向过早给出答案，准确率随之下降。因此应按难度分层检查长度与准确率的变化，而不只看平均长度。这里的长度控制压缩单条轨迹，第\ref{sec:nlp-reasoning-budget-forcing}小节的串行扩展则在推断时有意延长轨迹，两者分别回答“简单题怎样少想”和“难题怎样多想”。
+
+表~\ref{tab:nlp-reasoning-rl-variants}汇总本节的方法。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{推理任务上的强化学习与偏好方法。“解决的问题”对应第\ref{sec:nlp-reasoning-challenges}小节的挑战；各项措施可以组合，收益不能默认相加。}
+  \label{tab:nlp-reasoning-rl-variants}
+  \begin{tabularx}{\linewidth}{@{}p{24mm}p{32mm}Xp{36mm}@{}}
+    \toprule
+    方法 & 解决的问题 & 核心机制 & 新代价\\
+    \midrule
+    迭代DPO+NLL & 离线数据过时；正例概率下降 & 每轮重采样构造正误对，DPO加胜者负对数似然 & 每轮生成；只用挑出的一对\\
+    Step-DPO & 整条轨迹比较信号分散 & 首错步骤处的正误下一步构成偏好对 & 需要定位首个错误步骤\\
+    GRPO & 价值模型显存大、难学 & 组内标准化奖励作优势，保留裁剪，$k_3$进损失 & 每题$G$次采样；回答内无信用分配\\
+    Dr. GRPO & 标准差与长度平均的偏差 & 优势只中心化，损失除以常数 & 更新幅度随难度变化\\
+    上界放宽裁剪 & 低概率词元难以上升，熵塌缩 & $\varepsilon_{\mathrm{high}}>\varepsilon_{\mathrm{low}}$ & 多一个超参数\\
+    动态采样 & 全对全错组无梯度 & 过滤正确数为0或$G$的组并补采 & 额外生成；改变题目分布\\
+    词元级损失 & 长错轨迹惩罚被稀释 & 以组内总词元数为分母 & 长轨迹总权重更大\\
+    超长过滤与软惩罚 & 截断样本的噪声标签 & 截断样本不计损失；接近上限线性惩罚 & 需设定$L_{\max}$与$L_{\mathrm{cache}}$\\
+    GSPO & 词元比值方差大，MoE不稳定 & 长度归一化的序列级比与序列级裁剪 & 不再逐词元处理局部异常\\
+    长度奖励 & 简单题过度思考 & 组内按相对长度给分，错误回答不得正分 & 过强时损害难题准确率\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\section{推断阶段的计算与搜索}
+\label{sec:nlp-reasoning-test-time}
+
+参数固定以后，还可以通过增加推断计算改善结果。这类做法统称为\term{测试时计算}（test-time compute）的扩展。本节处理五个问题：怎样用提示引出分步推理；多条路径怎样聚合与选择；在中间状态上搜索时，状态、动作与价值怎样设计；单条轨迹怎样延长思考；给定预算时，怎样在这些方式之间分配。方法谱系依次是分步提示（思维链、问题分解、程序辅助），并行采样与聚合（自一致性、加权投票、验证器选择），树搜索（思维树、过程奖励引导的束搜索、蒙特卡洛树搜索），串行扩展，以及按难度的计算分配。采样与束搜索等共同生成机制见第\ref{sec:nlp-generation-sampling}小节与第\ref{sec:nlp-generation-beam}小节；金额题与24点固定候选树提供可以复算的控制例子。比较各方式时，生成词元数、验证调用次数和运行时间应分别记录：多条短候选与一条长轨迹都可以叫“多想一会儿”，消耗的资源却不同。
+
+\subsection{基于提示的分步推理}
+\label{sec:nlp-reasoning-prompting}
+
+直接要求答案时，模型需要在一次输出中完成全部中间计算，这些计算只能隐含在一个位置的前向传播里。分步提示让模型先写出中间步骤，把计算外化为可见的文本，后面的位置再以这些文本为条件继续生成。下面三种方法分别改变步骤的形式：自然语言的推理链，先分解再逐个求解的子问题序列，以及交给解释器执行的程序。
+
+\subsubsection{思维链与零样本思维链}
+\label{sec:nlp-execution-cot}
+
+\term{思维链}（chain of thought, CoT）提示在示例的题目和答案之间加入可读的步骤，使模型在新题上也先写步骤再给答案\scite{nlp-execution-wei2022cot}。令$x$为题目和示例，$z_1,\ldots,z_m$为步骤片段，$y$为答案，生成分布按前缀展开为
+\begin{equation}
+  p_{\bm{\theta}}(z_1,\ldots,z_m,y\mid x)
+  =\left[\prod_{i=1}^{m}p_{\bm{\theta}}(z_i\mid x,z_1,\ldots,z_{i-1})\right]
+  p_{\bm{\theta}}(y\mid x,z_1,\ldots,z_m).
+  \label{eq:nlp-execution-cot}
+\end{equation}
+片段内部仍按词元自回归生成，$\bm{\theta}$为固定的模型参数，步骤边界由提示格式或后处理确定。这一式说明了思维链为什么可能有帮助：生成$y$时，模型可以读取已经写出的中间量“书费60元”“笔费20元”，而不必在一个位置上同时完成条件绑定与多步算术。提示只改变条件，不改变参数。
+
+步骤文本也使错误可以定位。金额题的一条正确路径是“书原价75元；书折后60元；笔20元；合计80元”。若第三步写成“笔也打折，计16元”，错误就落在“不打折”这一条件上，而不必猜测最终76元的来历。修订时应从受影响的步骤重写并复算后续金额，而不是只把末尾的76改成80。可读的步骤是可检查的外部产物，不是形式证明，也不足以断言它忠实地暴露了模型的内部计算。思维链的收益依赖模型规模：Wei等在多个模型系列上观察到，较小的模型使用思维链提示几乎没有收益甚至变差，只有足够大的模型才能稳定地利用步骤条件。
+
+\term{零样本思维链}（zero-shot chain of thought）不需要任何示例\scite{nlp-llm-kojima2022zeroshot}。它分两次调用：第一次在题目后加上“让我们一步一步思考”，让模型生成推理；第二次把题目、生成的推理和一句答案提取提示（如“因此，答案（阿拉伯数字）是”）拼在一起，让模型只输出答案。第二次调用的作用是把自由文本中的结论规范为可以核验的格式。Kojima等用InstructGPT在MultiArith上把零样本准确率从17.7\%提高到78.7\%。与少样本思维链相比，零样本版本不需要为每个任务编写带步骤的示例，代价是推理格式不受控制，答案提取多一次调用。
+
+\subsubsection{问题分解提示}
+\label{sec:nlp-reasoning-least-to-most}
+
+思维链让模型自己决定步骤的顺序。当测试题比示例更复杂、需要更多步骤时，模型常在中途失去方向。\term{由少到多提示}（least-to-most prompting）把求解分为两个阶段\scite{nlp-llm-zhou2023leasttomost}。分解阶段用示例提示模型把原题拆成一串由易到难的子问题；求解阶段按顺序逐个回答子问题，每个子问题的答案都追加到上下文中，作为后续子问题的条件。金额题可以分解为“三本书打折后多少元”“五支笔多少元”“一共多少元”，第三个子问题的上下文中已经有前两个答案。
+
+与思维链相比，由少到多提示显式规定了步骤的顺序与粒度，适合需要组合泛化的任务，即测试题由训练示例中见过的基本操作组合而成，但组合更长。在SCAN指令到动作序列的长度泛化任务上，它用14个示例达到99\%以上的准确率，而思维链只有约16\%。代价是两阶段都要调用模型，分解本身也可能出错：若分解阶段漏掉“笔不打折”这一条件对应的子问题，后续求解无从补救。
+
+\subsubsection{程序辅助推理}
+\label{sec:nlp-reasoning-program-aided}
+
+金额题的三类要求中，计算最容易交给机器。\term{程序思维提示}（program of thoughts prompting, PoT）与\term{程序辅助语言模型}（Program-aided Language Models, PAL）让模型把题意写成程序，由解释器执行算术与逻辑，模型只负责把自然语言翻译成程序\scite{nlp-llm-chen2023pot,nlp-execution-gao2023pal}。两者的区别在于程序形式：PoT生成以变量和表达式为主的程序，可调用符号计算库；PAL生成交错着自然语言注释的代码，把推理步骤写在注释里。金额题的程序候选、执行结果与提取规则见第\ref{sec:nlp-execution-pal}小节。
+
+程序辅助消除的是计算错误：$75\times0.8$由解释器计算，不会算成65。它不能消除条件绑定错误：若程序把折扣乘到了笔的金额上，解释器会忠实地输出76。程序还带来新的失败形式，例如语法错误、运行异常和超时，需要保存程序、退出码与输出才能区分。工具调用的一般机制、执行环境的隔离与结果验证见第\ref{chap:nlp-solving-and-execution}章。
+
+\subsection{并行采样与答案聚合}
+\label{sec:nlp-reasoning-parallel}
+
+单条轨迹的错误可能是偶然的：同一道题再采样一次，模型可能就不会把笔打折。对同一题独立采样多条推理路径再聚合答案，可以利用多数路径的一致性。本小节先给出多数投票的概率解释，再说明用验证器分数加权或直接选择的做法。分析这类方法时，要分别观察两个量：生成覆盖，即候选中是否至少有一个正确答案，第\ref{chap:nlp-evaluation}章的pass@$k$度量的就是它；选择成功，即聚合规则是否选中了正确答案。前者不足要改进策略或增加探索，后者不足要改进聚合规则或验证器。
+
+\subsubsection{自一致性与推理路径边缘化}
+\label{sec:nlp-execution-self-consistency}
+
+\term{自一致性}（self-consistency）从固定模型采样多条完整推理路径，提取并规范化最终答案，选择出现次数最多的答案\scite{nlp-llm-selfconsistency2023}。不同的步骤顺序可以到达同一个金额，例如先算每本书折后20元，或先算三本原价75元再打折；投票让这些不同路径汇合。
+
+以六条路径为例，构造的输出为“80元”“80.0元”“人民币80元”“76元”“76.00元”和“无法确定”。规范化函数$N$把前三条映射为$(80,\text{元})$，中间两条映射为$(76,\text{元})$，末条标为无有效答案；有效率为$5/6$，票数为3比2。若答案以“分”为单位，应先按明确的换算规则转成元；缺单位且无法从题目恢复时，不盲目与金额合并。全无有效答案时返回“未求得答案”；平票时采用预先规定的独立核验或弃权策略，不事后挑选有利的平局规则。设有效路径的索引集合为$V$，投票结果是
+\begin{equation}
+  \hat y=\argmax_y\sum_{i\in V}\mathbb{I}[N(y_i)=y].
+  \label{eq:nlp-reasoning-majority-vote}
+\end{equation}
+
+多数投票有一个清楚的概率解释。我们真正关心的是答案的概率，而不是某一条推理路径的概率；同一个答案可以由许多路径得到，答案的边缘概率是对所有路径求和：
+\begin{equation}
+  p_{\bm\theta}(y\mid x)=\sum_{z}p_{\bm\theta}(z,y\mid x).
+  \label{eq:nlp-reasoning-path-marginal}
+\end{equation}
+从$p_{\bm\theta}(z,y\mid x)$独立采样$n$条路径，答案$y$出现的频率$\frac1n\sum_i\mathbb I[y_i=y]$是$p_{\bm\theta}(y\mid x)$的蒙特卡洛估计，多数投票因而是$\argmax_yp_{\bm\theta}(y\mid x)$的近似，即对推理路径边缘化后取最可能的答案。这与贪心解码不同：贪心解码近似的是最可能的单条路径，而概率最高的路径不一定通向概率最高的答案。同一结论也可以从决策角度得到：在0/1损失下，使期望损失最小的答案正是边缘概率最大的答案，所以多数投票也是0/1损失下的最小贝叶斯风险解码，即第\ref{sec:nlp-inference-mbr}小节中效用取0/1时的特例。Wang等在PaLM 540B上每题采样40条路径，GSM8K准确率从思维链贪心解码的56.5\%提高到74.4\%。
+
+这一解释也给出了边界。投票估计的是模型自己的答案分布，如果模型系统性地偏向某个错误答案，更多采样只会更稳定地选中它：六条路径中若有四条都把笔打折，投票就会选出76元。路径之间的相关错误可以形成多数。自一致性还要求答案能规范化为可比较的形式，适合数值、选项或短答案；开放的长文本必须先定义何谓答案相同。
+
+\subsubsection{加权投票与验证器选择}
+\label{sec:nlp-reasoning-weighted-voting}
+
+多数投票让每条路径一票，没有利用路径质量的信息。若有第\ref{sec:nlp-reasoning-feedback}节的ORM或PRM，可以为每条路径打分$s_i$。\term{加权投票}（weighted voting）按分数之和聚合：
+\begin{equation}
+  \hat y_{\mathrm{wv}}=\argmax_y\sum_{i\in V}\mathbb I[N(y_i)=y]\,s_i,\qquad
+  \hat y_{\mathrm{bon}}=N\bigl(y_{i^\star}\bigr),\quad i^\star=\argmax_{i\in V}s_i.
+  \label{eq:nlp-reasoning-weighted-vote}
+\end{equation}
+后者是第\ref{sec:nlp-inference-reranking}小节的best-of-$N$选择，直接交付分数最高的一条。沿用上面的六条路径作教学示例，设三条80元路径的验证器分数为$0.7$、$0.6$、$0.5$，两条76元路径为$0.9$、$0.85$。加权投票得到80元$1.8$分、76元$1.75$分，选中80元；best-of-$N$选中分数最高的0.9，交付76元。
+
+两种规则对验证器误差的敏感程度不同。best-of-$N$只看最大值，单个被验证器高估的错误候选就足以决定结果；候选数$N$越大，出现这种候选的机会越多，因此验证器不完美时，best-of-$N$的准确率随$N$增大会先升后降，这是第\ref{sec:nlp-align-overoptimization}小节的过度优化在推断时的形式。加权投票同时利用一致性与分数，单个高估候选的影响被其他路径稀释，对验证器误差更稳健；代价是当正确答案只出现在少数路径上、而验证器又能可靠识别它时，加权投票可能被多数错误路径压过。Lightman等的对照中，PRM的best-of-$N$优于多数投票，说明验证器足够可靠时直接选择有效；验证器的可靠性因而决定了应该更依赖分数还是更依赖票数。
+
+\subsection{树搜索}
+\label{sec:nlp-reasoning-tree-search}
+
+并行采样在整条路径的层面选择：一条路径在第二步就把笔打了折，后面的计算全部浪费，而且无法只修改那一步。树搜索在中间状态上展开、评估与剪枝，可以在错误刚出现时就放弃该分支，并复用共同的前缀。下面三种方法的区别在于展开策略和价值来源：思维树用模型自评做广度或深度优先搜索；过程奖励引导的束搜索用PRM逐步保留最好的部分路径；蒙特卡洛树搜索用访问统计量平衡探索与利用。
+
+\subsubsection{思维树的广度与深度优先搜索}
+\label{sec:nlp-execution-tot}
+
+\term{思维树}（Tree of Thoughts, ToT）把若干步骤组成候选状态，由扩展器$G$提出下一步，由评价器$V$估计哪些状态值得继续，再由搜索控制器分配预算\scite{nlp-intro-yao2023tot}。扩展器和评价器都可以通过提示调用同一个固定的语言模型，评价可以输出分值，也可以比较候选后投票。原始工作分别使用宽度受限的广度优先搜索和可回溯的深度优先搜索。
+
+为了单独检查搜索控制，下面固定一棵教学候选树，不把手设评分冒充模型的测量。题目是用$\{3,3,8,8\}$中的每个数恰好一次、经四则运算得到24。图~\ref{fig:nlp-reasoning-tot-tree}画出这棵树：根$R=\{3,3,8,8\}$提出两个分支，$A=\{3,3,16\}$来自$8+8$，评分0.9；$B=\{3,8,8/3\}$来自$8/3$，评分0.8。$A$再提出$C=\{6,16\}$（0.9）与$D=\{3,19\}$（0.4），$B$提出$E=\{8,1/3\}$（0.8），其中$1/3=3-8/3$。花括号表示允许元素重复的多重集，每次运算只消耗选中的两个数，已有表达式随状态保存。两数状态枚举加、乘以及两个方向的减法与除法，共六个终态，用精确规则检查是否为24。
+
+\begin{figure}[tbp]
+  \centering
+  \input{figures/12-natural-language-processing/01-language-models/tikz/reason-tot-tree.tex}
+  \caption{24点题$\{3,3,8,8\}$的教学候选树。每个节点是剩余数的多重集，边上是所做的运算，节点旁的数是手设的评价分数。只有$E$的六个两数终态中含有$8\div(1/3)=24$；$C$与$D$的终态都不等于24。宽度为2的广度优先搜索在第二层剪掉$D$，深度优先搜索则先走$A$下的分支，失败后回溯到$B$。}
+  \label{fig:nlp-reasoning-tot-tree}
+\end{figure}
+
+为使预算检查可以直接执行，以下算法把一次$G$调用与一次对单个候选的$V$调用各计为一个单位，总上限记为$B_{\mathrm{lim}}$。终态的精确算术检查与状态去重不计入这个调用预算，但仍应另记实际时间。
+
+\begin{algorithm}[宽度受限的ToT广度优先搜索]
+\label{alg:nlp-execution-tot-bfs}
+\begin{algorithmic}[1]
+\Require 初态$s_0$，扩展器$G$，评分器$V$，宽度$b$，深度$T$，调用预算$B_{\mathrm{lim}}$
+\Ensure 一个已核验解，或附搜索范围的未找到状态
+\State $F\gets\{s_0\}$；$b_{\mathrm{rem}}\gets B_{\mathrm{lim}}$
+\For{$t=1,\ldots,T$}
+  \State $C\gets\varnothing$
+  \For{每个$s\in F$}
+    \If{$b_{\mathrm{rem}}<1$} \State \Return 预算内未找到 \EndIf
+    \State 把$G(s)$的合法子状态加入$C$；$b_{\mathrm{rem}}\gets b_{\mathrm{rem}}-1$
+  \EndFor
+  \State 按足够表达约束的状态键对$C$去重
+  \For{每个$c\in C$}
+    \If{$b_{\mathrm{rem}}<1$} \State \Return 预算内未找到 \EndIf
+    \State 保存评分$v_c\gets V(c)$；$b_{\mathrm{rem}}\gets b_{\mathrm{rem}}-1$
+  \EndFor
+  \If{$C$中存在通过完整规则核验的终态}
+    \State \Return 按预定平局规则选择的解及其表达式
+  \EndIf
+  \State 删除错误终态；按分数降序、生成次序升序排序
+  \State $F\gets$排序后至多$b$个非终态
+  \If{$F=\varnothing$} \State \Return 当前候选范围内未找到 \EndIf
+\EndFor
+\State \Return 深度上限内未找到
+\end{algorithmic}
+\end{algorithm}
+
+令$b=2$、$T=3$。第一层保留$A,B$；第二层比较$C,D,E$，保留$C,E$，$D$因宽度限制被剪掉。第三层$C$的六种运算都得不到24，$E$则有$8\div(3-8/3)=8\div(1/3)=24$，这里分母是$3-8/3$而不是$(3-8)/3$，恢复括号是输出的一部分。这条轨迹展开了$R,A,B,C,E$共5个状态，评分了$2+3+12=17$个候选，共用22个调用单位。宽度2限制的是保留的状态数，评分前的候选池仍可有12项。
+
+\begingroup
+\tcbset{book statement/.append style={unbreakable}}
+\begin{algorithm}[带回溯的ToT深度优先搜索]
+\label{alg:nlp-execution-tot-dfs}
+\begin{algorithmic}[1]
+\Require 当前状态$s$、深度$t$、深度上限$T$、扩展器$G$、评分器$V$、阈值$\tau$与共享的剩余调用量$b_{\mathrm{rem}}$
+\Ensure 已核验解或本分支未找到
+\If{$b_{\mathrm{rem}}<1$或$t=T$} \State \Return 未找到 \EndIf
+\State $C\gets G(s)$；$b_{\mathrm{rem}}\gets b_{\mathrm{rem}}-1$；删除非法项并去重
+\For{每个$c\in C$}
+  \If{$b_{\mathrm{rem}}<1$} \State \Return 预算内未找到 \EndIf
+  \State 保存评分$v_c\gets V(c)$；$b_{\mathrm{rem}}\gets b_{\mathrm{rem}}-1$
+\EndFor
+\State 按分数降序、生成次序升序排序
+\For{排序后的$c\in C$}
+  \If{$c$通过完整终态核验}
+    \State \Return $c$及其表达式
+  \ElsIf{$c$为非终态且$v_c\geq\tau$且未被当前路径访问}
+    \State $r\gets\operatorname{DFS}(c,t+1)$
+    \If{$r$为解} \State \Return $r$ \EndIf
+  \EndIf
+\EndFor
+\State \Return 未找到；调用者恢复父状态，继续下一个候选
+\end{algorithmic}
+\end{algorithm}
+\endgroup
+
+以根深度0、$\tau=0.1$运行同一棵树，DFS先走$R,A,C$，$C$无解便回溯到$A$试$D$，$D$也无解，才回到根走$B,E$。它展开了6个状态，评分了$2+2+6+6+1+6=23$个候选，共用29个调用单位。本实现先评分一个节点的全部子项再寻找终态，找到解的那一批六项也全部计费；改成逐项检查、遇解即停，会得到另一组成本，比较时必须说明。
+
+两组成本只反映这棵固定树与手设排序。真实ToT的扩展器可能漏掉$B$，评价器可能错误剪掉$E$；此时“未找到”不表示原题无解。原始ToT在24点上提示GPT-4提出下一步运算，并把候选评为“可行”“可能”“不可行”，每个候选评价3次；在100道较难的题上，宽度为5的ToT成功率为74\%，思维链为4\%。与第\ref{sec:nlp-generation-beam}小节的词元束搜索相比，ToT在语义步骤的层面剪枝，评价的是状态的前景而不是延续概率；与多条完整的思维链相比，它复用前缀，但增加了中途评分的调用。
+
+\subsubsection{过程奖励引导的束搜索}
+\label{sec:nlp-reasoning-prm-beam}
+
+ToT的评价器是被提示的语言模型自己。若已有第\ref{sec:nlp-reasoning-prm}小节训练好的PRM，就可以用它作为步骤层面的评价，在推理步骤上做束搜索\scite{snell2025testtime}。以推理步骤为扩展单位，每一步为每条保留的部分路径采样若干个下一步，用PRM为所有候选打分，只保留分数最高的若干条。算法~\ref{alg:nlp-reasoning-prm-beam}给出总生成预算为$N$、每条路径扩展$M$个候选的版本。
+
+\begin{algorithm}[过程奖励引导的步骤束搜索]
+  \label{alg:nlp-reasoning-prm-beam}
+  \begin{algorithmic}[1]
+    \Require 题目$x$，策略$\pi$，过程奖励模型$p_{\bm\phi}$，生成预算$N$，扩展数$M$，最大步数$T$
+    \Ensure 交付的解答
+    \State 用$\pi$为$x$独立采样$N$个第一步，得到部分路径集合$P$
+    \For{$t=1,\ldots,T$}
+      \State 用$p_{\bm\phi}$为$P$中每条部分路径的最新一步打分
+      \State 把已生成答案的路径移入完成集合$F$；若无未完成路径则跳出循环
+      \State 在未完成路径中保留分数最高的$N/M$条
+      \State 对每条保留的路径，用$\pi$采样$M$个下一步，得到新的$P$（共$N$条）
+    \EndFor
+    \State \Return 在$F$中按聚合分数（或加权投票）选出的解答
+  \end{algorithmic}
+\end{algorithm}
+
+每一步都生成$N$个候选步骤，总生成量与best-of-$N$采样$N$条完整解答大致相当，因此可以在相同的生成预算下比较。差别在于预算的投向：best-of-$N$让$N$条路径各自走完，束搜索则每一步都把预算集中到PRM认为最有希望的前缀上。Snell等在MATH上按难度分组比较，观察到三种情形：中等难度的题目上束搜索稳定地优于best-of-$N$；简单题上两者差别小，预算较大时束搜索反而更差，因为它过度追随PRM的偏好，选中了PRM高估的路径；最难的题目上所有方法都几乎没有进展。束搜索的收益依赖PRM的质量：PRM在某类步骤上系统性高估，束搜索会把全部预算都投进这类分支，比独立采样更难逃出。
+
+\subsubsection{语言状态上的蒙特卡洛树搜索}
+\label{sec:nlp-reasoning-mcts}
+
+束搜索在每一层都按当前分数硬性剪枝，被剪掉的分支再也不会被访问。蒙特卡洛树搜索（Monte Carlo tree search, MCTS）改为维护每个状态的访问次数与平均价值，用统计量决定下一次往哪里走，既利用当前看起来好的分支，也给访问少的分支留出机会。在棋类中，它从当前局面反复执行“选择—扩展—评估—回传”四步：沿树按选择规则下行到叶节点，扩展叶节点的子节点，评估新节点的价值，再把价值沿路径回传更新统计量。AlphaZero的选择规则是PUCT：
+\begin{equation}
+  a^\star=\argmax_{a}\Bigl[Q(s,a)+c_{\mathrm{puct}}\,P(s,a)\frac{\sqrt{\sum_bN(s,b)}}{1+N(s,a)}\Bigr],
+  \label{eq:nlp-reasoning-puct}
+\end{equation}
+其中$Q(s,a)$是经由动作$a$的平均价值，$N(s,a)$是访问次数，$P(s,a)$是策略网络给出的先验概率，$c_{\mathrm{puct}}$控制探索强度\scite{rl2-silver2018-alphazero}。第二项在访问次数少、先验概率高的动作上较大，随访问增多而衰减。UCT与PUCT的一般形式和收敛性质可参考\BookChapterRef{chap:rl-planning}{卷七“给定模型下的规划”章}；这里只写它们在语言状态上的设计。
+
+把MCTS用于推理，需要规定四个对象。状态$s$是题目加上已生成的步骤$(x,z_1,\ldots,z_j)$；动作$a$是一个推理步骤，而不是一个词元，否则树的分支因子等于词表大小，深度等于轨迹长度，无法搜索。先验$P(s,a)$可取语言模型生成该步骤的概率，按长度归一化后在同一状态的候选间重新归一。价值来源有两种：用PRM为新步骤打分，或从新状态续写到底、按最终答案给出0/1的结果，即第\ref{sec:nlp-reasoning-prm-mc}小节的蒙特卡洛估计。图~\ref{fig:nlp-reasoning-mcts}在金额题上画出一次迭代。
+
+\begin{figure*}[!t]
+  \centering
+  \input{figures/12-natural-language-processing/01-language-models/tikz/reason-mcts-steps.tex}
+  \caption{语言状态上蒙特卡洛树搜索的一次迭代（金额题，数值为教学示例）。节点是“题目加已生成步骤”，边是一个推理步骤，节点内为访问次数$N$与平均价值$Q$。选择阶段按式\eqref{eq:nlp-reasoning-puct}从根下行到叶节点“书折后60元”；扩展阶段由语言模型采样两个候选下一步；评估阶段用过程奖励模型或续写到底的结果给新节点打分；回传阶段把价值0.9加到路径上各节点，更新$N$与$Q$。把笔也打折的分支“全打八折”价值低，后续迭代很少再访问它。}
+  \label{fig:nlp-reasoning-mcts}
+\end{figure*}
+
+\begin{algorithm}[语言状态上的蒙特卡洛树搜索]
+  \label{alg:nlp-reasoning-mcts}
+  \begin{algorithmic}[1]
+    \Require 题目$x$，策略$\pi$，价值来源（PRM或续写），迭代次数$K$，每次扩展的候选数$m$，常数$c_{\mathrm{puct}}$
+    \Ensure 交付的解答
+    \State 以$s_0=x$建立根节点，$N(s_0)\gets0$
+    \For{$k=1,\ldots,K$}
+      \State $s\gets s_0$；从根出发，按式\eqref{eq:nlp-reasoning-puct}逐层选择子节点，直到到达未扩展的叶节点$s_L$ \Comment{选择}
+      \If{$s_L$不是终态}
+        \State 用$\pi$为$s_L$采样$m$个候选步骤，建立子节点并记录先验$P(s_L,a)$ \Comment{扩展}
+        \State 任选一个新子节点作为$s'$
+      \Else
+        \State $s'\gets s_L$
+      \EndIf
+      \State 计算价值$v$：$s'$为终态时按答案核验给0/1，否则用PRM打分或续写到底 \Comment{评估}
+      \State 对从根到$s'$路径上的每条边$(s,a)$：$N(s,a)\gets N(s,a)+1$，$Q(s,a)\gets Q(s,a)+\bigl(v-Q(s,a)\bigr)/N(s,a)$ \Comment{回传}
+    \EndFor
+    \State \Return 从根沿访问次数最多的子节点下行得到的解答（或在所有到达终态的路径中按价值选择）
+  \end{algorithmic}
+\end{algorithm}
+
+与棋类相比，语言状态上的MCTS有三个本质困难。动作空间是开放的：每一步可以写出的步骤无穷多，只能采样少量候选，被采样遗漏的好步骤永远不会出现在树中。没有精确的模拟器：棋类的规则精确给出下一个局面和终局胜负，这里的“状态转移”就是把文本拼接起来，终局的价值则只能来自答案核验或学习得到的PRM。价值估计不可靠：PRM的误差在树中被反复利用，续写估计的方差又很大。DeepSeek-R1把MCTS列为不成功的尝试之一，理由正是词元生成的搜索空间远大于棋类，为每个节点设定扩展上限又容易陷入局部最优，而训练足够准确的价值模型本身很难\scite{deepseek2025r1}。
+
+已有的方法通过限制动作与改进价值来缓解这些困难。RAP让同一个语言模型同时扮演“世界模型”和“推理者”：推理者提出动作（一个子问题或一步操作），世界模型预测执行该动作后的新状态，奖励由动作的似然、模型对状态的置信度和自评等组合而成，再用UCT选择\scite{nlp-llm-hao2023rap}。rStar为动作规定了一组类似人类解题的类型，如提出下一步、直接写完剩余步骤、提出并回答子问题、重述题目等，再用第二个小模型对搜索得到的轨迹做“互相一致”的检查：遮去轨迹的后半段，让第二个模型续写，两者结论一致才采纳\scite{nlp-llm-qi2025rstar}。rStar-Math则把MCTS与第\ref{sec:nlp-reasoning-rest-em}小节的自举结合：用MCTS生成带代码验证的逐步解答，用搜索得到的步骤价值训练过程偏好模型，再用新的策略与过程模型进行下一轮搜索，迭代多轮\scite{nlp-llm-guan2025rstarmath}。后一种用法说明，树搜索既可以是推断时的计算，也可以是专家迭代中的“专家”，为训练产生更好的轨迹。
+
+\subsection{串行扩展：长思考与预算强制}
+\label{sec:nlp-reasoning-budget-forcing}
+
+另一种增加推断计算的方式不改变候选数，而是让单条轨迹更长。经第\ref{sec:nlp-reasoning-rl}节的强化学习训练后，模型会在轨迹中自行尝试、检查与修正，例如写出“等一下，笔不打折，这一步需要重算”。这种串行扩展的长度由模型自己决定，推断时也可以从外部控制。
+
+s1提出的\term{预算强制}（budget forcing）在解码时干预思考的结束\scite{nlp-llm-muennighoff2025s1}。设思考段的上限为$L_{\mathrm{hi}}$、下限为$L_{\mathrm{lo}}$。生成到$L_{\mathrm{hi}}$个词元时，解码器强制插入思考结束标记和“最终答案：”等提示，迫使模型立即给出答案；思考尚不足$L_{\mathrm{lo}}$而模型想要生成思考结束标记时，解码器抑制该标记，并追加“Wait”一词，让模型继续思考。追加的“Wait”常使模型重新检查前面的步骤，有时会纠正错误的答案。算法~\ref{alg:nlp-reasoning-budget-forcing}写出这一解码控制。
+
+\begin{algorithm}[预算强制解码]
+  \label{alg:nlp-reasoning-budget-forcing}
+  \begin{algorithmic}[1]
+    \Require 推理模型$\pi$，题目$x$，思考长度下限$L_{\mathrm{lo}}$与上限$L_{\mathrm{hi}}$，思考结束标记$e$
+    \Ensure 答案$y$
+    \State $z\gets$空序列
+    \Loop
+      \If{$|z|\ge L_{\mathrm{hi}}$}
+        \State 把$e$与“最终答案：”追加到$z$；\textbf{break} \Comment{强制结束}
+      \EndIf
+      \State 采样下一个词元$w\sim\pi(\cdot\mid x,z)$
+      \If{$w=e$且$|z|<L_{\mathrm{lo}}$}
+        \State 丢弃$w$，把“Wait”追加到$z$ \Comment{抑制结束，继续思考}
+      \ElsIf{$w=e$}
+        \State 把$e$追加到$z$；\textbf{break}
+      \Else
+        \State 把$w$追加到$z$
+      \EndIf
+    \EndLoop
+    \State 以$(x,z)$为前缀继续生成答案$y$
+    \State \Return $y$
+  \end{algorithmic}
+\end{algorithm}
+
+s1-32B在AIME 2024上不加干预时为50\%，用预算强制延长思考后达到57\%。准确率随思考长度上升，但会逐渐饱和：反复追加“Wait”到一定次数后，模型开始重复同样的检查甚至陷入循环，准确率不再提高。串行扩展与并行采样在相同词元预算下各有特点。串行扩展的每一次检查都能读取前面全部的推理，可以有针对性地修正，并且不需要聚合规则；但它只能顺序生成，延迟随长度线性增长，一旦在早期形成错误的判断，后续检查也可能只是为它辩护。并行采样可以同时生成，延迟取决于最长的一条，各路径相互独立，不会互相“带偏”，但需要第\ref{sec:nlp-reasoning-parallel}小节的聚合规则。s1报告，对未经长思考训练的Qwen2.5-32B-Instruct做多数投票，即使增加样本数也追不上s1-32B用预算强制得到的结果；这一对照同时改变了模型与扩展方式，不能单独归因于串行与并行的差别。
+
+\subsection{测试时计算的分配}
+\label{sec:nlp-reasoning-compute-allocation}
+
+不同题目从额外计算中获益不同。金额题这样的简单题，一次贪心解码就能答对，额外的采样与搜索都是浪费；中等难度的题从搜索中获益最多；超出模型能力的题，无论投入多少计算都难以解决。Snell等把这一观察写成一个优化问题\scite{snell2025testtime}。给定题目$x$与推断预算$N$，记$\theta$为推断策略的超参数，例如并行样本数、束宽、修订次数、并行与串行的比例，$\mathrm{Target}(\theta,N,x)$为该策略在预算$N$下输出答案的分布，\term{计算最优}（compute-optimal）的策略为
+\begin{equation}
+  \theta^\star(x,N)=\argmax_{\theta}\ \mathbb E_{y\sim\mathrm{Target}(\theta,N,x)}\,\mathbb I[y=y^\star(x)],
+  \label{eq:nlp-reasoning-compute-optimal}
+\end{equation}
+其中$y^\star(x)$是正确答案。式中的期望依赖正确答案，测试时无法直接求解。实际做法是先估计题目难度：用验证器对若干候选打分，取平均分数作为难度的代理，按分位数把题目分成若干难度桶；再在开发集上为每个难度桶选择表现最好的$\theta$，测试时按估计的难度查表使用。难度估计和策略选择都只在开发数据上完成，不能看过测试答案再选预算。
+
+用一个教学示例说明查表的含义。设开发集按估计难度分为易、中、难三档，每题预算都是16次生成。易档上，让一条解答连续修订若干次与16条独立采样投票的正确率相近，而串行修订只需维护一条上下文，就为这一档选择串行修订；中档上，过程奖励引导的束搜索明显高于best-of-16，就为这一档选择束搜索；难档上各种策略的正确率都很低，继续增加搜索几乎无效，与其平均分配，不如把预算留给前两档，或把这类题交给更大的模型。所选策略本身也有超参数，例如串行与并行的比例、束宽与扩展数，它们同样按档在开发集上确定。
+
+按这种方式分配，Snell等在MATH上观察到，用约四分之一的计算就能达到或超过普通best-of-$N$的表现。他们还比较了“小模型加更多推断计算”与“参数多约14倍的模型”：在总计算量匹配的条件下，前者在简单与中等难度的题目上可以胜出，在最难的题目上不如后者；结论还依赖推断词元与预训练词元的比例，部署中推断量越大，增加预训练计算越划算。这些结论说明，测试时计算可以替代部分参数规模，但替代不了缺失的基础能力。
+
+表~\ref{tab:nlp-reasoning-inference-options}以同一道题和总预算为共同入口，比较本节的运行方案。比较时至少记录生成词元、候选数、验证调用与实际运行时间，并区分候选覆盖与选择正确率。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{固定题目、可见信息和总预算后的推断方案比较。“判断来源”指选择或剪枝所依据的信号；候选覆盖、选择正确率、最终交付与实际耗时须分别报告。}
+  \label{tab:nlp-reasoning-inference-options}
+  \begin{tabularx}{\linewidth}{@{}p{24mm}p{30mm}p{34mm}X@{}}
+    \toprule
+    方案 & 预算投向 & 判断来源 & 主要失败与边界\\
+    \midrule
+    思维链 & 一条带步骤的轨迹 & 无；提示示例规定格式 & 早期错误传播；依赖模型规模\\
+    由少到多 & 分解加逐个求解 & 无；分解示例 & 分解漏掉条件后无法补救\\
+    程序辅助 & 程序生成与执行 & 解释器 & 只消除计算错误，不消除绑定错误\\
+    自一致性 & 多条完整轨迹 & 答案票数 & 相关错误可成多数\\
+    加权投票 & 多条轨迹及评分 & 票数与ORM或PRM分数 & 少数正确答案可能被压过\\
+    best-of-$N$ & 多条轨迹及评分 & 最高验证分数 & 单个高估候选决定结果；$N$大时过度优化\\
+    思维树 & 步骤扩展、回溯与评分 & 模型自评 & 错误剪枝可漏解；评分调用多\\
+    PRM束搜索 & 每步集中到高分前缀 & PRM & 简单题上可能不如best-of-$N$\\
+    MCTS & 按访问统计分配展开 & PRM或续写结果，加先验 & 动作开放，价值不可靠；实现复杂\\
+    预算强制 & 一条更长的轨迹 & 无；强制结束或追加“Wait” & 收益饱和；延迟随长度增长\\
+    按难度分配 & 按题选择以上组合 & 开发集上的难度估计与策略表 & 依赖难度估计；最难题收益有限\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\section{多阶段组合与能力检查}
+\label{sec:nlp-reasoning-integration}
+
+前面各节分别说明了预训练、轨迹监督、奖励与强化学习以及推断计算的作用。实际的推理模型把它们组合成一条训练路径，最终模型同时受各阶段影响。本节先以DeepSeek-R1说明代表性的组合方式，再讨论怎样用对照实验检查各阶段的贡献、泛化范围与副作用。
+
+\subsection{多阶段训练路径与综合案例}
+\label{sec:nlp-reasoning-r1-pipeline}
+
+DeepSeek-R1的报告给出了两条路径，图~\ref{fig:nlp-reasoning-r1-pipeline}对照画出\scite{deepseek2025r1}。第一条是R1-Zero：从预训练模型DeepSeek-V3-Base出发，不做任何有监督微调，直接用GRPO做强化学习。名称中的“Zero”指没有有监督微调，并不表示没有预训练。它使用一个固定的对话模板：用户提出问题，助手先在\code{<think>}与\code{</think>}之间写出推理过程，再在\code{<answer>}与\code{</answer>}之间给出答案。模板只规定结构，不规定推理的内容或策略，以便观察强化学习本身会形成什么行为。奖励全部由规则给出：正确性奖励按第\ref{sec:nlp-reasoning-rewards}小节的方式核验数学答案或运行代码测试，格式奖励检查推理是否放在规定的标记之间。R1-Zero在AIME 2024上的单次正确率从训练开始时的15.6\%升到71.0\%，每题64个候选做多数投票时为86.7\%；训练中回答长度持续增长，模型自发地出现重新检查和换方法求解的行为。它的缺陷是可读性差，并常混用多种语言。
+
+\begin{figure*}[!t]
+  \centering
+  \input{figures/12-natural-language-processing/01-language-models/tikz/reason-r1-pipeline.tex}
+  \caption{DeepSeek-R1-Zero与DeepSeek-R1的训练路径。上排R1-Zero从基座直接做规则奖励下的GRPO。下排R1依次经过冷启动有监督微调、推理强化学习、拒绝采样生成数据并与通用数据合并后从基座重新微调、覆盖全场景的强化学习；同一批再微调数据也用于蒸馏小模型。实线箭头表示参数继承，虚线箭头表示只迁移数据：再微调阶段的参数起点重新取自DeepSeek-V3-Base，而不是推理强化学习的检查点。}
+  \label{fig:nlp-reasoning-r1-pipeline}
+\end{figure*}
+
+第二条是R1，包含四个阶段。第一阶段是第\ref{sec:nlp-reasoning-demonstrations}小节的冷启动：用数千条整理过的长思维链示范微调基座。第二阶段是面向推理的强化学习，与R1-Zero相同，但增加了一项\term{语言一致性奖励}（language consistency reward），即思维链中目标语言词语所占的比例，直接加到正确性奖励上。消融显示这项奖励使推理准确率略有下降，但输出更符合阅读习惯。第三阶段是拒绝采样与再微调：从第二阶段的检查点为大量推理题采样，只保留答案正确、语言一致、格式可读的轨迹，得到约60万条推理样本；再与约20万条写作、问答、翻译等非推理样本合并，从DeepSeek-V3-Base重新做有监督微调。第四阶段是覆盖全场景的强化学习：推理题仍用规则奖励，一般问题则用奖励模型评价帮助性与无害性，使模型在保持推理能力的同时符合一般的偏好要求。最终的R1在AIME 2024上的单次正确率为79.8\%。
+
+这条路径中有两种不同的传递，需要分别追踪。参数继承发生在第一、二阶段之间和第三、四阶段之间：后一阶段从前一阶段的参数继续训练。数据迁移发生在第二、三阶段之间：第三阶段只使用第二阶段检查点生成的轨迹，参数起点重新取自基座。因此再微调不是从推理强化学习的检查点继续，它是第\ref{sec:nlp-reasoning-rest-em}小节意义下的一次E步与M步：用一个更强的“专家”（推理强化学习后的模型）生成并筛选数据，再让基座去拟合。报告没有专门解释这一选择；一种可能的考虑是，强化学习检查点主要在推理任务上训练过，从基座重新微调可以把推理数据与通用数据放在同一个监督目标下平衡。同一批80万条数据还被用于第\ref{sec:nlp-reasoning-long-cot-data}小节的蒸馏，生成一系列较小的学生模型。
+
+这类组合让同一条轨迹先作为策略样本接受奖励，再作为筛选后的示范去监督另一个起点或学生。两种学习信号的目标不同：策略梯度按相对回报改变概率，监督损失按保留的序列提高概率。复用数据时应保留生成和筛选的记录，避免把两个阶段的作用混在一句“经过推理训练”里。表~\ref{tab:nlp-reasoning-learning-signals}按学习信号汇总本章各阶段，而不是给不同论文排总分。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \caption{推理形成各阶段的直接监督与参数来源。表中方法可以组合，收益不能默认相加；推断时搜索不改变参数，不能冒充这些训练阶段。}
+  \label{tab:nlp-reasoning-learning-signals}
+  \begin{tabularx}{\linewidth}{@{}p{24mm}p{38mm}p{36mm}X@{}}
+    \toprule
+    阶段 & 输入与直接监督 & 更新或保留的对象 & 实际作用与未检查的对象\\
+    \midrule
+    领域预训练与中期训练 & 数学与代码文本，下一词元 & 基座参数 & 知识与表达；不判断步骤真值\\
+    冷启动SFT & 整理过的长轨迹 & 策略参数 & 格式与可读性；贡献难以单独分离\\
+    自举与拒绝采样 & 自生成、按答案筛选的轨迹 & 反复SFT，常从基座重训 & 扩展示范；侥幸正确的轨迹被保留\\
+    长思维链蒸馏 & 教师筛选的序列 & 学生参数 & 迁移求解模式；不继承教师全部能力\\
+    推理强化学习 & 同题采样与规则或学习型奖励 & 策略参数 & 改变候选概率；受验证器误判限制\\
+    全场景强化学习 & 规则奖励加帮助性与无害性奖励 & 策略参数 & 兼顾一般偏好；可能牺牲部分推理或知识表现\\
+    \bottomrule
+  \end{tabularx}
+\end{table*}
+
+\subsection{阶段贡献与能力泛化}
+\label{sec:nlp-reasoning-attribution}
+
+若最终模型比基线更强，单个总分不能说明收益来自哪一阶段。检查阶段贡献需要固定模型起点、训练题目、测试题目和推断规则，再逐一增减训练阶段或推断计算。R1报告中的两组对照就是这种设计：同一Qwen-32B起点上比较直接强化学习与蒸馏（第\ref{sec:nlp-reasoning-long-cot-data}小节），在第二阶段比较有无语言一致性奖励。推断时还要固定提示、温度、候选数与验证器；若更强的模型同时使用了更多候选，观察到的变化是模型与推断规则的共同结果，R1-Zero的71.0\%与86.7\%就分别对应单次生成与64候选投票，不能混为一谈。
+
+阶段之间还存在相互作用，收益不能假设可加。冷启动改变了强化学习的起点，使后者能采到的候选不同；强化学习又使多路径采样覆盖更多正确解，改变了拒绝采样所得数据的质量。因此“去掉冷启动后下降了多少”与“只加冷启动提高了多少”通常不相等。对照应声明实际固定了哪些条件，而不是声称完全隔离了全部因素。
+
+泛化检查不只是替换题目中的数字，而要改变约束组合、题型、难度、所需步骤数和语言，区分训练题型内的提升与迁移到新题型的提升。例如在金额题上训练得好的模型，应当在“书打八折、笔满五支减两元”这样改变了条件结构的题目上检查，在只换数字的题目上表现好不能说明学会了条件绑定。题目污染的审计、统计区间与比较协议在第\ref{chap:nlp-evaluation}章统一展开，这里保留的判断是：能力提升必须绑定到未泄露的题目与明确的资源条件。
+
+\subsection{轨迹可靠性与能力保持}
+\label{sec:nlp-reasoning-reliability}
+
+综合检查应同时覆盖答案、关键步骤、语言一致性、指令遵循与安全行为。数学正确率提高时，模型仍可能忽略用户限定的格式或语言，重复冗长的步骤，或在不需要时也长篇推理。R1的报告本身给出了反向的观察：最终R1在指令跟随基准IF-Eval上的严格提示通过率为83.3\%，低于DeepSeek-V3的86.1\%；在中文SimpleQA上为63.7\%，也低于V3的68.0\%，报告把后者归因于安全强化学习后模型更倾向于拒答部分问题。这些观察限制了“所有行为都改善”的说法，也说明第四阶段的全场景强化学习在推理与一般能力之间做了权衡。
+
+需要专门检查的失败有三类。其一是答案提取的投机：在多个位置写出互相冲突的答案，恰好让提取器取对。其二是测试信息泄漏：程序中写入了只对测试用例成立的特判，或题目与答案出现在训练语料中。其三是长度奖励的投机：模型为满足第\ref{sec:nlp-reasoning-overthinking}小节的长度奖励而在难题上过早作答，或为满足软超长惩罚而截短必要的推理。这些失败要求修复检查规则或反馈材料，单纯延长或缩短轨迹不能解决。可读的说明、过程评分与实际执行证据应相互核对，并保留各自未覆盖的部分。
+
+失败定位最终要回到具体的阶段。缺少知识和符号模式时，检查语料与继续预训练；无法遵循求解格式时，检查示范与冷启动；错误轨迹得到奖励时，检查验证器与奖励模型；正确轨迹已在候选中却没有被选中时，检查聚合规则与预算分配。这样的归因需要真实的错误记录，而不能依赖模型对自己失败原因的陈述：模型写出的“我之前错在把笔打折”同样是生成的文本，需要与实际轨迹核对。
+
+\section{本章小结}
+\label{sec:nlp-reasoning-summary}
+
+本章开头的问题是：推理任务的答案可以核验，中间步骤却很少有监督，预训练、轨迹监督、奖励学习与推断计算各自提供什么信号，怎样组合。回到第\ref{sec:nlp-reasoning-challenges}小节的六项挑战，可以收拢本章得到的回答。
+
+步骤监督的成本由三条途径降低：STaR、拒绝采样微调与ReST-EM让模型自己生成并按答案筛选轨迹，EM解释说明这一循环在最大化答对率对数的下界，按题归一化时给难题更大的权重；强教师的长思维链可以蒸馏给学生，强基座上一千条左右的精选数据就能激活长推理；Math-Shepherd用从步骤出发的续写成功率代替人工步骤标签。结果奖励下的信用分配由两个层面部分处理：过程奖励模型为步骤打分，组内相对优势比较同题的多条轨迹，GRPO据此省去价值模型，但一个回答内仍无信用分配，Step-DPO与过程监督的GRPO变体把信号推向步骤。探索不足由动态采样、上界放宽裁剪与熵控制缓解，代价是额外生成与训练题分布的改变。长轨迹的问题由词元级损失、超长过滤与软惩罚、序列级重要性比处理，Dr. GRPO则指出组标准差与长度平均本身引入的偏差。推断计算可以投向并行采样、树搜索与串行长思考，多数投票是对推理路径边缘化的近似，束搜索与MCTS把预算集中到有希望的前缀，计算最优分配按难度为每道题选择策略。验证器的可靠性是所有方法的共同上限：误判直接进入优化目标，规则验证、交叉检查与留出检验只能降低而不能消除这一风险。
+
+这些方法改变的对象不同。预训练改变知识与表达，轨迹监督改变模仿的文本，奖励与强化学习改变已有候选的相对概率，推断计算改变探索与选择的预算。更多训练、奖励或搜索都不自动保证可靠求解：答案正确不保证轨迹可靠，可验证奖励不保证检查完备，更多搜索也可能放大错误的评分。第\ref{chap:nlp-evaluation}章把这些证据放入统一的评测协议，规定在什么题目、信息和预算条件下才能比较推理能力，并报告所得结论的范围。
+
+\paragraph{延展阅读}
+思维链、自一致性与思维树分别改变步骤格式、候选聚合与状态搜索；过程监督与Math-Shepherd给出步骤标签的两种来源；DeepSeekMath与DeepSeek-R1展示了语料构造、GRPO与多阶段组合，DAPO讨论了长思维链强化学习中的探索与长度问题，测试时计算扩展的研究则把预算分配本身作为研究对象。阅读这些工作时，应固定题目、可见信息、答案检查器和总预算，分别记录候选覆盖、选择错误与最终交付，避免把更长的轨迹或更多的采样直接解释为推理能力的提高\scite{nlp-execution-wei2022cot,nlp-llm-selfconsistency2023,nlp-intro-yao2023tot,lightman2023verify,nlp-llm-wang2024mathshepherd,rl5-shao2024deepseekmath,deepseek2025r1,rl5-yu2025dapo,snell2025testtime}。

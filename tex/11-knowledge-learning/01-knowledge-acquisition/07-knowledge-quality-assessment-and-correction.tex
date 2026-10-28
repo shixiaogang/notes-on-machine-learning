@@ -1,0 +1,746 @@
+\chapter{知识的质量评估与修正}
+\label{chap:knowledge-quality-assessment-correction}
+
+前面六章都在讲“\textbf{怎么\emph{取得和融合}知识}”，本章要回答一个更尖锐、却最容易被乐观跳过的问题：\textbf{这些辛苦得到的标签、关系、训练目标，\emph{到底可不可靠}？发现了错又该\emph{怎么修、修完怎么证明确实变好了}}？先用一个贯穿全章的思想实验，把三个\textbf{最常被混淆}的证据概念分开。
+
+设想你有\textbf{一万条}候选标签。一个“风险检测程序”按某条规则（比如模型和标签分歧大）\textbf{挑出其中\emph{一百条}最可疑的}，人工复核后\textbf{确认其中\emph{四十条}确实错了}。面对这个结果，很多人会脱口而出“\textbf{错误率是$40\%$}”，甚至进一步说“整批数据有$40\%$的错”。这两句话\textbf{都不严谨}，请逐句辨析：
+\begin{itemize}\item 你\textbf{真正能说的}只有：\textbf{“在\emph{被选中}的这$100$条里，确认了$40$条错”}，即\textbf{入选样本中的命中率（命中$40\%$）}。它衡量的是“这个检测器\emph{挑得准不准}”。\item 你\textbf{\emph{不能}说的}是：\textbf{其余$9900$条的错误比例}——它们\textbf{根本没按同样条件被检查}（它们是“没被风险规则挑中”的，不代表它们就对），\textbf{整批一万条的总体错误率仍然未知}。\end{itemize}
+第二个区别：\textbf{“检测分数高”不是“这四十条有错”的\emph{依据}}。检测器只是\textbf{喊了一声“这一百条可疑”}，\textbf{真正判定其中四十条错的，是\emph{复核时拿到的独立证据}}（原图、规范、采集日志）。\textbf{线索（signal）}和\textbf{裁决（verdict）}是两件事。
+
+第三个区别出现在“修”之后：就算你把这四十条\textbf{全部改对了}，也\textbf{还不能收工}——必须\textbf{另问一句}：“\textbf{我用来修的这条规则，在\emph{没参与规则设计}的新对象上还成立吗}？”在这一百条上调出来的修正规则，可能只是“\emph{专为这一百条量身定做}”，换一批就失效。
+
+这三个区别\textbf{正是全章的三条主线}，先记住这三句“\textbf{什么\emph{不等于}什么}”：\textbf{重点排查（挑可疑的）\emph{不等于}总体审计（科学抽样推全体）；检测线索\emph{不等于}错误证明（要独立证据裁决）；“改好的结果被复核确认”\emph{不等于}“修正策略在\emph{留出}新数据上有效}”。把这三件事分清，质量改进里的证据才不会被夸大。
+
+再明确\textbf{本章要质检的“对象”有多杂}——它们来自前几章，形态完全不同，因此\textbf{不能用一把尺子（比如一个分类正确率）量到底}：
+\begin{itemize}\item \textbf{任务答案}（第2–4章的类别、数值标签）：这类\textbf{有明确正确答案}，原则上\textbf{可以和独立参考直接比较}对错。\item \textbf{局部结构/关系}（实体框、样本配对等，第5章和第6章）：要\textbf{分别核验两端对象是谁、关系方向对不对、成立条件满不满足}，不是一个“对/错”字能概括。\item \textbf{训练中\emph{生成}的表示目标}（自监督目标、教师软标签等）：它们\textbf{通常\emph{没有}“逐向量标准答案”}——你无法指着神经网络中间某一维说它该等于几；对它们只能\textbf{拆成两件事查}：\textbf{“\emph{构造过程}守没守约定”}（输入对不对、教师版本、变换规则）和\textbf{“\emph{下游用途}有没有用”}（拿它训练后任务有没有变好）。\end{itemize}
+由此自然得到本章的\textbf{两步走逻辑}：\textbf{先确定“要核验的、\emph{可核验}的属性是什么”}——属性没定义清楚，从有限样本算出的任何百分比都没有意义（分母、对错口径都是糊的）；\textbf{再区分“我这是在\emph{发现问题}（挑出具体错例）还是在\emph{估计总体}（推断没查的那一大批）”}——目的不同，抽样方法、修正范围、验证方式全都不同。
+
+本章\textbf{沿用第~\ref{chap:knowledge-fusion}章那张有争议的照片$x_2$作为\emph{连贯的教学案例}}，先把案情再固定一遍：两条\emph{共享同一本旧词典}的规则都报“山茶”，模型报“茶梅”，人工当时尚未请求。在标注版本\textbf{K17}里，规则是“每个有效来源一票、唯一最高票获胜、平票或无票记未决”，于是$x_2$以\textbf{$2:1$被判为山茶}。
+
+但第6章我们已经埋下伏笔：这两票其实\emph{同源}，可能只是一份证据被算了两次。本章的关键动作是——\textbf{我们\emph{不是}因为“来源意见不一致”就凭感觉改标}，而是\textbf{回到\emph{照片本身}和\emph{采集日志}去查}，发现独立证据其实支持“茶梅”，并顺藤摸瓜追到“\textbf{共享词典失效 + 重复计票}”这两个\textbf{系统性根因}。这正示范了“\emph{用证据定位问题，而非用票数压人}”。
+
+还要特别强调这张照片在\textbf{开发流程}里的\textbf{身份}：$x_2$和它的近重复样本\textbf{只用于“讲解 + 开发诊断”}（用它们发现词典问题、设计修正策略），\textbf{\emph{绝不}进入最终的“留出验收总体”}。为什么这么严格？因为\textbf{一旦你\emph{看过}某条数据、又围绕它\emph{设计和调整}了修正规则，它就\emph{失去了当裁判}的资格}——用它再去验收，等于用“做过的考题”报成绩（这条纪律在7.4会反复用到）。
+
+错误的“长相”远不止“标错类别”一种。同一批数据里还可能：\textbf{漏标}（照片里明明有两朵花只标了一朵）、\textbf{对象误配}（把两株不同植物错绑成同一对象）、\textbf{视图错误}（裁剪后只剩背景，却被当成“保留花朵语义”的正样本）。要让这些五花八门的问题\textbf{事后查得清、责任理得顺}，每一份审计报告都必须\textbf{能往回\emph{连接}到五样东西}：\textbf{标注版本、来源路径、抽样设计、参考证据、裁决理由}——这就是“质量\emph{可追溯}”的最低要求。
+
+这里要\textbf{引入第一组需要分清的状态词}，它们\textbf{属于\emph{两个不同的层}，千万不要混用}。
+\begin{itemize}\item \textbf{处理阶段}（流程走到哪了）：一条线索要么是\term{待复核线索}（review lead）——\textbf{只表示“某项检查\emph{提出了怀疑}”，\emph{还没}下质量结论}（它是个待办、一个问号，不是定罪）；要么是“\textbf{已完成}”（复核流程走完了）。\item \textbf{质量结论}（查完到底怎样）：\textbf{正确、错误、部分正确、缺失、不适用、无法裁决}。\end{itemize}
+两个\textbf{反直觉但重要}的点：其一，\textbf{“处理已完成”\emph{完全可以}得出“无法裁决”的结论}——流程走完了不等于一定能判对错；其二，\textbf{“无法裁决”必须\emph{写明原因}并保留}，常见原因是“\textbf{观测/证据不足}”（照片太糊、无参考）或“\textbf{规范本身有歧义}”（两种标注按现行规范都成立）。\textbf{把无法裁决偷偷改成“正确”或“错误”，都会让质量指标系统性失真}。
+
+\section{质量评估依据的建立}
+\label{sec:knowledge-quality-assessment-correction-basis}
+
+\textbf{“算错误率”看似只是数数，其实在“数”之前有三件事\emph{必须先定下来}}，否则同一个数据能算出互相矛盾的“质量”：
+\begin{enumerate}\item \textbf{检查\emph{什么属性}}：这次到底查\textbf{物种对不对、框的位置准不准、还是配对关系成不成立}？这几者是\emph{不同的问题}，混在一起数，分母分子都对不上。\item \textbf{用什么材料\emph{裁决}}：凭什么说一条标签错？必须\textbf{提前准备好能下判断的材料}（原图、规范、独立复标等），不能边查边改口裁判规则。\item \textbf{比例\emph{代表谁}}（抽样范围）：你数出的这个百分比，\textbf{说的是“这一百条”、还是“常见区”、还是“全部一万条”}？范围不划定，一个百分数就没有归属。\end{enumerate}
+这三者合在一起，构成一份\term{审计方案}（audit plan）——也就是对“\textbf{这次审计\emph{查什么}、\emph{怎么判}、\emph{怎么选样}}”的\textbf{事先书面约定}。它的意义在于\textbf{可复现、可追溯}：只有当“检查标准、裁决依据、抽样设计”三者\textbf{彼此对应、且事先冻结}，事后把\textbf{一条条裁决\emph{汇总}起来}，才能得到一个\textbf{“对明确用途有效”的质量结论}；否则只是一堆各说各话的对错。
+
+\subsection{评估标准的确定}
+\label{sec:knowledge-quality-assessment-correction-criteria}
+
+先破除一个想当然：\textbf{“标签栏里填了一个合法物种名”，\emph{远不等于}它满足了用途要求}。一个格式完全正确、拼写无误的“山茶”，可能\textbf{判错了物、可能漏标了同框的另一株花、可能只细到属而任务需要种、还可能用了已废止的旧分类}。所以需要\term{评估标准}（assessment criteria）来\textbf{把模糊的“质量好不好”翻译成“复核者\emph{能逐条照着执行}的具体判断”}。它至少要回答四类问题：
+\begin{itemize}\item \textbf{类别}是否\textbf{符合\emph{任务定义}}（任务问物种就不能用属名充数）；\item \textbf{需要的对象是否\emph{齐全}}（该标的花有没有漏）；\item \textbf{答案是否\emph{细到规定层次}}（要亚种就不能停在种）；\item \textbf{事实和来源版本是否\emph{适用于目标时间}}（旧规范、过期名录不能用于新任务）。\end{itemize}
+这里有\textbf{四个层次\emph{必须分开记录、不能互相顶替}}，因为它们可能一好一坏：\textbf{格式合规}（能不能被系统解析）、\textbf{证据充分}（有没有足够材料下判断）、\textbf{语义正确}（内容到底对不对）、\textbf{下游效果}（拿去训练有没有用）。请\textbf{记住两组反例}：\textbf{能被解析的标签仍可能\emph{错类}}（格式对、内容错）；\textbf{证据很充分的标签也可能据此\emph{判错}}（材料齐全但结论就是错）。至于“\textbf{与参考一致的标签\emph{能否改善训练}}”，那更是\textbf{另一个问题}，必须\textbf{在指定的训练流程和评价样本上\emph{另测}}，标签正确不自动等于训练有用。
+
+\textbf{属性定了，还要定“\emph{一次裁决的\emph{单位}}是什么”}——单位选错，对错就没法一致地记。不同监督信号的裁决单位差别很大：
+\begin{itemize}\item \textbf{单条类别标签}：通常可以\textbf{整体记一次}对/错。\item \textbf{对象检测框}：\textbf{不能整框一刀切}，要\textbf{拆成三件分别查}——\textbf{对象有没有\emph{遗漏}}（该框的东西在不在）、\textbf{边界合不合格}（框得准不准）、\textbf{类别正不正确}。可能“对象对、框偏、类错”三件事同时发生，必须各记各的。\item \textbf{关系}：单位是“\textbf{两个对象 + 方向 + 时间 + 上下文}”这一整套，单看一端无意义。\item \textbf{内容预测目标}（如图像修复）：检查的是“\textbf{重建目标是否仍\emph{对应}被遮蔽的原观测}”。\item \textbf{表示目标}：检查的是“\textbf{训练视图}”和“\textbf{目标\emph{生成分支}}”的条件有没有被违反（见第6章蒸馏）。\end{itemize}
+还有一个常被忽略的情形：\textbf{当任务本身\emph{允许多个正确答案}}（开放集、排序、偏好类任务）时，评估单位\textbf{可以是“答案\emph{集合}、一个\emph{排序}、或一组\emph{偏好关系}”}。这时\textbf{绝不能\emph{未经约定}就强行按“单一类别”去判它错}——人家本来就该有多个解。
+
+用同一个“山茶”标签把四类毛病\textbf{一次看清}：一张写着“山茶”的照片，可能分别\textbf{其一，错了物种（内容错）、其二，漏标了另一株花（不完整）、其三，只到种没到任务要求的亚种（粒度不够）、其四，用了已废止的分类版本（时间不适用）}。这\textbf{四种问题需要\emph{四种不同的依据}}：内容对不对找独立物种判断、完整性查原图、粒度查任务规范、时间查分类版本——\textbf{拿一种证据盖四种问题是盖不住的}。
+
+对象类任务还有个直观例子：\textbf{两张裁剪图即使\emph{来自同一张原图}}，\textbf{只剩背景的那一张}也\textbf{不能算满足“保留花朵语义”}——来源对不等于内容对。表~\ref{tab:knowledge-quality-assessment-correction-criteria}把五类监督信号“\textbf{该找什么参考、该测什么属性}”列成对照表，它最大的用处是\textbf{防止一种偷懒的错误}：\textbf{因为“来源对应正确/格式能解析”，就误以为“语义已经保留、质量过关”}。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begingroup
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{26mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{42mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{47mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
+    \toprule
+    \textbf{监督对象} & \textbf{可能问题} & \textbf{独立参考} & \textbf{可测属性} \\
+    \midrule
+    任务类别 & 错类、强制单解、时效失配 & 原始对象、规范与独立复标 & 参考一致性、错误类型、无法裁决比例 \\
+    局部结构 & 漏标、边界偏移、类别错配 & 原图或原文、对象级规范与独立定位 & 对象召回、边界重合与局部完整性 \\
+    样本关系 & 错配、漏配、方向或条件错误 & 采集标识、对象身份与采集时间 & 错配率、关系覆盖与条件违例率 \\
+    内容预测目标 & 内容泄漏、对象错误、可见范围越界 & 原始观测、遮蔽位置说明与对象对应 & 目标一致性、泄漏率与对象错配率 \\
+    表示目标 & 教师退化、语义被破坏、分组不稳定 & 构造日志、变换条件与冻结的用途评价 & 构造违例、稳定性、覆盖与下游效用 \\
+    \bottomrule
+  \end{tabularx}
+  \endgroup
+  \caption{不同监督信号的质量问题与判断依据。独立参考应与待核验属性相匹配；构造条件检查与下游用途评价分别提供证据，不能用一种结果替代另一种。}
+  \label{tab:knowledge-quality-assessment-correction-criteria}
+\end{table*}
+
+同样一个“不符”，\textbf{严重程度\emph{完全取决于用途}}，要会分级而不是一律当错误：\textbf{错写物种}\textbf{直接改变分类监督}（高严重）；\textbf{别名/格式不统一}可能\textbf{只需做一次接口转换}就能修（低严重，不影响语义）；而\textbf{证据不足}的正确处理是\textbf{记“无法裁决”}（悬置，不是凑一个对错）。还要\textbf{把“范围外对象”\emph{另记为}“不适用”}——它\textbf{既不是缺失、也不是错误}，\textbf{混进错误率或缺失率都会污染分母}（比如一张根本不含花的风景照，谈不上“漏标花朵”）。
+
+最后是“\textbf{规范变更}”带来的判断陷阱：如果\textbf{新规范重新划定了物种边界}，那么新旧标签不一致，\textbf{首先意味着“\emph{评价的尺子（基准）变了}”}，\textbf{不能\emph{据此}就说“旧流程\emph{退化}了”}——它们是在两把尺子下的结果，不构成时间上的优劣比较。为了\textbf{事后还能\emph{恢复}这些判断条件}，数据应\textbf{保存样本组成、采集方式、处理过程、用途和维护背景}（这也是数据文档/datasheet 的作用）\scite{gebru2021datasheets}。
+
+\subsection{参考依据的建立}
+\label{sec:knowledge-quality-assessment-correction-reference}
+
+“查物种”这件事定了，下一个问题更关键：\textbf{\emph{凭什么}材料，才足以\emph{推翻}或\emph{保住}原标签}？注意，这里要的是\textbf{能\emph{裁决}该属性的“材料 + 程序”}，而\textbf{\emph{不是}“再多投一票”}。\term{参考依据}（reference evidence）因此被定义为：\textbf{用于下结论的\emph{证据}（原始采集日志、原始照片、独立复标结果、专家裁决、或一个可自动执行的检查）以及配套的\emph{判定程序}}。它和“又找个人标一遍”的根本区别是：\textbf{它要\emph{独立于}原标签}。
+
+实践中最能保证独立性的程序叫\term{盲化复标}（blind re-labeling）：\textbf{复核者先\emph{只看}原始对象（照片）和当前规范}，\textbf{\emph{刻意不看}原标签写了什么、模型建议什么、置信分数多少}，先\textbf{独立写下自己的判断并\emph{保存}}；\textbf{然后}才把原标签、模型建议等冲突信息连同证据\textbf{展示给他对照}。为什么要这样排序？因为\textbf{人一旦先看到一个“貌似合理”的答案，判断会被它\emph{锚定、牵引}}——先入为主地为原答案找理由；先独立、后对照，才能\textbf{最大限度减少原答案对新判断的污染}。
+
+但要清醒：\textbf{盲化只\emph{隔离了“已有答案}”，并\emph{不保证}复核者用的是\emph{独立的信息来源}”}。这是两种不同的独立：他可能没看原标签，却\textbf{仍然和原标注者\emph{查了同一本错误名录}}；模型和人工也可能\textbf{共用同一本\emph{过时}名录}（回到第6章“来源相关”）。因此参考裁决报告必须\textbf{把这几样都\emph{存下来}}：\textbf{证据\emph{来源}}（查了哪本名录/哪个库）、\textbf{适用\emph{时间}}（名录版本、新旧）、\textbf{人员\emph{角色}}（初标/复核/专家）、\textbf{冲突\emph{意见}}（各方当时怎么看）、\textbf{裁决\emph{理由}}（最后凭什么定），这样裁决才可追溯、可二审。
+
+两条“不要硬来”：当\textbf{规范本身\emph{允许多解}}时（一张照片确实既像A也像B），应\textbf{保留答案集合或“成立条件”}，而不是逼一个唯一标签；当\textbf{材料不足}时，保留\textbf{无法裁决}。\textbf{强行让每条都只剩一个标签，等于把“\emph{没解决的歧义}”\emph{偷偷藏进}参考集}——表面干净，实则埋下隐患。
+
+一个例子能说明“\textbf{证据}推翻答案”和“\textbf{票数}推翻答案”的差别。原标签、模型建议\textbf{居然\emph{都}说是山茶}（多数票一边倒），但\textbf{采集编号（照片和实物植株的绑定记录）却\emph{指向另一株植物}}。复核者按盲化流程：\textbf{先看照片和同株植物的其他视图\emph{独立}判断}，再\textbf{调采集日志}，最终发现是\textbf{照片在“写回数据库”时\emph{对象错配}}（照片被挂到了错误的植株条目下）。
+
+请注意\textbf{推翻原结果的\emph{不是}“第三票”}——票数明明是二比零支持山茶；真正推翻它的是\textbf{一条\emph{独立的对象证据}}（采集绑定）。这再次呼应章首“检测线索并不等于错误证明、票数并不等于真相”。同时也要谦虚：\textbf{参考标签/复核结论\emph{自己也可能出错}}（复核者也会看走眼、名录也会错），所以对\textbf{高风险结论可以安排\emph{二次复核}}，并且\textbf{始终保留“能\emph{回到原始材料}重新查”的路径}，而不是只存一个最终结论。
+
+类别标签可以请专家“再看一眼判对错”，但\textbf{第5、6章里那些\emph{表示向量/模型生成目标}，通常\textbf{\emph{根本没法}交给专家“逐维判对错”}}——没人能看着一串浮点数说“第7维应该是$0.31$”。对这类目标，参考依据要\textbf{换成“查\emph{生成过程守不守约定}}”，可查的是：
+\begin{itemize}\item \textbf{视图/输入}：两张视图是否\textbf{确实来自同一对象}、有没有泄漏；\item \textbf{变换}：裁剪/变色等变换\textbf{是否保留了任务所需语义}（如裁剪后花还在不在）；\item \textbf{时间顺序}：用到序列/视频时，时间关系合不合规；\item \textbf{教师分支生成}的目标：查\textbf{教师模型版本、学生可见的输入、更新规则}（教师有没有看到学生看不到的信息、是不是冻结的）。\end{itemize}
+但要\textbf{严格区分这两类证据\emph{各自能回答什么}}：上面这些\textbf{只回答了“\emph{构造过程}有没有遵守约定”}，它们\textbf{\emph{没有}回答“\emph{拿去学习}有没有\emph{受益}}”。\textbf{构造合规 并不等于 训练有用}。后一个问题（学了到底好不好）必须\textbf{固定下游任务、使用方式、评价样本集，\emph{另行}做对比实验}，不能用“生成日志齐全”冒充“效果良好”。
+
+\subsection{审计样本的选择}
+\label{sec:knowledge-quality-assessment-correction-sampling}
+
+回到章首那一百条：\textbf{那种“挑最可疑的”选法，只适合回答“\emph{预算有限，先查哪里最可能有问题}}”（\textbf{提高找到错误的\emph{效率}}），但它\textbf{在统计上\emph{没有资格}回答“一万条\emph{整体}有多少错”}——因为它\textbf{故意}把样本往可疑处偏，入选概率既不相等也未知，无法反推全体。于是需要把两种目的\textbf{明确分成两类审计}：
+\begin{itemize}\item \term{总体审计}（population audit）：\textbf{用\emph{已知的概率机制}选样}（每条被抽中的概率都明确、为正），目的是\textbf{用样本\emph{无偏地推断}指定总体的错误率}——回答“整体质量怎样”。\item \term{重点排查}（targeted inspection）：\textbf{把有限预算\emph{集中}投给冲突大、损失高、影响面广的对象}，目的是\textbf{尽快\emph{捞出}具体问题}——回答“先修哪条”。\end{itemize}
+两者的\textbf{分界线（也是能否推总体的硬条件）}是：\textbf{要估计全体，抽样框（你打算代表的那批对象）里\emph{每一条相关样本}都必须有\emph{正的入样概率}}（这样每一条都“有机会被代表”，才能加权还原总体）。\textbf{重点排查\emph{可以}违反这一条}（它可以让大多数对象入样概率为0、专挑可疑的），\textbf{但代价是：它算出的错误率\emph{只能描述“入选范围}”，\emph{不能}外推到总体}。
+
+要把“入样机会”量化，设目标总体$U=\{1,\ldots,N\}$，实际抽出的样本集为$S\subseteq U$，每条对象$i$的\term{入样概率}（inclusion probability）记为$\pi_i=\mathbb{P}(i\in S)$——即“在这套抽样方案下，对象$i$有多大概率被选中审计”。最朴素的\term{简单随机无放回抽样}（simple random sampling without replacement）（抽$n$条、抽过不放回）下，\textbf{每个对象的入样概率都相等}$\pi_i=n/N$，因此样本里的错误率可以相当直接地代表总体。
+
+但等概率抽样在数据\textbf{不均匀}时很浪费或不公平（稀有类可能一条都没抽到），于是有两种常见的“成结构”抽样：
+\begin{itemize}\item \term{分层抽样}（stratified sampling）：\textbf{先按某个\emph{已知}特征（类别、来源、时间段、风险等级）把总体切成若干\emph{互不重叠、合起来覆盖全体}的“层”}，\textbf{再在\emph{每一层内部}随机抽}。好处是\textbf{保证每一层（尤其少数类）都有样本、估计更准}。\item \term{整群抽样}（cluster sampling）：当“同组对象绑在一起”更自然时（同一文档的句子、同一用户、同一批次），\textbf{先\emph{随机抽簇}（抽文档/用户/批次），再\emph{检查被抽中簇内}的所有（或再抽样）样本}。\end{itemize}
+一个\textbf{关键纪律}：为了让少数类估计更准，你\textbf{可以\emph{故意多抽}稀有层}（不等概率），但\textbf{必须\emph{如实保存每个对象实际的入样概率}}——这样汇总时\textbf{才能给“被过量抽取的组”\emph{压低权重}}，否则\textbf{多抽的那组会在总体估计里\emph{占据虚高的份额}}（稀有组看着错误很多，其实只是被你抽得多）。
+
+图~\ref{fig:knowledge-quality-assessment-correction-audit-sampling}把\textbf{同一个教学总体}\textbf{分别}送进这两种审计，\textbf{读图时\emph{不要}数谁挑得多，要比“被挑中对象的\emph{组成}”}：
+\begin{itemize}\item \textbf{左侧（分层随机审计）}：每个形状（层）都\textbf{按\emph{层内概率}被均匀代表}（保留了各层的真实比例$\pi_h=n_h/N_h$），所以它的结果\textbf{能\emph{按设计}推回总体}。\item \textbf{右侧（高风险重点排查）}：\textbf{选择条件\emph{主动}把可疑对象（叉号）的占比\emph{抬高}}——它\textbf{捞出叉号（错误）的效率更高}，但\textbf{样本组成已被人为改变}，不能再说它代表总体。\end{itemize}
+同一张图、同一堆对象，仅因“怎么选”不同，一个能推总体、一个只能用于排查——这就是两种审计的直观对照。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/11-knowledge-learning/01-knowledge-acquisition/tikz/knowledge-acquisition-ch07-audit-sampling.tex}
+  \caption{总体审计与重点排查的抽样差异。两个面板复用同一教学总体，形状表示分层，叉号表示实际存在但抽样前未知的错误。左侧在每层随机入样并保存$\pi_h=n_h/N_h$，可按设计估计总体；右侧按冲突分数超过阈值优先选择，能提高排查命中，却改变了样本组成。图中点数仅用于说明选择机制，不按真实总体规模绘制。}
+  \label{fig:knowledge-quality-assessment-correction-audit-sampling}
+\end{figure*}
+
+下面用一个\textbf{可亲手复算}的教学例子，看清“\textbf{为什么\emph{多抽}了重点层、汇总时反而要给它\emph{更小}权重}”。设独立验收总体含常见类别$N_1=800$条、茶梅易混淆区域$N_2=200$条，不含开发对象$x_2$及其近重复样本标注。用于比较的K17和K18配置均在本次抽样前冻结，这里先看K17。两层独立进行简单随机无放回抽样，分别审计$n_1=80$条和$n_2=40$条，全部可裁决，确认K17的错误数为$4$和$8$。两层错误率为$\widehat p_1=0.05$和$\widehat p_2=0.20$，按总体占比$W_1=0.8,W_2=0.2$汇总得到$\widehat p_{\mathrm{st}}=0.08$。现在\textbf{对比三种算法，它们在同一批数据上给出三个不同的数}，务必分清各自在回答什么：
+\begin{itemize}\item \textbf{直接把样本错误数除以样本数}$12/120=0.10$：\textbf{错}。它\textbf{默认每个抽中的样本权重相同}，但易混淆区被\emph{过量抽取}了（实际只占总体两成，却占了样本的$1/3$），于是\textbf{把问题严重的重点区\emph{看得过重}}，高估了总体。\item \textbf{把两层错误率\emph{简单平均}}$(0.05+0.20)/2=0.125$：\textbf{也不是总体错误率}。它回答的是“\textbf{一个‘两层\emph{等权}’的平均质量}”——即“随便选一个层、再在层里随便看”，\textbf{让只占两成的重点层和占八成的常见层\emph{平起平坐}}，\emph{高估得更厉害}。\item \textbf{按总体占比加权}$\widehat p_{\mathrm{st}}=0.8\times0.05+0.2\times0.20=0.08$：\textbf{这才是“\emph{总体}里有多少比例错”的无偏估计}。\end{itemize}
+直觉口诀：\textbf{权重只由“\emph{这一层在总体里占多少}”决定，\emph{不}由“你在这一层抽了多少}”决定。这些数字都是教学构造（且该独立验收总体\textbf{不含}$x_2$及其近重复样本），后面7.4还会用\textbf{同一批独立样本}比较K17、K18两个版本。
+
+抽样里还有一个\textbf{容易被统计术语绕晕、但必须先分清的前提}：你\textbf{要估计的，到底是“\emph{一份\emph{已经存在}的固定名单}的质量”，还是“\emph{未来\emph{还没出现}的新对象}的质量”}？这两者的“随机性来自哪”完全不同，结论的适用范围也不同。\textbf{第一种：固定名单}。这份名单里\textbf{每条标注的对错在抽样前就已经\emph{客观确定}}（要么对要么错，只是你不知道），所以\textbf{随机性\emph{唯一}来自“这一轮\emph{抽中了哪些编号}}”——这是一种“对固定有限总体的抽样推断”，结论只对这份名单负责。这里要注意\textbf{抽样单位（簇）}：
+\begin{itemize}\item 如果你确实是\textbf{按“全体\emph{样本}编号”简单随机抽}，那么哪怕同一文档内的句子共享来源和上下文，只要它们各自被独立编号、独立入样，仍可对这份有限总体做标准推断。\item 但如果流程是\textbf{先抽“\emph{文档}}”、再审被抽中文档里的句子，那么\textbf{文档才是第一阶段的\emph{抽样单位}}，句子只是簇内单元；这时\textbf{方差计算和重抽样都\emph{必须保留这个“先文档、后句子”的簇结构}}，把句子当独立样本会\textbf{严重低估}不确定性（同文档句子高度相关，没那么多独立信息）。\end{itemize}
+两个适用边界要记住：其一，\textbf{这种“固定名单”推断\emph{不会自动}告诉你“\emph{未来新文档/新照片}”的质量}——名单外是另一个总体；其二，\textbf{近重复照片、同一用户标的大量数据、同一批次生成物，\emph{不能}因为“条数多”就当成“同样多份\emph{独立}证据}”（它们高度相关，呼应第6章$\rho$和来源依赖）。
+
+最后是“\textbf{到底审多少条}”的样本量问题——它\textbf{不是拍脑袋，也不是越多越好}，而要同时联系四件事：\textbf{其一，允许的估计误差}（你能接受多宽的区间，要求越精样本越多）、\textbf{其二，需要\emph{单独}报告的分组}（每个组都要有足够样本，少数类往往要加抽）、\textbf{其三，预期错误率}（错误越稀少，要抓到足够错误所需样本越多）、\textbf{其四，复核成本}（每条复核都花钱）。这里有个反直觉点：\textbf{只按总体固定比例抽取，\emph{不保证}少数类别能攒够证据}——一个占$0.5\%$的稀有类，哪怕抽$1000$条也可能一条没有。
+
+还有一个\textbf{“无响应/没查成”陷阱}：\textbf{抽中了但\emph{没能完成复核}的对象，也必须\emph{保留在记录里}}，不能默默删掉。因为\textbf{往往\emph{难例}更容易“无响应”}（太糊、太难、专家没空判），如果你\textbf{把没查成的删掉}，留下的就\textbf{系统性偏向“\emph{容易判}”的样本}，错误率被人为压低。最后澄清两类审计能否合并：\textbf{概率审计和重点排查可以\emph{同时并行}做，但要\emph{分别标明用途}}；只有当你\textbf{给“合并样本”也\emph{建立了覆盖目标总体的入样机制和配套估计量}}时，才能把它们\emph{合并进同一个推断}——\textbf{绝不能图省事直接把“重点排查的错误数”加到“随机审计的错误数”上、分母也直接相加}（两者抽样机制不同，相加就是把选择性偏差掺进总体估计）。
+
+\section{知识质量的测量与估计}
+\label{sec:knowledge-quality-assessment-correction-measurement}
+
+审计样本拿到手、复核也做完，接下来是\textbf{“把\emph{证据}变成\emph{数字}”}的两步：\textbf{先把每条证据落成一个\emph{单条裁决}}（这条到底是对、错、还是无法判），再把单条裁决\textbf{汇总到“分组”和“总体”}。这里有两个\textbf{性质完全不同}的结论，必须在脑子里分开：
+\begin{itemize}\item \textbf{\emph{直接核验}}：在当前参考依据下，\textbf{确认\emph{某一条具体标注}有错（或对）}。这是\textbf{针对个体的“事实认定”}，审过才有，确定。\item \textbf{\emph{有限样本估计}}：\textbf{只查了\emph{一部分}样本，却要\emph{推断没查的那一大批}的错误比例}。这是\textbf{从样本到总体的“统计推断”}，\textbf{依赖你\emph{怎么选的样}}，天然带不确定性、可能偏。\end{itemize}
+正因为后一种结论\textbf{依赖选样方式}，所以\textbf{报告任何比例时，都不能只甩一个百分数}，必须\textbf{同时给出}：\textbf{分母是谁}（哪批对象、哪个范围）、\textbf{标注版本}、\textbf{有效裁决数}（多少条真的判出了对错）、以及\textbf{无法裁决的比例}。离开这四样，一个“错误率$8\%$”无法被解释、也无法复算。
+
+\subsection{样本级质量的测量}
+\label{sec:knowledge-quality-assessment-correction-item-measurement}
+
+一次单条审计要\textbf{备齐四类材料}：\textbf{待审标注本身、原始对象、任务规范、参考证据}；产出的审计结论则要\textbf{分字段记录}：\textbf{处理阶段}（待复核/已完成）、\textbf{质量结论}、\textbf{问题类型}、\textbf{严重程度}、\textbf{证据}。这种结构化记录是为了后面能\emph{按问题类型汇总、按版本追溯}，而不是一句“这条有问题”。
+
+怎么判，要\textbf{先固定“\emph{评价单位}”和“\emph{计分规则}”}，否则对错数会随心情变：
+\begin{itemize}\item \textbf{单一物种答案}：通常直接判\textbf{正确/错误}。\item \textbf{含多个待测属性的结果}：需要“\textbf{部分正确}”这个档——\textbf{结构化标注要把“对象、边界、类别、关系”\emph{拆开}各判各的}。典型例子：\textbf{一个花卉框\emph{位置（边界）对}、但\emph{物种}错}，这两个结论\textbf{必须\emph{分别保存}}，不能合成一个“对”或“错”。\end{itemize}
+算二值错误率\textbf{之前}，要先白纸黑字写死计分规则，比如规定“\textbf{对象存在、边界、类别\emph{全部}合格才记这一条正确}（任一出错即错）”。\textbf{切忌事后把“部分正确”\emph{临时}折算成“半个错误}”——折算规则必须\emph{事先}定，不同任务不可通用。\textbf{缺失、不适用、无法裁决}这三类\textbf{要按\emph{预定的分母口径}单列}，\textbf{既不强填成“正确”、也不强填成“错误}”（填正确会掩盖漏洞，填错误会冤枉“证据不足”的样本）。
+
+如果一条标注给的不是硬类别、而是\textbf{一整个类别概率分布$\bm{q}_i$}（比如融合/教师软标签），那么\textbf{只挑“最高概率那个类”判对错，会\emph{丢掉}“概率\emph{怎么分配}}”的信息——两个都把最高分给山茶的标注，可能一个$(0.9,0.1)$很笃定、另一个$(0.51,0.49)$很犹豫，硬判都“对”，却完全没有区别。所以要评价概率本身的质量。设$Y=\{1,\ldots,K\}$，$\bm{q}_i=(q_{i,c})_{c\in Y}$且$q_{i,c}\geq0,\ \sum_cq_{i,c}=1$，独立参考给出的真实类别为$y_i$。设$Y=\{1,\ldots,K\}$，样本标注$i$给出类别概率$\bm{q}_i=(q_{i,c})_{c\in Y}$，其中$q_{i,c}\geq0$且$\sum_cq_{i,c}=1$，独立参考类别为$y_i$。对数损失（log loss）$-\log q_{i,y_i}$惩罚给实际类别过低的概率，概率为零时损失为无穷；\term{Brier评分}（Brier score）$\sum_{c\in Y}(q_{i,c}-\mathbf{1}\{y_i=c\})^2$则计算概率向量与实际类别指示向量的平方距离，其中指示函数在$y_i=c$时为1，其余为0。读懂这两个分数的\textbf{不同脾气}：
+\begin{itemize}\item \textbf{对数损失}：\textbf{对“\emph{把真实类概率压到极低}”惩罚极重}——若$q_{i,y_i}=0$，损失是$+\infty$（你断言真类不可能，错得无可挽回）；它\textbf{无界}，越自信地错、罚得越狠，因此鼓励“\emph{没把握别押死}”。\item \textbf{Brier 评分}：本质是\textbf{概率向量与“真值独热向量”的\emph{平方欧氏距离}}，它\textbf{有界}（二分类时在$0$到$2$之间），更温和、对异常值不那么敏感。\end{itemize}
+两者都是\textbf{越小越好}。为什么它们能“逼”模型说真话？因为它们属于\term{严格适当评分规则}（strictly proper scoring rule）：有一个很漂亮的性质——\textbf{当你\emph{确实知道}真实条件分布时，\emph{唯一}能让期望分数最小的做法，就是\emph{如实}报出这个分布}；任何系统性地夸大、押注都会在期望上吃亏\scite{gneiting2007scoring}。所以用它们评软标签，不是只看“中没中”，而是看“概率分配诚不诚实”。
+
+但单条分数再低，也\textbf{回答不了另一个更宏观的问题——\term{概率校准}（probability calibration）}：\textbf{你\emph{一批}预测里报出的概率，\emph{整体上}和这些事件\emph{实际发生的频率}对得上吗}？“这次$0.8$对了”没有意义，校准永远是\textbf{对“\emph{一组}报了相同概率的预测”做统计}。\textbf{校准检查的第一件事是“\emph{先指定你说的是哪个事件}}”，因为“$0.8$”可以指两种完全不同的事件，混淆它们会得到错误结论：
+\begin{itemize}\item \textbf{查“最高分决策”对不对（\emph{置信度/精度}校准）}：把所有“\textbf{预测类的最大概率约为$0.8$}”的样本聚成一组，核对其中“\textbf{预测\emph{正确}}”的比例是否约$0.8$。这里事件是“\emph{我的最高票答案中没中}”。\item \textbf{查“某个\emph{固定类别}}”：把所有“\textbf{分给\emph{茶梅}}的概率约$0.8$”的样本聚成一组，核对其中“\textbf{真实类别\emph{就是茶梅}}”的比例是否约$0.8$。\end{itemize}
+\textbf{这两种分组、两个事件\emph{不一样}}：\textbf{前者成立（置信度校准好），\emph{不代表}每个类别的概率都已校准}（可能某类系统性高估、另一类低估，平均后最高分仍看似准）。要全面校准，得\emph{逐类}做第二种检查。概率是连续值，实践中把它\textbf{按\emph{事先约定}的概率区间}分桶（如$[0,0.1),[0.1,0.2),\ldots$），每桶报告“桶内平均预测概率 vs 实际频率”，并\textbf{同时报告每桶\emph{样本数}和\emph{不确定性}}（只含3条的桶，频率再准也不可信）。一个\textbf{不可妥协的数据纪律}：这些校准检查\textbf{必须用\emph{没参与}概率拟合/温度缩放/调参的\emph{独立评价}样本}——在调参用的数据上检查校准，结论天然偏乐观\scite{guo2017calibration}。
+
+这里要给一组\textbf{“\emph{不是}质量裁决”的常见信号}正名，它们最容易被误用：\textbf{模型置信度低、损失高、来源之间分歧大}——这些\textbf{都\emph{不能直接}判定这条标签错}，它们\textbf{只能\emph{触发一次复核}}（把它排进待查队列），但\textbf{无法\emph{独立}回答“原标签/约束到底对不对}”（模型可能自己错、高损失可能只是样本罕见，见第6章和7.3）。两个同理的区分：\textbf{文件字段齐全 到 只能记“格式合规”}（不代表内容对）；\textbf{多个来源一致 到 只能记“意见\emph{一致}}”（不代表一致地对，它们可能共享同一错误）。
+
+总原则一句话：\textbf{每一个状态都必须\emph{对应明确的证据}}；而\textbf{“无法裁决”的样本，\emph{不能}为了让数字好看就\emph{悄悄从分母里删掉}}。
+
+对那些\textbf{“构造类”目标（样本关系、恢复/表示目标）}，样本级测量要\textbf{诚实——只\emph{报告可观察、可核对的条件}，\emph{不编造}无法核对的对错}。各类能直接查的条件是：
+\begin{itemize}\item \textbf{正对应关系（配对/正样本）}：核对\textbf{对象标识是否一致}（两张视图是否真属同一对象）、\textbf{变换有没有越界}（裁剪有没有把配对破坏）。\item \textbf{内容恢复目标}（如图像补全）：核对\textbf{重建目标是否确实来自“被遮蔽的那部分”}（不能用别处可见内容冒充）。\item \textbf{表示目标}（蒸馏提示）：核对\textbf{教师版本是否存在、表示有没有\emph{退化成常数}}（所有样本提示都一样＝没信息，见第6章FitNets）。\end{itemize}
+\textbf{如果根本没有“逐向量标准答案”可比，就\emph{不要}硬贴一个“表示正确/错误”的标签}——那是无法裁决的构造问题；它的\textbf{“下游到底有没有用”应\emph{留给独立的用途评价}}（在下游任务上实测），两层不互相冒充。
+
+\subsection{数据集与分组质量的估计}
+\label{sec:knowledge-quality-assessment-correction-dataset-estimation}
+
+要把一条条状态\textbf{汇总成数据集级指标}，第一步是\textbf{用四个$0/1$开关，把“一条标注所处的\emph{状态}”\emph{拆开}记录}，避免“没采到、判不了、缺失、错误”被混成一锅。对样本$i$定义：
+\begin{itemize}\item $a_i=1$：\textbf{取得}了候选标注（这条进了我们实际拿到的集合）；\item $j_i=1$：这条监督信号\textbf{\emph{可裁决}}（证据够，能判对错）；\item $e_i=1$：裁决\textbf{确认它与参考\emph{不一致}}（即确认有错）；\item $m_i=1$：\textbf{任务\emph{要求}有这条监督信号、它却\emph{缺失}}。\end{itemize}
+
+这四个开关怎么组合，\textbf{决定了不同指标的\emph{分子分母}，最容易出错的就是“分母放谁}”：
+\begin{itemize}\item \textbf{错误标志$e_i$只在“\emph{已取得}$a_i=1$\textbf{且}\emph{可裁决}$j_i=1$”的标注上计分}。\textbf{没取得、或无法裁决的，\emph{不能}按“错误=$0$”处理}——它们不是“判对了”，只是“这次没结论”，塞进去会人为压低错误率。\item \textbf{条件错误率}：分母是“\textbf{取得\emph{且}可裁决}”的标注（在“能下结论的”里有多少错）。\item \textbf{缺失率}：分母是“\textbf{任务要求\emph{本应}有该信号的\emph{总体}}”（该有的里面缺了多少），跟错误率分母不同。\item \textbf{获取覆盖率}：还得\textbf{先选口径}——“\emph{有任意一类票}”算覆盖、“\emph{可裁决}”算覆盖、还是“\emph{达到接收阈值}”才算覆盖？\end{itemize}
+一句话：\textbf{分母一改，你回答的就是另一个问题}。所以\textbf{绝不能只甩一个光秃秃的“$8\%$”而不写口径}——同样$8$条错，除以“可裁决的$100$条”和除以“应有的$125$条”是两个完全不同的结论。
+
+表~\ref{tab:knowledge-quality-assessment-correction-metrics}把\textbf{五个常用指标的“分子 / 分母 / 汇总时还要别报什么”}一次列清（覆盖条件下错误率、总体缺失率、获取覆盖率、关系错配率、构造违例率）。读这张表要抓一条：\textbf{这些指标\emph{描述的是不同对象}}——类别错误说的是答案、关系错配说的是两端对象和方向、构造违例说的是生成条件，它们\textbf{应当\emph{并列}报告，让读者看到各自的短板}，而\textbf{\emph{不应}加权相加成一个“含义不明的\emph{总分}}”（把“类别错$3\%$”和“关系错$5\%$”加成“$8\%$”没有物理意义，还会互相掩盖）。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begingroup
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{29mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{43mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{44mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
+    \toprule
+    \textbf{指标} & \textbf{分子} & \textbf{分母} & \textbf{汇总时另报} \\
+    \midrule
+    覆盖条件下错误率 & 已获得且经参考确认错误的监督信号 & 已获得且可裁决的监督信号 & 无法裁决比例、参考标准与版本 \\
+    总体缺失率 & 任务要求但未取得监督信号的对象 & 总体中应获得监督信号的对象 & 完全遗漏区域与不适用对象 \\
+    获取覆盖率 & 达到所选接收条件的对象 & 目标总体中的适用对象 & 任意类别票、可裁决或可用的接收口径 \\
+    关系错配率 & 对象、方向、时间或条件错误的关系 & 已声明且可核验的关系 & 关系单位与共享对象的依赖 \\
+    构造违例率 & 违反已声明生成条件的目标或关系 & 具备检查条件的已生成对象 & 变换、教师、批次与构造版本 \\
+    \bottomrule
+  \end{tabularx}
+  \endgroup
+  \caption{质量指标的分子、分母与汇总范围。未知、不适用和无法裁决状态应单列；表中指标可以并列报告，但类别错误、关系错配和构造违例描述不同对象，不能相加成含义不明的总分。}
+  \label{tab:knowledge-quality-assessment-correction-metrics}
+\end{table*}
+
+为了先把“\textbf{怎么从样本错误率\emph{无偏}地估总体}”讲清楚，本小节\textbf{先做一个简化限定}：只考虑“\textbf{每条\emph{都有}候选标注、且\emph{都能}按同一套二值规则裁决}”的适用样本（即暂时令$a_i=j_i=1$、没有无法裁决的情形）。\textbf{“无法裁决怎么办”这个更麻烦的情形，\emph{留到下一小节}单独处理}——先在干净情形下建立估计量，再处理复杂口径。\textbf{简单随机抽样}时，直觉也成立：\textbf{用样本里错误指示的均值，就能估总体错误率}（每条权重相同）。但\textbf{分层（且各层\emph{不等比例}抽取）时，不能直接平均}——因为样本的层比例被抽样改变了，必须\textbf{把各层“\emph{恢复}回它在总体里的真实份额}”再加权。设互不重叠的$H$层\textbf{覆盖整个总体}，第$h$层总体有$N_h$条、占比$W_h=N_h/N$，在该层随机审计$n_h>0$条、样本索引集$S_h$，层内错误率$\widehat p_h$为层内$e_i$的均值。设互不重叠的$H$层覆盖总体，第$h$层有$N_h$条，随机审计$n_h>0$条，样本索引为$S_h$，总体权重$W_h=N_h/N$。层内先求均值，再按总体权重相加，得到
+\begin{equation}
+  \widehat p_{\mathrm{st}}
+  =
+  \sum_{h=1}^{H}W_h\widehat p_h,
+  \qquad
+  \widehat p_h
+  =
+  \frac{1}{n_h}\sum_{i\in S_h}e_i.
+  \label{eq:knowledge-quality-assessment-correction-stratified-rate}
+\end{equation}
+再强调一次权重的来源：\textbf{$W_h$由“第$h$层在\emph{总体}里占多少条”决定，\emph{不}由“你在该层\emph{抽了}多少条”决定}——这就是前面教学例得到$8\%$（而非样本直算的$10\%$）的原因。
+
+算出分层错误率后，\textbf{怎么\emph{用}它做决策也有讲究}：如果验收要求是“\textbf{每个类别（层）都要达标}”，就必须\textbf{把\emph{各层}$\widehat p_h$\emph{分别}与该组标准比}，\textbf{一层不达标就是不达标}；\textbf{不能只看“\emph{按类等权}平均”的总错误率}——平均可能\textbf{被表现好的大类拉下来，\emph{掩盖}某一小类严重不合格}（这和6.6帕累托、6.8分别报告各任务是同一种纪律）。
+
+分层估计量解决了“层间比例失衡”，但还有一种更一般的失衡：\textbf{如果\emph{每条对象}的入样概率$\pi_i$\emph{彼此不同}}（重点排查、不等概率抽样时必然如此），那\textbf{直接把抽中样本的错误率平均，会\emph{偏向}那些“\emph{更容易被选中}}”的对象——常被抽中的类，无论对错都被反复代表，估计就歪了。针对上面那个“都可二值裁决”的总体，在\textbf{总体规模$N$已知、且\emph{每条}对象入样概率$\pi_i>0$}的前提下，\term{Horvitz--Thompson 估计}（Horvitz--Thompson estimator，霍维茨–汤普森）用一个极简洁的想法纠偏：\textbf{每一条“被抽中”的错误，都\emph{除以它自己的入样概率}$1/\pi_i$}——\textbf{越难被抽中的对象（$\pi_i$小），一旦被抽中、就“\emph{以一当多}”，\emph{补偿}它代表的那一大群没被抽中的同类}；最后再除以总体规模$N$归一化：
+\begin{equation}
+  \widehat p_{\mathrm{HT}}
+  =
+  \frac{1}{N}
+  \sum_{i\in S}\frac{e_i}{\pi_i}.
+  \label{eq:knowledge-quality-assessment-correction-ht-rate}
+\end{equation}
+为什么除以$\pi_i$恰好纠偏？关键恒等式是
+$$\mathbb{E}\!\left[\mathbf{1}\{i\in S\}\frac{e_i}{\pi_i}\right]=\frac{e_i}{\pi_i}\mathbb{P}(i\in S)=\frac{e_i}{\pi_i}\pi_i=e_i.$$
+也就是说：\textbf{固定总体里每条对错（$e_i$已定），只对“抽不抽中”取期望，被抽中时乘的$1/\pi_i$正好和入样概率$\pi_i$抵消，\emph{还原出这条错误在总体里本应有的贡献}$e_i$}。这就是“无偏”的来源。
+
+但它有\textbf{三条必须知道的边界}：其一，\textbf{依赖\emph{准确已知}的设计概率$\pi_i$}——$\pi_i$是多少必须来自抽样设计本身，估错了纠偏也错；其二，\textbf{抽样框\emph{漏掉}的区域$\pi_i=0$}（那些对象从一开始就不可能被抽中），\textbf{再怎么给其他样本加大权重也\emph{补不回来}}——权重只能补偿“有机会被抽中但没中”的，补不了“根本不在框里”的；其三，\textbf{某\emph{一次}抽样算出的估计\emph{可能落在$[0,1]$之外}}（比如超过100\%），\textbf{不必惊慌也别截断}——\textbf{“无偏”是“\emph{反复按同一设计}抽样、估计值平均等于真值”的性质}，\textbf{不是“每一次估计都落在合理范围”的保证}。另外，如果\textbf{连总体规模$N$（分母）也未知}，可改用\term{比率估计}（ratio estimator，加权错误数/加权样本数），但那\textbf{是（近似）无偏的比值，\emph{不能}沿用这里“精确无偏”的解释}。该构造来自 Horvitz 与 Thompson\scite{knowledge-quality-assessment-correction-horvitz1952}。
+
+最后一个\textbf{名字像质量指标、其实很弱}的量：\term{来源一致率}（source agreement rate）只描述“\textbf{两个来源给出\emph{相同}结果的\emph{频率}}”。它\textbf{\emph{不是}正确率}，两个反例要记住：\textbf{没有独立参考时，两个来源可能\emph{一致地一起错}}（共享同一错误名录/模板，呼应第6章$\rho=1$）；\textbf{任务\emph{允许多解}时，它们给出\emph{不同但都合理}的答案}也完全正常（一致反而怪）。
+
+所以做来源比较时，要先\textbf{对齐“对象、任务定义、适用范围”}（否则比的不是一回事），并把结果\textbf{分成三类\emph{分开}记：一致、冲突、无法比较}——一致不等于对、冲突不等于某方错。最后回到报告纪律：\textbf{任何质量估计都要附上“审计样本数、有效裁决数、无法裁决数、标注版本”}，让读者能判断“这个百分数\emph{实际建立在多少证据上}”——一个基于$3$条有效裁决的$0\%$和基于$300$条的$0\%$，分量天差地别。
+
+\subsection{质量估计不确定性的分析}
+\label{sec:knowledge-quality-assessment-correction-uncertainty}
+
+前例教学算出的$8\%$，\textbf{只是“\emph{这一次}随机抽样”得到的\emph{一个}数值}。请意识到：\textbf{如果你\emph{重新}按同一方案随机抽一批}（抽到的编号不同），错误数会变，算出的百分比也会变——可能这次是$8\%$，下次是$6\%$、$11\%$。所以单点估计旁边必须带一个“\textbf{它\emph{会波动多大}}”的量，这就是\term{设计方差}（design variance）：\textbf{固定总体、固定标注版本，\emph{重复执行同一套抽样方案}时，估计值在不同次抽样之间的波动}。注意它\textbf{刻画的是“抽样随机性”，不是标注本身对错}——总体没变，只是看的样本不同。
+
+先推导最基础的情形——\textbf{简单随机、\emph{无放回}抽样}（抽过的不再放回去）。设$2\leq n\leq N$，$e_i$是前面定义的二值错误指示，$\widehat p$是样本错误率均值，并记\term{抽样比例}（sampling fraction）$f=n/N$（你查了总体的多大部分），样本内部错误指示的（无偏）样本方差为
+$$s_e^2=\frac{1}{n-1}\sum_{i\in S}(e_i-\widehat p)^2.$$用这个样本方差去估计总体内部错误指示的离散程度，再\textbf{按“样本量$n$越大越准”和“抽样比例$f$越大越准”两件事\emph{调整}}，就得到估计量$\widehat p$的方差：
+\begin{equation}
+  \widehat{\operatorname{Var}}(\widehat p)
+  =
+  (1-f)\frac{s_e^2}{n}.
+  \label{eq:knowledge-quality-assessment-correction-srs-variance}
+\end{equation}
+这个公式要读出两个要点。其一，\textbf{分母上的$1/n$}：\textbf{查得越多（$n$越大），估计越稳、方差越小}——这是“多样本平均抵消波动”。其二，前面的因子$(1-f)$叫\term{有限总体修正}（finite population correction）：\textbf{因为是“\emph{无放回}”抽样，\textbf{同一条不会被重复抽中}，当你\textbf{已经查了总体的很大一部分}时，剩余不确定性更小——\textbf{相比“有放回（可能重复抽到同一条）”的抽样，它\emph{额外}压低了方差}}。
+
+两个边界：\textbf{当你\emph{审遍全部}标注（普查）时$f=1$，这个抽样方差\emph{正好为零}}——因为没有“没看到”的抽样随机性了；\textbf{但“抽样波动为零”\emph{不等于}“没有错误”}——参考依据本身可能错、无法裁决仍存在，只是不再有“用样本推总体”的那层不确定。最后，方差开平方得到\term{标准误}（standard error）$\widehat{\operatorname{se}}$，它\textbf{把波动换回“错误率”同一个尺度}（百分点），报告区间时直接用它。有限总体、分层与整群抽样的设计公式可参见Cochran的整理\scite{knowledge-quality-assessment-correction-cochran1977}
+
+分层抽样下方差怎么合成？关键直觉：\textbf{每一层是\emph{独立}选样的（层间抽样互不影响），而各层在总体里占的权重$W_h$是\emph{固定}常数}，所以\textbf{“加权和”的方差＝“方差的加权和”，而\textbf{常数权重\emph{要平方}}}——即各层方差按$W_h^2$相加，\textbf{\emph{不是}按$W_h$相加}（独立随机变量和的方差里权重是平方进去的）。设层内也是简单随机无放回抽样（$n_h\geq2$、$f_h=n_h/N_h$），层内错误指示样本方差为$s_h^2$，则：设层内简单随机无放回抽样，$n_h\geq2$，$f_h=n_h/N_h$，错误指示样本方差为$s_h^2$，则
+\begin{equation}
+  \widehat{\operatorname{Var}}(\widehat p_{\mathrm{st}})
+  =
+  \sum_{h=1}^{H}
+  W_h^2(1-f_h)\frac{s_h^2}{n_h}.
+  \label{eq:knowledge-quality-assessment-correction-stratified-variance}
+\end{equation}
+要让上面的分层均值公式和分层方差公式\textbf{自洽}，必须\textbf{两式用\emph{同一套}分层定义、同一个抽样单位}（不能均值按“类别”分层、方差按“来源”分层；也不能一个按文档、一个按句子）。前面警告过“抽样单位可能是\emph{簇}”，这里看它对方差的影响：
+\begin{itemize}\item \textbf{如果是“先抽\emph{文档}、再审被抽中文档里的标注”}：那么\textbf{第一阶段（抽没抽中某文档）带来的波动，必须\emph{按文档为单位}估计}，不能把同文档的句子当独立。\item \textbf{如果簇内还\emph{再抽样}}（抽中文档后不查全部句子、再抽句子）：这是\textbf{两阶段整群抽样}，\textbf{两个阶段的波动\emph{都}要计}，方差通常比把句子当独立更大。\end{itemize}
+当抽样设计很复杂、解析公式难推时，有一条\textbf{更通用的路：\term{复制权重}（bootstrap replicate weights / 复制权）}——\textbf{\emph{严格照原设计}保留“层”和“第一阶段抽样单位（簇）”，\emph{整体地}复制整个簇/层，生成很多组“重加权样本”，每组算一个估计值，再用这些复制估计值之间的差异\emph{经验地}估方差}。这里\textbf{最忌讳}的是\textbf{把所有标注\emph{逐条独立}重抽的普通自助法}——它\textbf{直接丢掉“同文档/同簇相关”这层结构}，会\textbf{严重\emph{低估}真实方差}（假装独立的句子比实际多），不能替代“尊重设计”的重抽样\scite{knowledge-quality-assessment-correction-rao1988}。
+
+把方差公式\textbf{套回前面$N_1=800,N_2=200$、抽$n_1=80,n_2=40$的教学例}，亲手算一遍。二值指示有个方便性质：层内（无偏）样本方差可写成$s_h^2=\dfrac{n_h\widehat p_h(1-\widehat p_h)}{n_h-1}$（只由该层错误率和样本量决定）。代入两层：
+\[
+  \begin{aligned}
+    \widehat{\operatorname{Var}}(\widehat p_{\mathrm{st}})
+    &=
+    0.8^2(1-0.1)\frac{0.05(1-0.05)}{79}\\
+    &\quad+0.2^2(1-0.2)\frac{0.20(1-0.20)}{39},\\
+    \widehat{\operatorname{se}}(\widehat p_{\mathrm{st}})
+    &\approx 0.02185.
+  \end{aligned}
+\]
+若再\textbf{用正态近似}给一个$95\%$区间：$8\%\pm1.96\times2.185\%$约为$[3.72\%,12.28\%]$。怎么\textbf{正确解读}这个区间？它只表示“\textbf{在正态近似成立时，点估计周围的\emph{抽样波动}范围}”。本例\textbf{每层错误条数很少（4条、8条），正态近似本身就勉强}，所以这个区间\textbf{只能当“近似演算”，\emph{不能}当成“精确的$95\%$覆盖保证}”。更稳的做法：\textbf{靠近$0$或$1$边界、或要做\emph{严格验收}时，应改用与抽样设计相符的\emph{离散}精确区间（见下页超几何法），或\emph{事先}规划一个样本量更充分的审计}，而不是用一个勉强的正态区间下“达标”结论。
+
+分层、简单随机里，各对象入样相对独立；但\textbf{不等概率、尤其整群抽样时，波动还取决于“\emph{两条}是否\emph{容易一起}被抽中”}——同一文档的句子\textbf{要么一起进、要么一起不进}，这种“\textbf{成对的同进同出}”会\textbf{放大波动}。此时\textbf{单条入样概率$\pi_i$\emph{不足以}描述这种关系}（它只说每条自己多容易进，没说两条一起进的概率），还要二阶量。引入\term{二阶入样概率}（second-order inclusion probability）$\pi_{i,j}=\mathbb{P}(i,j\in S)$（$i,j$两条\textbf{同时}被抽中的概率），约定$\pi_{i,i}=\pi_i$。那么量$(\pi_{i,j}-\pi_i\pi_j)$正好是“两条入样指示的\textbf{协方差}”：它\textbf{为正＝两条倾向\emph{同进同出}}（同簇，正相关、增大方差），为负＝此进彼出。为估计式~\eqref{eq:knowledge-quality-assessment-correction-ht-rate}的方差，把这些协方差贡献加总，并用联合入样概率补偿只观察到入样样本标注对的事实：
+\begin{equation}
+  \widehat{\operatorname{Var}}(\widehat p_{\mathrm{HT}})
+  =
+  \frac{1}{N^2}
+  \sum_{i\in S}\sum_{j\in S}
+  \frac{\pi_{i,j}-\pi_i\pi_j}{\pi_{i,j}}
+  \frac{e_i}{\pi_i}\frac{e_j}{\pi_j},
+  \label{eq:knowledge-quality-assessment-correction-ht-variance}
+\end{equation}
+这个 HT 方差公式\textbf{有个硬前提：所需的二阶概率$\pi_{i,j}$}\emph{都为正、且真的保存了、可取得}。实践里若\textbf{没存$\pi_{i,j}$}（只记了单条$\pi_i$），就\textbf{不能硬套这个公式}，只能\textbf{改用能\emph{反映真实设计}的方差方法}：比如\textbf{一阶（线性化）近似}（用一阶泰勒展开近似估计量的抽样变化），或前面讲的\textbf{复制权重}法。\textbf{绝不能图省事\emph{退回}“把样本当独立”的公式}——那等于假设$\pi_{i,j}=\pi_i\pi_j$（无簇相关），会系统性低估方差。
+
+选哪种方差方法，还\textbf{必须有配套的“抽样设计字段”支撑}（分层定义、抽样单位、入样概率等都要在日志里）；\textbf{设计日志缺失时，\emph{不能}只凭“我用的是整群抽样”这个\emph{方法名}就\emph{补}出一个方差数}——没有$\pi_{i,j}$、没有簇结构，方差在数学上无法恢复。这套“尊重抽样设计”的估计框架，系统的整理可参见 Särndal 等人的抽样调查教材\scite{knowledge-quality-assessment-correction-sarndal1992}。
+
+当\textbf{样本量足够、抽样分布可用正态近似、且估计\emph{不靠近}$0/1$边界}时，可以用一个简洁的对称区间报告：
+$$\widehat p\ \pm\ z_{1-\alpha/2}\,\widehat{\operatorname{se}}(\widehat p),$$
+其中$0<\alpha<1$是你容许的误差概率（如$\alpha=0.05$对应$95\%$），$z_{1-\alpha/2}$是标准正态分位数（$95\%$时约$1.96$）。它的含义是“在正态模型成立时，估计值大致落在点估计上下这么多个标准误内”。但对称正态区间有两个\textbf{失效区}：其一，\textbf{错误很少}时，对称区间可能\textbf{越出$[0,1]$}（算出负的错误率），不合常理；其二，更隐蔽的是\textbf{“样本里\emph{零个错误}}”——此时经验方差甚至也算成$0$，正态区间退化成一个点$[0,0]$，\textbf{但这\emph{绝不}意味着“总体里没有错”}。没抽到错误，可能只是错误稀少、样本不够大。
+
+要正确处理“零错误”，得用\textbf{离散的超几何模型}精确算：固定总体规模$N$、并\textbf{假设其中真有$M$条错}（$M$未知），令$X$为“简单随机无放回抽$n$条后，\textbf{恰好发现的错误数}”。事件“\textbf{一条错都没发现}（$X=0$）”意味着抽出的$n$条\textbf{全部来自那$N-M$条正确标注}，其概率（超几何）为：
+\begin{equation}
+  \mathbb{P}(X=0\mid M)
+  =
+  \frac{\binom{N-M}{n}}{\binom{N}{n}}.
+  \label{eq:knowledge-quality-assessment-correction-zero-hypergeometric}
+\end{equation}
+这个公式怎么用来做“零错误时的保守上界”？逻辑是反问：\textbf{“假设总体里\emph{真有}$M$条错，那我\emph{一条都没抽到}的概率有多大？”}$M$越大，这个概率越小（错误越多，越不可能全躲掉）。于是在整数候选$0\leq M\leq N$里，\textbf{找出“使‘零发现’概率仍\emph{不小于}$\alpha$”的\emph{最大}那个$M$}——它就是置信水平$1-\alpha$下的\textbf{单侧“错误总数上界”}，再除以$N$得到\textbf{错误率上界}。
+
+为什么取“\textbf{最大}的$M$”？因为我们要\textbf{保留所有“\emph{尚未被‘零错误’这个观察\emph{排除}}’的候选真值”}，给出一个\emph{保守、不冒进}的上界，而\textbf{不是挑那个最好看（最小）的$M$}自欺欺人。一个常用对照：\textbf{有放回、各条独立（Bernoulli/二项）抽样}时，由$(1-p)^n\geq\alpha$反解，错误率上界恰为$1-\alpha^{1/n}$——它是\textbf{精确二项（有放回）区间的边界情形}\scite{knowledge-quality-assessment-correction-clopper1934}。注意\textbf{这两个区间对应\emph{不同抽样机制}}（无放回超几何 vs 有放回二项），而且\textbf{都\emph{不能}直接搬到分层或整群设计上}（簇相关改变分布，需用对应设计的区间）。
+
+在结束抽样区间前，要\textbf{清醒地列出它\emph{管不到}的东西}：无论区间多漂亮，它\textbf{都\emph{不}自动覆盖}“\textbf{参考依据本身错了}（复核也会错）、\textbf{无响应偏差}（难判的系统性不答）、\textbf{抽样框遗漏}（某些对象$\pi_i=0$根本进不来）、\textbf{规范歧义}（现行规范允许多解）”这四类问题——它们不是“多抽点样、区间算准点”能解决的。
+
+\textbf{“无法裁决”还带来另一层、与抽样无关的不确定}：注意，\textbf{即使你把每条标注\emph{全部}审一遍（没有抽样了），只要还有“无法裁决”的条目，真实错误率\emph{仍然}无法唯一确定}——因为那些条目可能对、也可能错。一个极简例子把“抽样不确定”和“裁决不确定”彻底分开：$10$条标注\textbf{全部审过}，确认\textbf{$1$条错、$7$条对、$2$条无法裁决}。这里\textbf{没有“没抽到”的对象}（普查了），所以$10\%$～$30\%$这个范围\textbf{\emph{完全}来自那$2$条结论未定}，\textbf{不是抽样波动}：
+\begin{itemize}\item \textbf{最乐观}：那$2$条其实\textbf{都对}，则错误率$=1/10=\mathbf{10\%}$；\item \textbf{最悲观}：那$2$条其实\textbf{都错}，则错误率$=3/10=\mathbf{30\%}$。\end{itemize}
+在“\textbf{已裁决结论可信}”这个假设下，真实错误率只能被夹在$[10\%,30\%]$之间，无法再缩窄。
+
+把上面的思想推广到一般总体：令$U$为“\textbf{已有候选标注的\emph{适用}标注总体}”，规模$N$；仍\textbf{假定已裁决的结论是可信的}，用$j_i=1$表示该条可裁决、$j_i=0$表示无法裁决。做法是\textbf{把无法裁决条目\emph{分别}按“\emph{全对}”和“\emph{全错}”两个极端处理}，得到错误率的\term{识别范围}（identification bounds）——注意这里的“识别/identification”是计量经济/统计里“\textbf{不加额外假设时，参数\emph{能被确定}到什么范围}”的意思，与第6章可识别性同源：
+\[
+  L=\frac{1}{N}\sum_{i:j_i=1}e_i,
+  \qquad
+  U_{\mathrm{err}}=L+\frac{1}{N}\sum_i(1-j_i).
+\]
+读懂两个端点：\textbf{下端点$L$只数“\emph{已确认}错误”}（无法裁决的先当全对），\textbf{上端点$U_{\mathrm{err}}$再把“\emph{全部}无法裁决条目”\emph{都算成错}加进去}。这个$U_{\mathrm{err}}$是“错误率”的上界，\textbf{记号上别和总体集合$U$混淆}（一个是样本总体、一个是错误率上端）。
+
+两个适用要点：其一， 上面$L,U_{\mathrm{err}}$是在“普查、所有可裁决都判完”时的确定范围；若\textbf{只查了\emph{概率样本}}，则要把$e_i,j_i$按设计权重（$\pi_i$、$W_h$）加权得到$\widehat L,\widehat U_{\mathrm{err}}$，此时\textbf{两端点\emph{还各带抽样误差}}，它们\textbf{只是“端点的\emph{估计}}”，不再是确定范围。其二， 要把它变成“覆盖保证”的置信区间时，\textbf{应给“下端点、上端点”\emph{分别}分配误差概率}（如各分$\alpha/2$），构造一个能\textbf{同时覆盖真实$L$和真实$U_{\mathrm{err}}$}的区间，不能只对中点做一个对称正态区间。把“零错误”和“识别范围”合起来看一个极易误判的例子：从$1000$条里\textbf{简单随机抽$100$条}，这$100$条\textbf{全部可裁决、且\emph{一条错都没有}}。此时点估计和识别端点似乎都是$0$，\textbf{但绝不能报告“总体错误率的$95\%$置信区间是$[0,0]$”}——用式~\eqref{eq:knowledge-quality-assessment-correction-zero-hypergeometric}（无放回超几何）反算，\textbf{在“抽$100$条零错”的观察下，$95\%$单侧“总体错误\emph{总数}上界”仍有约$28$条，即错误率上界约$2.8\%$}。意思是：\textbf{总体里\emph{完全可能}还藏着多达约$2.8\%$的错，只是这次没抽到}；“抽$100$条全对”远不足以证明“整体干净”。
+
+除了错误率，还可以\textbf{对一部分参考结果\emph{再}做一次独立复核}，用来检查\textbf{裁决本身的稳定性}（不同复核者/不同证据，结论一不一致、有没有主观性）。当发现\textbf{某个分组只审了寥寥几条、结论却很极端}时，有\textbf{三种合理但不同的选择，应\emph{按用途}决定}，没有默认答案：\textbf{合并分组}（但\emph{会改变正在估计的问题}，两组一合问题口径就变了）、\textbf{追加审计}（提高把握、但增加成本）、\textbf{暂缓下结论}（诚实保留不确定性）。
+
+最后两条\textbf{“数据窥探”陷阱}，在质量审计里尤其要守纪律：
+\begin{itemize}\item \textbf{不要“反复看区间、\emph{直到}它达到门槛”才停}：区间的$95\%$覆盖概率是在“\emph{事先固定样本量、只看一次}”下成立的；\textbf{反复根据当前结果决定抽不抽、停不停}，会让这个覆盖解释\textbf{失效}（你总能凑到一个看似达标的瞬间）。\item \textbf{同时在\emph{很多}类别/分组里搜索}时，\textbf{纯偶然冒出“极端好/极端坏”结果的机会\emph{自然增多}}（多重比较问题）——某层碰巧$0$错误，可能只是运气，不代表它特殊。\end{itemize}
+所以\textbf{审计方案应\emph{事先}约定}：主要指标是哪些、要单独报告哪些分组、什么条件下停止；\textbf{探索性}的额外发现要\textbf{明确标注“这是探索结果”，并用\emph{新证据}复核}，不能当成事先假设的确认。
+
+反过来\textbf{规划样本量}则可以\textbf{从“我需要多窄的\emph{区间半宽}}”\emph{反推}该抽多少，但代入的\textbf{必须是“实际抽样设计”的方差公式和“预期的各组错误率”}（不能用简单随机公式套整群设计）。这里有个常用量叫\term{设计效应}（design effect）：\textbf{“本设计（分层/整群/不等概率）的方差”相对“同样本量下简单随机抽样方差”的\emph{比值}}。\textbf{整群相关强时设计效应$>1$（要抽更多才能达到同等精度），高效分层可能$<1$}，它\textbf{定量描述“你的抽样安排\emph{改变了多少抽样波动}}”，是把样本量和实际设计挂钩的关键参数。
+
+\section{知识问题的检测与定位}
+\label{sec:knowledge-quality-assessment-correction-detection}
+
+再次把两件\textbf{目的不同}的事并排：\textbf{总体审计}回答“\emph{目标总体质量\emph{怎么样}}（有多少错）”——求“面”，要概率抽样、能推总体；而本章\term{问题检测}（issue detection）回答“\emph{复核预算有限，\emph{先看哪些对象}最划算}”——求“点”，要\textbf{尽快捞出具体问题}，不追求代表性。
+
+一个\textbf{检测系统}的产物是一份\textbf{“待复核清单”}：对每个可疑对象列出\textbf{其一，可疑对象是谁、其二，\emph{触发依据}（哪个信号报的警）、其三，可能的\emph{影响范围}、其四，建议走哪个核验入口}。\textbf{请特别注意它\emph{不做}什么：它\emph{不直接裁决}“这条确实错”}——它只“报警”，裁决永远是7.1那套独立证据的事（呼应章首“检测线索并不等于错误证明”）。
+
+\textbf{怎么\emph{评价}一个检测方法好不好}？不能只看谁的风险分数高，而要在\textbf{固定复核预算}下比较三件可量化的事：\textbf{其一，确认了多少\emph{真}问题（命中/精确率）、其二，在\emph{不同分组}（各类别、区域、来源）覆盖得均不均、其三，对“\emph{没入选}区域”随机抽查后，\emph{估计还漏掉多少}（漏报）}。一个只把最显眼问题挑出来、却整片忽略冷门区的检测器，分数再高也不算好。
+
+\subsection{基于模型行为的问题检测}
+\label{sec:knowledge-quality-assessment-correction-model-detection}
+
+最自然的检测信号是“\textbf{模型和标签\emph{意见不一致}}”：一张标着“山茶”的照片，模型却预测“茶梅”。但\textbf{分歧本身是\emph{多义}的——它\emph{不能}告诉你“到底是标签错了，还是模型错了}”，两种解释都成立，所以它\textbf{只能让这条\emph{进入复核候选}}。同类的“模型行为异常”信号还有：
+\begin{itemize}\item \textbf{高损失}：在现有标签下，模型怎么学都在这条上犯大错（可能标签误导，也可能样本本身就是难例）。\item \term{遗忘}（forgetting）信号：训练过程中模型\textbf{早先\emph{一直}和观测标签一致、后来却变得不一致}（注意：这里“遗忘”是\textbf{以“现有标签”为参照}的行为描述，\textbf{\emph{不}代表已经知道真实类别}——也可能模型只是变得更对了）。\item \textbf{表示离群}：该样本的表示向量\textbf{明显远离同类标注的表示簇}（可能错标，也可能只是罕见样本）。\end{itemize}这些模型信号有个\textbf{内生偏差}：模型\textbf{是拿这些标签\emph{训练}出来的}，它\textbf{倾向于“\emph{记住}训练标签”}——错标签它也会慢慢拟合，于是\textbf{在训练数据上评估}“模型同不同意标签”会\textbf{系统性地\emph{低估}分歧}（自己考自己）。为了\textbf{减少“模型见过待查标签”的影响}，有两种标准做法：
+\begin{itemize}\item \textbf{留出预测}：\textbf{用\emph{没拿该样本}训练的模型}来给它打分（它没记住这条，分歧更真实）。\item \term{交叉验证评分}（cross-validated scores）：\textbf{把样本分成若干\emph{折}，每一条都由“\emph{只在其他折}训练”的模型评分}，于是每条都有一个“对它而言是外部”的模型判断。\end{itemize}
+做交叉折有一条\textbf{不能违反的“\emph{同组同折}}”纪律：\textbf{同一对象、以及它的\emph{近重复}样本（近重复照片、同图多框）必须\emph{放进同一折}}——否则一张图在训练折、它的近重复在测试折，等于\textbf{测试时泄题}，分数又不可信。最后是数据纪律：\textbf{如果之后又\emph{用最终审计结果反复}挑模型、挑特征、调阈值}，那么那份审计就\textbf{被“用进了方案选择”，\emph{不能再}当独立评价}——最终评测必须另留（贯穿全书的留出纪律）。
+
+% 两条边注连续排放，按整组高度为本段预留空间。
+\Needspace{95mm}
+但即使把“模型见过标签”这个干扰\textbf{用交叉折\emph{隔离}掉}，\textbf{信号的\emph{多义性}仍然\emph{没有}消除}——这是7.3最核心的认知，请务必记住：\textbf{同一个“高损失/分歧/离群”信号，至少有四种互斥解释}：
+\begin{itemize}\item \textbf{标签真的错了}（这是我们想找的）；\item \textbf{标签对、但样本\emph{罕见/难}}（罕见正样本本来就学不像同类，损失高是正常的）；\item \textbf{模型\emph{能力不足}}（它就是学不会这个难但正确的模式）；\item \textbf{分布变了}（样本来自模型没覆盖好的新区域，不是标签问题）。\end{itemize}
+所以\textbf{光凭模型信号\emph{无法}区分这四种}，必须回到\textbf{独立证据（原图、规范、采集记录）}去判。两个有代表性的方法，注意它们\textbf{都只“排序/圈区域”、不直接定罪}：
+\begin{itemize}\item \term{置信学习}（confident learning）：\textbf{用模型的\emph{预测概率}和“观测到的标签”去\emph{估计}潜在的错标、再给样本\emph{排序}}。它依赖第6章讲过的“\textbf{类别条件噪声}”设定——\textbf{给定真实类别后，错标机制\emph{不再依赖}输入特征}（错标只看真类、不看长相）；而且它的\textbf{推断还\emph{依赖}“预测概率估得准（校准等）”这些条件}，条件不满足结论要打折\scite{knowledge-quality-assessment-correction-northcutt2021}。\item \textbf{训练动态地图（data maps）}：\textbf{利用\emph{训练过程中每一轮}的预测输出}，把样本按“学得\emph{多快、多稳}”分成“易学/模糊/困难”等区域。其中\textbf{“困难/模糊”区域\emph{可能富集}标签错误}，但\textbf{\emph{不能}把整个困难区域\emph{整体}当成错误集合}——里面混着大量“\emph{正确但天生难学}”的样本\scite{knowledge-quality-assessment-correction-swayamdipta2020}。\end{itemize}
+
+图~\ref{fig:knowledge-quality-assessment-correction-detection-signal}把\textbf{同一个高损失信号\emph{画成三条岔路}}，正是上面“多义性”的可视化：\textbf{每条虚线都\emph{只}表示“这条\emph{值得核查}}”（一个候选），\textbf{不能}在虚线上直接写“错”；要走到右边，用\textbf{不同的证据检查}，才能\textbf{分别}决定：该监督信号是“\textbf{应修正}（标签错）”、“\textbf{应保留}（罕见/正确难例）”、还是“\textbf{问题在\emph{检测模型}本身}（模型能力/分布），从而\emph{限制}检测器解释范围”。
+
+% 独立浮动页避免宽图回浮至长引文段上方，挤掉边栏的实际可用高度。
+\begin{figure*}[p]
+  \centering
+  \input{figures/11-knowledge-learning/01-knowledge-acquisition/tikz/knowledge-acquisition-ch07-detection-signal.tex}
+  \caption{同一检测信号可能对应不同原因。高损失或预测分歧只把样本送入候选解释；错误标签或约束、正确但罕见的样本和模型能力不足分别需要原始证据核验、分组与覆盖检查、模型对照。只有独立证据确认监督信号错误后才进入修正，箭头不表示三个解释已经由分数证实。}
+  \label{fig:knowledge-quality-assessment-correction-detection-signal}
+\end{figure*}
+\FloatBarrier
+
+所以\textbf{模型在这一步的角色被严格限定为“\emph{排序器}}”：它\textbf{读取原始监督信号、留出预测、损失或训练日志}，吐出的是\textbf{“待复核队列 + 触发理由”}，\textbf{不产出对错结论}。这给“开发检测器”立了条规矩：评估集\textbf{必须\emph{同时}包含三类区域——真错标、\emph{罕见但正确}的样本、\emph{模型失效}区域}，不能只在“人为翻转标签”上测。因为\textbf{只测人工翻转的标签，\emph{只能}说明检测器会不会抓“人造噪声”}，\textbf{说明不了}它\textbf{怎么处理\emph{真实的歧义}（本来就模棱两可）和\emph{分布变化}（新区域）}——而后者才是实际部署里最要命的误报来源。
+
+这个排序思路对其他监督信号也成立：\textbf{关系/配对目标}可用“\emph{配对相似度}异常”排序，\textbf{表示目标}可用“\emph{表示退化}、对扰动的\emph{响应}异常”排序；但无论信号是什么，\textbf{最后的裁决仍须回到“对象标注对不对、构造条件守没守”的独立核对}，模型分数不替代证据。
+
+检测阈值怎么定？\textbf{顺序不能反}：应\textbf{先规定“复核预算（能查多少条）”和“\emph{绝不能漏}的风险类型”}（比如某种高危病害漏检代价极大，必须全进），\textbf{再去比较“不同阈值\emph{会送进}哪些对象}”，在预算内尽量覆盖高风险，而不是先看分数随意切。阈值定下来后，用\textbf{两个互补指标}评价这次排查：
+\begin{itemize}\item \textbf{命中率/精确率}：\textbf{入选对象里，经\emph{证据确认}真错的比例}（章首那$40/100$）——衡量“选得准不准”。\item \textbf{未入选区域的遗漏}：\textbf{对“\emph{没被选中}”的那大批做\emph{概率抽查}}，估计还漏了多少错——衡量“有没有大面积放过”。\end{itemize}
+两个成本提醒：其一，\textbf{留出/交叉验证评分不是免费的}，要算\textbf{训练折、推断}的开销，\textbf{不能只计“人工复核时间”}；其二，\textbf{模型\emph{无法解析/无法响应}的预测请求（模型拒答、超范围），\emph{不能}因此就从审计总体里“消失”}——它们应\textbf{另安排一条检查路径}（转人工或专门规则），否则模型不答的对象永远不会被质检。
+
+\subsection{训练样本贡献的评价与归因}
+\label{sec:ka-sample-valuation}
+
+7.3.1 的高损失回答了“\textbf{\emph{哪些标签值得复核}}”（怀疑它错），但它\textbf{\emph{没有}回答另一个对“要不要动手改/删”同样重要的问题}：\textbf{“改动\emph{哪一条}训练样本，会真正\emph{改变}任务结果？”}这是两个\textbf{独立维度}，而且常常不一致：
+\begin{itemize}\item \textbf{两张\emph{都正确}的近重复照片}：它们\textbf{谁也没错}，但对训练高度冗余，\textbf{可以\emph{相互替代}}（删一张对结果几乎无影响）。\item \textbf{一张\emph{正确}的稀有物种照片}：标签完全对，但它可能\textbf{只对极个别类别有用}、对总体指标贡献很小。\item \textbf{一条\emph{错}标}：它当然该改，但\textbf{也可能早已被模型\emph{忽略}}（模型根本没拟合这个噪声点），改了结果也不变。\end{itemize}
+所以必须把\textbf{“标签\emph{对不对}}”（质量问题）和\textbf{“这条样本对\emph{指定任务结果}有多大\emph{作用}}”（影响/贡献问题）\textbf{分开}——错的未必重要，重要的未必错。由此定义\term{训练样本贡献}（training-sample contribution）：\textbf{固定\emph{学习算法}和\emph{评价规则}之后，“加入、删除或改动这条训练样本，会\emph{怎样改变}训练后的表现”}。请注意\textbf{它\emph{没有脱离这些条件}的“永久价值}”——换个算法、换个任务，同一张照片的贡献可以完全不同。
+
+要把“贡献”定义得既公平又能处理“冗余、互补”，借用博弈论里的 Shapley 值思想。先把记号立起来：训练样本索引集$N=\{1,\ldots,n\}$（$n>0$），$A(S,U)$表示“\textbf{用\emph{子集}$S\subseteq N$、加上算法随机种子$U$训练出的模型}”。两个约定保证它处处有定义：\textbf{空集$S=\varnothing$约定为一个\emph{固定基线预测器}}（不训练时的默认模型，而不是随机乱猜）；\textbf{即使子集里缺某些类别，仍保留\emph{完整类别头}、按\emph{同一规则}训练}（避免“缺类就没法定义效用”）。
+
+然后\textbf{先固定一批\emph{独立}验证样本和一条\emph{效用规则}}（比如$V=$“验证集上平均损失的相反数”，效用越大越好）；训练随机性$U$要么\textbf{固定成同一组预定随机数}（得到“给定种子下”的贡献），要么\textbf{对约定的$U$分布求平均}（得到“平均意义上”的贡献），\textbf{所有子集都用同一约定}。注意\textbf{“重复训练很多次”只能\emph{近似}后一种平均，不能把\emph{没控制住}的随机波动当成“样本的作用}”。
+
+为什么不能简单用“\textbf{从\emph{完整}集里删掉$i$}”的效用差$V(N)-V(N\setminus\{i\})$？因为它\textbf{只看了$i$在“\emph{所有其他样本都在}”这\emph{一种}上下文里的作用}，\textbf{看不到$i$在\emph{别的}训练子集里}（比如没有那些冗余近重复时）的作用，而贡献恰恰随上下文变。\term{Data Shapley}的修正是\textbf{“\emph{公平地平均所有\emph{加入次序}}”}：设想样本按随机顺序一个个加入训练集，看$i$\textbf{在它\emph{被加入的那一刻}带来的\emph{边际增量}}，再对所有次序平均。令$\sigma$等概率遍历全部$n!$种排列，$S_{\sigma,i}$为排列中排在$i$前面的样本集合，则
+\begin{equation}
+  \phi_i
+  =\mathbb E_{\sigma}
+    \bigl[V(S_{\sigma,i}\cup\{i\})-V(S_{\sigma,i})\bigr].
+  \label{eq:ka-data-shapley}
+\end{equation}
+理解这个定义的两个要点：其一，\textbf{每次比较都\emph{重用同一}学习算法和同一验证效用}，\textbf{只改变“用哪些训练样本（子集）”}——这样效用差才干净归因于样本；其二，\textbf{Data Shapley 是把经典 Shapley 的“公平分配”思想\emph{用到训练数据}上}，\textbf{分配的是“\emph{训练样本}对任务效用的贡献”，\emph{不是}“特征对某条当前预测的作用}”（那是特征归因/SHAP），两者别混。计算上$n!$种排列不可能枚举，实践用\textbf{随机采样一部分排列来\emph{近似}}；\textbf{一旦用“\emph{截断}训练（每个子集只训几步）”或“\emph{只近似}训练”去省算力，近似本身\textbf{还会额外改变误差}}，要单独评估\scite{ka-ghorbani2019-data-shapley}。
+
+用\textbf{两张“\emph{可相互替代}的正确照片}”把Shapley的“公平”算明白。设$V(\varnothing)=0$（没有照片时效用为0，即基线）、$V(\{1\})=V(\{2\})=V(\{1,2\})=1$（每张单独都能把效用带到满值1，两张一起也还是1——它们完全冗余）。
+\begin{itemize}\item \textbf{“留一/删一”值}：从\emph{完整}集删任一张，效用都还是1、不变，所以\textbf{两条的“留一”贡献\emph{都是}0}。\item \textbf{Shapley（跨所有次序平均）}：看两种加入顺序——排列$(1,2)$中，1先加入带来$1-0=1$、2后加入带来$1-1=0$，增量对为$(1,0)$；排列$(2,1)$对称为$(0,1)$。\textbf{两种次序一平均，每张各得$1/2$}。\end{itemize}
+这里有个\textbf{看似矛盾、实则关键}的点：既然“\textbf{在\emph{已有照片1}时再加照片2，增量是0}”，为什么照片2的 Shapley 还是$1/2$而不是0？因为\textbf{Shapley 还要算“\emph{照片1\emph{不在}}（排列2先到）”的那种次序}——那时照片2是\emph{单独}把效用从0带到1的功臣，贡献为1；\textbf{跨“它在/不在”两种上下文平均，才得到$1/2$}。这正好说明：\textbf{“删一试验（leave-one-out）”回答“在\emph{当前完整}模型里它多不多余”，“Shapley 跨子集分配”回答“\emph{平均而言}它对训练有多大功劳”，是两个不同问题}，数值不同不矛盾。
+
+Data Shapley 要为大量子集\textbf{反复\emph{完整重训}}，大模型上算不起。如果\textbf{问题只针对“\emph{某一次具体预测}会怎么变”}（而非全体任务效用），可以\textbf{不重训、用\emph{训练后模型的局部近似}}：\term{影响函数}（influence function）通过\textbf{对“训练样本权重”做微小扰动}，\textbf{局部线性地近似“模型参数、进而预测”会怎么变}（用梯度/Hessian 之类）。但它\textbf{带着一串数学条件}：损失要\textbf{光滑}、要停在\textbf{局部最优解}、\textbf{曲率（Hessian）要可逆}等；\textbf{“\emph{整条}样本删除”或“训练路径切换”这种\emph{大改动}，往往\emph{破坏}局部近似}（小扰动线性近似不了大跳变）。推导见\BookChapterRef{chap:trust-interpretability}{卷三《基础、理论与可信性》的“可解释性”章}。
+
+两条不能越界的结论：其一，\textbf{这种局部敏感性\emph{不等于}Shapley 的“跨所有联盟（子集）平均”}——一个是局部微分近似、一个是全局公平分配；其二，\textbf{无论影响多大，都\emph{不能}由“这条样本\emph{有影响}”推出“它的\emph{标签有错}}”——高影响只说明“改了会变”，变的方向可好可坏。
+
+Data Shapley 和影响函数在\textbf{超大模型}上还有个现实障碍：\textbf{模型参数梯度\emph{维数极高}}（几十上百亿维），存不下、算不动。\term{TRAK}（Tracing with the Randomly-projected After Kernel）的核心思路是\textbf{先\emph{降维}再归因}：\textbf{把“指定预测对模型参数的梯度”\emph{投影到一个低维空间}}（用随机投影把维度压到可算），再配合\textbf{局部线性化 + 一步 Newton（牛顿步）近似}，得到“训练样本对这条预测的归因分数”。以分类为例，给定样本$z=(x,y)$，取模型对类别$y$的对数几率$f(z;\bm\theta)=\log[p_{\bm\theta}(y\mid x)/(1-p_{\bm\theta}(y\mid x))]$，要求概率严格位于0与1之间。对一个固定的已训练模型，令随机投影$\bm P\in\mathbb R^{D\times r}$，$D$为模型参数维数，$r$为投影维数；$\bm\varphi(z)=\bm P^\top\nabla_{\bm\theta}f(z;\bm\theta)\in\mathbb R^r$。将训练样本的投影梯度按行排成$\bm\Phi$，并令$\bm Q=\operatorname{diag}(1-p_{\bm\theta}(y_i\mid x_i))$，其单模型近似的核心为
+\begin{equation}
+  \bm\tau(z)
+  =\bm\varphi(z)^\top
+   (\bm\Phi^\top\bm\Phi)^{-1}\bm\Phi^\top\bm Q.
+  \label{eq:ka-trak-core}
+\end{equation}
+读这个核心式（式~\eqref{eq:ka-trak-core}）三块的直觉（这里假设$\bm{\Phi}^{\top}\bm{\Phi}$可逆，实际\textbf{要靠加正则项保证}，换求解规则需另说近似）：
+\begin{itemize}\item \textbf{投影梯度$\bm{\varphi}(z)$}：刻画“\textbf{这条指定预测\emph{对模型参数}的局部敏感方向}（降到低维后）”——预测最吃哪些参数变化。\item \textbf{中间的$(\bm{\Phi}^{\top}\bm{\Phi})^{-1}$}：这是一个\textbf{“重复度/协方差”校正}——\textbf{调整“这些敏感方向在\emph{训练样本}里\emph{重复出现}的程度}”：如果一批训练样本在某方向上高度雷同（冗余），就不能各算一份，要用逆矩阵压权重。\item 最后的$\bm Q$：按\textbf{模型给出的类别概率加权}（对角阵，对角线是$1-p$）。\end{itemize}
+还要知道这个式子\textbf{只是 TRAAK 的“\emph{单模型核心}”，\emph{不是}全部实现}：原方法还\textbf{组合“\emph{多个}子集训练（类似折/集成）得到的梯度关系”和类别权重}，并可做\textbf{软阈值}处理以去噪/降本\scite{ka-park2023-trak}；省略这些步骤时要说明自己用的是简化版。
+
+用一个一维教学例子看清 TRAK 分数的量纲：投影只有一维、两条训练样本的梯度都为1、目标梯度也为1，且$\bm Q=\operatorname{diag}(1/2,1/2)$。此时$\bm{\Phi}^{\top}\bm{\Phi}=(1,1)\cdot(1,1)^\top=2$，代入得每条分数$\tau(z)=\tfrac12\cdot\tfrac12\cdot(1\cdot\tfrac12+1\cdot\tfrac12)=\tfrac14$，即两条各$1/4$。
+
+\textbf{请务必不要把这个$1/4$和前面 Shapley 的$1/2$当成“同一东西的两种算法”}——它们数字不同是因为\textbf{计量的对象根本不同}：\textbf{TRAK 计量的是“\emph{指定（已训练）模型}对某条预测的\emph{局部线性}响应”}（站在训好的模型附近做微分）；\textbf{Shapley 分配的是“\emph{训练后任务效用}在数据上的\emph{全局}公平份额”}（要跨子集重训）。两者不可互证。那怎么\textbf{验证 TRAK 这类近似归因可不可信}？做法是：\textbf{按“子集归因分数\emph{之和}”去\emph{预测}“用这个子集训练后模型响应怎么排”}，然后\textbf{真的\emph{按预定比例抽子集、\emph{真正}重训}}，比较两者响应\emph{排序}的\emph{秩相关}；\textbf{不能}只凭“排名靠前的照片\emph{看起来}像相关样本”这种主观印象就采信。
+
+贡献分数用起来的\textbf{共同纪律}（和检测信号一样）：
+\begin{itemize}\item \textbf{留出纪律}：一旦\textbf{验证样本被用来“\emph{筛选}训练样本”或“\emph{设计}修正方案”}，它就参与了方案选择，\textbf{最终测试必须\emph{另留}}。\item \textbf{成本要算全}：Shapley 的\textbf{反复重训排列}、TRAK 的\textbf{梯度计算、随机投影、矩阵求逆、还要为\emph{多个模型（模型集）}重复}，都不便宜，别只看人工。\item \textbf{低贡献 并不等于 错标}：一条样本贡献低，\textbf{可能只是\emph{冗余}（有近重复）、可能是\emph{评价范围没覆盖它的稀有类}、也可能是\emph{模型能力不足}没用上它}——这些都\textbf{不直接裁定“它标错了”}。\item \textbf{归因 并不等于 事实支持}：在大模型里，能\textbf{解释“模型为什么生成某句话”（高归因）}，\textbf{\emph{不}等于“训练文本里\emph{确实支持}这句话这个事实”}（影响高不等于出处正确，更不等于内容属实）。\end{itemize}
+一句话收口：\textbf{贡献分析只负责“为\emph{复核和干预}提出\emph{候选}（先看谁、可先删谁）”；至于“原始标签到底对不对”，\textbf{仍要回到\emph{独立证据}裁决}}，两个流程各司其职。
+
+\subsection{基于多源关系的问题检测}
+\label{sec:knowledge-quality-assessment-correction-multisource-detection}
+
+看到“\textbf{两条标注给同一植株\emph{不同}答案}”，新手最容易立刻记为“冲突/有错”，但\textbf{第一反应应是“它们\emph{到底是不是在回答同一个问题}}”——很多“分歧”其实是问题不同，根本不矛盾：
+\begin{itemize}\item \textbf{时间不同}：同一植株\textbf{春季的开花状态和秋季可以\emph{不同}}（春天开花、秋天结果），两条都对。\item \textbf{粒度不同}：一条给\textbf{物种}、另一条给\textbf{属}，\textbf{可能\emph{同时成立}}（属是上位，物种落在该属里）。\end{itemize}
+所以\textbf{形成“冲突线索”\emph{之前}必须先回到第6章的三层对齐：对象、语义、粒度、上下文全部对上}。只有当\textbf{“\emph{同一对象、同一时点、同一问题}”}（比如同一时刻问“这朵花开没开”，一个说是、一个说否），\textbf{才是真正\emph{不能同时成立}的冲突}。反过来，\textbf{同一条件下本就允许多个合理答案}，两答不同\textbf{不构成冲突}。\textbf{重复标签之间的差异、以及结构约束违例，也都按这条原则先核对，而\emph{不直接}记成“标注错误”}。
+
+这条\textbf{在第6章已反复强调、但质量检测时最容易忘}：\textbf{“来源\emph{数量多}”\emph{绝不是}证据独立性的保证}。十个网页可能\textbf{都复制了同一份错误名录}，于是“十比零多数票”只是\textbf{把同一个错误\emph{数了十遍}}，一个独立的原始采集日志（哪怕只有一份）反而可能是更强证据。因此\textbf{冲突表不能只存“谁赞同、几票”}，必须同时保存\textbf{来源依赖关系、来源版本、时间、证据路径}（否则看不出十票其实是一票）。
+
+还有一个\textbf{“一致”的盲区}：\textbf{当所有来源\emph{碰巧}一致时，系统最容易\emph{取消}审计（觉得没冲突=没问题）——这是危险的}。因为\textbf{共享同一个错误来源时，大家会\emph{一起错、还不产生任何冲突信号}}（异常检测正是靠分歧报警，一致的错它根本看不见）。所以\textbf{无论来源一不一致，\emph{随机抽查}都不能省}——专门用来抓“\textbf{沉默的共同错误}”。
+
+关系类的“冲突”还要\textbf{额外检查\emph{方向}和\emph{条件}}，不能只看两端对象对不对：
+\begin{itemize}\item \textbf{方向不能反}：若$A$是照片、$B$是植株，$(A,\text{采集自},B)$和\textbf{把两端\emph{交换}}得到的$(B,\text{采集自},A)$\textbf{\emph{不是}同一个命题}（植株不会“采集自”照片），判错时要指出是方向错。\item \textbf{条件/时间不能无条件复制}：关系上带的时间、上下文属性，\textbf{换个版本、换个对象不能照搬}（春天的“位于”不等于秋天的）。\item \textbf{结构违例\emph{不等于}标签错}：一个\term{违例}（violation）只说明“\textbf{当前这组答案\emph{和声明的约束}\emph{不相容}}”（如BIO非法、互斥类同时被选）。到底是“某条\emph{标注}错”还是“\emph{约束本身}不适用这里”，\textbf{必须\emph{同时}复核“标注”和“约束的适用性”两边才能定}——可能是约束写错了。\end{itemize}
+工程上来源很多时，可\textbf{先按“任务规范 + 对象标识 + 版本”把同源/同对象的标注\emph{聚合}}（先消除重复和明显对齐的），\textbf{减少大量无意义的逐条两两比较}，再\textbf{集中查“影响大的冲突”和“\emph{无法靠对齐解释}的冲突”}。
+
+\subsection{基于来源记录的问题定位}
+\label{sec:knowledge-quality-assessment-correction-provenance-localization}
+
+当\textbf{多条错误被\emph{分别}确认}后，下一步不该一条条孤立修，而要\textbf{顺着它们的\emph{生成过程}往回找“\emph{共同的根因}}”——如果一批错都指向同一个词典版本、同一条规则、同一个模型，那是系统性问题，改一处胜过改一片。要做到这一点，前提是有\term{溯源清单}（provenance manifest）：它\textbf{记录每条结果是“\emph{谁、用什么版本、在什么配置下、什么时候}”产出的}，至少包括——
+\begin{itemize}\item \textbf{样本/对象}、\textbf{人员或模型}（谁标的、哪个模型）；\item \textbf{规则与词典的版本}（用的哪一版）；\item \textbf{预测请求配置、执行状态、批次、时间戳}。\end{itemize}
+有了它，结果才能\textbf{回溯到\emph{具体的处理活动}}（复现“当时到底跑了什么”）。
+
+\textbf{定位根因的方法}：先\textbf{列出错误样本\emph{共同}用了什么}（共同的词典？同一批？同一模型版本？），再\textbf{和\emph{没受影响}的样本\emph{对照}}（它们缺了哪个共同因素），然后\textbf{\emph{复现}那个候选变更（切回旧版/新版）看错误是否随之出现/消失}，并\textbf{圈定影响\emph{范围}}（波及哪些下游结果）。\textbf{两个“别冤枉好人”的提醒}：其一，\textbf{流水线上\emph{最先}报警/最先暴露异常的环节，\emph{不一定}就是产生错误的环节}——\textbf{解析器}最先崩，可能只是上游喂了脏数据；其二，\textbf{对象错配可能在\emph{更早}的“写回数据库}”步骤就发生了（如前面S042挂错植株），报警的是下游类别，根因却在写回。
+
+一个\textbf{“怎么\emph{排除干扰}、确证根因”的范例}。现象：\textbf{某次词典更新后，“茶梅”被\emph{大量}错映成“山茶}”。直觉会说“就是词典的锅”，但\textbf{“时间上\emph{同时发生}”只能提供一个\emph{候选}原因，不能定罪}——因为\textbf{同一时期可能\emph{还}发生了别的变化}：样本换了地区（分布变了）、评价规范改了（尺子变了），这些也能造成错误率同时上升。
+
+\textbf{要\emph{隔离}出词典这个变量}，必须做\textbf{受控对照}：\textbf{挑\emph{同一批}、\emph{冻结}的样本}，\textbf{只切换词典版本（旧 vs 新）、\emph{保持模型、规范等其他一切不变}}，分别跑。\textbf{只有当差异“\emph{只随词典版本}出现”}，才能把根因\textbf{锁定到词典}；然后再\textbf{用原始名录\emph{核验}那条具体映射}（坐实“茶梅到山茶”这条映射是错的）。最后是\textbf{影响\emph{范围}}：\textbf{共享词典被\emph{多个规则、多个模型的预测输入}共用}，所以一旦确认词典错，\textbf{受影响的是\emph{全部}依赖它的下游结果}，不能只修“最先报警的那一个来源”——同源污染要成片排查。
+
+溯源\textbf{强依赖日志是否完整}，所以\textbf{日志缺失会\emph{直接}限制你能下的结论}：如果\textbf{无法恢复“当时的预测请求、模型版本、随机配置”}，你就\textbf{无法受控复现}，这时只能诚实写“\textbf{这是个\emph{与该批次相关}的\emph{候选}原因}”，\textbf{\emph{不能}声称“已经\emph{找到根因}}”。
+
+两个严谨性边界：其一，\textbf{“调用可\emph{重现}}（每次跑结果一样）”\textbf{\emph{不}自动证明\emph{因果}}——稳定复现只说明确定性，要证“是A导致B”仍需上面那种“\emph{对照变更}（切版本）”、或\emph{独立证据}、或\emph{可执行检查}；其二，定位结论本身\textbf{要\emph{分三档}写清影响面}：\textbf{\emph{已确认}受影响的、\emph{可能}受影响的、\emph{尚未覆盖}还没查的}。这个影响范围清单\textbf{正好为下一节“\emph{修正该动多大粒度}}（单条/整批/整条流水线）”提供依据——根因波及多广，修正范围就该多大。
+
+\section{知识的修正与验证}
+\label{sec:knowledge-quality-assessment-correction-repair}
+
+进入修正阶段，先立一条\textbf{反直觉的总原则}：\textbf{修正\emph{不是}“把检测分数最高的标签\emph{换掉}}”。检测器只负责\textbf{把可疑对象和\emph{证据线索}排到面前}，\textbf{“改成什么、改不改、改多大范围”必须由\emph{已确认的问题}（7.3的根因）、\emph{可用证据}、和\emph{影响范围}共同决定}——分数从来不是修改的依据。
+
+针对一个确认的问题，\textbf{可采取的行动\emph{不止}“改一个字”}，按问题类型可以是：\textbf{改正内容}（错标改对）、\textbf{补齐遗漏}（漏标补上）、\textbf{重建关系}（对象错配重新绑定）、\textbf{修改\emph{构造条件}}（规则/教师/变换错了就改生成程序）；而当\textbf{证据不足}时，\textbf{正确的“行动”恰恰是\emph{保留不确定性}}（标记未决、降权、隔离），而不是硬改一个答案。
+
+无论采取哪种行动，\textbf{每一次变更都要可追溯、可回退}：必须\textbf{保存“原始值、候选（改成什么）、\emph{采用依据}（凭什么这么改）、\emph{未决问题}、\emph{回退入口}（怎么撤回）”}。最后\textbf{给“改了就会变好”泼冷水}：\textbf{“\emph{改变了}监督信号或生成程序”只说明“\emph{系统发生了变化}”，它\emph{绝不}自动等于“\emph{质量已经改善}}”——改完可能更糟（改错、引入新错），\textbf{是否改善要靠7.4.2的独立验证说了算}。
+
+\subsection{修正方案的选择与实施}
+\label{sec:knowledge-quality-assessment-correction-repair-selection}
+
+用$x_2$看清“\textbf{修正\emph{粒度}要和问题\emph{范围}匹配}”：
+\begin{itemize}\item \textbf{如果只是$x_2$这\emph{一条}经独立材料确认为茶梅}（个别错标），那就\textbf{只对这一条做\emph{人工改正}}，范围精确到单条。\item \textbf{如果根因是“\emph{同一本词典的某个映射}错了，而它影响了\emph{整批}预测输出”}（系统性问题），那\textbf{只改$x_2$这一条}就是\textbf{“按下葫芦”——\emph{其他受同一错误影响的样本全被留下}}，治标不治本；正确动作是\textbf{修词典/修规则、再\emph{批量}重算受影响结果}。\end{itemize}
+所以\textbf{选方案时要同时判断三件事}：其一，\textbf{“改成新值”的\emph{证据}充不充分}（没有独立证据就别自动替换）；其二，\textbf{需不需要\emph{新增专业判断}}（是不是超出当前规范、要请专家/查外部资料）；其三，\textbf{这是“\emph{任务定义/生成条件}变了”，还是“旧定义下\emph{做错了}}”——前者要换标准、后者是纠错。
+
+把四类“处理方式”的\textbf{分工}理清，它们\textbf{可以组合、\emph{不是}互斥的四个抽屉}：\textbf{人工复核}说明“\emph{由谁执行判断}”（人而非机器）；\textbf{自动推断}说明“\emph{谁执行}”（规则/模型自动）；\textbf{补充与调整}说明“\emph{改变了什么}”（加证据/改配置）；\textbf{“无法可靠修正时怎么办}”规定“\emph{怎么保留未决}”。最后是版本纪律：\textbf{如果是\emph{任务定义本身}改变（新规范重新划界），必须\emph{另建新版本}}，\textbf{\emph{不能}把“按新标准重标的结果”\emph{混进}“旧标准下的错误率”}——新旧标准是两把尺子（呼应7.1）。
+
+\subsubsection{基于人工复核的修正}
+\label{sec:knowledge-quality-assessment-correction-human-repair}
+
+\textbf{人工修正不能“看着模型建议打勾”}：它所需的材料\textbf{必须包括\emph{原始对象}、\emph{适用规范}、\emph{独立证据}}——\textbf{而\emph{不只是}一条模型建议}（否则只是给模型背书）。流程上沿用7.1的盲化顺序：\textbf{复核者先\emph{独立}给出新判断（不看原标签/模型），\emph{保存}后再查看原标签和冲突判断及其证据对照}，最后提交\textbf{四类结论之一并附理由}：\textbf{保留}（原判对）、\textbf{修改}（改成什么+依据）、\textbf{维持多解}（本来允许多答案）、\textbf{无法裁决}（证据/规范不足）。
+
+还要\textbf{分清“操作错”和“\emph{领域事实}错”该谁处理}：\textbf{操作层面的错误}（框拖偏了、填错字段、可按规范机械纠正）\textbf{可以由\emph{受训复核者}处理}；但一旦涉及\textbf{需要\emph{领域事实}判断（这个物种到底是不是茶梅）或\emph{规范解释}（这条规则在这种边缘情形算不算适用）}，就\textbf{应交给\emph{相应领域专家}}，不能让受训人员猜。并且\textbf{专家\emph{可推广}的裁决（“这类情形以后统一这么判”）应\emph{写回规范}}——让同类问题以后不必反复请教，把一次性判断沉淀成可复用的规则。
+
+对象错配这类问题\textbf{有“\emph{牵一发动全身}}”的特点——\textbf{一条绑定错误，往往\emph{连带}多条标注/关系}，不能只改眼前字段。举例：照片S042被错挂到植株P017名下，正确的修正顺序是：
+\begin{enumerate}\item \textbf{先\emph{恢复照片的真实对象}}（把S042从P017解绑、挂回正确植株）——这是根；\item 再\textbf{检查S042自己的\emph{类别}}（对象对了类还对不对）；\item 检查\textbf{它和“\emph{同株}其他照片”的\emph{正对应关系}}（同一植株的多视图要一致）；\item 还要\textbf{检查所有“\emph{以P017为锚}生成的\emph{邻居/下游结果}}”（邻居关系、训练关系可能都建立在错绑上）。\end{enumerate}
+\textbf{只把类别字段改对、却留着错误绑定，会留下一整片错误关系}。所以\textbf{修正范围应\emph{沿来源依赖关系}展开}（顺着7.3溯源清单波及到哪就查到哪），但\textbf{每一条受影响标注\emph{仍要}保留它\emph{自己的变更依据}}——批量改不等于“一刀切共享同一条理由”，每条仍可追溯。
+
+\textbf{为什么坚持“\emph{先}独立复标、\emph{后}知情裁决”这个顺序不能颠倒}？因为两步在做\emph{不同}的事：\textbf{独立复标}产生的是“\emph{不受原答案影响的\emph{新增判断}}”（一份新鲜证据）；\textbf{知情裁决}则是在\textbf{已有这份新判断\emph{之后}，再\emph{比较各方意见和证据}做仲裁}。如果\textbf{先看了各方争议再“独立”判断，那份判断已被污染，\emph{不能}倒过来算成一份“盲化}判断”——顺序反了，证据等级就变了。
+
+\textbf{多人复核仍分歧}时怎么办？\textbf{不必靠“\emph{无限}加人投票”硬凑一致}：若规范允许多解，\textbf{保留“答案\emph{集合}”和“各自\emph{成立条件}}”即可。\textbf{要不要继续加人复核}，判据不是“已经复核了几次”，而是三件实事：\textbf{其一，\emph{新证据}还能不能\emph{排除}某些候选（能排除才值得查）、其二，\emph{当前用途的风险}（高风险值得多查）、其三，\emph{追加复核的成本}}——证据不再改变结论时，继续复核只是烧钱。
+
+\subsubsection{基于自动推断的修正}
+\label{sec:knowledge-quality-assessment-correction-automatic-repair}
+
+自动修正听起来省力，但它\textbf{有个\emph{硬前提}}：\textbf{只有当“\emph{转换规则}、\emph{外部证据}、或\emph{经过验证的预测}”能够\emph{支持}“新结果确实成立”时，才允许自动替换}。没有这个支撑的“自动改”只是把模型的猜测当成事实。先分清两种自动程度完全不同的情形：
+\begin{itemize}\item \textbf{\emph{确定性}的格式转换}：比如\textbf{类别编码从旧编号\emph{无歧义}地一一映射到新编号}（旧码X恒等于新码Y，纯重命名）——这是“\textbf{在\emph{限定条件}下\emph{保持语义}的确定性转换}”，\textbf{不涉及判断对错}，可以高把握自动执行。\item \textbf{\emph{模型对疑似错标重新预测}}：模型给个新答案——这\textbf{\emph{永远只是}“生成一个\emph{候选}}”，它可能重复原标签的错、可能自己没把握，\textbf{必须再有证据/验证环节}，不能直接落库。\end{itemize}
+因此这两类\textbf{\emph{不能}共用同一个“\textbf{置信度高于阈值＝修正成功}”的标准}：\textbf{确定性映射的把握来自“\emph{规则无歧义}}”，\textbf{模型重测的把握需要\emph{外部验证}}——前者不看置信度（看规则），后者不能只看置信度（要看证据）。
+
+一个\textbf{可审计的自动修正流程}应当\textbf{顺序清晰、每步留痕}：\textbf{其一，生成候选}（规则/模型给新值）到\textbf{其二，检查\emph{适用条件}}（这个对象/范围里这条规则成立吗）到\textbf{其三，决定“\emph{自动接收}”还是“\emph{转人工}}”（高把握、确定性的自动；有歧义的转人）到\textbf{其四，\emph{保存修改前后差异}和决策理由}。不同步骤要\textbf{存不同的东西}：
+\begin{itemize}\item \textbf{确定性规则}：要\textbf{写明“\emph{为什么}它\emph{保持对象和语义}”}（说明这是一一、无损、无歧义的转换，而不是判断）。\item \textbf{预测替换}：要\textbf{分别保存“模型分数、\emph{替换风险}（错改概率/影响面）、\emph{复核要求}}（哪些情况必须人工回看）”。\end{itemize}
+两个“一致不等于对”的陷阱（第6、7.3反复出现，这里同样适用）：其一，\textbf{模型和原标签若来自\emph{相同训练样本}或\emph{共享来源}}，那么“模型重测结果和原标签\emph{多次一致}”\textbf{仍可能只是\emph{重复同一个错误}}（同源）；其二，\textbf{用\emph{同一个教师}重新生成表示目标}，教师和“学生”共享同样的错，\textbf{\emph{不构成}对“教师模型预测输出”的\emph{独立}证明}——自证不算证。
+
+自动修正的\textbf{规则/阈值必须在\emph{开发样本}上确定、然后\emph{冻结}，再进入\emph{留出}审计}——绝不允许边看留出结果边调（数据纪律同前）。在冻结前的\textbf{小范围试用}阶段，要\textbf{\emph{同时}检查两组对象，它们各暴露一类不同风险}：
+\begin{itemize}\item \textbf{被修改的对象}：检查\textbf{“\emph{改错}”风险}——规则有没有把本来对的改成错的（精确率）。\item \textbf{\emph{未}被修改的对象}：检查\textbf{“规则\emph{漏修}”和“\emph{作用边界}}”——该改的有没有没动、规则在什么样本上失效（召回率/适用范围）。\end{itemize}
+只看被改的，会盲目乐观。最后一条\textbf{反“过拟合调参”}纪律：如果自动修正\textbf{出现\emph{系统性}副作用}（比如某一类被成片改错、某来源整体异常），\textbf{正确动作是\emph{回退到旧版本、查根因}，而\emph{不是}“继续\emph{提高阈值}，直到\emph{开发样本看起来}正确}”——后者只是让规则在开发集上自洽，副作用在新数据上依旧，甚至更隐蔽。
+
+\subsubsection{基于问题类型的补充与调整}
+\label{sec:knowledge-quality-assessment-correction-type-repair}
+
+不同类型的问题，要求\textbf{不同性质的修正动作}，先把“\emph{不改变任务定义}就能解决”的和“\emph{连定义都要动}”的分开：
+\begin{itemize}\item \textbf{照片\emph{漏标}}（该有的花没框）到\textbf{\emph{补齐}监督信号}（补框/补关系），任务定义不变。\item \textbf{\emph{对象绑定}错}（S042挂错植株）到\textbf{\emph{重建对应关系}}（解绑重挂），定义不变。\item \textbf{答案\emph{过粗}}（只到属、任务要种）到\textbf{\emph{增加细节}}（细分/补更细标签），也不改变任务。\end{itemize}
+这三类\textbf{都能在\emph{既有任务定义}内修}。但如果\textbf{歧义的根源是\emph{规范本身}}，就要先分清两种性质完全不同的动作：
+\begin{itemize}\item \textbf{\emph{澄清}原有规则}（原规则没说清、大家理解不一致，补一个解释）——“正确”的标准其实没变，只是明确了；\item \textbf{\emph{重新规定}类别边界}（把原来一类拆成两类/合并两类）——这\textbf{\emph{改变了“什么算正确”的含义}}，旧标注在新标准下无所谓对错，\textbf{必须\emph{分版本}评价}（7.1讲过）。\end{itemize}
+还有一类问题在“\emph{构造条件}”而不在标签本身：比如\textbf{一个视图变换\emph{删掉了主体}，却还声明“语义不变”}（裁剪后只剩背景还当正样本）——这时\textbf{要修的是“\emph{变换规则}和\emph{目标构造}}”（重新生成对应、改裁剪约束），\textbf{\emph{不是}更换\emph{某一个标签}}就能解决。\textbf{一句话：处理范围由“\emph{问题发生在\emph{哪一层}}”决定}——标签错改标签、绑定错重建绑定、规则错改规则、定义变建版本。
+
+表~\ref{tab:knowledge-quality-assessment-correction-repair-scope}是\textbf{“核查结果 到 该改\emph{什么}、改\emph{多大范围}”的\emph{对照表}}：前五行（单点错标、对象错配、标注缺失、定义变化、构造条件失效）都是\textbf{\emph{已有证据支持}、可以\emph{动手}}的问题，每一行对应不同的“改变对象与范围”；\textbf{最后一行“证据不足}”则\textbf{\emph{不是}一种修正，而是\emph{保留“无法裁决”状态}}（暂缓/降权/隔离/补证据）。
+
+使用这张表有个\textbf{不可跳过的闸门}：\textbf{只有当“核查依据”已经是\emph{独立证据}}时，才能按表批量处理。\textbf{如果你手上\emph{仍然只有}“检测分数高”或“来源之间有冲突”}，那\textbf{还停在“线索”阶段}，\textbf{必须先去\emph{找参考证据}（原图/规范/日志/复标）}，\textbf{\emph{不能}据此就认定“某类全错”并\emph{批量替换}}——用线索当证据批量改，是修正阶段最大的误伤来源。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begingroup
+  \setlength{\tabcolsep}{2.5pt}
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{26mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{47mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{43mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X@{}}
+    \toprule
+    \textbf{核查结果} & \textbf{改变对象与范围} & \textbf{可选处理} & \textbf{后续核验} \\
+    \midrule
+    单点错标 & 当前答案及引用它的派生样本标注 & 独立复标后替换或保留多解 & 复核改后结果，抽查关联样本标注 \\
+    对象错配 & 对象绑定、同对象标签与关系 & 恢复对象后重建关联结果 & 对象、方向与影响范围 \\
+    标注缺失 & 缺失监督信号及同类、同批次对象 & 补标、追加获取或保留弃权 & 覆盖变化与新增部分质量 \\
+    定义变化 & 规范版本及旧定义下的相关样本标注 & 分版本保留、有限映射或重标 & 共同定义域内的前后差异 \\
+    构造条件失效 & 来源规则及同配置生成的目标 & 修改规则，重生成受影响批次 & 构造条件与独立下游用途 \\
+    证据不足 & 状态、候选集合与使用方式 & 暂缓、降权、隔离或追加证据 & 覆盖损失与再次触发条件 \\
+    \bottomrule
+  \end{tabularx}
+  \endgroup
+  \caption{核查结果与处理范围的对应。前五行处理已有证据支持的问题，末行处理仍无法裁决的情况；高损失或来源冲突本身不能确立问题类型。}
+  \label{tab:knowledge-quality-assessment-correction-repair-scope}
+\end{table*}
+
+一个“\textbf{构造条件错、要动整条流水线}”的具体例子：某条\textbf{裁剪规则把花朵主体\emph{裁掉了}}（只剩背景），但流程却\textbf{仍把裁剪图和原图记为“\emph{正对应}}”（声称语义保留）。修正\textbf{不是改某张图的标签}，而是一套动作：\textbf{其一，\emph{限制裁剪区域}}（规则上保证主体在框内）到\textbf{其二，\emph{重新生成}“原图—裁剪图”的对应关系}（旧的正对应作废）到\textbf{其三，\emph{检查所有用旧关系}训练/评价过的\emph{派生版本}}（哪些下游模型/数据集建立在错关系上，要重算）。
+
+这类\textbf{补标/重生成之后}还要追三个连带变化：\textbf{其一，对象有没有\emph{新增}（新框出新花）或\emph{退出}（原来误标的对象被移除）}；\textbf{其二，\emph{适用条件}有没有变}（新裁剪适用的范围和旧的不同）。一旦这些发生，\textbf{“\emph{抽样框}和\emph{审计范围}”都要\emph{更新}}（新对象进框、退出对象出框），并\textbf{\emph{单列}报告“新增覆盖部分”的类别\emph{组成}}（防止新旧混在一起后指标含义漂移）。\textbf{如果只是“\emph{对同一总体}\emph{重新计算}目标”}（对象、范围都没变，只是重新生成像素/关系），则\textbf{总体可以保留}，但\textbf{必须保存\emph{新的构造版本}}以便区分“同一总体的不同构造产物”。
+
+\subsubsection{无法可靠修正时的处理}
+\label{sec:knowledge-quality-assessment-correction-unresolved}
+
+有些情形\textbf{不是“再努力一点就能改对”}，而是\textbf{本质上\emph{证据不足}}：比如一张\textbf{严重遮挡的照片}，可能\textbf{无论如何都\emph{无法区分}山茶与茶梅}。这时\textbf{把它\emph{强行}改成任一单标签，都\emph{缺少依据}}——硬改只会制造一个看似确定、实则猜测的新错误。正确做法不是“选一个”，而是一组\textbf{“诚实处理不确定性”的动作}：
+\begin{itemize}\item \textbf{保留候选集合}（山茶/茶梅都留着，不假装唯一）；\item \textbf{标记“待复核”}（等更好照片/专家）；\item \textbf{\emph{降低}训练权重}（让这条不太可靠的样本少影响训练）；\item \textbf{\emph{暂时隔离}}（高风险时干脆先不用于训练）；\item \textbf{\emph{追加}证据}（补拍、补检测、调其他视图）。\end{itemize}
+要明白这些动作\textbf{改变的是“\emph{表达形式}和\emph{使用方式}”，\emph{未必}纠正了内容}——它没让你知道真值，只是不让缺证据的样本危害系统。两个具体区分：其一，若\textbf{独立证据已\emph{确认}“真值在某\emph{集合}内”}（确定非此即彼），可按第~\ref{sec:knowledge-fusion-set-abstention-use}节\textbf{用集合约束训练}；但\textbf{仅由\emph{模型自己筛}出的候选}\textbf{仍可能漏掉真值}，\textbf{不能当“确定集合约束}”（第6章反复强调）。其二，\textbf{降权和隔离不一样}：\textbf{降权\emph{只减小}该样本对训练的贡献（保留覆盖、降低风险），隔离则\emph{同时移除}风险\emph{和}覆盖}（更安全但这条等于不用了）。
+
+当\textbf{不是个别、而是\emph{一整批}样本都疑似有标注噪声}、又\textbf{无法逐条核出真值}时，还有第6章那条\textbf{不逐条改标签、而在\emph{训练损失}里校正}的路：若能为这批样本\textbf{建立可信的“报错通道”（噪声转移矩阵$\bm T$）}，可按第~\ref{sec:ka-noise-correction}节\textbf{保留原始观测标签、用前向/后向校正损失训练}。
+
+但要\textbf{严格记得它\emph{做了什么、没做什么}}：它\textbf{改变的是“训练时\emph{对噪声的\emph{统计处理}}”（让模型不被噪声带偏）}，\textbf{\emph{没有}逐条裁定真值、也\emph{没有}把任何一条标签改对}——所以它是“\textbf{带着已知不确定性\emph{稳健训练}}”，不是“消除了未决”。它的两个失效条件也照搬到这：\textbf{通道$\bm T$\emph{不可识别}时}（没有锚点估不出，见第6章）、或\textbf{通道\emph{随照片特征}变化}（不是类别条件噪声）时，\textbf{矩阵校正都\emph{不能}消除这些未决}，还得回到补证据/隔离。
+
+一个\textbf{用“删除低分样本”会\emph{系统性作恶}}的场景：\textbf{当某\emph{少数类别}\emph{持续}拿到低置信度时，\textbf{批量删除这些样本\emph{尤其危险}}。为什么？回忆第6章——\textbf{低分\emph{不一定}是标签错}，它\textbf{很可能来自“\emph{模型本身\emph{缺少}识别这个少数类的能力}}”}（模型不会，不是标签错）。这时\textbf{把低分样本\emph{删掉}，等于\emph{把模型\emph{本来就学不好}的那类样本}进一步抽走}——\textbf{训练数据在这个任务区域\emph{进一步}流失}，模型更学不会，下次给该类的分更低，形成“越删越不会、越不会越删”的恶性循环。
+
+正确顺序：\textbf{先\emph{抽查独立证据}}（这些低分到底是错标，还是模型无能/样本罕见？），\textbf{再\emph{比较}几种处理的代价}：保留候选集合、允许弃权转专家、追加专业复核，哪个代价/风险更合适。\textbf{如果当前任务实在\emph{不能容忍}“未决”状态}（下游必须确定答案），可以\textbf{\emph{暂时隔离}}这些样本，但\textbf{必须\emph{如实报告覆盖率因此下降}}（你放弃了多少、哪一类），\textbf{\emph{绝不能}把“\emph{剩余}样本上的\emph{较高正确率}”\emph{解释成}“\emph{原总体}质量\emph{提高}了”}——那只是“把难题都不算之后”的数字美化（第6.8阈值陷阱同款）。
+
+“待复核/未决”\textbf{不能变成一个“\emph{只进不出}的黑洞”}——很多系统的待复核队列越积越多、再没人看，等于把不确定性藏起来了。所以\textbf{每条未决标注都要有\emph{明确的“去向”和“重新触发”规则}}：
+\begin{itemize}\item \textbf{保存原始内容和候选证据}（不能在搁置中丢失）；\item \textbf{事先规定\emph{什么条件下重新审计}}：相关\textbf{来源更新}了（新词典/新模型可能解决它）、\textbf{风险累积超阈值}（同类未决多到影响使用）、或\textbf{积累到一定\emph{数量}}（批量送专家更划算）；\item \textbf{\emph{定期}检查这些未决是否\emph{集中在某些特定群体}}（某地区/某来源/某难类长期悬而未决，说明那一块有系统性盲区）。\end{itemize}
+连“\textbf{什么时候\emph{停止}追加证据、就此搁置}”也要\textbf{有\emph{事先明确}的理由}，比如“\textbf{追加证据对\emph{降低使用风险}的作用已\emph{低于门槛}}（再查也改变不了用途决策）”或“\emph{边际复核成本过高}、风险可接受”——\textbf{而不是让“待复核”状态\emph{永久}挂着、在报表里\emph{变成不可见}（既不算错也不算对、无人负责）}。
+
+\subsection{修正效果的验证}
+\label{sec:knowledge-quality-assessment-correction-repair-validation}
+
+“修正完了，怎么\emph{证明}它确实更好？”——这里\textbf{藏着\emph{两个}必须分开回答的问题}，混为一谈就会出现“改的那批看着挺好、上线却没用甚至更糟”：
+\begin{itemize}\item \textbf{修正\emph{结果}的独立复核}：问的是“\textbf{\emph{这一条}被改动的对象，\emph{现在}对不对}”。它针对的是\emph{具体改动点}（$x_2$改后真的是茶梅了吗），\textbf{可以复核\emph{同一对象}的前后}，但\textbf{下判断用的\emph{证据}或\emph{复核者}必须和“修正过程”\emph{适当隔离}}（不能让设计修正规则的人又来当裁判）。\item \textbf{修正\emph{策略}的\emph{留出}验证}：问的是“\textbf{我这套\emph{冻结}后的处理规则（新词典/新阈值/新流程），\emph{遇到\emph{没参与设计}的\emph{新对象}}时，\emph{还}有效吗}”。它针对的是\emph{规则的泛化}，\textbf{必须把“策略\emph{开发}用的样本”和“\emph{评价}用的样本”\emph{严格隔离}}。\end{itemize}
+两者最容易踩的坑：\textbf{不能\emph{先看了留出结果}、发现不达标、再回去\emph{继续调}规则，却还\emph{沿用}原来那份“这是独立留出”的声明}——一旦你为了留出结果改了规则，留出集就变成开发集了（数据窥探，独立性作废），必须换新的留出集。
+
+图~\ref{fig:knowledge-quality-assessment-correction-evidence-isolation}把这\textbf{两种“隔离”画成上下两条路径}，对照着看就不会混：
+\begin{itemize}\item \textbf{上板（结果复核）}：\textbf{允许\emph{同一对象}形成“修正前 vs 修正后”的\emph{配对}}（当然要看同一张照片改对没），\textbf{这里被隔离的是“\emph{判断证据/裁判}}”——要由没参与修正、或独立的新证据来判改后对不对。\item \textbf{下板（策略验证）}：\textbf{隔离的是“\emph{策略开发}”和“\emph{推广评价}}”两个\emph{阶段}——用一批\emph{开发审计}定策略、定阈值，\textbf{在\emph{看任何留出结果之前}就把策略\emph{冻结}}，再用\emph{另外}的留出审计评价；\textbf{冻结线之后，留出结果\emph{不能再送回去}改策略}（否则越界）。\end{itemize}
+
+\subsubsection{修正结果的独立验证}
+\label{sec:knowledge-quality-assessment-correction-independent-validation}
+
+先看“结果复核”具体怎么做。\textbf{要检查改动\emph{是不是真的纠了错}，必须让“修正前、修正后”\emph{可比}}——所以要\textbf{在\emph{同一任务定义}、\emph{同一参考依据}下，把\emph{同一对象}的前后结果\emph{配对}}（同一张照片、同一套规范，只看改前改后），不能拿“改后这张”去和“另一张照片”比。对\textbf{前后两版\emph{都}有监督信号、且\emph{都}能二值裁决}的同一对象$i$，记改前错误指示$e_i^{(0)}$、改后$e_i^{(1)}$（都是1=错、0=对），定义\term{改进量}（improvement）
+$$d_i=e_i^{(0)}-e_i^{(1)}\in\{-1,0,1\}.$$
+它有三种取值，但对应\textbf{四种必须\emph{分开}记录的“对错转移”}（这是关键，零值里藏着两种完全不同的情况）：
+\begin{itemize}\item $d_i=+1$：\textbf{错到对}（真正改进）；\item $d_i=-1$：\textbf{对到错}（\emph{改坏了}，新引入的错误）；\item $d_i=0$包含两种：\textbf{对到对}（本来就对、没动坏）和\textbf{错到错}（\emph{改了但还是错}，漏修）。\end{itemize}
+所以\textbf{四类转移（错到对、对到错、对到对、错到错）都要\emph{分别保存}计数}，不能只存一个$d_i$——否则“对到对”和“错到错”被混成同一个0，你就看不出“有多少改了白改”。而\textbf{那些“改前/改后有一版\emph{退出使用}、\emph{缺失}、或\emph{无法裁决}”的对象}，它们\textbf{\emph{不能}硬塞进这个$\{-1,0,1\}$二值配对}（你没有两个可判对错的版本可比）。对它们要\textbf{\emph{另列}报告}（多少条没法纳入配对、原因是什么），\textbf{不能为了凑数把“无法裁决”当“对”或“错”填进$d_i$}——否则配对率被系统性污染（前面样本级讲过的纪律）。
+
+单条配对$d_i$只说明“\textbf{被抽中、被复核的这些对象\emph{实际}变好了多少}”；要\textbf{由它\emph{估计总体}下降多少}，还得加一个抽样前提：\textbf{“\emph{各对象的前后结果}\emph{不由‘评价入样}’决定}”。换句话说，\textbf{用哪些对象来做这个评估（抽$n_h$、分层），必须\emph{在看到改前改后答案之前}就定好}，不能“先看哪些改对了、再专挑那些来评估”。
+
+具体地：\textbf{两个版本（或将要推广到总体的策略）应在\emph{评价抽样之前}就\emph{确定（冻结）}}；\textbf{策略允许“\emph{按对象特征}决定\emph{改不改}某类”}（比如只修高风险层，这是事先规则），\textbf{但\emph{不能}“看了\emph{本次参考答案}”才\emph{挑对象}或\emph{临时改规则}}”——前者是事先可复现的策略，后者是用评价数据做开发，估出的“总体改善”必然虚高。在满足上述前提（前后都可二值裁决、抽样事先固定）的同一总体上，若\textbf{各\emph{层}\emph{独立}简单随机无放回抽样}，令$\overline d_h$为第$h$层差值$d_i$的层内均值、$s_{d,h}^2$为层内差值的（无偏）样本方差（$n_h\geq2$），沿用7.2的总体层权重$W_h=N_h/N$和层抽样比例$f_h=n_h/N_h$。关键技巧是：\textbf{直接对“\emph{差值}$d_i$”做分层估计，而\emph{不是}“先算改前错误率、再算改后错误率、两个方差各自算一遍相减}”——因为\textbf{前后是\emph{同一对象}，两者\emph{强相关}}，对差值估计能自动利用这种相关、方差更小。公式为：
+\begin{equation}
+  \widehat\Delta_{\mathrm{st}}
+  =
+  \sum_{h=1}^{H}W_h\overline d_h,
+  \qquad
+  \widehat{\operatorname{Var}}(\widehat\Delta_{\mathrm{st}})
+  =
+  \sum_{h=1}^{H}W_h^2(1-f_h)\frac{s_{d,h}^2}{n_h},
+  \label{eq:knowledge-quality-assessment-correction-paired-difference}
+\end{equation}
+读这个配对差值公式的两个要点：其一，\textbf{对“差值$d_i$”而不是“两次独立错误率”求方差}，正好\textbf{\emph{保留}了“\emph{同一对象}前后”的\emph{相关性}}（减掉了“对象本身难易不同”这部分无关波动，所以配对估计通常比两次独立估计更稳）；其二，方差里的\textbf{平方层权重$W_h^2$和有限总体修正$(1-f_h)$}都\textbf{来自\emph{同一个}抽样设计}，不能和别的设计混用。
+
+一个最常用的特例：\textbf{简单随机、二值配对}时，设$b$条“错到对”、$c$条“对到错”、其余差值为0，则平均改进量直接是
+$$\widehat\Delta=(b-c)/n.$$
+即\textbf{改进量＝“改对的”减去“\emph{改坏的}”，再除以样本数}——\textbf{只报$b$（改对多少）会掩盖$c$（新引入多少错）}，必须净值。针对这种“只有两类\emph{不一致对}（$b,c$）提供信息”的配对设计，有专门的\term{McNemar 检验}（McNemar test）：它\textbf{用$b$和$c$检验“修正\emph{前后}两个边际错误率是否\emph{真的}不同”}（区分“改善”和“随机抖动”）。但要注意它的边界：\textbf{McNemar 只回答“\emph{有没有}差异”的\emph{显著性}，\emph{不替代}“效应\emph{多大}（$\widehat\Delta$）”和“\emph{不确定区间}”}，而且它针对的是简单配对设计，\textbf{不能直接套到分层/整群等复杂抽样上}\scite{knowledge-quality-assessment-correction-mcnemar1947}。
+
+光“随机入样”\textbf{还\emph{不足以}保证配对估计无偏}——还有一个更隐蔽的陷阱：\textbf{“\emph{改哪些}”如果\emph{由入样决定}}，配对估计就被污染。一个极端但极有说服力的例子：假设1000条原标注\textbf{全部错误}，你随机抽100条、\textbf{\emph{只把这被抽中的100条}改正}，再请独立专家确认这100条\emph{全部}改对（$b=100,c=0$）。
+\begin{itemize}\item 若你\textbf{错误地把“样本里$d_i=1$”直接套进配对公式}，会报“总体下降$\widehat\Delta=100\%$、方差为0”——仿佛整体全好了。\item \textbf{实际只改了100条，总体错误率只从$100\%$降到$90\%$，\emph{真实}下降只有$10$个百分点}。\end{itemize}
+差在哪？因为\textbf{“\emph{修改对象}”是由“\emph{入样}”决定的——\textbf{评价样本（那100条）\emph{已经参与了修正方案的执行}}，它不再是“对一个\emph{预先冻结、推广到全体}的策略”的独立评价}（你只修了抽到的，没抽到的900条策略根本没作用过）。正确报告法：\textbf{老实报“这\emph{被修的100条}里，确认纠正了100条（确认纠正数）、它们占总体的\emph{已知份额}$100/1000=10\%$”}；\textbf{若要估计“\emph{修正后总体}会怎样”或“策略\emph{推广}效果”，必须\emph{另取}\emph{没参与修正}的独立评价样本（或用预先冻结策略+HT加权）}。
+
+配对差值的估计\textbf{仍要\emph{匹配抽样设计}}，不同设计有不同注意点：
+\begin{itemize}\item \textbf{按簇抽样}（先抽文档/批次）：\textbf{配对差值要在\emph{簇层}估计、或用尊重簇的重抽样}，不能把同文档样本当独立（同7.2）。\item \textbf{只评价“高风险\emph{范围}}”（开发/排查只在$x_2$这类冲突区做修正）：结论\textbf{\emph{严格限于该范围}}——你只能说“高风险区改善了多少”，不能外推到全体。\item \textbf{策略\emph{事先}规定“只修高风险对象}”（冻结的规则），但\textbf{评价样本\emph{覆盖整个总体}}（在全体上随机抽，含大量策略根本不会动的低风险对象）：这时反而\textbf{可以\emph{估计全体}变化}——因为未修对象的$d_i=0$，它们“零变化”被\textbf{如实计入}，于是得到的是“这个只修高风险的策略\emph{推广到全体}的净效果”。\end{itemize}
+最后是“规范改变”的配对口径：\textbf{只有\emph{新旧两个定义\emph{共同覆盖}}（含义没变、只是对错可能变）的对象，才能做“\emph{同一口径}”的前后配对}；那些“旧类被拆/并、在新规范里没有对应物”的对象，\textbf{无法同口径配对，应\emph{分版本}报告}（7.1的尺子问题）。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/11-knowledge-learning/01-knowledge-acquisition/tikz/knowledge-acquisition-ch07-evidence-isolation.tex}
+  \caption{修正与验证的证据隔离。上面板复核同一被修改对象，独立性来自未参与修改的复核者或新证据；下面板用开发审计确定策略，在评价抽样前冻结，再用留出审计评价。上面板只确认已改结果；用于总体推断的配对样本还须满足下面板的隔离条件。}
+  \label{fig:knowledge-quality-assessment-correction-evidence-isolation}
+\end{figure*}
+
+独立验证时\textbf{看什么、不看什么}有几条纪律：
+\begin{itemize}\item \textbf{先对可二值裁决对象\emph{统计齐四类对错转移}}（错到对/对到错/对到对/错到错），\textbf{未裁决、退出的\emph{另列}}。\item \textbf{还要\emph{抽查“未修改区域}}”——这是\textbf{查“规则\emph{漏修}”}的\emph{唯一}办法。只看被改对象，你能算清“改对/改错比例”，却\textbf{\emph{看不见}“该改却没被规则触及的那批”}（规则召回率问题）。\item 反过来说，\textbf{只看“总体平均改善”也不够}——一个$4\%$的平均改善，可能\textbf{\emph{掩盖}某\emph{少数类别}\emph{恶化}}（常见类大改善、稀有类被改坏，平均仍好看），所以要\emph{分组}看（呼应6.6/7.2）。\item \textbf{不同监督信号用不同的复核法}：\textbf{关系重建}须\textbf{核查“对象绑定+成立条件”}（改完的关系两端、方向对不对）；\textbf{表示目标更新}须\textbf{\emph{分开}检查“构造条件”和“下游用途}”（构造合规不代表下游变好，见7.1、第6章）。\end{itemize}
+最后，验证不只是“打勾通过”，还要\textbf{回到决策}：\textbf{是否回退版本、追加审计、或限制策略范围}，应\textbf{依据\emph{事先预定的分组要求}和\emph{证据充分程度}决定}（比如某层改善证据不足就限制该层或回退），而不是看总体数字碰巧好不好看。
+
+\subsubsection{修正收益与成本的比较}
+\label{sec:knowledge-quality-assessment-correction-benefit-cost}
+
+就算\textbf{确实“把一批标注\emph{改对了}”}（结果复核通过），事情还\textbf{没结束}——还要问一句\textbf{“这次改进\emph{值不值得}投入}”，并\textbf{检查“\emph{改错}（对到错的新错）”和“\emph{覆盖}损失（隔离/收紧范围丢了多少）”}。所以比较的是一个\textbf{多方面的账单}，至少含四项：\textbf{其一，净纠错（改对$-$改坏，不是只看改对）、其二，关键分组（各类/各区域分别有没有变好变坏）、其三，下游用途（拿去训练到底有没有用）、其四，本轮\emph{完整}成本}。
+
+其中“下游贡献”最容易被冒领。\textbf{若要测“\emph{标签修正}对下游的贡献}”，必须做\textbf{控制变量}：\textbf{固定\emph{学习算法}、固定\emph{样本范围}、固定\emph{评价样本集}}，让\textbf{两次训练之间\emph{唯一}的主要变化就是“标签换了”}，并\textbf{另计训练随机性}（用同种子或多种子平均）。如果你\textbf{一边换标签、一边\emph{还换了模型、加了算力预算、加了训练数据}}，那\textbf{下游变好\emph{无法归因}给“标签修正”}（差异可能来自其他任何一项）。最后守住一句克制：\textbf{本节先只比较“\emph{标注/训练目标本身}的质量”变化，\emph{不预设}它已经带来模型收益}——标签更对不等于模型更好，下游要另测。
+
+下面把前面$x_2$/K17 的开发诊断，\textbf{接成一次\emph{完整、可复算}的具体验收流程}（这是本章教学案例的收官）。先回顾背景：\textbf{开发复核}在$x_2$等对象上确认“\emph{共享旧词典失效}”，于是\textbf{新版本K18采取一种\emph{隔离}措施：\emph{暂时}把那两条同模板规则的权重置零}（不让它们投票），\textbf{其他来源仍按等权合并}；\textbf{无可用答案或平票时仍保留未决}。要准确理解这个动作的性质：\textbf{它只是“\emph{先把\emph{失效来源}从融合中\emph{摘除/隔离}}”的处置，\emph{还\emph{没有}“修好词典本身}}”（词典里那条错映射还原样在，只是暂时不采信依赖它的票）。具体到$x_2$：两条规则票被摘除后，\textbf{模型那张“茶梅”成为\emph{剩下唯一}的有效票}，$x_2$从而改判茶梅。\textbf{K17、K18\emph{两版都保留原始来源类别票}}（不删历史），\textbf{以便以后\emph{恢复}和\emph{比较}}（能看到规则被摘除前后各投了什么）。
+
+为了让验收\textbf{不被数据窥探污染}，\textbf{所有“策略、分层方式、阈值”都在“\emph{打开那1000条独立验收总体的参考答案}”\emph{之前}就\emph{先固定}好}，并\textbf{在“\emph{评价抽样}”\emph{之前}冻结}（先定规则、再看结果）。还有一个\textbf{范围纪律}：\textbf{K18要\emph{按同一规则\emph{重算\emph{全部}1000条}}，而\emph{不是}只重算“抽中的那120条}”——因为策略变了（摘除两规则），\textbf{没被抽中的880条的结果\emph{也}可能变}，只重算抽中的会让“版本对比”漏掉未抽查部分的变化（呼应iv7）。这批教学样本的\textbf{可比性前提}要交代清楚：\textbf{两版\emph{都}给出1000条“可接收”的类别答案，\emph{没有}新增、退出或未决对象}——即两版\textbf{评价的是\emph{同一批}1000个对象、同样都有答案可比}（没有“这版多了/少了对象”造成的口径漂移）。但措辞要\textbf{精确}：\textbf{“可接收”只表示“\emph{满足作答协议与阈值}（有有效答案、够接收线）”，\emph{\emph{不}表示“已\emph{确认正确}}”}——“能给出答案”和“答案对”是两回事（后者正是接下来独立复核要查的）。然后请\textbf{\emph{独立}复核者（与K18的开发隔离）复核\emph{同一组}$80$常见+$40$易混淆的样本}，记录每一条的“K17对错 vs K18对错”，得到表~\ref{tab:knowledge-quality-assessment-correction-benefit-cost}里的\textbf{四类配对转移计数}（注意是同一批样本的前后对照，不是两批不同样本）。
+
+常见层有3条改对、1条改错，易混淆层有6条改对、2条改错，因此
+\[
+  \overline d_1=\frac{3-1}{80}=0.025,\qquad
+  \overline d_2=\frac{6-2}{40}=0.10,
+\]
+\[
+  \widehat\Delta_{\mathrm{st}}=0.8(0.025)+0.2(0.10)=0.04.
+\]
+\textbf{先把表读成“\emph{纠正}了多少”和“\emph{改坏}了多少”两笔账}，且都按总体权重汇总（不能按抽样数$80/40$加权，理由同7.2）：
+\begin{itemize}\item \textbf{纠正率（错到对的净\emph{正向}贡献）}：$0.8(3/80)+0.2(6/40)=6\%$；\item \textbf{新增错误率（对到错的\emph{负向}贡献）}：$0.8(1/80)+0.2(2/40)=2\%$。\end{itemize}
+\textbf{两者\emph{相减}$6\%-2\%=4$个百分点，才是“\emph{净}改善”}——只看“改对$6\%$”会漏掉“同时还新引入了$2\%$的错”。再直接核对K18改完后的错误率：常见层剩$2$条错（原4条里改对3、又把1条对的改错）、易混淆层剩$4$条（原8条改对6、改坏2），故K18总体错误率点估计$0.8(2/80)+0.2(4/40)=4\%$，\textbf{相对K17的$8\%$，\emph{净}下降$4$个百分点}。措辞要准：是“\textbf{从$8\%$\emph{降到}$4\%$，\emph{相差}4个百分点}”，\textbf{\emph{不是}“\emph{下降了}$4\%$”}（后者会被理解成相对降幅，量纲不同）。
+
+更重要的是\textbf{不要只看净值，要看四类原始转移}：样本里还有\textbf{$3$条“错到错”（\emph{始终错误}}）——它们\textbf{暴露“\emph{漏修}}”（K18规则没碰到它们）；另有\textbf{$3$条“对到错”（\emph{被改错}}）——它们\textbf{暴露“\emph{新引入风险}}”（新规则误伤）。\textbf{$4\%$这个净值是$+6$和$-2$抵消后的结果，\emph{不能替代}这两类原始计数}；只报净值，你既不知道规则漏了多少、也不知道误伤了多少。
+
+要给“净改善$4\%$”配不确定性，注意\textbf{不能把“K17错误率方差”和“K18错误率方差”\emph{简单相加}}——因为两次测量来自\emph{同一批对象}，\textbf{前后结果\emph{强相关}}，必须用\textbf{对“\emph{差值}$d_i$}”直接估方差（就是式~\eqref{eq:knowledge-quality-assessment-correction-paired-difference}的作用）。由$d_i^2$只在改变对错的对象上等于1，得到
+\[
+  s_{d,1}^2=\frac{3+1-80(0.025)^2}{79}=0.05,\qquad
+  s_{d,2}^2=\frac{6+2-40(0.10)^2}{39}\approx0.19487.
+\]
+代入式~\eqref{eq:knowledge-quality-assessment-correction-paired-difference}得到标准误约0.02271。正态近似95\%区间为
+\[
+  0.04\pm1.96(0.02271)
+  \approx[-0.00452,0.08452].
+\]
+用百分点表示，这次净改善量约落在$\boldsymbol{[-0.45,\ 8.45]}$个百分点之间。怎么\textbf{诚实地}读这个区间？
+\begin{itemize}\item \textbf{区间\emph{跨过了$0$}（下界$-0.45<0$）}：意味着“\textbf{这次修正\emph{可能}\emph{完全没改善、甚至轻微变差}}”在统计上\emph{不能排除}——所以\textbf{\emph{没有}证据支持“改善\emph{确定}为正}”。\item 区间这么宽，\textbf{根因是“\emph{真正改变对错的配对}只有$b+c=3+1+6+2=12$条}”（其余都没变、不含信息），\textbf{有效样本小，\emph{近似}误差不可忽略}。\end{itemize}
+所以这次演算\textbf{\emph{不足以}提供“严格的$95\%$发布保障}”——点估计好看（$+4\%$），但不确定性太大。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begingroup
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular*}{\linewidth}{@{\extracolsep{\fill}}lrrrrrr@{}}
+    \toprule
+    \textbf{分层} & \textbf{抽查数} & \textbf{错$\to$对} & \textbf{对$\to$错} & \textbf{对$\to$对} & \textbf{错$\to$错} & \textbf{退出} \\
+    \midrule
+    常见类别 & 80 & 3 & 1 & 75 & 1 & 0 \\
+    易混淆区域 & 40 & 6 & 2 & 30 & 2 & 0 \\
+    \bottomrule
+  \end{tabular*}
+
+  \medskip
+
+  \begin{tabularx}{\linewidth}{@{}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{29mm}>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}X>{\RaggedRight\setlength{\parindent}{0pt}\arraybackslash}p{56mm}@{}}
+    \toprule
+    \textbf{验收项} & \textbf{预先给定的要求} & \textbf{本次结果} \\
+    \midrule
+    错误改善 & 点估计至少2个百分点，且区间下界大于0 & 点估计4个百分点；近似下界为负，证据不足 \\
+    分组表现 & 两层错误率点估计均不升高 & 5\%降至2.5\%；20\%降至10\% \\
+    接收覆盖 & 总体及每层均不低于99\% & 两版均为100\%；退出为0 \\
+    本轮投入 & 人工不超过32工时，计算不超过1机时 & 开发4、复核24、维护2工时；重算0.5机时 \\
+    \bottomrule
+  \end{tabularx}
+  \endgroup
+  \caption{K17到K18的教学验收。上表是独立样本中的原始配对数，汇总需使用总体层权重；下表连接预定要求与结果。全部审计对象均可裁决，且没有退出，故四类对错转移覆盖全部样本。点估计改善而不确定性仍大，本次暂缓发布。}
+  \label{tab:knowledge-quality-assessment-correction-benefit-cost}
+\end{table*}
+
+\textbf{标签/目标质量改善，\emph{不等于}下游模型/任务就改善——必须等“监督信号\emph{真正进入任务}（拿去训练/使用）\emph{以后}，才有\emph{相应的下游收益}可言}。而且\textbf{不同监督信号要\emph{用不同的下游评测}，不能用一个分类准确率包打}：
+\begin{itemize}\item \textbf{类别修正}：\textbf{固定学习算法}，比较“用K17标签训 vs 用K18标签训”的评价结果（才是标签修正的贡献）。\item \textbf{关系重建}：比较\textbf{关系任务本身、或\emph{使用这些关系}的下游模型}（如配对/检索任务）。\item \textbf{表示目标}：在\textbf{约定好的使用方式下}，比较\textbf{独立的下游任务}（不能用构造损失代替）。\end{itemize}
+这正呼应7.1那个根本分工：\textbf{“构造检查}”回答“\emph{条件/约定有没有\emph{落实}}（流程对不对）”，\textbf{“用途评价}”回答“\emph{任务有没有\emph{受益}}（实际好不好）”——两者\textbf{不能互换}（流程合规并不等于任务变好）。成本也要\textbf{算\emph{全周期}}：\textbf{人工复核、自动调用、重生成、再训练、再次审计、后期维护}都要计入。在“预算口径、效果口径”都明确后，才可以\textbf{在“继续修正、追加监督信号、\emph{保留现状}}”之间理性比较——\textbf{\emph{不必}把“继续修改”当作唯一或默认选项}，证据不足时暂停/维持现状完全可以是最优决策。
+
+把表~\ref{tab:knowledge-quality-assessment-correction-benefit-cost}当“\textbf{\emph{预先}定好的发布门槛 vs 实际结果}”的验收单读，结论很清楚：
+\begin{itemize}\item \textbf{覆盖、投入}这两项\textbf{达标}（接收覆盖$100\%$、退出0；总投入30工时在预算内）；\item 但\textbf{“错误改善”这一项\emph{没}达标}——要求“点估计至少+2个百分点\textbf{\emph{且}区间下界$>0$}”，实际点估计$+4\%$过了第一关、但\textbf{区间下界$-0.45<0$，第二关没过}。\end{itemize}
+所以基于事先规则，\textbf{本次决定是“\emph{暂缓发布}K18”}——\textbf{不是因为它变差了，而是因为“\emph{改善\emph{是否真实存在}}”的证据\emph{还不够硬}}（不能排除零改善）。投入要算清且\textbf{不强行折成同一个金额}：复核$24$工时（120条、每条12分钟）+开发$4$工时+维护$2$工时$=30$工时；计算资源另算，\textbf{“人工小时”和“机时”量纲不同，没有业务给出的换算系数就不相加（第6章预算原则）}。还有一个诚实的记账：\textbf{这一轮\emph{还没有}重训下游模型}，所以\textbf{重训成本、用途收益\emph{都还没发生}}——\textbf{\emph{不能}把“标签错误率从$8\%$降到$4\%$”当成“\emph{已经取得的模型收益}}”（模型压根没动）。
+
+那\textbf{若要继续推进，正确姿势是什么}？两条，且都\textbf{\emph{预先}设计}：其一，\textbf{预先设计一个\emph{新的、更大的审计批次}}（或改进合并/加权规则），用更足样本把区间压窄到下界$>0$；其二，若要改策略，\textbf{重新开发后\emph{另作一次独立验收}}（旧开发样本不能再当裁判）。\textbf{绝不能“\emph{不断加看样本、直到区间\emph{碰巧}过线}”——那是数据窥探，过线也是假的}（7.2“反复看区间”陷阱）。
+
+\subsection{知识版本与持续质量的维护}
+\label{sec:knowledge-quality-assessment-correction-version-maintenance}
+
+先理解“\textbf{一个结论\emph{绑定}在什么上}”：\textbf{“K18\emph{暂缓发布}”这个结论，是\emph{这次}“固定配置 + 那次审计”的产物——它\textbf{\emph{不能自动转移}到“\emph{后来}修好词典之后的新版本}”}。修好词典后要重新走流程、重新评估，旧的“暂缓”不代表新的也不能发，旧的“通过”也不自动顺延。
+
+为了让每个版本\textbf{事后\emph{可复查、可复现结论}}，一个\term{可复查版本}（reviewable version）不能只存“结果标签”，而要\textbf{\emph{绑定}并保存以下\emph{全套}上下文}：
+\begin{itemize}\item \textbf{样本范围}（这版覆盖哪些对象）；\item \textbf{样本标注、或目标构造配置}（规则/教师/变换版本）；\item \textbf{来源依赖}（用了哪些模型、规则、词典及其版本）；\item \textbf{修改理由}（为什么改、根因是什么）；\item \textbf{审计设计}（怎么抽样、查什么）、\textbf{参考依据与\emph{验证结果}}。\end{itemize}
+两个“\textbf{光靠名字不够}”的提醒：其一，\textbf{递增的版本号（K17/K18）\emph{只能}区分“这是两个不同名字”，\emph{不能}帮你\emph{恢复}“当时是\emph{怎么生成}的”}——恢复生成过程靠的是上面那份绑定清单，不是编号；其二，\textbf{\emph{样本说明文档}（datasheet 等）也要随\emph{每次维护}更新}，因为\textbf{结论是在“当时那些条件”下成立的，条件变了、说明不更新，旧结论就失去了成立依据}\scite{gebru2021datasheets}。
+
+不同类型数据要\textbf{保存不同的“变更内容”}：
+\begin{itemize}\item \textbf{静态标签、关系}：要能\textbf{区分并保存“\emph{新增、删除、替换、未决}}”四种\emph{状态差异}（不只是存最新值——要知道相对上版多了什么、少了什么、改了什么、哪些还悬着）。\item \textbf{\emph{动态生成}的表示目标}（蒸馏/自监督/模型生成的向量或目标）：这类\textbf{没有手写来源、且依赖随机过程}，除了配置，还要\textbf{额外保存“\emph{用的模型}、\emph{预测输入的变换}、\emph{随机配置（种子）}，以及“\emph{能否\emph{重现}数值}”}——没有种子/版本，同一个版本号也复现不出同样的向量（第6章Progress\&Compress也强调过这点）。\end{itemize}为了给“\textbf{哪个版本、由\emph{什么过程}、用\emph{什么来源}产生}”这种溯源关系一个\textbf{通用、可交换的描述方式}，可以借鉴\term{W3C PROV}溯源模型：它把世界抽象成几类节点——\textbf{\emph{实体}（entity：产物，如一个标注版本/数据集）、\emph{活动}（activity：生成它的过程，如审计/训练）、\emph{责任主体}（agent：人/系统/模型）、以及\emph{派生/关联关系}（谁用了谁、谁生成谁）}\scite{knowledge-quality-assessment-correction-w3c2013provdm}。\textbf{本章\emph{不要求}你采用某一特定存储系统或软件}（数据库、文档、专门的溯源系统都行），但有一条硬要求：\textbf{这些“版本—过程—来源—责任人”的关联\emph{不能}只存在于“\emph{临时日志/某个人脑子里}}”——临时日志会被清、人会忘，溯源必须是持久、可查的记录。
+
+图~\ref{fig:knowledge-quality-assessment-correction-version-feedback}用\textbf{两种箭头}展示“\emph{共享来源一旦更新}，影响怎么\emph{追踪}和\emph{闭环}”：
+\begin{itemize}\item \textbf{实线（生成/依赖）}：表示“\emph{原始样本、来源版本、构造配置}\emph{产出}了标注版本、验证报告”的\textbf{强依赖}——它让\textbf{每份验证报告都能\emph{绑定回}它所评价的那个\emph{具体标注版本}}（不会出现“报告说的是哪一版”说不清）。\item \textbf{虚线（反馈/触发）}：表示“来源更新后，\textbf{\emph{触发}一次\emph{复查}、\emph{重生成}、或\emph{回退}}”的动作——它是流程信号，不是产物依赖。\end{itemize}
+还要注意\textbf{版本共存}：\textbf{新版本在\emph{通过验证之前}，\emph{旧版本仍保留为“可恢复基线}}”——验证没过时可以回退，且新旧结果可对比；\textbf{不要}在新版本还没验证时就把旧版覆盖删除（否则验证失败无路可退、也无从比较）。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/11-knowledge-learning/01-knowledge-acquisition/tikz/knowledge-acquisition-ch07-version-feedback.tex}
+  \caption{标注版本、来源依赖与质量反馈。实线表示原始样本、来源版本和构造配置对标注版本及验证报告的生成依赖；虚线表示来源更新后触发复查、重生成或回退。旧版本与新版本均保留，验证报告绑定具体标注版本；复查反馈用于形成新证据，不能把同一审计结果无限重复当作独立验证。}
+  \label{fig:knowledge-quality-assessment-correction-version-feedback}
+\end{figure*}
+
+当\textbf{来源（模型/规则/词典）或任务规范\emph{更新}}时，维护流程有一个\textbf{固定的“受影响—对照—决策}”顺序，和7.3的根因定位一脉相承：
+\begin{enumerate}\item \textbf{\emph{沿调用依赖清单}确定“\emph{哪些对象}受影响}”（谁引用了这个来源/规则）；\item \textbf{对\emph{冻结}样本\emph{分别}运行新旧配置}（只切来源、其他不变，做受控对照）；\item \textbf{执行\emph{局部}概率审计}（在受影响范围抽样估计变化，而非全量）；\item \textbf{比较版本差异}（配对待错转移、覆盖变化）；\item \textbf{决策：\emph{发布}、\emph{限制范围}、还是\emph{回退}}。\end{enumerate}
+触发方式有两种、用途不同：\textbf{定期抽查}是\textbf{用来\emph{发现缓慢退化}}（词典悄悄过期、模型慢慢漂移，没人通知你）；\textbf{事件触发检查}是\textbf{用来\emph{响应}“来源/定义\emph{发生变化}}”（已知换了，主动查影响）。最后重复那条监测纪律：\textbf{连续监测\emph{仍然只产生线索}}（报警不等于错误）；而\textbf{一旦“\emph{监测用的样本}”被拿去\emph{调阈值、选方案}，它们就参与了方案选择，\textbf{要发布结论时必须\emph{另备新的独立证据}}验证}（监测样本不能再当裁判，全章一致）。
+
+用$x_2$这条主线把7.4收口：\textbf{章首的\emph{开发排查}}确认了“$x_2$是\emph{共享来源（旧词典）错误}”，于是K18采取“\emph{隔离}那两条失效规则、用\emph{固定配置}\emph{重算总体}”的修正——它对症地处理了根因，但还没修词典本身。随后\textbf{独立验收得到“净改善4个百分点”的\emph{点估计}}，但因为\emph{区间跨0、证据不足}而\textbf{\emph{暂缓发布}}。
+
+这里\textbf{版本清单该\emph{保留}什么}很能体现成熟度：要\textbf{\emph{完整}保留“这个暂缓决定”以及“\emph{尚未解决}的错误（漏修的3条、误伤的3条、词典本体未修）”}，\textbf{\emph{不能}只把“\emph{更好看}的点估计$+4\%$”存下来}——只存好数字，后人会误以为K18已验证有效。同时要防止反向误用：\textbf{“暂缓K18”\emph{不等于}“重新证明了K17\emph{可靠}”}——K17\textbf{已确认的旧问题（8\%错误率、共享词典失效）照样存在}，仍要\textbf{保留对它的\emph{风险处置}和\emph{复查安排}}，不能因为新版暂缓就让旧版继续带病运行而无人跟进。
+
+维护不是线性收尾，而是一个\textbf{按“\emph{已确认根因}}”\emph{把问题\emph{送回正确环节}}的\emph{反馈环}（呼应7.3结尾）：
+\begin{itemize}\item 若决定\textbf{彻底\emph{修好词典}}（而不只是隔离）到 产生\textbf{新的来源配置、新的待验收版本}，走新版本完整流程；\item 若发现是\textbf{照片与植株\emph{绑定错误}}（对象问题）到 \textbf{返回“\emph{标注对齐}}”环节（第6章6.3）；\item 若问题出在\textbf{模型\emph{预测输出}、或\emph{裁剪/构造条件}}到 \textbf{返回“\emph{相应的获取环节}}”（第4/5章），从源头改生成条件。\end{itemize}
+\textbf{反馈\emph{退回}哪一步，严格由“已确认的原因”决定，而不是哪步方便改哪步}。两条贯穿全章的数据纪律在此收口：其一，\textbf{新的开发过程中“\emph{已经用过}的证据”要\emph{继续标明用途}（开发/诊断用）}，不能在后续冒充独立证据；其二，\textbf{后续的\emph{发布判断}\emph{另需独立评价依据}}（新留出集）——开发证据和发布证据始终分开，质量闭环才能一圈圈转下去而不自我证明。
+
+最后一个\textbf{版本管理最容易制造“假进步”的地方——\emph{覆盖/总体组成}变化}。下面三种情况都会让“平均错误率”改变，\textbf{但改变\emph{未必}来自质量真的变好，而可能只是“被统计的对象\emph{换了一拨}}”：
+\begin{itemize}\item \textbf{修正时\emph{删除}了难例}（把总判不对的样本剔出数据集）；\item \textbf{规范\emph{缩小}了适用范围}（把难覆盖的区域划到范围外/不适用）；\item \textbf{新来源\emph{补入}了一批少数类}（总体组成变了）。\end{itemize}
+这些情况下，平均错误率\textbf{可能因为“\emph{总体组成改变}”}而下降，与“同样对象标得更准”毫无关系（第6章阈值、7.2范围口径都警告过）。所以\textbf{发布说明必须\emph{同时}报告四样东西}：\textbf{其一，\emph{共同对象}上的\emph{配对}变化（同一批对象前后）、其二，\emph{新增}对象、其三，\emph{退出}对象、其四，\emph{目标总体定义}有没有变、以及其五，\emph{仍未解决}的问题}。\textbf{把“共同对象的净变化”和“对象进出/组成变化”分开报告}，质量反馈才能\textbf{准确地\emph{返回}到“监督信号获取、来源选择、语义对齐、融合”中真正出问题的那一环}，而\textbf{\emph{不会}把“每一次版本\emph{组成}变化”都\emph{误写成}“质量\emph{进步}”}。
+
+\section{本章小结}
+\label{sec:knowledge-quality-assessment-correction-summary}
+
+把全章收回章首那一万条标签。\textbf{第一组要分清的是“三种数字/三个问题”}：
+\begin{itemize}\item \textbf{重点排查在入选的$100$条里确认了$40$条错}——它\textbf{只回答“\emph{入选区域}里查到了什么”}（检测器命中率），\textbf{回答不了整体质量}。\item \textbf{要估计整体质量}，必须\textbf{先明确“总体是谁、参考标准是什么、按什么\emph{概率抽样设计}选的样”}，再用\textbf{总体权重}（分层$W_h$、不等概率$1/\pi_i$）\textbf{纠正“样本组成不均衡}”，才能从样本无偏推总体。\item 即便如此，\textbf{“\emph{设计方差}}”只描述“\emph{选样造成的波动}”（区间多宽）；而\textbf{“\emph{无法裁决}带来的端点范围（识别范围$L$到$U_{\mathrm{err}}$）}”，\textbf{保留的是“\emph{证据本身还不能确定}”的那部分}——这两种不确定来源完全不同，普查能消前者、消不了后者。\end{itemize}
+还要记住\textbf{不同监督信号要用不同的核验属性，\emph{不能}统一糊成一个“类别正确率}”：\textbf{任务答案}比对错、\textbf{关系}核对象/方向/条件、\textbf{表示目标}查构造条件与下游用途（7.1那张表）。
+
+\textbf{第二组：“检测线索”和“质量裁决”永远分层}。\textbf{模型高损失、来源冲突、异常日志、离群/遗忘}——这些都只是\textbf{\emph{帮助安排复核}的\emph{排序信号}}，它们\textbf{\emph{不支持}任何对错结论}；真正\textbf{支持质量裁决的，只有“\emph{原始对象}、\emph{规范}、\emph{独立证据}}”（照片、采集记录、盲化复标）。
+
+\textbf{第三组：“标签对错”和“训练贡献”是两个维度}。\textbf{Data Shapley}\textbf{在训练子集中公平地平均“边际效用}”（回答“平均而言这条样本对任务有多大功劳”，要跨大量重训、且依赖固定的学习算法+评价规则）；\textbf{TRAK}\textbf{用低维投影+局部牛顿，\emph{近似}“指定预测对训练样本的响应}”（快但是局部近似、不等于Shapley全局分配）。两者\textbf{都依赖学习算法和评价范围、都\emph{不能}代替“标签真值核验}”——高贡献不等于标签对、有影响不等于内容真。
+
+\textbf{第四组：改完之后的“两种验证”分开做}：\textbf{对\emph{已查对象}，独立复核能确认“这些改动改对没有”}（结果复核）；\textbf{评价\emph{策略}}时则必须“\emph{先冻结规则、再用\emph{没参与开发}的证据}”（留出验证）。本章教学案例K17到K18正是范例：同口径配对得到$+4$个百分点净改善的\emph{点估计}，但近似区间仍包含恶化（$[-0.45,8.45]$跨0），证据不足，所以\textbf{\emph{暂缓发布}}——\textbf{绝不把“\emph{改过了}”当成“\emph{已经有效}}”。
+
+最后把“\textbf{能不能发}”的完整判据列一次，它是\textbf{多目标、缺一不可}的，不能用某一项好看替代其他：\textbf{其一，新增错误（对到错）、其二，覆盖变化（有没有靠删难例/缩范围刷分）、其三，关键分组（各类/区域有没有被平均掩盖恶化）、其四，下游用途（标签变了模型到底变好没——且要控制变量）、其五，投入（人工/算力/维护全周期成本）}。本章K18\textbf{尚未重训下游模型}，所以\textbf{标签错误率的变化\emph{不能}算作“已取得的模型收益}”。
+
+两条\textbf{任何统计技巧都补不回来}的底线要永远记住：\textbf{“参考依据本身错/系统遗漏”\emph{不由抽样区间自动补偿}}（区间只管抽样波动，管不了证据错和抽样框外对象）；\textbf{“缩小使用范围”\emph{不能}冒充“原总体质量改善}”（把难题排除后正确率上升是组成变化，不是质量进步）。
+
+全章的\textbf{落脚点是“\emph{留痕}让质量环能转起来}”：把\textbf{来源、配置、版本、验证报告、未决问题}\textbf{持久地保留下来}，才能\textbf{按“\emph{已确认的根因}}”把问题\textbf{准确\emph{返回}到“获取、对齐、融合”等相应环节}，并让\textbf{新一轮的开发与验收\emph{继续保持证据边界}}（开发证据不当裁判、留出证据不进开发）。这样，“知识的质量”才不是一次性的验收，而是一个\textbf{可持续、可追溯、不自我证明的闭环}。

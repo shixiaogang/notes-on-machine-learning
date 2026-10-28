@@ -26,13 +26,13 @@ class CurrentChapterStructureTests(unittest.TestCase):
                         f"### {part}.1 本章小结\n\n说明本章得到的结论。\n"
                     )
             paths, text = AUDIT.reading_structure(root)
-            self.assertEqual(len(paths), 6)
+            self.assertEqual(len(paths), 15)
             headings = AUDIT.outline_headings(text)
-            self.assertEqual(list(headings), [1, 2, 3, 26, 27, 28])
-            self.assertEqual(headings[26][1]["number"], "1.1")
+            self.assertEqual(list(headings), [1, 2, 3, 19, 20, 21, 22, 23, 24, 31, 32, 33, 35, 36, 37])
+            self.assertEqual(headings[19][1]["number"], "1.1")
             # A volume may carry any number of part outlines; none is required to equal another.
             (root / paths[-1]).unlink()
-            self.assertEqual(len(AUDIT.reading_structure(root)[0]), 5)
+            self.assertEqual(len(AUDIT.reading_structure(root)[0]), 14)
 
     def test_current_chapter_numbers_include_nested_titles(self):
         headings = AUDIT.outline_headings(
@@ -239,7 +239,7 @@ class Chapter17RetirementTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         (self.root / AUDIT.RETIRED_LABELS).parent.mkdir(parents=True)
-        self.source = "tex/02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning/01-mathematics-and-future-research.tex"
+        self.source = "tex/historical-summary/01-mathematics-and-future-research.tex"
         self.revision = "a" * 40
         self.baseline = {
             "eq:old": str(AUDIT.CHAPTER17_BASELINE_SOURCE),
@@ -377,7 +377,7 @@ class Chapter1RetirementTests(unittest.TestCase):
             "baseline_revision": self.revision,
             "baseline_source": str(AUDIT.VOLUME / AUDIT.CHAPTER1_BASELINE_SOURCE),
             "pre_rewrite_revision": AUDIT.CHAPTER1_PRE_REWRITE_REVISION,
-            "pre_rewrite_source": self.source,
+            "pre_rewrite_source": str(AUDIT.CHAPTER1_PRE_REWRITE_SOURCE),
             "authorized_baseline_section_titles": ["命题与证明"],
             "authorized_pre_rewrite_section_titles": ["命题与证明"],
             "baseline_source_sha256": AUDIT.hashlib.sha256(self.old.encode()).hexdigest(),
@@ -578,7 +578,7 @@ class Chapter2RetirementTests(unittest.TestCase):
             "baseline_revision": self.revision,
             "baseline_source": str(AUDIT.VOLUME / AUDIT.CHAPTER2_BASELINE_SOURCE),
             "pre_rewrite_revision": AUDIT.CHAPTER2_PRE_REWRITE_REVISION,
-            "pre_rewrite_source": self.source,
+            "pre_rewrite_source": str(AUDIT.CHAPTER2_PRE_REWRITE_SOURCE),
             "authorized_pre_rewrite_sections": [3, 4, 5, 6],
             "authorized_baseline_section_titles": list(AUDIT.CHAPTER2_BASELINE_SECTION_TITLES),
             "authorized_pre_rewrite_section_titles": list(AUDIT.CHAPTER2_PRE_REWRITE_SECTION_TITLES),
@@ -753,3 +753,83 @@ class Chapter2RetirementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WholeChapterDeletionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.snapshot = r'\chapter{Deleted}\label{chap:deleted}\label{eq:deleted}'
+        self.baseline = {'chap:deleted': str(AUDIT.CHAPTER17_BASELINE_SOURCE),
+                         'eq:deleted': str(AUDIT.CHAPTER17_BASELINE_SOURCE)}
+        self.manifest = {
+            'disposition': 'delete-entire-chapter', 'chapter': 17,
+            'source_revision': AUDIT.CHAPTER17_DELETION_REVISION,
+            'source': AUDIT.CHAPTER17_DELETION_SOURCE,
+            'source_sha256': AUDIT.hashlib.sha256(self.snapshot.encode()).hexdigest(),
+            'source_labels': ['chap:deleted', 'eq:deleted'],
+            'baseline_labels': ['chap:deleted', 'eq:deleted'],
+            'authorization': 'Explicit deletion request.',
+        }
+        (self.root / AUDIT.CHAPTER17_DELETION).parent.mkdir(parents=True)
+
+    def run_audit(self, locations=None, body=''):
+        (self.root / AUDIT.CHAPTER17_DELETION).write_text(json.dumps(self.manifest))
+        return AUDIT.audit_deleted_chapter17(
+            self.root, self.baseline, locations or {}, {Path('live.tex'): body}, self.snapshot,
+        )
+
+    def test_explicit_whole_chapter_deletion_requires_exact_snapshot(self):
+        result = self.run_audit()
+        self.assertEqual(result['issues'], [])
+        self.assertEqual(result['approved_baseline_retirements'], ['chap:deleted', 'eq:deleted'])
+        self.manifest['source_labels'].remove('eq:deleted')
+        result = self.run_audit()
+        self.assertEqual(result['approved_baseline_retirements'], [])
+        self.assertIn('chapter_deletion_metadata', {issue['kind'] for issue in result['issues']})
+
+    def test_deleted_labels_must_not_remain_defined_or_referenced(self):
+        result = self.run_audit({'eq:deleted': [{'path': 'live.tex'}]}, r'\BookChapterRef{chap:deleted}{fallback}')
+        self.assertEqual(result['approved_baseline_retirements'], [])
+        self.assertEqual({issue['kind'] for issue in result['issues']},
+                         {'deleted_chapter_label_still_defined', 'deleted_chapter_active_reference'})
+
+    def test_missing_authorization_never_retires_chapter_labels(self):
+        del self.manifest['authorization']
+        result = self.run_audit()
+        self.assertEqual(result['approved_baseline_retirements'], [])
+        self.assertIn('chapter_deletion_authorization_missing', {issue['kind'] for issue in result['issues']})
+
+
+class FiveVolumeMigrationMapTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.path = self.root / AUDIT.CONTRACT
+        self.path.parent.mkdir(parents=True)
+        self.rows = (SCRIPT.parents[1] / AUDIT.CONTRACT).read_text()
+
+    def test_migrated_map_preserves_identities_and_volume_local_numbers(self):
+        self.path.write_text(self.rows)
+        rows = AUDIT.assignments(self.root)
+        self.assertEqual(len(rows), 37)
+        self.assertEqual({row['chapter'] for row in rows}, set(range(1, 40)) - {17, 37})
+        self.assertEqual([AUDIT.current_outline_chapter(row) for row in rows], list(range(1, 38)))
+        for volume, count in {1: 18, 2: 3, 3: 9, 4: 4, 5: 3}.items():
+            self.assertEqual([row['local_chapter'] for row in rows if row['volume'] == volume], list(range(1, count + 1)))
+
+    def test_migrated_map_rejects_missing_identity_and_noncontiguous_local_number(self):
+        lines = self.rows.splitlines()
+        body = [i for i, line in enumerate(lines) if line.startswith('| ') and line.split('|')[1].strip().isdigit()]
+        changed = lines.copy()
+        del changed[body[-1]]
+        self.path.write_text('\n'.join(changed))
+        with self.assertRaisesRegex(ValueError, 'Expected 37 assignments'):
+            AUDIT.assignments(self.root)
+        changed = lines.copy()
+        changed[body[-1]] = changed[body[-1]].replace('| 5 | 3 |', '| 5 | 2 |')
+        self.path.write_text('\n'.join(changed))
+        with self.assertRaisesRegex(ValueError, 'Volume 5 assignments'):
+            AUDIT.assignments(self.root)

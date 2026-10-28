@@ -79,7 +79,7 @@ def style_record():
     return {
         "scope": "全书",
         "native_style": "tex/styles/figure-style.tex",
-        "plot_reference": "figures/03-foundations/02-learning-theory/matplotlib/volume1-risk-and-shift.py",
+        "plot_reference": "figures/06-foundations/02-learning-theory/matplotlib/volume1-risk-and-shift.py",
         "shared_generator_style": "figures/00-shared/mathematical-generators/matplotlib/plot_style.py",
         "fonts": {"Chinese": "fonts/LXGWWenKai-Regular.ttf",
                   "Latin_and_numbers": "fonts/SourceSans3-Regular.otf",

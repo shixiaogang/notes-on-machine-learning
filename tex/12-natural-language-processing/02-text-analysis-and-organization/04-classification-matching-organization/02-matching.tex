@@ -1,0 +1,332 @@
+\section{文本匹配与关系判定}
+\label{sec:nlp-classification-matching}
+
+单篇分类固定了标签表，句对任务还要固定关系及其方向。以本章通知为参照，“机器学习读书会改到周五”与它很相似，却省略了日期、地点和报名条件：它可以充当简要概括，却不是保留全部条件的等义复述。完整通知能够推出这句概括，反过来不行。查询“周五几点开始？”与片段“14:00开始”几乎没有共同词，后者却比一段详细的读书会介绍更有用。相似、等价、有向蕴含和对需求有用是四种不同关系，监督数据和验收口径都要分别规定。
+
+这些任务共享一组困难。其一，关系可能有方向，交换两段文本会改变答案。其二，日期、否定、数量和角色这些少量词元决定关系，整体相似度却对它们不敏感。其三，让两段文本逐词比较能提高精度，但每个候选都要重新计算，候选库很大时无法承受。其四，没有人工评分时，需要从别的信号学到可比较的表示。其五，跨语言对应和版本比较还会出现一对多、增删和高重合下的关键改动。本节先比较匹配架构，回答第三个困难；随后按关系类型展开相似度、复述、推断、查询相关性以及对应与版本关系，其余困难在各自的任务中处理。
+
+\subsection{匹配架构的谱系}
+\label{sec:nlp-classification-matching-architectures}
+
+所有匹配任务都要为文本对$(a,b)$计算一个分数$s(a,b)$，再按任务把分数变成相似度、标签或排序。架构之间的核心差别在于：两段文本在编码时能否互相看见，以及哪些计算可以在查询到来之前完成。图~\ref{fig:nlp-classification-matching-architectures}按这两个问题把模型分为四类。表示型让两侧独立编码成单向量，交互型把两侧联合编码，后期交互保留多个词元向量、把比较推迟到打分阶段，多向量编码则在查询一侧保留少量向量，再由候选决定如何汇聚。
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/02-text-analysis-and-organization/tikz/classification-ch11b-matching-architectures.tex}
+  \caption{四类匹配架构的计算位置。表示型两侧各得一个向量，候选向量可离线算好；交互型把两段文本拼接后联合编码，每个文本对都要完整计算一次；后期交互独立编码但保留全部词元向量，打分时逐个查询词元找最匹配的候选词元；多向量编码（Poly-encoder）把查询压成$m$个向量，再按候选向量加权汇聚。从左到右，打分时允许的交互逐渐增多，离线存储与在线代价的分布也随之改变。}
+  \label{fig:nlp-classification-matching-architectures}
+\end{figure*}
+
+\subsubsection{表示型匹配}
+\label{sec:nlp-classification-representation-matching}
+
+网页搜索要在数以亿计的文档中找出与查询语义相近的若干篇。逐对重新计算不可行，最直接的办法是把每段文本独立映射为一个向量，让向量距离代表语义距离。这类做法称为\term{表示型匹配}（representation-based matching）：编码器$f$先分别产生$\bm u=f(a)$和$\bm v=f(b)$，再用余弦或内积打分；两侧各用一个编码器的结构也称\term{双编码器}（bi-encoder）。由于$\bm v$不依赖$a$，候选库可以提前编码并建立向量索引。
+
+DSSM是这一路线的早期代表\scite{rs-h10}。它首先解决词表过大的问题：把每个英文词两端加上边界符，再切成字母三元组，例如\code{good}变成\code{\#go}、\code{goo}、\code{ood}、\code{od\#}。原文用这种\term{词哈希}（word hashing）把约50万词的词表压缩成约3万维三元组计数，未登录词也能得到表示。查询和文档各自经过三层带$\tanh$的全连接网络，形状依次为$30\text{k}\to300\to300\to128$，最后一层输出即语义向量。对一个查询$q$，取被点击文档$d^+$与4篇随机未点击文档组成候选集合$D_q$，训练目标是
+\[
+  P(d^+\mid q)=\frac{\exp(\gamma\cos(\bm u_q,\bm v_{d^+}))}
+  {\sum_{d\in D_q}\exp(\gamma\cos(\bm u_q,\bm v_d))},
+\]
+最小化$-\log P(d^+\mid q)$。$\gamma$是平滑因子，把取值在$[-1,1]$的余弦放大成足够分开的logit。设一个查询对点击文档的余弦为0.6，对两篇未点击文档为0.2和0.1，取$\gamma=10$，三项未归一化权重为$(e^6,e^2,e^1)$，点击文档的概率约0.9756，损失约0.0247。这个“一正多负的softmax”就是后文对比损失的雏形。
+
+ARC-I保留同样的独立编码思路，把多层感知机换成卷积\scite{nlp-matching-hu2014arc}。每句的词向量序列经过窗口为$k$的一维卷积与最大池化，堆叠两层后得到定长句向量，两句向量拼接后送入多层感知机输出匹配分。卷积能抓住局部词序，例如“改至周五”与“周五改至”得到不同的局部特征；但两句之间的比较仍然只发生在压缩之后。
+
+表示型的优点是在线代价低：查询编码一次，每个候选只需一次$d$维内积。它的缺陷也来自压缩：句中哪个词与对方哪个词对应，在得到$\bm u,\bm v$时已无法再调整。“周五14:00”和“周六14:00”在单向量中可能只差一个很小的分量，打分阶段无从放大。后文的Sentence-BERT、SimCSE与DPR都沿用这一架构，只是把编码器换成预训练Transformer，并改进训练信号。
+
+\subsubsection{交互型匹配}
+\label{sec:nlp-classification-interaction-matching}
+
+要让关键词元之间的对应进入判断，两段文本就必须在编码阶段相遇。\term{交互型匹配}（interaction-based matching）先建立两侧词元之间的交互结构，再从中提取匹配特征。ARC-II是与ARC-I同时提出的交互版本：第一层对句$a$的每个窗口$i$与句$b$的每个窗口$j$，把两段窗口的词向量拼接后做卷积，得到一张以$(i,j)$为坐标的二维特征图，之后交替进行二维池化与卷积，最后由多层感知机打分\scite{nlp-matching-hu2014arc}。
+
+MatchPyramid把这一想法写得更直接：先计算\term{匹配矩阵}（matching matrix）$\bm M\in\mathbb R^{n_a\times n_b}$，元素$M_{i,j}$可以是词相同的指示、词向量余弦或内积，再把它当作一张单通道图像，用二维卷积识别其中的匹配模式\scite{nlp-matching-pang2016matchpyramid}。卷积核在矩阵上滑动，对角方向的连续高值对应有序的短语匹配；动态池化把不同长度句对的特征图池化成固定大小，最后接多层感知机。
+
+用一个可手算的例子说明卷积在看什么。查询为“改至、周五”，候选甲为“现、改至、周五”，候选乙为“周五、现、改至”，用词相同指示构造匹配矩阵：
+\[
+  \bm M_{\text{甲}}=\begin{pmatrix}0&1&0\\0&0&1\end{pmatrix},\qquad
+  \bm M_{\text{乙}}=\begin{pmatrix}0&0&1\\1&0&0\end{pmatrix}.
+\]
+两张矩阵都有两个1，词袋重合相同。取$2\times2$对角卷积核$\bigl(\begin{smallmatrix}1&0\\0&1\end{smallmatrix}\bigr)$，在两个位置上的响应分别是$M_{1,1}+M_{2,2}$和$M_{1,2}+M_{2,3}$：候选甲为$(0,2)$，候选乙为$(0,0)$。最大池化后甲得2、乙得0，有序短语“改至周五”只在甲中被识别。真实模型的卷积核由训练学到，这里人为给定，只演示结构为何能保留次序。
+
+ESIM（第~\ref{sec:nlp-classification-esim}小节）在软对齐之后比较局部差异，BERT\term{交叉编码器}（cross-encoder，第~\ref{sec:nlp-classification-paraphrase-cross}、\ref{sec:nlp-classification-rerank}小节）则让自注意力在所有层中跨句交互，它们都属于这一类。交互型在复述、推断和重排上通常更准确，代价是没有任何候选侧结果可以复用：$N$个候选就要做$N$次联合计算，每次的规模随$n_an_b$或$(n_a+n_b)^2$增长。因此它多用于对少量已召回候选做细判。
+
+\subsubsection{后期交互与多向量编码}
+\label{sec:nlp-classification-late-interaction}
+
+表示型在压缩后才比较，交互型在编码时就比较。能否独立编码、却在打分时保留一定的细粒度交互？\term{后期交互}（late interaction）的回答是不把候选压成单向量。ColBERT独立编码两侧，保留每个词元的低维向量，打分时让每个查询词元在候选中找最相似的词元，再把这些最大值相加\scite{nlp-khattab2020colbert}。候选词元向量可以离线计算，交互只剩下$n_qn_d$次低维内积，不必再运行Transformer；代价是索引要为每个候选保存$n_d$个向量。它的打分公式、训练与存储在第~\ref{sec:nlp-classification-colbert}小节展开。
+
+Poly-encoder从相反的一侧折中：候选仍是单向量，存储与表示型相同；查询一侧保留$m$个向量，让候选决定怎样汇聚\scite{nlp-matching-humeau2020polyencoder}。设查询编码器输出$\bm H=(\bm h_1,\ldots,\bm h_n)\in\mathbb R^{n\times d}$，候选编码器输出$\bm y_{\mathrm{cand}}\in\mathbb R^d$。模型学习$m$个\term{代码向量}（code vector）$\bm c_1,\ldots,\bm c_m\in\mathbb R^d$，每个代码向量对查询词元做一次注意力：
+\[
+  \bm y^{k}=\sum_{t=1}^{n}w_{t}^{(k)}\bm h_t,\qquad
+  \bigl(w_{1}^{(k)},\ldots,w_{n}^{(k)}\bigr)=
+  \operatorname{softmax}\bigl(\bm c_k^\top\bm h_1,\ldots,\bm c_k^\top\bm h_n\bigr),
+\]
+得到$m$个查询向量$\bm y^1,\ldots,\bm y^m$。这一步与候选无关，查询到来时只做一次。随后由候选向量对它们再做一次注意力：
+\[
+  \begin{aligned}
+    (a_1,\ldots,a_m)&=\operatorname{softmax}\bigl(\bm y_{\mathrm{cand}}^\top\bm y^1,\ldots,\bm y_{\mathrm{cand}}^\top\bm y^m\bigr),\\
+    \bm y_{\mathrm{ctxt}}&=\sum_{k=1}^{m}a_k\bm y^{k},\qquad
+    s=\bm y_{\mathrm{ctxt}}^\top\bm y_{\mathrm{cand}}.
+  \end{aligned}
+\]
+每个候选的在线代价是$m$次内积、一次$m$项softmax和一次加权求和，即$O(md)$。
+
+取一个二维教学例子。查询有两个词元向量$\bm h_1=(1,0)$、$\bm h_2=(0,1)$，代码向量为$\bm c_1=(2,0)$、$\bm c_2=(0,2)$。第一组注意力权重为$\operatorname{softmax}(2,0)\approx(0.8808,0.1192)$，故$\bm y^1\approx(0.8808,0.1192)$，同理$\bm y^2\approx(0.1192,0.8808)$。候选$\bm y_{\mathrm{cand}}=(1,0)$与两者的内积为$(0.8808,0.1192)$，softmax权重约$(0.6817,0.3183)$，汇聚得$\bm y_{\mathrm{ctxt}}\approx(0.6383,0.3617)$，分数约0.6383。候选$(0,1)$按对称计算也得0.6383，但所用的查询向量是$(0.3617,0.6383)$。若改用平均池化的单向量$(0.5,0.5)$，两个候选都只得0.5。可见查询表示会随候选偏向与之相关的那部分内容；$m=1$时Poly-encoder退化为表示型，$m$增大则向更细的交互靠近。
+
+表~\ref{tab:nlp-classification-matching-architectures}汇总四类架构。复杂度以$N$个候选、查询长$n_q$、候选长$n_d$、向量维数$d$计，忽略对所有架构相同的查询编码。精度一栏只给文献中常见的相对位置：Poly-encoder原文报告其效果介于双编码器与交叉编码器之间，ColBERT原文报告其在段落重排上接近BERT交叉编码器而延迟低得多；具体差距随数据和训练而变，不构成统一排名。
+
+\begin{table*}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{12mm}
+    >{\raggedright\arraybackslash}p{30mm}>{\raggedright\arraybackslash}p{19mm}
+    >{\raggedright\arraybackslash}p{15mm}>{\raggedright\arraybackslash}p{30mm}
+    >{\raggedright\arraybackslash}p{10mm}>{\raggedright\arraybackslash}X@{}}
+    \toprule
+    架构 & 代表模型 & 编码时交互 & 候选预计算 & 每候选在线代价 & 存储 & 精度位置与典型用途 \\
+    \midrule
+    表示型 & DSSM、ARC-I、SBERT、SimCSE、DPR、LaBSE & 否 & 可，单向量 & $O(d)$内积，可用近似近邻 & $Nd$ & 最低一档；大规模召回、去重 \\
+    交互型 & ARC-II、MatchPyramid、可分解注意力、ESIM、BERT交叉编码器 & 是，逐层或逐词 & 否 & 完整前向，约$O(n_qn_dd)$至$O(L(n_q+n_d)^2d)$ & 无 & 最高一档；复述、推断、重排 \\
+    后期交互 & ColBERT & 否，打分时逐词元比较 & 可，词元向量 & $O(n_qn_dd)$内积，无Transformer & $Nn_dd$ & 接近交叉编码；召回或重排 \\
+    多向量 & Poly-encoder & 否，打分时对$m$个向量注意力 & 可，单向量 & $O(md)$ & $Nd$ & 介于表示型与交互型之间；对话回复选择 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{匹配架构的谱系。“编码时交互”一栏决定精度上限，“候选预计算”一栏决定能否面向大候选库。$L$为Transformer层数。实际系统常把它们串联：表示型或后期交互召回少量候选，交互型再对这些候选重排。}
+  \label{tab:nlp-classification-matching-architectures}
+\end{table*}
+
+\FloatBarrier
+\subsection{语义相似度}
+\label{sec:nlp-classification-similarity}
+
+\term{语义文本相似度}（semantic textual similarity，STS）给句子对一个连续分数，表示两句在约定标注规范下有多接近。STS基准通常用0到5的人工评分，从“无关”到“完全等义”\scite{nlp-intro-cer2017}。这里有两个困难：相似度对日期、否定等少量关键差异往往不敏感；无标注或标注很少时，怎样得到好的句向量。方法谱系沿此展开：TF-IDF与平均词向量不需训练，给出基线；Sentence-BERT用孪生结构把预训练编码器调成可比较的句向量；SimCSE用对比学习在无标注或NLI数据上进一步改善向量空间。三者都是表示型架构。
+
+\subsubsection{TF-IDF与词向量相似度基线}
+\label{sec:nlp-classification-similarity-baseline}
+
+沿用训练语料拟合的词表和IDF，两句表示为$\bm x,\bm y$，非零向量的余弦为
+\[
+  s(\bm x,\bm y)=\frac{\bm x^\top\bm y}{\|\bm x\|_2\|\bm y\|_2}.
+\]
+若只保留“读书会、周五、周六”三个等IDF维度，两句向量为$(1,1,0)$与$(1,0,1)$，余弦为$1/2$。若词表把日期词过滤掉，两句都只剩“读书会”，分数反而变成1。空向量需要预先约定缺省分数。平均词向量把词元向量相加后除以词数，也可按IDF加权；“甲通知乙”与“乙通知甲”的平均完全相同，因为求和不保留角色。这两种基线适合快速找同主题候选。
+
+评价时，Pearson相关系数比较预测与参考分数的线性关联，Spearman相关系数比较排序。参考为$(1,2,3)$、预测为$(11,12,13)$时两种系数都为1，分数的量纲却完全错开。若部署要求$s\geq t$才接受，还须在开发集选定$t$，再在测试集报告该阈值下的误报与漏报。
+
+\subsubsection{Sentence-BERT：孪生编码与句向量}
+\label{sec:nlp-classification-sbert}
+
+BERT交叉编码器在STS上很准，但为$n$句两两找最相似对需要$n(n-1)/2$次联合前向；直接取BERT的分类位置向量或平均输出做余弦，效果又不好。Sentence-BERT（SBERT）用\term{孪生网络}（siamese network）解决这一矛盾：同一个BERT编码器分别处理两句，对输出作平均池化，得到$\bm u=f_\theta(a)$、$\bm v=f_\theta(b)\in\mathbb R^{d}$，再用句对监督微调，使余弦本身就有意义\scite{nlp-reimers2019sbert}。共享参数不等于拼接输入：每句在编码时只看到自身，因此句向量可以离线计算。
+
+原文给出三种目标。分类目标把$[\bm u;\bm v;|\bm u-\bm v|]\in\mathbb R^{3d}$乘以$\bm W\in\mathbb R^{k\times3d}$后取softmax，在NLI三分类上训练；回归目标以$\cos(\bm u,\bm v)$拟合STS分数，用均方误差；三元组目标对锚点$a$、正例$p$、负例$n$最小化
+\[
+  L_{\mathrm{triplet}}=\max\{0,\|f(a)-f(p)\|_2-\|f(a)-f(n)\|_2+\epsilon\}.
+\]
+以回归为例，归一化后的通知向量$\bm u=(1,0)$、近义句$\bm v=(0.8,0.6)$，余弦为0.8；若参考分数缩放到$[0,1]$后为0.9，单对平方误差为0.01。以三元组为例，若负例为$(0.6,0.8)$、$\epsilon=0.5$，正、负距离为$\sqrt{0.4}$和$\sqrt{0.8}$，损失约0.2380：正例虽然更近，但尚未拉开到间隔要求。
+
+三元组每次只比较一个负例。很多数据只有正对，例如问题与答案、标题与正文、原句与译句；这时可以让同一批次里其他样本的正例充当负例，一次比较$B-1$个负候选。设一批有$B$个正对$(q_i,p_i)$，每个$q_i$还可附加\term{难负例}（hard negative）集合$\mathcal H_i$，即与$q_i$相似却不匹配、模型容易混淆的候选，候选集合为$C_i=\{p_1,\ldots,p_B\}\cup\mathcal H_i$。\term{批内负例}（in-batch negatives）对比损失为
+\begin{equation}
+  L_i=-\log\frac{\exp\bigl(s(q_i,p_i)/\tau\bigr)}
+  {\sum_{c\in C_i}\exp\bigl(s(q_i,c)/\tau\bigr)},
+  \label{eq:nlp-matching-infonce}
+\end{equation}
+批损失为$\frac1B\sum_iL_i$。$s$是余弦或内积，$\tau>0$是温度，分母包含正例本身。这一形式常称为InfoNCE损失\cite{nlp-matching-oord2018cpc}：它把匹配写成“在$|C_i|$个候选中认出正例”的分类问题。DSSM的一正四负softmax是它的特例，$\gamma$对应$1/\tau$。它与第~\ref{sec:nlp-classical-nce}小节噪声对比估计的思路相近，都是用与噪声样本的区分代替完整归一化，但这里不估计语言模型的归一化常数，负例来自数据本身而非人为噪声分布。sentence-transformers等实现中常用的“多负例排序损失”就是式~\eqref{eq:nlp-matching-infonce}在余弦与固定缩放下的形式。
+
+对$s(q_i,c)$求导，正例的梯度是$(P_i(p_i)-1)/\tau$，负例$c$的梯度是$P_i(c)/\tau$，其中$P_i(c)$为该候选的softmax概率。因此损失最在意那些已经得分较高的负例。设一个锚点对正例和两个负例的余弦为$(0.8,0.6,0)$。$\tau=0.2$时未归一化权重为$(e^4,e^3,1)$，正例概率约0.7214，损失约0.3266，余弦0.6的负例分得约0.2654的概率，是主要的推开对象。$\tau=1$时正例概率只有约0.4409，两个负例的概率相差不大。温度越低，梯度越集中在难负例上。批量$B$越大，负例越多，估计越接近在全库中区分正例；代价是显存。若批内恰有与$q_i$同义的样本，它会被当成负例推开，这类\term{假负例}（false negative）需要靠去重和采样控制。
+
+\subsubsection{SimCSE：句向量对比学习}
+\label{sec:nlp-classification-simcse}
+
+没有人工相似度时，正对从哪里来？无监督SimCSE的回答是同一句话本身：把句子$x_i$送入带dropout的编码器两次，两次随机掩码不同，得到$\bm h_i$与$\bm h_i^+$；以$(\bm h_i,\bm h_i^+)$为正对、批内其他句子的第二次编码为负例，代入式~\eqref{eq:nlp-matching-infonce}，用余弦和$\tau=0.05$训练\scite{nlp-gao2021simcse}。dropout在这里充当最小的数据增强，它没有产生新的同义句，只要求表示对编码扰动稳定、又能与其他句子区分。原文用对齐性（alignment）与均匀性（uniformity）分析效果：正对越近、全体向量在单位球面上分布越均匀，句向量越好用；预训练模型原始句向量挤在狭窄锥体里，对比目标主要改善了均匀性。
+
+有监督SimCSE使用NLI数据：前提为锚点，蕴含句为正例，矛盾句为难负例，即式~\eqref{eq:nlp-matching-infonce}中$\mathcal H_i$只含该锚点的矛盾句，其余锚点的正例与矛盾句也进入分母。训练信号由“同句不同扰动”变成了已标注的意义关系。它仍输出对称的余弦相似度，不会因为用了蕴含句就变成有方向的蕴含判断；运行时关闭dropout，每句只编码一次。检验时仍应单列“甲通知乙／乙通知甲”“须报名／无需报名”一类反例组：平均相关性高，不保证关键条件变化时分数会充分下降。
+
+\subsection{复述与语义等价}
+\label{sec:nlp-classification-paraphrase}
+
+\term{复述}（paraphrase）指不同表达在任务规定范围内传达相同含义。按“保留活动事实和适用条件”验收时，“校外来宾须在4月16日18:00前提交报名信息”与“校外来宾提交报名信息的时间须早于4月16日18:00”是正例；删去“校外”会扩大对象，删去时刻会改变截止条件，都应构造为负例。若业务只需要概括，应另定近似复述规范。
+
+复述有两个特有的难点。词面重合高、意义却不同的难例很常见，PAWS用打乱词序构造这类句对，例如“甲从海棠楼到图书馆”与“甲从图书馆到海棠楼”\cite{nlp-intro-zhang2019paws}；等价关系要求对称，交换两句不应改变判定。双编码器速度快，适合候选初筛；交叉编码器让两句逐词交互，能区分角色交换与条件遗漏，用于细判。
+
+\subsubsection{双编码器复述判定}
+\label{sec:nlp-classification-paraphrase-bi}
+
+在句向量$\bm u,\bm v$之上构造关系特征并训练二分类头：
+\[
+  \bm r=[\bm u;\bm v;|\bm u-\bm v|;\bm u\odot\bm v],
+  \qquad p=\sigma(\bm w^\top\bm r+b),
+\]
+$\odot$为逐维乘积，损失为二元交叉熵。增加乘积项是这里的关系头选择，并非SBERT原文的分类配置。前两段若使用不同权重，交换输入会改变结果；令对应权重相等、只用$|\bm u-\bm v|$与$\bm u\odot\bm v$这类对称特征，或平均两个输入次序的预测，都能保证对称。
+
+取对称头：原向量权重为零，差向量权重$(-2,-2)$，乘积权重$(3,3)$，偏置$-0.5$。$\bm u=(1,0)$与保留全部条件的改写$\bm v=(0.96,0.28)$给出$z=-2(0.04+0.28)+3(0.96)-0.5=1.74$，$p\approx0.8507$；删去关键条件的候选$(0.8,0.6)$给出$z=0.3$、$p\approx0.5744$。在开发集选定阈值0.8后，前者接受、后者拒绝。但若角色相反的句子被编码成与$\bm u$相同的$(1,0)$，同一头给出$\sigma(2.5)\approx0.9241$，任何阈值都无法将它与真实等义句分开。这是表示碰撞，只能反馈给表示训练、难负例采样或交给交叉编码器。
+
+\subsubsection{交叉编码器复述判定}
+\label{sec:nlp-classification-paraphrase-cross}
+
+交叉编码器把两句作为\code{[CLS]}句A\code{[SEP]}句B\code{[SEP]}联合编码，让“出发地”“目的地”等词元在每层注意力中相互比较，再由\code{[CLS]}表示经线性层预测二元标签，损失仍是二元交叉熵；任务头的一般写法见第~\ref{sec:nlp-classical-bert-heads}小节。它不要求先把每句压成单向量，代价是无法为候选预存表示。
+
+为展示分类头怎样使用交互结果，把一个已训练的三维句对表示暂解释为“角色一致、条件缺失、否定冲突”三个线索，设$z=4h_1-3h_2-5h_3-2$。这只是可手算的教学坐标。完整改写$\bm h=(1,0,0)$给出$p\approx0.8808$，交换出发地和目的地的$(0,0,0)$给出0.1192，遗漏报名条件的$(1,1,0)$给出0.2689，否定冲突的$(1,0,1)$给出0.0474。验证时应成组替换实体、数量、否定和截止条件，统计固定阈值下的结果。联合编码对输入次序敏感，对称任务需双向训练或平均两个次序的分数；长度截断可能切掉第二句末尾的条件，须报告截断率。
+
+\subsection{自然语言推断}
+\label{sec:nlp-classification-nli}
+
+\term{自然语言推断}（natural language inference，NLI）给定前提$P$和假设$H$，判断$P$是否支持$H$（蕴含）、与$H$不相容（矛盾），或不足以决定（中立）。三类判断依据数据集约定的通常语义，不是形式证明。以完整通知为前提，“读书会本次在4月18日14:00开始”被蕴含，“读书会本次仍在4月17日开始”与之矛盾，“读书会由张老师主讲”是中立；交换前提与假设，短句推不出报名条件，关系转为中立。MultiNLI扩展体裁，ANLI用对抗式收集增加难例，XNLI考察跨语言迁移，使用时应分别报告训练与评价语言。
+
+NLI有三个困难：关系有方向；否定与量词改变结论，例如“所有校外来宾须报名”推不出“所有参加者须报名”；标注产物会留下捷径，只看假设就能猜出不少标签。方法谱系从轻到重：可分解注意力用软对齐加局部比较，参数少且可并行；ESIM加入BiLSTM上下文编码与推断组合层；BERT类交叉编码直接联合编码，生成式模型以标签词或解释输出。三者都属于交互型架构。第~\ref{chap:nlp-question-answering-dialogue}章会在这一接口之外增加证据检索与主张核验。
+
+\subsubsection{可分解注意力模型}
+\label{sec:nlp-classification-decomposable}
+
+可分解注意力模型把句对判断拆成对齐（attend）、比较（compare）和聚合（aggregate）三步\scite{nlp-parikh2016decomposable}。对前提词表示$\bm a_i$与假设词表示$\bm b_j$，前馈网络$F$给出对齐分数，再按行、按列归一化得到软对齐：
+\[
+  \begin{gathered}
+    e_{i,j}=F(\bm a_i)^\top F(\bm b_j),\\
+    \widetilde{\bm b}_i=\sum_j\frac{\exp(e_{i,j})}{\sum_k\exp(e_{i,k})}\bm b_j,\qquad
+    \widetilde{\bm a}_j=\sum_i\frac{\exp(e_{i,j})}{\sum_k\exp(e_{k,j})}\bm a_i.
+  \end{gathered}
+\]
+比较网络$G$分别处理$[\bm a_i;\widetilde{\bm b}_i]$与$[\bm b_j;\widetilde{\bm a}_j]$，两侧各自求和得$\bm v_1,\bm v_2$，再由$H([\bm v_1;\bm v_2])$三分类。各词对的计算互不依赖，可完全并行；基础版本不含词序，句内注意力是可选增强。
+
+把前提简化为“读书会”$(1,0)$和“14:00”$(0,1)$，假设只有“读书会”$(1,0)$，两条对齐分数为$(\log3,0)^\top$。按行归一化时每个前提词只能对齐唯一的假设词，权重都是1；按列归一化时，假设词对前提的权重为$(3/4,1/4)$，得$\widetilde{\bm a}=(0.75,0.25)$。前提中“14:00”与其对齐对象的绝对差为$(1,1)$，假设一侧的差为$(0.25,0.25)$。若$G$暂取绝对差的$L_1$和，两侧聚合值为$2$和$0.5$：前提有假设没有的内容，反之不然，这种不对称正是蕴含方向的线索。例子也暴露了一个缺陷：单候选时“14:00”被迫对齐到“读书会”，软对齐不会自动拒绝无对应的词；没有词序，角色交换也难以区分。
+
+\subsubsection{ESIM：上下文编码与局部推断组合}
+\label{sec:nlp-classification-esim}
+
+ESIM针对上述两点改进\scite{nlp-chen2017esim}。第一层用BiLSTM编码每句，使每个位置的表示包含句内语境；按可分解注意力的方式计算软对齐后，对前提一侧构造增强特征
+\[
+  \bm m_i=[\bm a_i;\widetilde{\bm b}_i;\bm a_i-\widetilde{\bm b}_i;\bm a_i\odot\widetilde{\bm b}_i]\in\mathbb R^{8h},
+\]
+$h$为单向隐藏维数，差与积显式给出“哪里一致、哪里冲突”。另一侧同样处理。增强特征经前馈投影后进入第二层BiLSTM，把分散的局部比较组合起来；对两侧输出分别做平均池化与最大池化，四个向量拼接后经多层感知机三分类。BiLSTM的原理可参考\BookChapterRef{chap:recurrent-networks}{卷五的循环神经网络章}，这里只用到它的输出在每个位置同时汇总了左右语境。
+
+比较“甲通知乙报名”与“乙通知甲报名”时，词相同，但第一层BiLSTM使“甲作为通知者”与“甲作为接收者”的表示不同。设某位置编码为$\bm a=(0.8,0.2)$，对齐表示为$\widetilde{\bm b}=(0.3,0.7)$，则差为$(0.5,-0.5)$，积为$(0.24,0.14)$，增强特征为$(0.8,0.2,0.3,0.7,0.5,-0.5,0.24,0.14)$，其中较大的差值标记了角色不一致。若第二层输出两个位置为$(0.2,0.8)$、$(0.6,0.4)$，平均池化为$(0.4,0.6)$，最大池化为$(0.6,0.8)$。与可分解注意力相比，ESIM用顺序计算换来了语境信息；它仍可能学到只看词重合的捷径。
+
+\subsubsection{BERT类模型与生成式关系判定}
+\label{sec:nlp-classification-nli-bert}
+
+BERT类交叉编码器把前提与假设按次序拼接联合编码，分类头以三分类交叉熵训练。若三条假设分别得到logits $(3,0,0)$、$(0,3,0)$、$(0,0,3)$，每条首选标签的概率都是$e^3/(e^3+2)\approx0.9094$，损失约0.0949。交换前提和假设需要重新编码，不能直接对调输出概率。受约束生成让模型只输出三个合法标签词之一，监督目标是标签词元的条件似然；自由生成解释是另一项输出，须单独核查它是否引用了前提中的实际内容。诊断时应比较只给假设的模型、词汇重合基线和完整句对模型，前两者若已取得高分，说明数据存在标签泄漏。
+
+\subsection{查询与候选文本的相关性}
+\label{sec:nlp-classification-relevance}
+
+检索中的\termalias{search-relevance}{相关性}是候选对当前信息需求的有用程度。设三个教学候选为$d_1$“机器学习读书会介绍”、$d_2$“ML-0418更正：4月18日14:00开始”、$d_3$“原计划4月17日举行”。对查询“读书会几点开始？”，$d_2$是答案来源，$d_1$只与主题相关，$d_3$词面相关却已过时。挑战因此有三个：查询与答案用词不同；候选库很大，必须先召回再精排；相关与时效可能冲突。谱系依次是：BM25以词汇统计高效召回，但无法处理同义；DPR类双编码器学习语义召回，难负例挖掘解决随机负例过易的问题；交叉编码器在小候选集上精排；ColBERT以后期交互兼顾预计算与细粒度匹配。倒排索引、近似近邻检索、SPLADE等稀疏学习表示以及在线系统架构，可参考\BookChapterRef{chap:rs-search}{卷十一的搜索相关性章}；本节只写这些模型在文本匹配中的结构与训练，第~\ref{chap:nlp-question-answering-dialogue}章的检索问答回用这里的模型。
+
+\subsubsection{BM25：词汇相关性基线}
+\label{sec:nlp-classification-bm25}
+
+BM25按查询词在候选中的出现、词项区分度与文档长度打分\scite{rs-h01}。采用非负IDF版本：
+\[
+ \operatorname{BM25}(q,d)=\sum_{t\in q}
+ \log\!\left(1+\frac{N-\operatorname{df}_t+0.5}{\operatorname{df}_t+0.5}\right)
+ \frac{f_{t,d}(k_1+1)}{f_{t,d}+k_1(1-b+b|d|/\overline L)},
+\]
+$N$为文档数，$\operatorname{df}_t$为含词$t$的文档数，$f_{t,d}$为词频，$\overline L$为平均长度；$k_1$控制词频饱和，$b$控制长度归一。取$N=4$、$\operatorname{df}=2$、$k_1=1.2$、$b=0.75$、$|d|=\overline L$，该词IDF为$\log2$；出现1次贡献0.6931，出现2次贡献$\log2\times4.4/3.2\approx0.9531$，并未翻倍。BM25能奖励“读书会”的匹配，却不知道“何时开始”与“几点举行”同义，也不知道哪个日期已被更正。中文分词、活动编号是否拆开和时间规范化都会改变匹配，须作为索引配置记录。
+
+\subsubsection{DPR类双编码器与难负例挖掘}
+\label{sec:nlp-classification-dpr}
+
+DPR用两个BERT编码器分别编码查询与段落，以分类位置向量的内积$s(q,d)=f_q(q)^\top f_d(d)$打分，训练目标是式~\eqref{eq:nlp-matching-infonce}取$\tau=1$、内积打分的形式\scite{nlp-karpukhin2020dpr}。原文比较了随机负例、BM25高分负例和批内负例，最终把批内负例与每个问题一条BM25难负例结合。设查询向量为$(1,1)$，$d_2,d_1,d_3$的向量为$(1,1),(1,0),(0,0)$，内积为$(2,1,0)$，正例概率$e^2/(e^2+e+1)\approx0.6652$，损失约0.4076。部署时离线编码全部段落并绑定文档编号、字符区间和版本，查询在线编码后取前$k$个，Recall@$k$衡量正确段落是否进入前$k$。召回阶段漏掉的段落，后续重排无法找回。
+
+负例的难度决定模型学到什么。随机负例与查询几乎无关，模型很快就能把它们分开，梯度随之消失；BM25负例与查询词面相近，却未必是当前模型最容易混淆的样本。难负例挖掘的发展沿着“负例是否来自当前模型的错误”展开。ANCE直接用正在训练的模型检索负例：用当前编码器为整个语料建近似近邻索引，对每个查询取排名靠前的非正例段落作负例\scite{rs-s03}。困难在于编码器每更新一步，全库向量就已过时，而重新编码数百万段落代价很高。ANCE的做法是异步刷新：训练进程持续更新参数，另一个推断进程按固定间隔取最新检查点重新编码语料、重建索引，完成后替换旧索引，见算法~\ref{alg:nlp-classification-ance}。训练用的负例因此略为滞后，但始终接近当前模型的错误。
+
+\begin{algorithm}[ANCE式异步难负例训练]
+  \label{alg:nlp-classification-ance}
+  \begin{algorithmic}[1]
+    \Require 训练对$\{(q,d^+)\}$，语料$\mathcal C$，以BM25负例预训练的编码器参数$\theta_0$，每查询负例数$k$，刷新间隔$m$
+    \Ensure 编码器参数$\theta_T$
+    \State 用$\theta_0$编码$\mathcal C$，建立近似近邻索引$\mathcal I$
+    \For{$t=1,\ldots,T$}
+      \State 取一批查询；对每个$q$，从$\mathcal I$检索前若干段落，去掉已标注正例，抽取$k$个作为$\mathcal H_q$
+      \State 以式~\eqref{eq:nlp-matching-infonce}（候选为批内正例与$\mathcal H_q$）计算损失，更新$\theta_t$
+      \If{$t\bmod m=0$}\Comment{与训练并行执行}
+        \State 推断进程用检查点$\theta_t$重新编码$\mathcal C$，建好新索引后替换$\mathcal I$
+      \EndIf
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+难负例越难，混入假负例的可能越大：排名最靠前的“负例”可能恰好是未被标注的正确段落。另一类方法借助交叉编码器的判断。RocketQA用交叉编码器给检索出的难负例重新打分，剔除得分很高的疑似假负例，并用它为未标注问题生成伪标签\scite{nlp-matching-qu2021rocketqa}。\term{知识蒸馏}（knowledge distillation）则直接让双编码器学生模仿交叉编码器教师的打分。Margin-MSE只要求学生复现教师对正负候选的分差：
+\[
+  L_{\mathrm{MM}}=\Bigl(\bigl[s_S(q,d^+)-s_S(q,d^-)\bigr]-\bigl[s_T(q,d^+)-s_T(q,d^-)\bigr]\Bigr)^2,
+\]
+$s_S,s_T$分别为学生与教师分数\scite{nlp-matching-hofstatter2020margin}。只匹配分差，是因为两种架构的分数尺度不同，绝对值无法直接对齐。若教师分差为3、学生为1，损失为4，梯度推动学生拉大分差。蒸馏把交互型的精度部分转移到表示型中，推断时仍只需内积；它的上限受教师质量限制，教师的系统偏差也会一并传给学生。
+
+\subsubsection{BERT交叉编码器：候选重排}
+\label{sec:nlp-classification-rerank}
+
+重排器只处理已召回的候选，把查询与每个段落拼接后联合编码，由\code{[CLS]}表示输出相关分\scite{rs-s20}。点式训练用二元交叉熵；成对训练最小化$\log(1+\exp[-(s^+-s^-)])$，要求正例高于负例；列表式训练对一组候选用softmax交叉熵。设初始列表为$(d_1,d_3,d_2)$，重排器给出logits $(0,-1,2)$，排序恢复为$(d_2,d_1,d_3)$。以“能回答当前开始时间”为唯一相关标准，正确段落的倒数排名从$1/3$升至1；MRR是跨查询的平均倒数排名，分级相关性下则用nDCG并注明截断$k$。时间难负例要保留“原定”“现改至”等关系词，而不只是随机换日期。若召回集合里只有$d_1,d_3$，重排器仍会排出第一名，因此还需要“无合适候选”的拒绝规则。
+
+\subsubsection{ColBERT：词元表示与后期交互}
+\label{sec:nlp-classification-colbert}
+
+单向量可能压掉稀少而关键的词，交叉编码又太贵。ColBERT用共享BERT分别编码查询与文档，在开头分别加查询、文档标记；查询用掩码词元补到固定长度，让模型学会查询扩展，文档一侧滤掉标点的向量；输出经线性层降到较低维度（原文128维）并作$L_2$归一化\scite{nlp-khattab2020colbert}。打分采用MaxSim聚合：
+\[
+  S(q,d)=\sum_{i=1}^{n_q}\max_{1\le j\le n_d}\bm q_i^\top\bm d_j.
+\]
+每个查询词元找最匹配的文档词元，同一个文档词元可以被多次选中。给定相似矩阵
+$\bm M=\bigl(\begin{smallmatrix}0.8&0.2&0.1\\0.1&0.3&0.9\end{smallmatrix}\bigr)$，
+行最大值为0.8与0.9，MaxSim为1.7；若改为平均池化后的单向量内积，结果等于矩阵全部元素的均值0.4，每个查询词元的最佳对应被平均掉了。
+
+训练用查询、正段落和负段落三元组上的成对softmax交叉熵。文档词元向量离线计算并存入索引，查询到来后只做矩阵乘法与按行取最大，因此既能用于重排，也能结合近似近邻检索直接召回。代价是存储：每篇文档存$n_d$个向量，而非一个，ColBERTv2等后续工作用残差压缩降低这一开销。局部最大匹配也有盲区：“原时间14:00，新时间15:00”中两个时间词都可能得到高分，各词元高分不等于组成了一致答案。
+
+\subsection{文本对应、重复与版本关系}
+\label{sec:nlp-classification-alignment-duplicates}
+
+对应关系问两组材料中哪些单元表达同一部分内容，近重复问内容重合多少，版本关系还要问哪次编辑继承并改动了哪份材料。三者各有困难。平行文本的句对齐要保序，又要处理增删与一对多，例如译文把一句拆成两句；只靠句长对齐，遇到长度相近的错误译文就无能为力，跨语言句向量让对齐能直接比较语义；近重复检测面对海量文档，逐对比较成本为平方级，MinHash和SimHash用定长签名和分桶把比较降下来。新旧通知高度重合，却只改了一个日期，因此近重复结果必须保留实质差异。
+
+\subsubsection{Gale--Church式句长对齐}
+\label{sec:nlp-classification-galechurch}
+
+句长对齐利用两个条件：平行文本大体保序，互译片段的长度成比例。对源片段长度$l_s$和目标片段长度$l_t$，标准化长度差为
+\[
+  \delta=\frac{l_t-cl_s}{\sqrt{l_s\sigma^2}},
+\]
+$c$为平均长度比，$\sigma^2$刻画波动。按正态尾概率取匹配代价$-\log[2(1-\Phi(|\delta|))]$，$\Phi$为标准正态分布函数，再加上对齐类型$(1,1)$、$(1,2)$、$(2,1)$、$(2,2)$、$(1,0)$、$(0,1)$的先验罚值\scite{nlp-gale1991alignment}。令$D(i,j)$为源端前$i$句与目标端前$j$句的最小代价，$D(0,0)=0$，
+\[
+ D(i,j)=\min_{(a,b)}\bigl\{D(i-a,j-b)+C(s_{i-a+1:i},t_{j-b+1:j})\bigr\}.
+\]
+
+源文两句长度为$(10,20)$，译文三句长度为$(10,10,10)$，第二句被译成两句。教学设$c=1$、$\sigma^2=10$，$(1,1)$不加罚，$(1,2),(2,1),(2,2)$加1，单边未对应加3；这些罚值人为给定，不是原论文的拟合值。累计表为
+\[
+ \begin{array}{c|rrrr}
+ D(i,j)&0&1&2&3\\ \hline
+ 0&0&3&6&9\\
+ 1&3&0&2.1479&5.1479\\
+ 2&6&2.3935&0.7350&1
+ \end{array}
+\]
+其中$(10,20)$的$\delta=1$，匹配项1.1479，故$D(1,2)=1+1.1479$；$(20,10)$的$\delta=-1/\sqrt2$，匹配项约0.7350；$D(2,1)$取两句合并的$(30,10)$，代价约2.3935。从$D(2,3)=1$回溯，第二源句对目标第2、3句，再由$D(1,1)=0$得到第一句一对一。长度相近不证明翻译正确，摘要式翻译和大段重排都会破坏保序与比例假设。
+
+\subsubsection{跨语言表示匹配与全局对齐}
+\label{sec:nlp-classification-crosslingual-align}
+
+长度只是语义对应的弱代理。若有把不同语言映射到同一空间的句编码器，就能直接比较两句的意义。LaBSE是这样的表示型双编码器：在多语言掩码语言模型和翻译语言模型上预训练的BERT，对源句与译句共享参数，取归一化的分类位置向量，用翻译句对训练\scite{nlp-matching-feng2022labse}。训练目标是式~\eqref{eq:nlp-matching-infonce}的双向版本，并在正例分数中减去一个间隔$m$，即加性间隔softmax：要求译句不仅得分最高，还要比批内其他句子至少高出$m$。
+
+用句向量在大语料中挖掘平行句时，直接取余弦最高的目标句会遇到\term{中心点问题}（hubness）：某些泛泛的句子与许多源句都相似，被反复选中。\term{边际打分}（margin-based scoring）把原始余弦除以双方各自近邻的平均相似度\cite{nlp-matching-artetxe2019margin}：
+\[
+  \operatorname{margin}(x,y)=\frac{\cos(x,y)}
+  {\sum_{z\in\mathrm{NN}_k(x)}\frac{\cos(x,z)}{2k}+\sum_{z\in\mathrm{NN}_k(y)}\frac{\cos(y,z)}{2k}},
+\]
+$\mathrm{NN}_k(x)$是$x$在目标语言中的$k$个最近邻，$\mathrm{NN}_k(y)$是$y$在源语言中的$k$个最近邻。一个句子若与谁都相似，分母就大，分数被压低。设两个源句$x_1,x_2$与三个目标句的余弦为
+\[
+  \begin{pmatrix}0.80&0.78&0.20\\0.82&0.30&0.75\end{pmatrix},
+\]
+$y_1$是泛泛的“活动通知”，按余弦两个源句都选它。取$k=2$，$x_1,x_2$的近邻均值为0.79和0.785，$y_1,y_2,y_3$在源端的近邻均值为0.81、0.54、0.475。于是$\operatorname{margin}(x_1,y_1)=0.80/0.80=1.000$，$\operatorname{margin}(x_1,y_2)=0.78/0.665\approx1.173$，$\operatorname{margin}(x_2,y_1)\approx1.028$，$\operatorname{margin}(x_2,y_3)=0.75/0.63\approx1.190$。边际打分让$x_1$选$y_2$、$x_2$选$y_3$，中心句不再独占。这组余弦是教学构造。
+
+挖掘只决定哪些句对可能互译；对已知是平行文本的两篇文档，还要输出保序的全局对齐。Vecalign把Gale--Church的动态规划保留下来，把长度代价换成句向量代价\scite{nlp-matching-thompson2019vecalign}。对候选片段$x,y$（可以是相邻几句的拼接，拼接后重新编码），代价为
+\[
+  c(x,y)=\frac{(1-\cos(x,y))\,n(x)\,n(y)}
+  {\sum_{r=1}^{R}\bigl(1-\cos(x,y_r)\bigr)+\sum_{r=1}^{R}\bigl(1-\cos(x_r,y)\bigr)},
+\]
+$n(\cdot)$是片段含的句数，$x_r,y_r$是随机抽取的句子。分母用随机句估计“这两个片段与无关句平均相差多少”，消除了不同句子余弦基线的差异；乘以句数是为了抑制无节制的合并。单边未对应使用固定罚值。原文还用逐层下采样的近似动态规划把复杂度降到线性，从而能处理长文档。与逐句独立选最佳不同，全局对齐受保序约束，可以拒绝低质量的配对、让句子保持未对应。评价时应分开候选覆盖率与最终对应正确率：正确译句没进候选是召回问题，进了候选却被约束挤掉是打分或约束问题。
+
+\subsubsection{MinHash：片段集合的近重复检索}
+\label{sec:nlp-classification-minhash}
+
+第~\ref{sec:nlp-llm-data-minhash}小节已为预训练语料去重推导了MinHash的碰撞概率等于Jaccard相似度（式~\eqref{eq:nlp-llm-minhash}），以及分带局部敏感哈希的候选概率（式~\eqref{eq:nlp-llm-lsh}）\scite{nlp-broder1997resemblance}。文本组织中用的是同一工具，区别在于目的：语料去重删掉副本即可，这里要找出转载、模板与新旧版本，并保留它们之间的关系。
+
+先决定片段集合怎样构造。连续字符$n$元组适合不分词的中文短通知，词$n$元组对长文更稳；规范化只能去掉空白、编码和全半角等无关差异，不能为提高命中而删掉日期或编号。取$A=\{a,b,c\}$、$B=\{a,b,d\}$，其中$c,d$含不同日期，$J(A,B)=0.5$。短文档片段少，一个日期变化就能让$J$下降很多；长模板共享大量片段，又可能掩盖关键事实变化。当规范要求“新通知主要包含旧通知”时，应计算有方向的包含率$|A\cap B|/|A|$，它与Jaccard回答不同问题。签名只用于召回候选，命中后应计算原集合的相似度并核读正文；近重复只支持合并建议，不能据此删除新版本。
+
+\subsubsection{SimHash与版本差异核验}
+\label{sec:nlp-classification-simhash}
+
+MinHash比较集合的交并比例，SimHash近似加权特征向量之间的夹角\scite{nlp-charikar2002similarity}。理想随机超平面方法对随机向量$\bm r_j$记录$\operatorname{sign}(\bm r_j^\top\bm x)$；两个向量夹角为$\theta$时，某一位不同的概率为$\theta/\pi$。工程实现把每个特征哈希成若干正负位，按特征权重逐位累加后取符号，得到一个定长指纹，用汉明距离筛选候选。
+
+给三个特征四位正负码：“读书会”$(+,+,-,-)$、“报名”$(+,-,+,-)$、“周五”$(-,+,+,-)$，权重为2、1、1。逐位和为$(2,2,0,-4)$，约定零取正，指纹为\code{1110}。把“周五”换成码为$(-,-,+,+)$的“周六”，逐位和变为$(2,0,0,-2)$，指纹仍是\code{1110}，汉明距离为0。高权重的共同特征主导了指纹，实质的日期变化被吞没。因此候选命中以后要恢复原文差异，逐项核对实体、数字、否定与条件。新旧版本即使高度重合，也须保存“4月17日”变为“4月18日14:00”的编辑；没有发布时间、活动编号或编辑链记录，仅凭文本无法确定谁先谁后。候选覆盖、重复判定与版本变更核验应分别评价，才能区分漏掉了相近材料还是漏掉了关键修改。

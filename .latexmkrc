@@ -1,7 +1,10 @@
 $pdf_mode = 5;
 $xelatex = 'xelatex %O %S';
 $out_dir = 'build';
-$biber = 'biber %O %S';
+# macOS 上优先使用可执行的 Homebrew Biber；其他环境继续从 PATH 查找。
+$biber = -x '/opt/homebrew/bin/biber'
+    ? '/opt/homebrew/bin/biber %O %S'
+    : 'biber %O %S';
 $makeindex = 'texindy -L general -C utf8 -M ../tex/styles/book-index.xdy %O -o %D %S';
 
 # 最高压缩等级会反复压缩大幅 PNG 和嵌入字体。日常使用快速无损压缩，

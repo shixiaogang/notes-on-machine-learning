@@ -19,19 +19,27 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 VOLUME = Path("tex/01-mathematical-preliminaries")
 CURRENT_VOLUMES = (
-    Path("tex/01-mathematical-preliminaries-upper"),
-    Path("tex/02-mathematical-preliminaries-lower"),
+    Path("tex/01-basic-mathematics"),
+    Path("tex/02-abstract-mathematics"),
+    Path("tex/03-optimization-evolution-and-signals"),
+    Path("tex/04-manifolds-distributions-and-inference"),
+    Path("tex/05-control-decision-and-games"),
 )
 OUTLINE_DIRECTORIES = tuple(Path("plans") / volume.name for volume in CURRENT_VOLUMES)
+MIGRATED_CHAPTER_COUNTS = {1: 18, 2: 3, 3: 9, 4: 4, 5: 3}
 CONTRACT = Path("tests/fixtures/math-reading-structure/chapter-map.md")
 RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter17-retired-labels.json")
+CHAPTER17_DELETION = Path("tests/fixtures/math-reading-structure/chapter17-deletion.json")
+CHAPTER17_DELETION_REVISION = "5dbfb0e3"
+CHAPTER17_DELETION_SOURCE = "tex/02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning/01-mathematics-and-future-research.tex"
 CHAPTER1_RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter1-retired-labels.json")
 CHAPTER1_BASELINE_REVISION = "f435c9df3d52f2aee75b22e40ed6fc33fd0eca15"
 CHAPTER1_PRE_REWRITE_REVISION = "870ef690a9f1cd74a98510b05cc033529986fa4e"
 CHAPTER1_BASELINE_SOURCE = Path(
     "01-mathematical-language-combinatorics-analysis-optimization/01-sets-functions-and-proofs.tex"
 )
-CHAPTER1_CURRENT_SOURCE = CURRENT_VOLUMES[0] / CHAPTER1_BASELINE_SOURCE
+CHAPTER1_PRE_REWRITE_SOURCE = Path("tex/01-mathematical-preliminaries-upper") / CHAPTER1_BASELINE_SOURCE
+CHAPTER1_CURRENT_SOURCE = CURRENT_VOLUMES[0] / "01-sets/01-sets-relations-and-maps.tex"
 # The authorized topic was section 1.4 in the baseline and 1.5 before removal.
 # Bind its real title in each immutable source instead of reusing a section number.
 CHAPTER1_REMOVED_SECTION_TITLES = ("命题与证明",)
@@ -41,7 +49,8 @@ CHAPTER2_PRE_REWRITE_REVISION = "870ef690a9f1cd74a98510b05cc033529986fa4e"
 CHAPTER2_BASELINE_SOURCE = Path(
     "01-mathematical-language-combinatorics-analysis-optimization/02-combinatorics.tex"
 )
-CHAPTER2_CURRENT_SOURCE = CURRENT_VOLUMES[0] / CHAPTER2_BASELINE_SOURCE
+CHAPTER2_PRE_REWRITE_SOURCE = Path("tex/01-mathematical-preliminaries-upper") / CHAPTER2_BASELINE_SOURCE
+CHAPTER2_CURRENT_SOURCE = CURRENT_VOLUMES[0] / "01-sets/02-counting.tex"
 CHAPTER2_BASELINE_SECTION_TITLES = (
     "候选空间上的约束与求解", "问题族的可计算性与复杂度",
 )
@@ -53,7 +62,7 @@ CHAPTER2_PRE_REWRITE_SECTION_TITLES = (
 CHAPTER2_SUMMARY_RETIREMENT = "tab:prelim-four-solution-questions"
 CHAPTER2_FORMULA_RETIREMENT = "eq:prelim-binomial-theorem"
 CHAPTER2_PATTERN_RELOCATION_TITLE = "有限输入上的可区分模式"
-CHAPTER2_PATTERN_DESTINATION = "tex/03-foundations/02-learning-theory/statistical-learning-framework/01-finite-input-patterns.tex"
+CHAPTER2_PATTERN_DESTINATION = "tex/06-foundations/02-learning-theory/statistical-learning-framework/01-finite-input-patterns.tex"
 CHAPTER17_BASELINE_SOURCE = Path(
     "05-dynamical-systems-control-and-decision/06-mathematics-and-future-research.tex"
 )
@@ -104,7 +113,7 @@ def normalize(title: str) -> str:
 def assignments(root: Path) -> list[dict]:
     rows = []
     modern = list(re.finditer(
-        r"^\| (\d+) \| ([12]) \| (\d+) \| ([^|]+) \| ([^|]+\.tex) \|$",
+        r"^\| (\d+) \| ([1-5]) \| (\d+) \| ([^|]+) \| ([^|]+\.tex) \|$",
         (root / CONTRACT).read_text(), re.M,
     ))
     for match in modern:
@@ -123,7 +132,8 @@ def assignments(root: Path) -> list[dict]:
     # Historical audit identities stay stable when current chapters merge.
     # In particular, ID 17 remains the source governed by the retirement file.
     # Independent one-variable and multivariable calculus retain IDs 18 and 21.
-    expected_identities = list(range(1, 36)) if modern else list(range(1, 18))
+    migrated = bool(modern and any(row["volume"] > 2 for row in rows if "volume" in row))
+    expected_identities = ([n for n in range(1, 40) if n not in {17, 37}] if migrated else list(range(1, 36))) if modern else list(range(1, 18))
     count = len(expected_identities)
     if modern and len(modern) != len(rows):
         raise ValueError("Chapter assignments must not mix current and legacy formats")
@@ -135,10 +145,16 @@ def assignments(root: Path) -> list[dict]:
     if len({row["path"] for row in rows}) != count:
         raise ValueError("Chapter assignments must have unique source paths")
     if modern:
-        for volume, expected_count in ((1, 25), (2, 10)):
+        counts = MIGRATED_CHAPTER_COUNTS if migrated else {1: 25, 2: 10}
+        offset = 0
+        for volume, expected_count in counts.items():
             local_numbers = [row["local_chapter"] for row in rows if row["volume"] == volume]
             if local_numbers != list(range(1, expected_count + 1)):
                 raise ValueError(f"Volume {volume} assignments must list local chapters 1 through {expected_count} in reading order")
+            for row in rows:
+                if row["volume"] == volume:
+                    row["outline_offset"] = offset
+            offset += expected_count
     return rows
 
 
@@ -146,7 +162,7 @@ def current_outline_chapter(row: dict) -> int:
     """Map stable audit identities to the current concatenated outline."""
     if "local_chapter" not in row:
         return row["chapter"]
-    return row["local_chapter"] + (25 if row["volume"] == 2 else 0)
+    return row["local_chapter"] + row.get("outline_offset", 25 if row["volume"] == 2 else 0)
 
 
 def chapter17_retirement_source(rows: list[dict]) -> str:
@@ -167,7 +183,10 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
     offset = 0
     current = None
     for line_no, line in enumerate(text.splitlines(), 1):
-        if line.startswith("## 卷二"):
+        marker = re.fullmatch(r"<!-- audit-volume-offset: (\d+) -->", line)
+        if marker:
+            offset = int(marker[1])
+        elif line.startswith("## 卷二"):
             offset = 25
         chapter = re.match(r"## 第(\d+)章 (.+)$", line)
         if chapter:
@@ -203,15 +222,16 @@ def outline_headings(text: str) -> dict[int, list[dict]]:
 
 
 def reading_structure(root: Path) -> tuple[list[Path], str]:
-    """Read the six current part outlines, retaining historical audit numbers."""
+    """Read the current mathematics part outlines, retaining historical audit numbers."""
     paths = []
     texts = []
+    offset = 0
     for number, directory in enumerate(OUTLINE_DIRECTORIES, 1):
         parts = sorted((root / directory).glob("*.md"))
         if not parts:
             raise ValueError(f"Expected at least one part outline in {directory}")
-        if number == 2:
-            texts.append("## 卷二")
+        texts.append(f"<!-- audit-volume-offset: {offset} -->")
+        offset += MIGRATED_CHAPTER_COUNTS[number]
         for path in parts:
             paths.append(path.relative_to(root))
             texts.append(path.read_text())
@@ -276,7 +296,7 @@ def audit_part_guides(root: Path) -> list[dict]:
 
 
 def active_body_sources(root: Path) -> tuple[dict[Path, str], list[str]]:
-    """Follow all twelve volume entries, excluding obsolete unreferenced chapters."""
+    """Follow all registered volume entries, excluding obsolete unreferenced chapters."""
     sources: dict[Path, str] = {}
     missing: set[str] = set()
 
@@ -349,6 +369,44 @@ def references(text: str) -> list[dict]:
                         "line": text.count("\n", 0, match.start()) + 1,
                     })
     return result
+
+
+def audit_deleted_chapter17(root: Path, baseline_labels: dict, all_locations: dict,
+                           body_sources: dict, snapshot: str) -> dict:
+    """Verify the explicitly authorized deletion against an immutable source snapshot."""
+    report = {"path": str(CHAPTER17_DELETION), "exists": True, "issues": [],
+              "retired_labels": [], "approved_baseline_retirements": []}
+    issues = report["issues"]
+    try:
+        manifest = json.loads((root / CHAPTER17_DELETION).read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        issues.append({"kind": "invalid_chapter_deletion_manifest", "error": str(error)})
+        return report
+    labels = sorted(set(LABEL_RE.findall(uncomment(snapshot))))
+    baseline = sorted(label for label, source in baseline_labels.items()
+                      if source == str(CHAPTER17_BASELINE_SOURCE))
+    required = {"disposition": "delete-entire-chapter", "chapter": 17,
+                "source_revision": CHAPTER17_DELETION_REVISION,
+                "source": CHAPTER17_DELETION_SOURCE,
+                "source_sha256": hashlib.sha256(snapshot.encode()).hexdigest(),
+                "source_labels": labels, "baseline_labels": baseline}
+    for key, expected in required.items():
+        if manifest.get(key) != expected:
+            issues.append({"kind": "chapter_deletion_metadata", "field": key})
+    if not manifest.get("authorization"):
+        issues.append({"kind": "chapter_deletion_authorization_missing"})
+    retired = set(labels) | set(baseline)
+    for label in sorted(retired):
+        if label in all_locations:
+            issues.append({"kind": "deleted_chapter_label_still_defined", "label": label})
+    for source, text in body_sources.items():
+        for reference in references(text):
+            if reference["label"] in retired:
+                issues.append({"kind": "deleted_chapter_active_reference", "source": str(source), **reference})
+    report["retired_labels"] = sorted(retired)
+    if not issues:
+        report["approved_baseline_retirements"] = baseline
+    return report
 
 
 def audit_retired_chapter17_labels(
@@ -451,7 +509,7 @@ def audit_retired_chapter17_labels(
     if undeclared:
         issues.append({"kind": "unrecorded_chapter17_label_removal", "labels": sorted(undeclared)})
     report["pre_rewrite_label_count"] = len(inventory)
-    report["active_reference_scope"] = "All active body inputs in the twelve volumes."
+    report["active_reference_scope"] = "All active body inputs in the registered volumes."
     if not issues:
         report["approved_baseline_retirements"] = sorted(set(retired) & eligible)
     return report
@@ -510,7 +568,7 @@ def audit_retired_chapter1_labels(
         "baseline_revision": CHAPTER1_BASELINE_REVISION,
         "baseline_source": str(VOLUME / CHAPTER1_BASELINE_SOURCE),
         "pre_rewrite_revision": CHAPTER1_PRE_REWRITE_REVISION,
-        "pre_rewrite_source": str(CHAPTER1_CURRENT_SOURCE),
+        "pre_rewrite_source": str(CHAPTER1_PRE_REWRITE_SOURCE),
         "authorized_baseline_section_titles": list(CHAPTER1_REMOVED_SECTION_TITLES),
         "authorized_pre_rewrite_section_titles": list(CHAPTER1_REMOVED_SECTION_TITLES),
         "baseline_source_sha256": hashlib.sha256(baseline_source.encode()).hexdigest(),
@@ -574,7 +632,7 @@ def audit_retired_chapter1_labels(
     report["pre_rewrite_section_label_count"] = len(eligible_new)
     report["pre_rewrite_label_count"] = len(inventory)
     report["prior_baseline_only_retirements"] = sorted(set(retired) & (eligible_baseline - eligible_new))
-    report["active_reference_scope"] = "All active body inputs in the twelve volumes."
+    report["active_reference_scope"] = "All active body inputs in the registered volumes."
     if not issues:
         report["approved_baseline_retirements"] = sorted(set(retired) & eligible_baseline)
     return report
@@ -613,7 +671,7 @@ def audit_retired_chapter2_labels(
         "baseline_revision": CHAPTER2_BASELINE_REVISION,
         "baseline_source": str(VOLUME / CHAPTER2_BASELINE_SOURCE),
         "pre_rewrite_revision": CHAPTER2_PRE_REWRITE_REVISION,
-        "pre_rewrite_source": str(CHAPTER2_CURRENT_SOURCE),
+        "pre_rewrite_source": str(CHAPTER2_PRE_REWRITE_SOURCE),
         "authorized_pre_rewrite_sections": [3, 4, 5, 6],
         "authorized_baseline_section_titles": list(CHAPTER2_BASELINE_SECTION_TITLES),
         "authorized_pre_rewrite_section_titles": list(CHAPTER2_PRE_REWRITE_SECTION_TITLES),
@@ -694,7 +752,7 @@ def audit_retired_chapter2_labels(
     if undeclared:
         issues.append({"kind": "unrecorded_chapter2_label_removal", "labels": sorted(undeclared)})
     report["pre_rewrite_label_count"] = len(inventory)
-    report["active_reference_scope"] = "All active body inputs in the twelve volumes."
+    report["active_reference_scope"] = "All active body inputs in the registered volumes."
     # The user moved this exact historical lesson to volume 3. Require live,
     # unique definitions at the declared destination; a deletion cannot pass.
     relocation_entries = manifest.get("relocated_pattern_labels", [])
@@ -885,13 +943,20 @@ def main() -> int:
                 "path": str(path), "line": body.count("\n", 0, match.start()) + 1,
             })
     duplicate = {key: value for key, value in all_locations.items() if len(value) > 1}
-    chapter17_source = chapter17_retirement_source(rows)
-    retirements = audit_retired_chapter17_labels(
-        root, baseline_revision, baseline_labels, chapter17_source,
-        all_locations, body_sources,
-    )
+    chapter17_deleted = not any(row["chapter"] == 17 for row in rows)
+    chapter17_source = CHAPTER17_DELETION_SOURCE if chapter17_deleted else chapter17_retirement_source(rows)
+    if chapter17_deleted:
+        snapshot = subprocess.check_output(
+            ["git", "show", f"{CHAPTER17_DELETION_REVISION}:{CHAPTER17_DELETION_SOURCE}"],
+            cwd=root, text=True,
+        )
+        retirements = audit_deleted_chapter17(root, baseline_labels, all_locations, body_sources, snapshot)
+    else:
+        retirements = audit_retired_chapter17_labels(
+            root, baseline_revision, baseline_labels, chapter17_source, all_locations, body_sources,
+        )
     chapter1_pre_rewrite_source = subprocess.check_output(
-        ["git", "show", f"{CHAPTER1_PRE_REWRITE_REVISION}:{CHAPTER1_CURRENT_SOURCE}"],
+        ["git", "show", f"{CHAPTER1_PRE_REWRITE_REVISION}:{CHAPTER1_PRE_REWRITE_SOURCE}"],
         cwd=root, text=True,
     )
     chapter1_retirements = audit_retired_chapter1_labels(
@@ -900,7 +965,7 @@ def main() -> int:
         all_locations, body_sources, chapter1_baseline_source, chapter1_pre_rewrite_source,
     )
     chapter2_pre_rewrite_source = subprocess.check_output(
-        ["git", "show", f"{CHAPTER2_PRE_REWRITE_REVISION}:{CHAPTER2_CURRENT_SOURCE}"],
+        ["git", "show", f"{CHAPTER2_PRE_REWRITE_REVISION}:{CHAPTER2_PRE_REWRITE_SOURCE}"],
         cwd=root, text=True,
     )
     chapter2_retirements = audit_retired_chapter2_labels(
@@ -916,7 +981,8 @@ def main() -> int:
             if reference["label"] not in all_locations
         ],
         "active_source": Path(chapter17_source) in body_sources,
-        "resolution_scope": "All active body inputs in the twelve volumes.",
+        "expected_active": not chapter17_deleted,
+        "resolution_scope": "All active body inputs in the registered volumes.",
     }
     approved_retirements = set(retirements["approved_baseline_retirements"])
     approved_retirements.update(chapter1_retirements["approved_baseline_retirements"])
@@ -939,7 +1005,7 @@ def main() -> int:
         "chapter2_label_retirements": chapter2_retirements,
         "chapter17_cross_references": chapter17_reference_audit,
         "missing_baseline_labels": missing, "duplicate_labels": duplicate,
-        "duplicate_label_scope": "All active body inputs in the twelve volumes.",
+        "duplicate_label_scope": "All active body inputs in the registered volumes.",
         "missing_body_inputs": missing_inputs,
     }
     if args.json:
@@ -972,7 +1038,7 @@ def main() -> int:
     failed = failed or bool(chapter1_retirements["issues"])
     failed = failed or bool(chapter2_retirements["issues"])
     failed = failed or bool(chapter17_reference_audit["undefined_references"])
-    failed = failed or not chapter17_reference_audit["active_source"]
+    failed = failed or (chapter17_reference_audit["active_source"] != chapter17_reference_audit["expected_active"])
     if not args.chapter:
         print(
             f"PART_GUIDES files={len(part_guides)} "
