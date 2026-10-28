@@ -1,6 +1,6 @@
 # 数学基础五卷章目与文件映射
 
-当前数学正文共39章，五卷章数依次为20、3、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
+当前数学正文共43章，五卷章数依次为24、3、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
 
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
@@ -23,7 +23,11 @@
 | 33 | 1 | 17 | 图的遍历、分解与简化 | tex/01-basic-mathematics/04-graphs/03-traversal-decomposition-simplification.tex |
 | 34 | 1 | 18 | 图上的约束优化 | tex/01-basic-mathematics/04-graphs/04-constrained-optimization.tex |
 | 35 | 1 | 19 | 图上函数的变换与查询 | tex/01-basic-mathematics/04-graphs/05-functions-transforms-and-queries.tex |
-| 10 | 1 | 20 | 随机变量与概率基础 | tex/01-basic-mathematics/05-probability-and-statistics-basics/01-random-variables.tex |
+| 10 | 1 | 20 | 随机变量与概率分布 | tex/01-basic-mathematics/05-probability-and-statistics-basics/01-random-variables-and-distributions.tex |
+| 42 | 1 | 21 | 随机向量与联合分布 | tex/01-basic-mathematics/05-probability-and-statistics-basics/02-random-vectors-and-joint-distributions.tex |
+| 43 | 1 | 22 | 样本、统计量与参数估计 | tex/01-basic-mathematics/05-probability-and-statistics-basics/03-samples-statistics-and-estimation.tex |
+| 44 | 1 | 23 | 抽样分布与估计误差 | tex/01-basic-mathematics/05-probability-and-statistics-basics/04-sampling-distributions-and-errors.tex |
+| 45 | 1 | 24 | 区间估计、假设检验与预测 | tex/01-basic-mathematics/05-probability-and-statistics-basics/05-intervals-tests-and-prediction.tex |
 | 25 | 2 | 1 | 度量空间 | tex/02-abstract-mathematics/01-metric-and-measure/01-metric-spaces.tex |
 | 26 | 2 | 2 | 测度空间 | tex/02-abstract-mathematics/01-metric-and-measure/02-measure-spaces/01-measure-spaces.tex |
 | 7 | 2 | 3 | 函数空间 | tex/02-abstract-mathematics/03-function-spaces/04-functional-analysis-and-approximation.tex |

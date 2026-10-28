@@ -28,8 +28,8 @@ class CurrentChapterStructureTests(unittest.TestCase):
             paths, text = AUDIT.reading_structure(root)
             self.assertEqual(len(paths), 15)
             headings = AUDIT.outline_headings(text)
-            self.assertEqual(list(headings), [1, 2, 3, 21, 22, 23, 24, 25, 26, 33, 34, 35, 37, 38, 39])
-            self.assertEqual(headings[21][1]["number"], "1.1")
+            self.assertEqual(list(headings), [1, 2, 3, 25, 26, 27, 28, 29, 30, 37, 38, 39, 41, 42, 43])
+            self.assertEqual(headings[25][1]["number"], "1.1")
             # A volume may carry any number of part outlines; none is required to equal another.
             (root / paths[-1]).unlink()
             self.assertEqual(len(AUDIT.reading_structure(root)[0]), 14)
@@ -814,10 +814,10 @@ class FiveVolumeMigrationMapTests(unittest.TestCase):
     def test_migrated_map_preserves_identities_and_volume_local_numbers(self):
         self.path.write_text(self.rows)
         rows = AUDIT.assignments(self.root)
-        self.assertEqual(len(rows), 39)
-        self.assertEqual({row['chapter'] for row in rows}, set(range(1, 42)) - {17, 37})
-        self.assertEqual([AUDIT.current_outline_chapter(row) for row in rows], list(range(1, 40)))
-        for volume, count in {1: 20, 2: 3, 3: 9, 4: 4, 5: 3}.items():
+        self.assertEqual(len(rows), 43)
+        self.assertEqual({row['chapter'] for row in rows}, set(range(1, 46)) - {17, 37})
+        self.assertEqual([AUDIT.current_outline_chapter(row) for row in rows], list(range(1, 44)))
+        for volume, count in {1: 24, 2: 3, 3: 9, 4: 4, 5: 3}.items():
             self.assertEqual([row['local_chapter'] for row in rows if row['volume'] == volume], list(range(1, count + 1)))
 
     def test_migrated_map_rejects_missing_identity_and_noncontiguous_local_number(self):
@@ -826,7 +826,7 @@ class FiveVolumeMigrationMapTests(unittest.TestCase):
         changed = lines.copy()
         del changed[body[-1]]
         self.path.write_text('\n'.join(changed))
-        with self.assertRaisesRegex(ValueError, 'Expected 39 assignments'):
+        with self.assertRaisesRegex(ValueError, 'Expected 43 assignments'):
             AUDIT.assignments(self.root)
         changed = lines.copy()
         changed[body[-1]] = changed[body[-1]].replace('| 5 | 3 |', '| 5 | 2 |')
