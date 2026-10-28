@@ -5,10 +5,10 @@ python3 - <<'PY'
 from pathlib import Path
 from scripts.book_catalog import ROOT, volumes, tex_inputs, references
 catalog = volumes()
-assert [v["number"] for v in catalog] == list(range(1, 13))
-assert len({v["pdf"] for v in catalog}) == 12
+assert [v["number"] for v in catalog] == list(range(1, 16))
+assert len({v["pdf"] for v in catalog}) == 15
 assert not Path("tex/main.tex").exists(), "全集入口应退役"
-expected = [26, 10, 17, 6, 10, 15, 8, 15, 15, 15, 10, 0]
+expected = [17, 3, 9, 4, 3, 17, 6, 10, 15, 8, 15, 15, 15, 10, 0]
 for volume, count in zip(catalog, expected):
     entry = (ROOT / volume["entry"]).read_text()
     assert "\\BookVolumeSlug" in entry and "\\input{tex/book}" in entry
@@ -16,11 +16,11 @@ for volume, count in zip(catalog, expected):
     sources = tex_inputs(ROOT, volume["content"])
     text = "\n".join(sources.values())
     assert text.count("\\chapter{") == count, (volume["slug"], count)
-    if volume["number"] in (4, 5):
+    if volume["number"] in (7, 8):
         assert "\\bookpart" not in text
     assert text.count("\\section{本章小结}") == count
 references()
-print("出版结构通过：十二卷、146章、卷内编号、无部分的卷及标签唯一性。")
+print("出版结构通过：十五卷、147章、卷内编号、无部分的卷及标签唯一性。")
 PY
 output_dir="$(mktemp -d "${TMPDIR:-/tmp}/book-index.XXXXXX")"
 trap 'rm -rf "$output_dir"' EXIT

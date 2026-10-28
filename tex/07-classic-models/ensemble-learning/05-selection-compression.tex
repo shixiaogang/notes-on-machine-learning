@@ -1,0 +1,72 @@
+\section{成员选择与集成压缩}
+\label{sec:ensemble-selection-compression}
+
+集成成员增多后，内存与推理延迟可能超出部署预算，且部分成员彼此重复。本节在保持质量的前提下降低成本，对应三种部署对象：固定成员子集、按输入路由的动态调用、以及一个新的紧凑学生模型。资源评价包括路由、成员调用与聚合路径的全部成本，不只计成员个数。
+
+\begin{figure*}[htbp]
+  \centering
+  \includegraphics[width=130.048mm]{figures/07-classic-models/00-shared/generated/ensemble-selection-compression/figure.png}
+  \caption{静态选择、动态选择与知识压缩三类降本路径示意。}
+  \label{fig:ensemble-selection-compression}
+\end{figure*}
+
+\subsection{静态成员选择}
+\label{sec:ensemble-static-selection}
+
+每个成员单独打分排出名次，并不能反映成员之间的互补与重复；要省下来的成本必须对着完整子集的组合预测来评。
+
+\subsubsection{模型结构}
+\term{静态成员选择}在固定成员池中选出一个非空子集，聚合规则不变，对所有未来输入使用同一选择；部署时只调用被选中的不同成员一次，不重复计入同一成员。
+
+\subsubsection{参数学习}
+
+\paragraph{成员子集与离散权重}
+以验证损失、成员数惩罚与部署成本构造目标，预算与成本进入目标；前向贪心逐个加入、后向贪心逐个剔除。独立排序成员与“加入当前组合后再评价”不是同一件事：前者按成员单独表现排名，后者评价组合后的边际改善。在多轮重采样中统计各成员被选中的次数，这个计数向量即离散权重。
+
+\paragraph{搜索后的独立评价}
+子集搜索本身使用了验证信息，搜索空间越大偶然选优的机会越多；因此冻结子集与聚合规则后，必须用独立数据评价，并把预算与组合子集一并作为比较对象，不能把搜索用过的验证损失当作最终成绩。
+
+\subsection{动态成员选择}
+\label{sec:ensemble-dynamic-selection}
+
+不同输入区域适合不同成员：在某些区域表现稳定的成员，换到另一个区域可能最差。固定子集选不出这种差异，于是按当前输入的局部表现当场决定调用谁。
+
+\subsubsection{模型结构}
+\term{动态成员选择}按查询输入选择一个成员、一个子集或一组输入相关权重：能力估计器（在独立数据上估计各成员历史表现的模块）给出局部可信成员，路由规则选定调用对象，实际预测由被选成员产生，选择结果随查询改变；选择阈值与平局规则事先固定，查询邻域为空时回退到全体集成。
+
+\subsubsection{参数学习}
+
+\paragraph{局部能力与路由}
+在独立的能力估计数据上记录各查询邻域（与当前输入接近的已记录样本）内各成员的局部准确率（该成员在该邻域上的历史正确率），供结构段的路由规则使用；邻域表示、邻域大小与配置都在训练范围内确定；局部记录有限或分布漂移时，局部能力估计本身不可靠\scite{woods1997localaccuracy}。
+
+\paragraph{端到端调用成本}
+成本要计入路由加上实际成员的调用；若路由前已运行全部成员以获取轮廓，被跳过成员的成本已经付出，动态选择并未省下这部分\scite{caruana2004ensemble}。
+
+\subsection{从集成到紧凑模型}
+\label{sec:ensemble-compression}
+
+原成员里挑出的子集仍然超出部署预算时，保留旧成员已没有意义；换一条路：新训练一个小模型，直接模仿整个教师集成的输入输出行为。
+
+\subsubsection{模型结构}
+\term{知识压缩}（knowledge compression）用教师集成监督一个新的紧凑学生模型：回归让学生拟合教师连续目标，分类让学生拟合教师的完整类别分布。学生网络的参数$\bm\theta$是唯一待学参数；训练完成后部署只运行学生——学生对新输入输出类别概率、按阈值或最大类决策，教师集成固定不更新、部署时不再参与计算。教师输出经聚合与温度软化得到软目标分布，温度$T$控制这一训练目标表示的尖锐程度：$T$越大各类别概率越平滑，$T\to0$则接近硬标签；它是训练信号的构造约定，学生部署时的输出校准由其自身概率决定，训练温度不等于部署校准温度。学生容量限制了能保留的行为；软分布中的相对类别信息来自教师，不等于真实语义，也不保证测试更好。
+
+\subsubsection{参数学习}
+
+\paragraph{监督目标及温度梯度}
+学生同时拟合硬标签损失与教师软目标损失，按已标注与未标注索引分别平均。软目标在训练时构造：教师输出先聚合成各类得分、再经温度软化，并固定零概率平滑等顺序。设教师、学生在温度$T$下的软概率分别为$q_{ic}^T=\operatorname{softmax}(z_{ic}^T/T)_c$、$p_{ic}^T=\operatorname{softmax}(z_{ic}^S/T)_c$，软目标为教师对学生的KL散度（衡量两个概率分布差别的非对称量，方向上让学生分布去贴近教师）并按惯例乘$T^2$：
+\begin{equation}
+  L_{\mathrm{soft}}=T^2\sum_c q_{ic}^T\log\frac{q_{ic}^T}{p_{ic}^T}.
+  \label{eq:ensemble-distill-kl}
+\end{equation}
+由温度Softmax对同一样本内各类得分的雅可比$\partial p_{i,c}^T/\partial z_{i,d}^S=\frac1T p_{i,c}^T(\delta_{c,d}-p_{i,d}^T)$（不同样本的logit之间导数为零），软目标项对学生logit的导数为$\partial L_{\mathrm{soft}}/\partial z_{ic}^S=T(p_{ic}^T-q_{ic}^T)$；硬标签交叉熵对学生logit的梯度为$p_{ic}-y_{ic}$，其中$p_{ic}$为硬标签损失使用的未软化学生概率（普通Softmax，温度$1$）。
+
+两项经链式法则汇总成对学生参数$\bm\theta$的显式梯度：
+\begin{equation}
+  \nabla_{\bm\theta}L
+  =\sum_{i,c}\Big[\big(p_{ic}-y_{ic}\big)+T\big(p_{ic}^T-q_{ic}^T\big)\Big]\,\frac{\partial z_{ic}^S}{\partial\bm\theta},
+  \label{eq:ensemble-distill-theta-grad}
+\end{equation}
+再按通用更新$\bm\theta\leftarrow\bm\theta-\eta\,\nabla_{\bm\theta}L$训练学生，教师参数固定不更新。$T^2$是训练尺度约定。
+
+\paragraph{使用边界}
+检查输入覆盖、学生容量、误差与端到端资源；教师很强或训练损失很低，不直接等于部署质量好\scite{bucilua2006compression,hinton2015distilling}。

@@ -20,9 +20,9 @@ def render(source, output_dir=None):
     work.mkdir(parents=True, exist_ok=True)
     driver = work / "figure.tex"
     theme = ""
-    if str(relative).startswith(("figures/04-classic-models/",
-                                 "figures/05-neural-network-models/",
-                                 "figures/06-probabilistic-graphical-models/")):
+    if str(relative).startswith(("figures/07-classic-models/",
+                                 "figures/08-neural-network-models/",
+                                 "figures/09-probabilistic-graphical-models/")):
         theme = "\\input{figures/00-shared/model-generators/muted-theme.tex}\n"
     driver.write_text(PREAMBLE + theme + r"\input{" + str(relative) + "}\n\\end{document}\n")
     with (work / "compile.log").open("w") as log:

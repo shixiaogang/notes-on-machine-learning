@@ -1,0 +1,161 @@
+\section{继续预训练与阶段检查}
+\label{sec:nlp-llm-continuation}
+
+训练预算用完，只说明过程到达了预定终点，不说明参数已经适合交给下一阶段。模型可能缺少某个领域或语言的知识，上下文长度可能不够；而在已训练的参数上继续学习，又可能损害原有能力。本节处理四个挑战：选哪组参数交接；在新分布上继续训练时怎样设置学习率与旧数据回放、要不要扩展词表；怎样把使用RoPE的模型扩展到更长上下文；以及怎样判断新收益与旧能力的得失。方法依次是检查点选择与平均、回放与重新预热、词表扩展与新嵌入初始化、位置插值—NTK感知插值—YaRN与长样本渐进训练，最后是能力保持检查。完整的评价协议、统计不确定性与污染分析在第\ref{chap:nlp-evaluation}章展开。
+
+\subsection{训练进展与检查点选择}
+\label{sec:nlp-llm-checkpoints}
+
+训练损失反映当前采样批次的拟合，留出损失反映模型对未参与更新材料的预测。两者必须采用相同的词元化、可见范围和计分方式；若留出材料的来源配比与训练不同，还要按来源分别报告，否则整体损失的变化可能只来自比较对象的变化。若多次根据留出结果修改配比和超参数，这批留出数据已经参与了选择，最终结论还需要未反复用于决策的测试材料。
+
+曲线进入平台期有多种可能：模型接近当前目标下的可达状态，学习率过小，材料过度重复，或者目标本身难以提供所需能力的信号。单看曲线变平无法区分它们，需要结合数据曝光、更新范数和各来源损失再判断；突然的尖峰也应先按第\ref{sec:nlp-llm-qknorm-spikes}小节排查样本与更新，而不是直接解释为能力下降。
+
+检查点是训练中保存的参数及恢复训练所需的优化器、日程和数据位置状态。除了从中挑选一个，还可以对多个检查点取平均。\term{检查点平均}（checkpoint averaging）对同一次训练末段的$K$个检查点取
+\begin{equation}
+ \bar{\bm\theta}=\frac1K\sum_{k=1}^{K}\bm\theta^{(t_k)},
+ \qquad\text{或在线形式}\quad
+ \bar{\bm\theta}\gets\gamma\bar{\bm\theta}+(1-\gamma)\bm\theta^{(t)},
+ \label{eq:nlp-llm-checkpoint-average}
+\end{equation}
+后者即指数移动平均，$\gamma\in(0,1)$接近1。依据与第\ref{sec:nlp-llm-wsd}小节的退火相同：较大学习率下参数在谷底附近随噪声振荡，各检查点偏离谷底的方向不同，平均把这些偏离部分抵消，效果类似降低学习率\scite{izmailov2018swa}。平均只对处在同一低损失区域的参数有效；不同初始化、分别训练的模型直接平均权重，通常会落到损失很高的位置。LLaMA 3对退火阶段的检查点取平均作为最终预训练模型\scite{nlp-llm-llama3-2024}。
+
+检查的对象要与本阶段目标相符。例如给预训练模型输入“读书会改到哪天？”，它可能接着写出另一个问题，而不是回答。这时要先区分：模型若能在续写“读书会改到”时给出“周五”，说明相关内容已经学到，缺的是回答问题的交互行为，属于第\ref{chap:nlp-supervised-finetuning}章有监督微调的任务；若连续写都给不出正确时间，才是内容缺口，需要更多预训练材料或继续预训练。
+
+\subsection{新领域与新语言的继续学习}
+\label{sec:nlp-llm-domain-continuation}
+
+若模型已经具备一般语言规律，但专业术语或某种语言覆盖不足，可以从现有参数出发，改用相关材料继续优化预训练目标。这称为\term{继续预训练}（continued pre-training）：预测信号仍来自文本本身，变化的是训练分布、曝光比例和更新安排。它与第\ref{chap:nlp-supervised-finetuning}章依据指令—回答示范学习行为不同，尽管两者都从已有参数开始。
+
+设原有材料分布为$P_{\mathrm{old}}$，新材料分布为$P_{\mathrm{new}}$，用$P_\rho=(1-\rho)P_{\mathrm{old}}+\rho P_{\mathrm{new}}$控制混合，$\rho\in[0,1]$。增大$\rho$使更多更新针对新材料，但旧分布上的损失未必同时下降。设两类损失在当前参数处的梯度分别为$\bm g_{\mathrm{old}}$和$\bm g_{\mathrm{new}}$，只沿新材料更新$\Delta\bm\theta=-\eta\bm g_{\mathrm{new}}$时，旧损失的一阶变化为
+\begin{equation}
+ \Delta\mathcal L_{\mathrm{old}}
+ \approx-\eta\langle\bm g_{\mathrm{old}},\bm g_{\mathrm{new}}\rangle.
+ \label{eq:nlp-llm-continuation-conflict}
+\end{equation}
+内积为负时，这一步会增加旧损失，这是目标冲突与遗忘的局部来源；混入比例$1-\rho$的旧数据，相当于在更新方向中加入$-\eta(1-\rho)\bm g_{\mathrm{old}}$，抵消一部分冲突。并非所有旧损失上升都是遗忘：活动从周四改到周五后，模型降低“周四”的概率是正确的事实更新；失去读取其他活动时间的能力才是退步。比较时应明确期望保留的是旧事实、通用技能还是输入协议。
+
+实践中要同时决定三件事：学习率怎样重新上升、旧数据回放多少、新语言压缩率差时是否扩展词表。下面依次讨论。
+
+\subsubsection{数据回放与学习率重新预热}
+\label{sec:nlp-llm-replay-rewarm}
+
+预训练结束时学习率已衰减到很小。直接用这个小学习率训练新数据，参数几乎不动，新知识学得很慢；所以继续预训练通常先\term{学习率重新预热}（learning rate re-warming），从低值升到一个较高的峰值，再重新衰减。较大的学习率让参数离开原来的谷底，旧分布上的损失会先上升；新数据越多、峰值越高，这种上升越明显。抵消它的办法是\term{数据回放}（data replay），在新数据中混入一定比例的原预训练数据。Ibrahim等人比较发现，重新预热、重新衰减与回放三者组合，就能达到用新旧数据合并后从头训练的效果；分布差异越大，所需的回放比例越高\scite{ibrahim2024continual}。流程见算法~\ref{alg:nlp-llm-continual-pretraining}。
+
+\begin{algorithm}[带回放与重新预热的继续预训练]
+  \label{alg:nlp-llm-continual-pretraining}
+  \begin{algorithmic}[1]
+    \Require 已训练参数$\bm\theta_0$，新旧数据分布$P_{\mathrm{new}}$、$P_{\mathrm{old}}$，回放比例$1-\rho$，新峰值$\eta'_{\max}$，预热步数$S'_{\mathrm w}$，总步数$S'$
+    \Ensure 继续预训练后的参数
+    \State 从$\bm\theta_0$及其优化器状态开始（若没有保存状态，则重新初始化矩估计）
+    \For{$t=1,\ldots,S'$}
+      \State 以概率$\rho$从$P_{\mathrm{new}}$、以概率$1-\rho$从$P_{\mathrm{old}}$抽取样本组成批次
+      \State 按式\eqref{eq:nlp-llm-cosine}或式\eqref{eq:nlp-llm-wsd}的形状，在前$S'_{\mathrm w}$步升到$\eta'_{\max}$，之后衰减
+      \State 用AdamW更新参数
+      \State 定期分别计算新、旧留出集上的损失
+    \EndFor
+  \end{algorithmic}
+\end{algorithm}
+
+两项选择存在取舍。峰值$\eta'_{\max}$越高，新数据学得越快，旧能力越容易受损；回放比例越高，旧能力越稳，但每步用于新数据的样本越少。若原预训练使用WSD日程并保存了恒定段的检查点，可以从该检查点以原峰值直接接着训练，省去重新预热，旧分布上的损失上升也更小；这是WSD日程在继续训练中的便利。
+
+\subsubsection{词表扩展与新嵌入初始化}
+\label{sec:nlp-llm-vocab-extension}
+
+旧词表若主要针对英文构建，新语言的文本会被切得很碎：一个汉字可能被拆成多个字节片段，同样内容所需词元数成倍增加，训练与推断都更贵，固定长度的上下文也容纳更少内容。\term{词表扩展}（vocabulary expansion）在新语言语料上另训子词，并入原词表。Chinese LLaMA把一个约两万词元的中文分词器并入LLaMA原有的32000个词元，词表增至49953，同一中文文本所需的词元数约减少一半\scite{cui2023chinesellama}。
+
+新词元的嵌入要初始化。若随机初始化的向量范数偏大，它的logit在所有上下文中都可能过高，模型开始大量输出新词元，原有分布被破坏。一种稳妥的做法是取原嵌入的均值$\bar{\bm e}=\frac1V\sum_{v=1}^{V}\bm e_v$，再加小噪声。设输出层与嵌入共享，在上下文表示$\bm h$下原词元的logit为$z_v=\bm h^{\top}\bm e_v$，新词元的logit恰为它们的均值$\bar z=\frac1V\sum_v z_v$。由指数函数的凸性（詹森不等式），$\exp\bar z\leq\frac1V\sum_v\exp z_v=Z/V$，于是新词元的初始概率
+\begin{equation}
+ p_{\mathrm{new}}=\frac{\exp\bar z}{Z+\exp\bar z}\leq\frac{Z/V}{Z+Z/V}=\frac1{V+1}.
+ \label{eq:nlp-llm-new-embedding}
+\end{equation}
+新词元在任何上下文中的概率都不超过$1/(V+1)$，原词元之间的相对概率完全不变，原模型的行为几乎不受影响。另一种做法利用子词组成：把新词元的字符串用旧分词器切成片段$u_1,\ldots,u_k$，取$\bm e_{\mathrm{new}}=\frac1k\sum_{j=1}^{k}\bm e_{u_j}$。它保留了片段携带的语义线索，但不再有式\eqref{eq:nlp-llm-new-embedding}的上界，必要时可再缩小范数。输出层不共享时，输出矩阵按同样方式扩行。
+
+训练常分两步：先冻结Transformer主体，只训练新的嵌入与输出行，让新词元在已有表示空间中找到位置；再进行全参数继续预训练。扩展词表会增加$V\cdot d$量级的参数与softmax计算，并改变词元化接口；词表、分词器与参数必须一起交付，旧分词器不能再与新参数配用。
+
+\subsection{上下文长度扩展}
+\label{sec:nlp-llm-context-extension}
+
+第\ref{sec:nlp-llm-rope}小节已经给出RoPE的多频率形式：$d_h$维的查询与键分成$d_h/2$个二维对，第$i$对的角频率为$\theta_i=b^{-2i/d_h}$，波长$\lambda_i=2\pi b^{2i/d_h}$，打分只依赖相对位移对应的角度；波长超过训练长度的低频对在训练中没有转满一周。下面沿用一个教学配置：$d_h=128$、$b=10^4$、训练长度$T_{\mathrm{train}}=4096$。$i=0$的一对每个位置转1弧度，波长约6.3；$i=63$的一对波长约$5.4\times10^4$。由$2\pi\cdot10^{4i/64}>4096$解得$i\geq46$，即共有18个维度对的波长超过训练长度。直接输入$sT_{\mathrm{train}}$长的序列时，这些低频对出现训练中从未见过的角度，注意力打分失常，困惑度急剧上升。
+
+扩展方法因此在推断前改写位置到角度的映射，再用少量长样本继续训练。它们的区别在于对不同频率的维度施加多大缩放，记扩展倍数为$s$、新频率为$\theta_i'$，图~\ref{fig:nlp-llm-rope-scaling}画出各方法的缩放因子$\theta_i'/\theta_i$。
+
+\subsubsection{位置插值}
+\label{sec:nlp-llm-position-interpolation}
+
+\term{位置插值}（position interpolation, PI）把位置$m$换为$m/s$，等价于对所有维度取$\theta_i'=\theta_i/s$\scite{nlp-llm-pi2023}。新序列的最大相对位移$sT_{\mathrm{train}}$对应角度$sT_{\mathrm{train}}\theta_i/s=T_{\mathrm{train}}\theta_i$，恰好落回训练覆盖的范围，不再出现未见过的角度。代价是相邻位置的角度差也缩小$s$倍：$s=8$时，最高频维度上相邻两个词元的角度差从1弧度变为0.125弧度。高频维度原本负责区分相近位置，压缩后局部分辨率下降，模型需要通过继续训练重新适应。Chen等人用约1000步微调把LLaMA扩展到32768的长度\scite{nlp-llm-pi2023}。
+
+\subsubsection{NTK感知插值与底数调整}
+\label{sec:nlp-llm-ntk-interpolation}
+
+位置插值对所有维度一视同仁，而只有低频维度真正超出了训练范围。\term{NTK感知插值}（NTK-aware interpolation）改为调整底数：高频维度几乎不变，低频维度按$s$压缩。设新底数为$b'$，则$\theta_i'=b'^{-2i/d_h}$。要求最低频维度$i=d_h/2-1$恰好被压缩$s$倍，即$\theta'_{d_h/2-1}=\theta_{d_h/2-1}/s$：
+\begin{equation}
+ \left(\frac{b'}{b}\right)^{-\frac{d_h-2}{d_h}}=\frac1s
+ \quad\Longrightarrow\quad
+ b'=b\,s^{\frac{d_h}{d_h-2}},\qquad
+ \frac{\theta_i'}{\theta_i}=s^{-\frac{2i}{d_h-2}}.
+ \label{eq:nlp-llm-ntk-base}
+\end{equation}
+缩放因子从$i=0$的1按几何级数降到$i=d_h/2-1$的$1/s$。上面的例子中$s=8$，$b'=10^4\times8^{128/126}\approx8.27\times10^4$。名称来自神经正切核理论的一个观察：网络难以从低维输入中学习高频分量，因此应尽量保留高频维度。这一方法最早由开源社区提出，不经继续训练也能有一定效果。
+
+直接把底数调大是同一思路的另一种用法。\term{基础频率调整}（adjusted base frequency, ABF）把底数从$10^4$增至$5\times10^5$，再在长样本上继续训练，不追求推断时零训练可用\scite{xiong2024effective}。LLaMA 3预训练时就取底数$5\times10^5$\scite{nlp-llm-llama3-2024}。
+
+\subsubsection{YaRN分段插值}
+\label{sec:nlp-llm-yarn}
+
+NTK感知插值按维度编号平滑过渡，但没有直接依据某个维度在训练中是否转满过整周。YaRN改用波长与训练长度之比划分维度\scite{nlp-llm-yarn2023}。记$r_i=T_{\mathrm{train}}/\lambda_i$为训练长度内第$i$个维度对转过的整周数，取两个边界$r_{\mathrm{lo}}<r_{\mathrm{hi}}$，定义斜坡函数
+\begin{equation}
+ \gamma(r)=
+ \begin{cases}
+  0, & r<r_{\mathrm{lo}},\\
+  \dfrac{r-r_{\mathrm{lo}}}{r_{\mathrm{hi}}-r_{\mathrm{lo}}}, & r_{\mathrm{lo}}\leq r\leq r_{\mathrm{hi}},\\
+  1, & r>r_{\mathrm{hi}},
+ \end{cases}
+ \qquad
+ \theta_i'=\bigl(1-\gamma(r_i)\bigr)\frac{\theta_i}{s}+\gamma(r_i)\,\theta_i.
+ \label{eq:nlp-llm-yarn-ramp}
+\end{equation}
+转不满一周的维度（$r<r_{\mathrm{lo}}$）完全插值，与位置插值相同；转过很多周的维度（$r>r_{\mathrm{hi}}$）不插值，保持局部分辨率；中间线性过渡。对LLaMA取$r_{\mathrm{lo}}=1$、$r_{\mathrm{hi}}=32$。在上面的例子中，$i\leq20$的维度不变，$i\geq46$的维度压缩8倍，$21\leq i\leq45$逐步过渡。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/12-natural-language-processing/01-language-models/tikz/llm-continuation-rope-scaling}
+  \caption{三种长度扩展方法对各维度对角频率的缩放因子，纵轴为对数刻度。设定为教学示例：头维度128、底数$10^4$、原训练长度4096、扩展倍数8，YaRN边界取$r_{\mathrm{lo}}=1$、$r_{\mathrm{hi}}=32$。位置插值统一压缩8倍；NTK感知插值从高频的1按几何级数降到最低频的$1/8$；YaRN按训练长度内转过的周数分三段，虚线为分段边界。}
+  \label{fig:nlp-llm-rope-scaling}
+\end{figure}
+
+YaRN还修正注意力的温度。插值后长序列中的打分分布变得更平，YaRN把打分乘以$1/t$，经验取$\sqrt{1/t}=0.1\ln s+1$。$s=8$时$\sqrt{1/t}\approx1.21$，打分放大约1.46倍。实现时把查询和键各乘$\sqrt{1/t}$即可，不改变注意力内核，也不增加推断开销。YaRN报告，与此前的方法相比，达到相近长度所需的训练词元约少10倍；只用64K长度样本继续训练的模型，在128K输入上仍保持较低困惑度，即具有一定的外推能力\scite{nlp-llm-yarn2023}。表~\ref{tab:nlp-llm-context-extension}对照这几种方法。
+
+\begin{table*}[!b]
+ \small
+ \begin{tabularx}{\linewidth}{@{}p{24mm}p{40mm}p{30mm}p{28mm}X@{}}
+  \toprule
+  方法 & 对频率的改动 & 高频维度 & 低频维度 & 训练需求与特点\\
+  \midrule
+  直接外推 & 不改 & 不变 & 出现未见角度 & 超过训练长度后迅速失效\\
+  位置插值 & 全部$\theta_i/s$ & 压缩$s$倍 & 压缩$s$倍 & 需少量长样本微调恢复局部分辨率\\
+  NTK感知插值 & 底数改为$b s^{d_h/(d_h-2)}$ & 基本不变 & 最低频压缩$s$倍 & 不训练也有一定效果\\
+  ABF & 底数增大到$5\times10^5$等 & 基本不变 & 大幅压缩 & 与长样本继续训练配合\\
+  YaRN & 按整周数$r_i$分段斜坡 & 不变 & 压缩$s$倍 & 另加注意力温度；所需训练少\\
+  \bottomrule
+ \end{tabularx}
+ \caption{RoPE上下文长度扩展方法的对照。各方法都在推断前改写位置到角度的映射，区别在于对不同频率维度的缩放；外推到超过继续训练长度时，效果都需要单独检查。}
+ \label{tab:nlp-llm-context-extension}
+\end{table*}
+
+\subsubsection{长样本构造与渐进训练}
+\label{sec:nlp-llm-long-data}
+
+改写频率只解决角度是否见过的问题，模型还要学会使用远处的信息，这需要真正长的训练样本。网页文档大多很短，把互不相关的短文档拼成长序列虽然增加了长度，却不要求模型利用远距离关系。常用做法是上采样书籍、长论文、完整代码仓库等天然长文档。Fu等人发现，在各领域内部上采样长文档、同时保持原有领域比例，比只上采样书籍更好；他们用10亿到50亿词元的继续预训练把模型扩展到128K\scite{fu2024dataengineering}。
+
+长度通常分阶段逐步增加，每个阶段相应调整RoPE底数或插值倍数，并检查短上下文能力是否恢复。LLaMA 3在预训练后期分六个阶段把上下文从8K增至128K，共用约8000亿词元\scite{nlp-llm-llama3-2024}。逐步加长的理由是计算：整段序列的注意力计算随长度平方增长（第\ref{sec:nlp-llm-context-bottlenecks}小节），在短长度上完成大部分训练、只在末段使用长序列，总成本低得多。
+
+检查长上下文能力时，常把一条事实（“针”）插入长文本的不同深度，再要求模型取回。这只测试单个事实的定位。RULER等基准加入多条干扰事实、多跳追踪和信息汇总后发现，许多通过针式检索的模型，在这些任务上的有效长度远短于宣称长度\scite{hsieh2024ruler}。具体评测方法见第\ref{chap:nlp-evaluation}章。
+
+\subsection{原有能力保持与阶段交接}
+\label{sec:nlp-llm-pretraining-handoff}
+
+完成初始预训练或继续预训练后，应把新参数放回相同协议下与旧参数比较：目标范围上看收益，原有范围上看语言覆盖、基本知识、长短上下文表现是否保持。比较既看变化量，也看变化后的水平。例如某项任务的错误率从80\%降到60\%，下降了20个百分点，但60\%的错误率仍远未达到可用水平；改变量与完成水平是两个问题。
+
+交接的产物不只是参数。词元化规则、特殊标记、结束符、RoPE底数与插值设置、上下文长度上限必须与参数一起保存，任何一项不匹配都会造成与模型能力无关的运行错误。数据来源、时间范围、混合比例和各阶段日程的记录，则让后续阶段判断哪些能力已经接触过、哪些材料仍然不足。
+
+下一步怎样走取决于缺口的性质。若主要问题是对新领域语言缺少基本的概率建模，应继续预训练，少量交互示范补不齐；若内容知识已经存在而输出方式不稳定，示范学习才直接针对这个差异，由第\ref{chap:nlp-supervised-finetuning}章接手。推理所需的数学、代码材料在预训练和退火阶段已经开始积累，第\ref{chap:nlp-reasoning}章把这部分放回多个学习阶段综合讨论；交接时的能力检查采用第\ref{chap:nlp-evaluation}章的评测协议。

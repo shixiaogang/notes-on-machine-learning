@@ -82,9 +82,11 @@ def check(registry, check_review_bindings=True):
     # Cover both ordinary floating figures and explicitly numbered inline
     # figures; the latter must not disappear from the inventory.
     active = set()
-    for slug in ['01-mathematical-preliminaries-upper', '02-mathematical-preliminaries-lower',
-                 '03-foundations', '04-classic-models', '05-neural-network-models',
-                 '06-probabilistic-graphical-models']:
+    try:
+        from scripts.book_catalog import volumes
+    except ModuleNotFoundError:
+        from book_catalog import volumes
+    for slug in [v['slug'] for v in volumes()[:9]]:
         for path in (ROOT / 'tex' / slug).rglob('*.tex'):
             for _, _, block_labels in figure_blocks(path.read_text()):
                 if block_labels:

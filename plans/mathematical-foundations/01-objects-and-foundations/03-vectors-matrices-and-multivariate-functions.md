@@ -1,6 +1,6 @@
 # 03 向量、矩阵与多元函数
 
-所属卷：拟定五卷方案的卷一：基础数学。
+所属卷：拟定五卷方案的卷一：数学准备：基础数学。
 
 状态：保留已经讨论的七章及“先谱、后方程”的章序。本稿补齐各章的节、小节与自然段提要，作为下一轮逐章讨论的依据；以下均为目标大纲建议，尚未实施到正文。
 
@@ -8,7 +8,7 @@
 
 前置知识为第一部分的集合、映射、索引与有限求和，第二部分的实数、复数、极限和一元微积分。线性代数的主要论证在有限维空间中完成；多元积分先采用欧氏空间中的黎曼积分与分片光滑几何对象。一般度量、测度、勒贝格积分及无限维函数空间由卷二继续建立。
 
-内容参考当前正文的[线性空间部分](../../../tex/01-mathematical-preliminaries-upper/02-linear-spaces/part.tex)及其章内输入，以及[多元函数微积分章](../../../tex/01-mathematical-preliminaries-upper/03-calculus/03-multivariate-calculus.tex)。本稿重组后的标题和层级不代表当前正文目录；现有正文提要分别见[线性空间](../../01-mathematical-preliminaries-upper/02-linear-spaces.md)和[微积分](../../01-mathematical-preliminaries-upper/03-calculus.md)。
+内容参考当前正文的[线性空间部分](../../../tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/part.tex)及其章内输入，以及[多元函数微积分章](../../../tex/01-basic-mathematics/03-vectors-matrices-and-multivariate-functions/multivariate-calculus/04-multivariate-calculus.tex)。本稿重组后的标题和层级不代表当前正文目录；现有正文提要见[向量、矩阵与多元函数](../../01-basic-mathematics/03-vectors-matrices-and-multivariate-functions.md)。
 
 章目标识采用“部分号.部分内章序号”，节、小节采用本部分内的章序号，仅用于讨论定位。小节下的编号条目表示自然段安排；标为“paragraph”的标题才是拟设置的有标题段落单元，不把每个推理步骤另立标题。各章保留独立的“本章小结”。返回[当前正文大纲索引](../../README.md)。
 

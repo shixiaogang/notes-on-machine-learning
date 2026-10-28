@@ -9,8 +9,8 @@ usage() {
   printf '用法: %s [build|volume <slug>|volumes|all|check-target|watch <slug>|release <slug>|clean]\n' "${0##*/}"
   printf '  build          仅编译输入变化、缺失或损坏的卷（默认）\n'
   printf '  volume <slug>  只编译指定单卷\n'
-  printf '  volumes/all    首次构建或全书变更时编译十二卷\n'
-  printf '  check-target   检查十二份成品和各卷构建记录\n'
+  printf '  volumes/all    首次构建或全书变更时编译十五卷\n'
+  printf '  check-target   检查十五份成品和各卷构建记录\n'
   printf '  watch <slug>   监听指定卷，成功后更新该卷成品和记录\n'
   printf '  release <slug> 以最高无损压缩等级编译指定卷\n'
   printf '  clean          清除本工作区的构建缓存和产物\n'

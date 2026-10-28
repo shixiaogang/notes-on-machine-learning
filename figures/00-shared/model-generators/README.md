@@ -21,11 +21,11 @@ python3 figures/00-shared/model-generators/generated/replay.py --check-only
 前两条分别复现数值图与仍采用 TikZ 的简单图。最后一条在独立的 `build/figure-replay-check` 复现其登记的复杂图，并核对最终解码 RGB 像素哈希；去掉 `--check-only` 才覆盖成图。可添加 `--key` 指定资源。三个部分的历史图使用独立排字程序，在仓库根执行以下命令，复现保留背景上的透明文字层与最终 PNG；这些命令不重新生成模型背景。
 
 ```sh
-python3 figures/04-classic-models/00-shared/generated/classic-models-history/typeset.py
-python3 figures/05-neural-network-models/00-shared/generated/neural-network-history/typeset.py
-python3 figures/05-neural-network-models/00-shared/generated/neural-network-history-recent/typeset.py
-python3 figures/06-probabilistic-graphical-models/04-models/generated/pgm-models-history/typeset.py
-python3 figures/06-probabilistic-graphical-models/01-representation/generated/pgm-models-history-recent/typeset.py
+python3 figures/07-classic-models/00-shared/generated/classic-models-history/typeset.py
+python3 figures/08-neural-network-models/00-shared/generated/neural-network-history/typeset.py
+python3 figures/08-neural-network-models/00-shared/generated/neural-network-history-recent/typeset.py
+python3 figures/09-probabilistic-graphical-models/04-models/generated/pgm-models-history/typeset.py
+python3 figures/09-probabilistic-graphical-models/01-representation/generated/pgm-models-history-recent/typeset.py
 ```
 
 排字程序叠加实际字体，不描摹、填色或清理模型图像。三个部分的历史图旧 TikZ 条目退出当前复现登记，避免共用生成器将已替换图当作当前生产资源。

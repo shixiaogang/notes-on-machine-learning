@@ -33,7 +33,7 @@ git status --short
 
 ## 验证与集成
 
-提交前遵循下文提交要求与 [LaTeX 与数学记号规范](latex.md)，在当前任务 worktree 内运行 `./build.sh build` 和 `./build.sh check-target`。前者只更新输入变化、缺失或损坏的卷，后者确认十二份 PDF 与各卷构建记录一致。首次构建或出版结构变化时运行 `./build.sh all`。worktree 隔离不减免成品一致性检查，也不允许绕过提交钩子。
+提交前遵循下文提交要求与 [LaTeX 与数学记号规范](latex.md)，在当前任务 worktree 内运行 `./build.sh build` 和 `./build.sh check-target`。前者只更新输入变化、缺失或损坏的卷，后者确认十五份 PDF 与各卷构建记录一致。首次构建或出版结构变化时运行 `./build.sh all`。worktree 隔离不减免成品一致性检查，也不允许绕过提交钩子。
 
 交付时说明 worktree 路径、分支、基线、变更范围和实际验证结果；涉及正文时，报告大纲同步与一致性核对结果。未提交的成果应保留在原 worktree 并明确告知；不能让用户误以为变更已进入 `main`。
 
@@ -110,7 +110,7 @@ git status --short
 docs(theory): 补充算法稳定性的泛化界推导
 fix(basics): 修正训练集与测试集的符号引用
 style(layout): 将边注编号改为按章重置
-refactor(book): 按十二卷结构重组章节目录
+refactor(book): 按十五卷结构重组章节目录
 build(latex): 按字体文件路径加载中文字体
 docs(specs): 统一提交消息格式与变更划分规则
 ```
@@ -127,7 +127,7 @@ docs(specs): 统一提交消息格式与变更划分规则
 `target/.build-manifest.json` 中对应记录，再运行 `./build.sh check-target`。
 `target/` 纳入 Git；将发生变化的 PDF、清单及对应正文一并暂存。
 版本化 `.githooks/pre-commit` 拒绝未暂存的正文输入，编译受影响卷，
-并核对暂存区十二份 PDF 与各卷当前输入和构建记录一致。若构建更新了成品，
+并核对暂存区十五份 PDF 与各卷当前输入和构建记录一致。若构建更新了成品，
 重新暂存对应 PDF 和清单后再提交；禁止绕过检查提交旧 PDF。
 每卷输入由活跃正文、所用图像及图源、实际调用的索引词条与文献、引用目标位置、
 字体和共享样式构成。局部正文或未使用文献变更不要求编译无关卷；
