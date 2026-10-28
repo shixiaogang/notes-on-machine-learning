@@ -6,7 +6,7 @@
 
 | 卷 | 卷名 | 正文章数 | 部分与大纲 |
 | --- | --- | --- | --- |
-| 1 | 数学准备：计算、分析与几何 | 27 | [数学对象、计数与极限](01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)；[线性空间](01-mathematical-preliminaries-upper/02-linear-spaces.md)；[微积分](01-mathematical-preliminaries-upper/03-calculus.md)；[最优化](01-mathematical-preliminaries-upper/04-optimization.md)；[空间与几何](01-mathematical-preliminaries-upper/05-space-and-geometry.md)；[信号](01-mathematical-preliminaries-upper/06-signals.md)；[图](01-mathematical-preliminaries-upper/07-graphs.md) |
+| 1 | 数学准备：计算、分析与几何 | 27 | [数学对象、计数与极限](01-mathematical-preliminaries-upper/01-mathematical-language-combinatorics-analysis-optimization.md)；[线性空间](01-mathematical-preliminaries-upper/03-linear-spaces.md)；[微积分](01-mathematical-preliminaries-upper/04-calculus.md)；[最优化](01-mathematical-preliminaries-upper/05-optimization.md)；[空间与几何](01-mathematical-preliminaries-upper/06-space-and-geometry.md)；[信号](01-mathematical-preliminaries-upper/07-signals.md)；[图](01-mathematical-preliminaries-upper/08-graphs.md) |
 | 2 | 数学准备：概率、因果与决策 | 10 | [随机变量、分布与因果响应](02-mathematical-preliminaries-lower/01-random-variables-distributions-and-causality.md)；[演化、控制、决策与博弈](02-mathematical-preliminaries-lower/02-dynamical-systems-control-decision-and-games.md)；[数学与机器学习](02-mathematical-preliminaries-lower/03-mathematics-and-machine-learning.md) |
 | 3 | 基础、理论与可信性 | 17 | [机器学习基础](03-foundations/01-basics.md)；[机器学习理论](03-foundations/02-learning-theory.md)；[机器学习可信性](03-foundations/03-trustworthiness.md) |
 | 4 | 模型：经典模型 | 6 | [模型：经典模型](04-classic-models/outline.md) |
