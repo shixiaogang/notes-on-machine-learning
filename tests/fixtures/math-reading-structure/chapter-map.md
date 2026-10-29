@@ -1,6 +1,6 @@
 # 数学基础五卷章目与文件映射
 
-当前数学正文共44章，五卷章数依次为25、3、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；概率与统计基础改为五章后，42至45对应新增的四章；图部分改为六章后，32（原路径与连接章）并入9不再单列，46、47分别对应集合函数章与图上的动态规划章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
+当前数学正文共48章，五卷章数依次为25、7、9、4、3。审计序号保留历史身份，36对应独立基数章，37为移出卷一、待迁移的勒贝格积分原稿，暂不登记为活跃章节；38、39分别对应实数与复数章、黎曼积分章；概率与统计基础改为五章后，42至45对应新增的四章；图部分改为六章后，32（原路径与连接章）并入9不再单列，46、47分别对应集合函数章与图上的动态规划章；概率空间部分设四章后，48至51对应新增的四章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
 
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
@@ -31,7 +31,11 @@
 | 45 | 1 | 25 | 区间估计、假设检验与预测 | tex/01-basic-mathematics/05-probability-and-statistics-basics/05-intervals-tests-and-prediction.tex |
 | 25 | 2 | 1 | 度量空间 | tex/02-abstract-mathematics/01-metric-and-measure/01-metric-spaces.tex |
 | 26 | 2 | 2 | 测度空间 | tex/02-abstract-mathematics/01-metric-and-measure/02-measure-spaces/01-measure-spaces.tex |
-| 7 | 2 | 3 | 函数空间 | tex/02-abstract-mathematics/03-function-spaces/04-functional-analysis-and-approximation.tex |
+| 48 | 2 | 3 | 一般概率模型与随机对象 | tex/02-abstract-mathematics/02-probability-spaces/01-probability-models-and-random-objects.tex |
+| 49 | 2 | 4 | 条件期望与条件分布 | tex/02-abstract-mathematics/02-probability-spaces/02-conditional-expectation-and-distribution.tex |
+| 50 | 2 | 5 | 随机变量的收敛与积分极限 | tex/02-abstract-mathematics/02-probability-spaces/03-random-variable-convergence.tex |
+| 51 | 2 | 6 | 分布弱收敛、紧性与极限定理 | tex/02-abstract-mathematics/02-probability-spaces/04-weak-convergence-and-limit-theorems.tex |
+| 7 | 2 | 7 | 函数空间 | tex/02-abstract-mathematics/03-function-spaces/04-functional-analysis-and-approximation.tex |
 | 4 | 3 | 1 | 优化问题的定义与基本性质 | tex/03-optimization-evolution-and-signals/01-optimization/10-optimization-fundamentals.tex |
 | 27 | 3 | 2 | 无约束光滑目标的求解 | tex/03-optimization-evolution-and-signals/01-optimization/11-smooth-unconstrained.tex |
 | 28 | 3 | 3 | 无约束非光滑目标的求解 | tex/03-optimization-evolution-and-signals/01-optimization/12-nonsmooth-unconstrained.tex |
