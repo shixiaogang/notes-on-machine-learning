@@ -20,4 +20,4 @@
 | 14 | 应用：推荐、搜索与广告 | 10 | [理解、选择与展示](14-recommendation-search-advertising/01-understanding-selection-and-display.md)；[决策与评价](14-recommendation-search-advertising/02-decision-and-evaluation.md)；[搜索与广告](14-recommendation-search-advertising/03-search-and-advertising.md) |
 | 15 | 系统 | 0 | [机器学习系统](15-systems/01-machine-learning-systems.md) |
 
-[数学基础五卷目标目录](mathematical-foundations/README.md)保留逐部分讨论稿。目标目录的九十三个章目是后续细化方案，不代表已有正文；“概率空间”部分已按目标大纲实施为四章。
+[数学基础五卷目标目录](mathematical-foundations/README.md)保留逐部分讨论稿。目标目录的八十八个章目是后续细化方案，不代表已有正文；“概率空间”部分已按目标大纲实施为四章。
