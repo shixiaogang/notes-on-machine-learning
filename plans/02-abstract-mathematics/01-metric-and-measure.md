@@ -1518,7 +1518,7 @@
 
 5. 用图`fig:density-rn-candidate`（事后已知密度$f=1.2+0.6\sin 2\pi x$、候选$\min(f,1)$、$\varepsilon=0.25$）解释剩余质量与加高步骤。
 
-###### paragraph：σ有限情形与唯一性
+###### paragraph：$\sigma$有限情形与唯一性
 
 1. 指出有限情形在何处用到$\nu(X)<\infty$与$\mu(X)<\infty$；把空间切成两测度都有限的可数块$A_i\cap B_j$，在各块用引理并以单调收敛拼接，核对对限制测度的积分等于乘示性函数后的积分。
 
