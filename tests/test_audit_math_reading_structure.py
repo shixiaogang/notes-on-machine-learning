@@ -28,7 +28,7 @@ class CurrentChapterStructureTests(unittest.TestCase):
             paths, text = AUDIT.reading_structure(root)
             self.assertEqual(len(paths), 15)
             headings = AUDIT.outline_headings(text)
-            self.assertEqual(list(headings), [1, 2, 3, 26, 27, 28, 31, 32, 33, 40, 41, 42, 44, 45, 46])
+            self.assertEqual(list(headings), [1, 2, 3, 26, 27, 28, 36, 37, 38, 45, 46, 47, 49, 50, 51])
             self.assertEqual(headings[26][1]["number"], "1.1")
             # A volume may carry any number of part outlines; none is required to equal another.
             (root / paths[-1]).unlink()
@@ -814,10 +814,10 @@ class FiveVolumeMigrationMapTests(unittest.TestCase):
     def test_migrated_map_preserves_identities_and_volume_local_numbers(self):
         self.path.write_text(self.rows)
         rows = AUDIT.assignments(self.root)
-        self.assertEqual(len(rows), 46)
-        self.assertEqual({row['chapter'] for row in rows}, set(range(1, 49)) - {17, 32})
-        self.assertEqual([AUDIT.current_outline_chapter(row) for row in rows], list(range(1, 47)))
-        for volume, count in {1: 25, 2: 5, 3: 9, 4: 4, 5: 3}.items():
+        self.assertEqual(len(rows), 51)
+        self.assertEqual({row['chapter'] for row in rows}, set(range(1, 54)) - {17, 32})
+        self.assertEqual([AUDIT.current_outline_chapter(row) for row in rows], list(range(1, 52)))
+        for volume, count in {1: 25, 2: 10, 3: 9, 4: 4, 5: 3}.items():
             self.assertEqual([row['local_chapter'] for row in rows if row['volume'] == volume], list(range(1, count + 1)))
 
     def test_migrated_map_rejects_missing_identity_and_noncontiguous_local_number(self):
@@ -826,7 +826,7 @@ class FiveVolumeMigrationMapTests(unittest.TestCase):
         changed = lines.copy()
         del changed[body[-1]]
         self.path.write_text('\n'.join(changed))
-        with self.assertRaisesRegex(ValueError, 'Expected 46 assignments'):
+        with self.assertRaisesRegex(ValueError, 'Expected 51 assignments'):
             AUDIT.assignments(self.root)
         changed = lines.copy()
         changed[body[-1]] = changed[body[-1]].replace('| 5 | 3 |', '| 5 | 2 |')

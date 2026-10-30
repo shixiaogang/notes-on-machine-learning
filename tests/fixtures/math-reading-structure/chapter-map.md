@@ -1,6 +1,6 @@
 # 数学基础五卷章目与文件映射
 
-当前数学正文共46章，五卷章数依次为25、5、9、4、3。审计序号保留历史身份，36对应独立基数章，37原为移出卷一、待迁移的勒贝格积分原稿，度量与测度部分改为四章后对应积分章；38、39分别对应实数与复数章、黎曼积分章；概率与统计基础改为五章后，42至45对应新增的四章；图部分改为六章后，32（原路径与连接章）并入9不再单列，46、47分别对应集合函数章与图上的动态规划章；48对应密度与换测度章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
+当前数学正文共51章，五卷章数依次为25、10、9、4、3。审计序号保留历史身份，36对应独立基数章，37原为移出卷一、待迁移的勒贝格积分原稿，度量与测度部分改为四章后对应积分章；38、39分别对应实数与复数章、黎曼积分章；概率与统计基础改为五章后，42至45对应新增的四章；图部分改为六章后，32（原路径与连接章）并入9不再单列，46、47分别对应集合函数章与图上的动态规划章；48对应密度与换测度章；函数空间部分改为六章后，7对应函数空间章，49至53依次对应线性泛函与线性算子、算子谱与算子方程、弱导数与Sobolev空间、再生核Hilbert空间、函数与函数类的逼近五章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
 
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
@@ -33,7 +33,12 @@
 | 26 | 2 | 2 | 测度 | tex/02-abstract-mathematics/01-metric-and-measure/02-measures.tex |
 | 37 | 2 | 3 | 积分 | tex/02-abstract-mathematics/01-metric-and-measure/03-integration.tex |
 | 48 | 2 | 4 | 密度与换测度 | tex/02-abstract-mathematics/01-metric-and-measure/04-densities-and-change-of-measure.tex |
-| 7 | 2 | 5 | 函数空间 | tex/02-abstract-mathematics/03-function-spaces/04-functional-analysis-and-approximation.tex |
+| 7 | 2 | 5 | 函数空间 | tex/02-abstract-mathematics/03-function-spaces/01-function-spaces.tex |
+| 49 | 2 | 6 | 线性泛函与线性算子 | tex/02-abstract-mathematics/03-function-spaces/02-linear-functionals-and-operators.tex |
+| 50 | 2 | 7 | 算子谱与算子方程 | tex/02-abstract-mathematics/03-function-spaces/03-operator-spectra-and-equations.tex |
+| 51 | 2 | 8 | 弱导数与Sobolev空间 | tex/02-abstract-mathematics/03-function-spaces/04-weak-derivatives-and-sobolev-spaces.tex |
+| 52 | 2 | 9 | 再生核Hilbert空间 | tex/02-abstract-mathematics/03-function-spaces/05-reproducing-kernel-hilbert-spaces.tex |
+| 53 | 2 | 10 | 函数与函数类的逼近 | tex/02-abstract-mathematics/03-function-spaces/06-function-approximation.tex |
 | 4 | 3 | 1 | 优化问题的定义与基本性质 | tex/03-optimization-evolution-and-signals/01-optimization/10-optimization-fundamentals.tex |
 | 27 | 3 | 2 | 无约束光滑目标的求解 | tex/03-optimization-evolution-and-signals/01-optimization/11-smooth-unconstrained.tex |
 | 28 | 3 | 3 | 无约束非光滑目标的求解 | tex/03-optimization-evolution-and-signals/01-optimization/12-nonsmooth-unconstrained.tex |
