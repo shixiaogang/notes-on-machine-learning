@@ -2,9 +2,9 @@
 
 所属卷：卷三：数学准备：优化、动力系统与信号处理。
 
-状态：以主工作区`7e4c6afd`为基线，保存六章的目标大纲，已展开到节、小节与关键自然段。本稿尚未实施到正文；当前正文仍为“动力系统”“随机序列与随机过程”两章。现行[正文入口](../../../tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/part.tex)和[当前正文提要](../../03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution.md)保持原状。
+状态：以主工作区`7e4c6afd`为基线，保存六章的目标大纲，已展开到节、小节与关键自然段。本稿已实施到正文：[正文入口](../../../tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/part.tex)现为六章，节与小节按本稿组织，[当前正文提要](../../03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution.md)记录实际标题与段落；正文另在5.5.1补充可预测设计下的向量自归一化界。原“动力系统”章中基于观测的状态推断已迁至第十一部分的“基于状态模型的信号估计”章。
 
-章目标识采用“部分号.部分内章序号”，节与小节使用部分内章序号，仅用于讨论定位。每小节的编号列表表示拟安排的关键自然段，不是新增标题层级；本轮不为每段增设paragraph。以下内容是展开计划，不能作为正文已完成相应定义、证明或迁移的依据。返回[五卷目录](../README.md)。
+章目标识采用“部分号.部分内章序号”，节与小节使用部分内章序号，仅用于讨论定位。每小节的编号列表表示拟安排的关键自然段，不是新增标题层级；本轮不为每段增设paragraph。正文的实际内容以当前正文提要为准。返回[五卷目录](../README.md)。
 
 ## 范围与组织
 
@@ -892,7 +892,7 @@
 
 ## 现有材料的归属与待补范围
 
-以下是后续正文调整的材料归属，本轮只更新目标大纲。当前活跃材料仍在[动力系统](../../../tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/01-action-and-state.tex)与[随机序列与随机过程](../../../tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/03-random-sequences-and-processes.tex)中，保持原文件和入口。
+以下是正文调整时采用的材料归属。原“动力系统”“随机序列与随机过程”两章已按此表拆入六章并移除。
 
 | 现有材料 | 目标位置及处理原则 |
 |---|---|
