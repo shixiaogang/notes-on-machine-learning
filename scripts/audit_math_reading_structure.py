@@ -26,7 +26,7 @@ CURRENT_VOLUMES = (
     Path("tex/05-control-decision-and-games"),
 )
 OUTLINE_DIRECTORIES = tuple(Path("plans") / volume.name for volume in CURRENT_VOLUMES)
-MIGRATED_CHAPTER_COUNTS = {1: 25, 2: 14, 3: 9, 4: 4, 5: 3}
+MIGRATED_CHAPTER_COUNTS = {1: 25, 2: 14, 3: 12, 4: 4, 5: 3}
 CONTRACT = Path("tests/fixtures/math-reading-structure/chapter-map.md")
 RETIRED_LABELS = Path("tests/fixtures/math-reading-structure/chapter17-retired-labels.json")
 CHAPTER17_DELETION = Path("tests/fixtures/math-reading-structure/chapter17-deletion.json")
@@ -137,8 +137,9 @@ def assignments(root: Path) -> list[dict]:
     # The four-chapter metric and measure part activates ID 37 (integration) and adds ID 48.
     # The six-chapter function space part keeps ID 7 and adds IDs 49 to 53.
     # The four-chapter probability-space part adds IDs 54 to 57.
+    # The nine-chapter optimization part adds IDs 58 to 60.
     migrated = bool(modern and any(row["volume"] > 2 for row in rows if "volume" in row))
-    expected_identities = ([n for n in range(1, 58) if n not in {17, 32}] if migrated else list(range(1, 36))) if modern else list(range(1, 18))
+    expected_identities = ([n for n in range(1, 61) if n not in {17, 32}] if migrated else list(range(1, 36))) if modern else list(range(1, 18))
     count = len(expected_identities)
     if modern and len(modern) != len(rows):
         raise ValueError("Chapter assignments must not mix current and legacy formats")

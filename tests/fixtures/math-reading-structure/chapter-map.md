@@ -1,6 +1,6 @@
 # 数学基础五卷章目与文件映射
 
-当前数学正文共55章，五卷章数依次为25、14、9、4、3。审计序号保留历史身份，36对应独立基数章，37原为移出卷一、待迁移的勒贝格积分原稿，度量与测度部分改为四章后对应积分章；38、39分别对应实数与复数章、黎曼积分章；概率与统计基础改为五章后，42至45对应新增的四章；图部分改为六章后，32（原路径与连接章）并入9不再单列，46、47分别对应集合函数章与图上的动态规划章；48对应密度与换测度章；函数空间部分改为六章后，7对应函数空间章，49至53依次对应线性泛函与线性算子、算子谱与算子方程、弱导数与Sobolev空间、再生核Hilbert空间、函数与函数类的逼近五章；概率空间部分设四章后，54至57对应新增的四章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
+当前数学正文共58章，五卷章数依次为25、14、12、4、3。审计序号保留历史身份，36对应独立基数章，37原为移出卷一、待迁移的勒贝格积分原稿，度量与测度部分改为四章后对应积分章；38、39分别对应实数与复数章、黎曼积分章；概率与统计基础改为五章后，42至45对应新增的四章；图部分改为六章后，32（原路径与连接章）并入9不再单列，46、47分别对应集合函数章与图上的动态规划章；48对应密度与换测度章；函数空间部分改为六章后，7对应函数空间章，49至53依次对应线性泛函与线性算子、算子谱与算子方程、弱导数与Sobolev空间、再生核Hilbert空间、函数与函数类的逼近五章；概率空间部分设四章后，54至57对应新增的四章；优化部分改为九章后，4、27至31依次对应优化问题与解、光滑优化、非光滑与复合优化、约束优化与对偶、随机与分块优化、多目标极小极大与双层优化，58至60对应新增的线性规划、函数拟合与正则化、泛函优化三章；历史第17章按用户明确要求整章删除，删除清单及快照指纹见 chapter17-deletion.json。审计序号不作为出版章号。
 
 | 审计序号 | 卷 | 卷内章号 | 章节 | 源文件 |
 | --- | --- | --- | --- | --- |
@@ -43,15 +43,18 @@
 | 51 | 2 | 12 | 弱导数与Sobolev空间 | tex/02-abstract-mathematics/03-function-spaces/04-weak-derivatives-and-sobolev-spaces.tex |
 | 52 | 2 | 13 | 再生核Hilbert空间 | tex/02-abstract-mathematics/03-function-spaces/05-reproducing-kernel-hilbert-spaces.tex |
 | 53 | 2 | 14 | 函数与函数类的逼近 | tex/02-abstract-mathematics/03-function-spaces/06-function-approximation.tex |
-| 4 | 3 | 1 | 优化问题的定义与基本性质 | tex/03-optimization-evolution-and-signals/01-optimization/10-optimization-fundamentals.tex |
-| 27 | 3 | 2 | 无约束光滑目标的求解 | tex/03-optimization-evolution-and-signals/01-optimization/11-smooth-unconstrained.tex |
-| 28 | 3 | 3 | 无约束非光滑目标的求解 | tex/03-optimization-evolution-and-signals/01-optimization/12-nonsmooth-unconstrained.tex |
-| 29 | 3 | 4 | 有约束优化的求解 | tex/03-optimization-evolution-and-signals/01-optimization/13-constrained.tex |
-| 30 | 3 | 5 | 计算预算有限时的近似优化 | tex/03-optimization-evolution-and-signals/01-optimization/14-budget-approximation.tex |
-| 31 | 3 | 6 | 多目标、对抗与双层优化 | tex/03-optimization-evolution-and-signals/01-optimization/15-multiobjective-minimax-bilevel.tex |
-| 13 | 3 | 7 | 动力系统 | tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/01-action-and-state.tex |
-| 19 | 3 | 8 | 随机序列与随机过程 | tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/03-random-sequences-and-processes.tex |
-| 8 | 3 | 9 | 信号 | tex/03-optimization-evolution-and-signals/03-signals-and-state-estimation/01-signal-representation-and-processing.tex |
+| 4 | 3 | 1 | 优化问题与解 | tex/03-optimization-evolution-and-signals/01-optimization/01-optimization-problems.tex |
+| 58 | 3 | 2 | 线性规划 | tex/03-optimization-evolution-and-signals/01-optimization/02-linear-programming.tex |
+| 27 | 3 | 3 | 光滑优化 | tex/03-optimization-evolution-and-signals/01-optimization/03-smooth-optimization.tex |
+| 28 | 3 | 4 | 非光滑与复合优化 | tex/03-optimization-evolution-and-signals/01-optimization/04-nonsmooth-composite-optimization.tex |
+| 29 | 3 | 5 | 约束优化与对偶 | tex/03-optimization-evolution-and-signals/01-optimization/05-constrained-optimization-duality.tex |
+| 30 | 3 | 6 | 随机与分块优化 | tex/03-optimization-evolution-and-signals/01-optimization/06-stochastic-block-optimization.tex |
+| 31 | 3 | 7 | 多目标、极小极大与双层优化 | tex/03-optimization-evolution-and-signals/01-optimization/07-multiobjective-minimax-bilevel.tex |
+| 59 | 3 | 8 | 函数拟合与正则化 | tex/03-optimization-evolution-and-signals/01-optimization/08-function-fitting-regularization.tex |
+| 60 | 3 | 9 | 泛函优化 | tex/03-optimization-evolution-and-signals/01-optimization/09-functional-optimization.tex |
+| 13 | 3 | 10 | 动力系统 | tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/01-action-and-state.tex |
+| 19 | 3 | 11 | 随机序列与随机过程 | tex/03-optimization-evolution-and-signals/02-processes-and-trajectory-evolution/03-random-sequences-and-processes.tex |
+| 8 | 3 | 12 | 信号 | tex/03-optimization-evolution-and-signals/03-signals-and-state-estimation/01-signal-representation-and-processing.tex |
 | 6 | 4 | 1 | 非线性空间与流形 | tex/04-manifolds-distributions-and-inference/01-manifolds/03-differential-geometry-and-symmetry.tex |
 | 11 | 4 | 2 | 概率分布的分析与优化 | tex/04-manifolds-distributions-and-inference/02-probability-distributions/02-information-theory-and-statistical-geometry.tex |
 | 20 | 4 | 3 | 统计推断 | tex/04-manifolds-distributions-and-inference/03-inference-and-causal-identification/04-statistical-inference.tex |
