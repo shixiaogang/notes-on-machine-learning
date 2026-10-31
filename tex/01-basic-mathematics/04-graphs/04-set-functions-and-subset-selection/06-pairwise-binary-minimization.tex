@@ -1,20 +1,21 @@
-% 第4章第6节：成对二值函数的最小化（成对二值最小化问题；次模条件与割表示；最小割求解与解的恢复）。
+% 第4章第6节：成对二值函数的最小化（问题与思路；次模条件与割表示；算法实现；算法分析）。
 
 \section{成对二值函数的最小化}
 \label{sec:graph-pairwise-binary-cut}
 
-前两节在约束下最大化一般的集合函数，只能得到近似解。本节换一个方向：目标是最小化，没有基数或预算约束，但函数具有特殊的结构，即由只涉及单个元素的一元项和只涉及两个元素的成对项相加而成。利用子集与二值向量的对应，我们把这样的目标在一定条件下表示为割的容量，再调用第~\ref{sec:graph-max-flow}节的最小割，求出精确的最优解。
+前两节在约束下最大化一般的集合函数，只能得到近似解。本节换一个方向：目标是最小化，没有基数或预算约束，但函数具有特殊的结构，即由只涉及单个元素的一元项和只涉及两个元素的成对项相加而成。下面先写清问题与把成本编码成割容量的思路，再给出编码条件、网络构造及其证明，然后写出完整计算步骤并在两变量例子上追踪，最后分析正确性、开销与失效情形。
 
-\subsection{成对二值最小化问题}
+\subsection{问题与思路}
 \label{sec:graph-setfn-pairwise-problem}
 
+\paragraph{要解决的问题}
 给底集$V$的每个元素$i$一个二值变量$x_i\in\{0,1\}$，$x_i=1$表示选中$i$，于是配置$\bm x\in\{0,1\}^V$就是第~\ref{sec:graph-setfn-binary-vectors}节的指示向量。元素之间的交互用无向图$\mathcal G=(V,E)$记录：只有$\{i,j\}\in E$的两个元素之间有成对项。目标是
 \begin{equation}
   \min_{\bm x\in\{0,1\}^V}J(\bm x),\qquad
   J(\bm x)=\sum_{i\in V}\phi_i(x_i)+\sum_{\{i,j\}\in E}\phi_{i,j}(x_i,x_j).
   \label{eq:graph-setfn-pairwise-objective}
 \end{equation}
-\term{一元项}$\phi_i$给出元素$i$两种状态各自的成本，只有两个数$\phi_i(0),\phi_i(1)$；\term{成对项}$\phi_{i,j}$给出$i,j$四种联合状态的成本，例如两者取值不同时的不一致代价，或两者同时选中的配合收益（以负成本表示）。为了让$\phi_{i,j}(a,b)$的含义确定，对每条边固定一个次序，约定$a$是$x_i$、$b$是$x_j$的值。本节只考虑有限实值成本。
+\term{一元项}$\phi_i$给出元素$i$两种状态各自的成本，只有两个数$\phi_i(0),\phi_i(1)$；\term{成对项}$\phi_{i,j}$给出$i,j$四种联合状态的成本，例如两者取值不同时的不一致代价，或两者同时选中的配合收益（以负成本表示）。为了让$\phi_{i,j}(a,b)$的含义确定，对每条边固定一个次序，约定$a$是$x_i$、$b$是$x_j$的值。本节只考虑有限实值成本。输入是这些成本表，输出是一个使$J$最小的配置$\hat{\bm x}$及其目标值。
 
 通过$S=\{i:x_i=1\}$，$J$也是$V$上的集合函数。但并不是每个集合函数都能写成式~\eqref{eq:graph-setfn-pairwise-objective}的形式：例如只在三个元素同时选中时才产生的成本，不能拆成两两之间的成对项。本节的方法只适用于已经具有这种一元加成对结构的目标。
 
@@ -32,12 +33,16 @@
   \label{fig:graph-setfn-pairwise-config-table}
 \end{figure}
 
-两个变量可以枚举，$n$个变量则有$2^n$种配置。下面把四种配置的成本同时编码进一个网络的割容量，使枚举变成一次最小割计算。
+两个变量可以枚举，$n$个变量则有$2^n$种配置。
+
+\paragraph{思路：把成本写成割容量}
+在顶点为$V\cup\{s,t\}$的网络中，一个$s$--$t$割由$V$中哪些元素与$s$同侧决定；规定源侧取$0$、汇侧取$1$，割就成了配置。如果能选非负的弧容量，使每个配置的割容量都等于$J(\bm x)$减去同一个常数，最小割（第~\ref{sec:graph-max-flow}节）对应的配置就是$J$的最小点，$2^n$种配置的枚举变成一次最大流计算。困难在于割容量只能累加非负容量，而成本可以为负，成对项的四个值也未必能用弧表示；下一小节说明在什么条件下可以做到。
 
 \subsection{次模条件与割表示}
 \label{sec:graph-setfn-cut-representation}
 
-割容量只能累加非负的弧容量，因此能否编码取决于成对项的形状。关键条件是对每条边$\{i,j\}\in E$成立
+\paragraph{可表示的条件}
+一条弧只在两端分居两侧时计入容量。对边$\{i,j\}$，两条方向相反、容量相同的弧恰好在$x_i\neq x_j$时计入一次，所以它们能表示的成对成本只有“取值不同时付一个非负的代价”。成对项能否化成这种形式，取决于它的四个值，关键条件是对每条边$\{i,j\}\in E$成立
 \begin{equation}
   \phi_{i,j}(0,0)+\phi_{i,j}(1,1)\leq\phi_{i,j}(0,1)+\phi_{i,j}(1,0).
   \label{eq:graph-setfn-pairwise-submodular}
@@ -83,7 +88,7 @@ $w_{i,j}\geq0$就是式~\eqref{eq:graph-setfn-pairwise-submodular}移项除以$2
 右边除常数$K$外各项都非负。在例子中，$\psi_1=(0,\,1+1)=(0,2)$，$\psi_2=(2,\,0-1)=(2,-1)$；$m_1=0$，$m_2=-1$，所以$\tilde\psi_1=(0,2)$，$\tilde\psi_2=(3,0)$，$K=0+0+(-1)=-1$。
 
 \paragraph{网络构造}
-由式~\eqref{eq:graph-setfn-shifted-objective}构造有向网络：顶点为$V\cup\{s,t\}$；对每个$i\in V$，建弧$s\to i$，容量$\tilde\psi_i(1)$，以及弧$i\to t$，容量$\tilde\psi_i(0)$；对每条边$\{i,j\}\in E$，建方向相反的两条弧$i\to j$与$j\to i$，容量都是$w_{i,j}$。容量为零的弧可以省略。规定源侧的元素取$0$、汇侧的元素取$1$，即配置$\bm x$对应$s$--$t$割$(S_{\bm x},\bar S_{\bm x})$，其中$S_{\bm x}=\{s\}\cup\{i:x_i=0\}$。用最小割求解这类问题的方法常称为\term{图割}（graph cut）。
+由式~\eqref{eq:graph-setfn-shifted-objective}构造有向网络：顶点为$V\cup\{s,t\}$；对每个$i\in V$，建弧$s\to i$，容量$\tilde\psi_i(1)$，以及弧$i\to t$，容量$\tilde\psi_i(0)$；对每条边$\{i,j\}\in E$，建方向相反的两条弧$i\to j$与$j\to i$，容量都是$w_{i,j}$。容量为零的弧可以省略。配置$\bm x$对应$s$--$t$割$(S_{\bm x},\bar S_{\bm x})$，其中$S_{\bm x}=\{s\}\cup\{i:x_i=0\}$。用最小割求解这类问题的方法常称为\term{图割}（graph cut）。
 
 \begin{theorem}[成对二值函数的割表示]
 \label{thm:graph-setfn-cut-representation}
@@ -112,17 +117,36 @@ $w_{i,j}\geq0$就是式~\eqref{eq:graph-setfn-pairwise-submodular}移项除以$2
   \label{tab:graph-setfn-cut-check}
 \end{table}
 
-\paragraph{条件不成立时}
-若某个成对项违反式~\eqref{eq:graph-setfn-pairwise-submodular}，引理给出的$w_{i,j}$为负，网络中就会出现负容量的弧。第~\ref{sec:graph-max-flow}节的流值与割容量的关系建立在非负容量之上，负容量时不能直接使用。例如奖励两个变量取值不同的成对项$\phi_{i,j}(0,1)=\phi_{i,j}(1,0)=0$、$\phi_{i,j}(0,0)=\phi_{i,j}(1,1)=1$就违反条件，这时的最小化一般不能化为一次最小割。
-
-\subsection{最小割求解与解的恢复}
+\subsection{算法实现}
 \label{sec:graph-setfn-cut-solving}
 
-\paragraph{求解步骤}
-构造网络后，用第~\ref{sec:graph-max-flow}节的Edmonds--Karp算法求最大流。算法停止时，残量网络中从$s$可达的顶点集合是一个最小割的源侧；把其中的元素标为$0$，其余元素标为$1$，就得到最优配置$\hat{\bm x}$。结果可以独立核对：直接按式~\eqref{eq:graph-setfn-pairwise-objective}计算$J(\hat{\bm x})$，它应等于最大流值加$K$。由于最大流值等于最小割容量，这个等式同时证明了$\hat{\bm x}$的最优性，而不必相信算法实现本身。
+\paragraph{状态与初始化}
+构造阶段维护三项状态：每个元素的两个合并后一元成本$\psi_i(0),\psi_i(1)$；常数$K$；每条边的不一致惩罚$w_{i,j}$。初始时$\psi_i=\phi_i$，$K=0$，$w$尚未计算。
 
-\paragraph{两变量例子的求解}
-网络中从$s$到$t$只有一条正容量路径$s\to1\to2\to t$，瓶颈为$\min\{2,4,3\}=2$。沿它增广$2$个单位后，$s\to1$的正向残量为零，$s\to2$本来容量为零，所以残量网络中从$s$出发哪里也到不了，可达集合是$\{s\}$。最小割容量$2$等于流值，两个元素都在汇侧，得到$\hat{\bm x}=(1,1)$。代回原目标，$J(1,1)=1+0+0=1=2+K$，与图~\ref{fig:graph-setfn-pairwise-config-table}中的枚举结果一致。图~\ref{fig:graph-setfn-st-cut-construction}把这个最小割与配置$(0,1)$对应的割并排比较。
+\paragraph{逐边分解与逐点移位}
+对每条边$\{i,j\}\in E$，先检查式~\eqref{eq:graph-setfn-pairwise-submodular}，不成立就报告无法用本方法处理；成立则按引理~\ref{lem:graph-setfn-pairwise-decomposition}算出$w_{i,j},\alpha_i,\alpha_j$，令$K\gets K+\phi_{i,j}(0,0)$，$\psi_i(1)\gets\psi_i(1)+\alpha_i$，$\psi_j(1)\gets\psi_j(1)+\alpha_j$。所有边处理完后，对每个元素算出$m_i$，令$\tilde\psi_i=\psi_i-m_i$，$K\gets K+m_i$。然后按上一小节建弧。
+
+\paragraph{求最小割与恢复标签}
+构造网络后，用第~\ref{sec:graph-max-flow}节的Edmonds--Karp算法求最大流：每次在残量网络中用广度优先遍历找一条从$s$到$t$的最短增广路径，沿它推送瓶颈流量，直到$t$不再可达。算法停止时，残量网络中从$s$可达的顶点集合是一个最小割的源侧；把其中的元素标为$0$，其余元素标为$1$，就得到最优配置$\hat{\bm x}$。
+
+\begin{algorithm}[成对二值函数的图割最小化]
+\label{alg:graph-setfn-graph-cut}
+输入：交互图$\mathcal G=(V,E)$，一元成本表$\phi_i$，满足式~\eqref{eq:graph-setfn-pairwise-submodular}的成对成本表$\phi_{i,j}$。输出：$J$的一个最小点$\hat{\bm x}$及最小值。
+\begin{enumerate}
+  \item 令$\psi_i=\phi_i$（$i\in V$），$K=0$。
+  \item 对每条边$\{i,j\}$：按引理~\ref{lem:graph-setfn-pairwise-decomposition}算出$w_{i,j},\alpha_i,\alpha_j$；$K\gets K+\phi_{i,j}(0,0)$，$\psi_i(1)\gets\psi_i(1)+\alpha_i$，$\psi_j(1)\gets\psi_j(1)+\alpha_j$。
+  \item 对每个$i$：$m_i=\min\{\psi_i(0),\psi_i(1)\}$，$\tilde\psi_i=\psi_i-m_i$，$K\gets K+m_i$。
+  \item 建网络：弧$s\to i$容量$\tilde\psi_i(1)$，弧$i\to t$容量$\tilde\psi_i(0)$，每条边$\{i,j\}$建两条反向弧，容量都为$w_{i,j}$。
+  \item 用Edmonds--Karp算法求最大流值$\Phi$；取残量网络中从$s$可达的顶点集合$S^\ast$。
+  \item 输出$\hat x_i=0$（$i\in S^\ast$），$\hat x_i=1$（$i\notin S^\ast$），以及最小值$\Phi+K$。
+\end{enumerate}
+\end{algorithm}
+
+\paragraph{执行过程}
+在两变量例子上追踪构造阶段的状态。初始$\psi_1=(0,1)$，$\psi_2=(2,0)$，$K=0$。处理唯一的边$\{1,2\}$：$w_{1,2}=4$，$\alpha_1=1$，$\alpha_2=-1$，常数$\phi_{1,2}(0,0)=0$计入$K$，于是$\psi_1=(0,2)$，$\psi_2=(2,-1)$。移位时$m_1=0$、$m_2=-1$，得到$\tilde\psi_1=(0,2)$，$\tilde\psi_2=(3,0)$，$K=-1$。建出的网络有弧$s\to1$（容量$2$）、$2\to t$（容量$3$）、$1\to2$与$2\to1$（容量都是$4$）。
+
+
+接着求最大流。初始流为零，残量网络就是原网络。广度优先遍历从$s$出发，经$s\to1$到$1$，经$1\to2$到$2$，经$2\to t$到$t$，找到增广路径$s\to1\to2\to t$，瓶颈为$\min\{2,4,3\}=2$。推送$2$个单位后，残量变为：$s\to1$为$0$，$1\to2$为$2$，$2\to t$为$1$，反向残量$1\to s$、$2\to1$、$t\to2$相应增加。再次从$s$出发遍历：$s\to1$的残量为零，$s\to2$本来容量为零，$s$没有任何正残量的出弧，可达集合$S^\ast=\{s\}$，算法停止，流值$\Phi=2$。两个元素都在汇侧，得到$\hat{\bm x}=(1,1)$，输出最小值$\Phi+K=2-1=1$，与图~\ref{fig:graph-setfn-pairwise-config-table}中的枚举结果一致。图~\ref{fig:graph-setfn-st-cut-construction}把这个最小割与配置$(0,1)$对应的割并排比较。
 
 \begin{figure}[!htb]
   \centering
@@ -131,8 +155,18 @@ $w_{i,j}\geq0$就是式~\eqref{eq:graph-setfn-pairwise-submodular}移项除以$2
   \label{fig:graph-setfn-st-cut-construction}
 \end{figure}
 
-\paragraph{开销}
-网络有$n+2$个顶点，弧数$a\leq2n+2m$，其中$m=|E|$；计算分解、合并一元项和建弧都只需扫描一遍元素与边，用时$O(n+m)$。主要开销在最大流：按第~\ref{sec:graph-max-flow}节的分析，Edmonds--Karp算法需要$O(na^2)$次算术与比较操作，代入$a=O(n+m)$即$O(n(n+m)^2)$。与枚举$2^n$种配置相比，这是多项式规模的计算。
+\subsection{算法分析}
+\label{sec:graph-setfn-cut-analysis}
+
+\paragraph{正确性与可核对的证书}
+由定理~\ref{thm:graph-setfn-cut-representation}，每个配置的$J$值等于对应割的容量加$K$；由第~\ref{sec:graph-max-flow}节的最大流最小割定理，算法停止时的可达集合给出容量等于最大流值$\Phi$的割，而任何割的容量都不小于$\Phi$。所以$\hat{\bm x}$是$J$的最小点，最小值为$\Phi+K$。结果可以独立核对：直接计算$J(\hat{\bm x})$应等于$\Phi+K$，且流满足容量与守恒条件；这时流值给出所有配置的下界，而$\hat{\bm x}$达到了它，不必相信算法实现本身。
+
+\paragraph{时间与空间开销}
+网络有$n+2$个顶点，弧数$a\leq2n+2m$，其中$m=|E|$；分解、合并一元项、移位和建弧都只需扫描一遍元素与边，用时$O(n+m)$，存储也是$O(n+m)$。主要开销在最大流：按第~\ref{sec:graph-max-flow}节的分析，Edmonds--Karp算法需要$O(na^2)$次算术与比较操作，代入$a=O(n+m)$即$O(n(n+m)^2)$。最后读出可达集合只需一次遍历。与枚举$2^n$种配置相比，这是多项式规模的计算。
+
+\paragraph{条件不成立时}
+若某个成对项违反式~\eqref{eq:graph-setfn-pairwise-submodular}，引理给出的$w_{i,j}$为负，网络中就会出现负容量的弧。第~\ref{sec:graph-max-flow}节的流值与割容量的关系建立在非负容量之上，负容量时不能直接使用。例如奖励两个变量取值不同的成对项$\phi_{i,j}(0,1)=\phi_{i,j}(1,0)=0$、$\phi_{i,j}(0,0)=\phi_{i,j}(1,1)=1$就违反条件：$1+1>0+0$，算出$w_{i,j}=-1$。这时的最小化一般不能化为一次最小割。算法~\ref{alg:graph-setfn-graph-cut}把条件写进了输入要求；实现时应在第2步处理每条边之前先检查条件，不成立就报告失败，而不是照常建出带负容量的网络。同样不能直接套用的还有：附加“恰好选$k$个”这样的数量限制、含三个及以上变量的高阶项、每个变量有三种以上取值的问题；一般次模函数的最小化另有专门的算法，超出本书范围。
+
 
 \paragraph{与前两节的比较}
-本节与前两节都在子集上做选择，但条件和结论不同。前两节在基数或预算约束下最大化单调次模函数，得到的是近似解，保证依赖单调性、次模性和约束的形式。本节最小化可以写成一元项加满足式~\eqref{eq:graph-setfn-pairwise-submodular}的成对项的函数，没有额外约束，得到的是精确解，依据是割表示。在本节的问题上再加“恰好选$k$个”这样的数量限制，割与配置的对应就不再保持约束；含三个及以上变量的高阶项、违反条件的成对项，以及每个变量有三种以上取值的问题，也都不能直接套用这个构造。一般次模函数的最小化另有专门的算法，超出本书范围。
+本节与前两节都在子集上做选择，但条件和结论不同。前两节在基数或预算约束下最大化单调次模函数，算法逐轮维护已选集合，得到的是近似解，保证依赖单调性、次模性和约束的形式。本节最小化可以写成一元项加满足式~\eqref{eq:graph-setfn-pairwise-submodular}的成对项的函数，没有额外约束，算法一次性建出网络再求最小割，得到的是精确解，依据是割表示，并附带可以独立核对的证书。
