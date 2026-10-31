@@ -9,7 +9,7 @@ import sys
 import numpy as np
 
 ROOT = next(p for p in Path(__file__).resolve().parents if (p/'build.sh').is_file() and (p/'tex/book.tex').is_file())
-sys.path.insert(0, str(ROOT/'figures/01-mathematical-preliminaries-upper/00-shared/comprehension-figures'))
+sys.path.insert(0, str(ROOT/'figures/00-shared/mathematical-preliminaries-upper/00-shared/comprehension-figures'))
 from support import figure, save, BLUE, GREEN, YELLOW, RED, PURPLE, INK, MUTED, GRID, BLUE_FILL, GREEN_FILL, YELLOW_FILL
 
 D = Path(__file__).resolve().parent
@@ -177,7 +177,116 @@ def quadrature_rules():
         'n': ns.tolist(), 'errors': data, 'arithmetic': 'IEEE double precision'})
 
 
-DRAWERS = {f.__name__.replace('_', '-'): f for f in [power_sequence_nonuniform, geometric_partial_sums, convex_chord_tangent, finite_difference_error, riemann_sums, narrow_spikes, quadrature_rules]}
+def quadrature_comparison():
+    """Same integrand, same interval: constant, linear and quadratic local approximations."""
+    from support import RED_FILL
+    fig, grid = figure(width_mm=169, height_mm=92, nrows=2, ncols=3, gridspec_kw={'height_ratios': [2, 1.15]})
+    axes, lower = grid[0], grid[1]
+    f = lambda t: np.exp(2*t)/3
+    exact = (np.exp(2) - 1)/6
+    x = np.linspace(0, 1, 600)
+    A = f(.5); B = f(1) - f(0); C = (f(0) + f(1) - 2*f(.5))/(2*.25)
+    rules = [
+        ('(a) 中点矩形：常数', np.full_like(x, f(.5)), [.5], f(.5)),
+        ('(b) 梯形：直线', f(0) + (f(1) - f(0))*x, [0, 1], (f(0) + f(1))/2),
+        ('(c) Simpson：抛物线', A + B*(x-.5) + C*(x-.5)**2, [0, .5, 1], (f(0) + 4*f(.5) + f(1))/6),
+    ]
+    facts = {'integrand': 'exp(2x)/3 on [0,1]', 'exact': float(exact), 'rules': {}}
+    for k, (ax, low, (title, p, nodes, value)) in enumerate(zip(axes, lower, rules)):
+        y = f(x)
+        d = p - y
+        low.axhline(0, color=MUTED, lw=.6)
+        low.fill_between(x, 0, d, where=d > 0, interpolate=True, color=RED_FILL, lw=0)
+        low.fill_between(x, d, 0, where=d < 0, interpolate=True, color=YELLOW_FILL, lw=0)
+        low.plot(x, d, color=BLUE, lw=1.1)
+        low.plot(nodes, np.zeros(len(nodes)), 'o', color=INK, ms=3, zorder=5)
+        span = 1.15*np.abs(d).max()
+        low.set(xlim=(0, 1), ylim=(-span, span), xlabel=r'$x$')
+        low.set_xticks([0, .5, 1])
+        if k == 0:
+            low.set_ylabel('近似函数 − f(x)')
+        if k > 0:
+            ax.set_yticklabels([])
+        facts.setdefault('max_abs_pointwise_gap', {})[title] = float(np.abs(d).max())
+        ax.fill_between(x, 0, np.minimum(y, p), color=BLUE_FILL, lw=0, label='两者共有的面积')
+        ax.fill_between(x, y, p, where=p > y, interpolate=True, color=RED_FILL, lw=0, label='近似多算')
+        ax.fill_between(x, p, y, where=p < y, interpolate=True, color=YELLOW_FILL, lw=0, label='近似少算')
+        ax.plot(x, p, color=BLUE, lw=1.1, label='近似函数')
+        ax.plot(x, y, color=INK, lw=1.2, label=r'$f(x)$')
+        ax.plot(nodes, f(np.array(nodes)), 'o', color=INK, ms=3, zorder=5)
+        err = value - exact
+        sign = '−' if err < 0 else '+'
+        ax.set_title(f'{title}\n近似值 {value:.3f}，误差 {sign}{abs(err):.3f}')
+        ax.set(xlim=(0, 1), ylim=(0, 2.6))
+        ax.set_xticks([0, .5, 1])
+        facts['rules'][title] = {'nodes': nodes, 'approximation': float(value), 'signed_error': float(err)}
+    axes[0].legend(loc='upper left', handlelength=1.6)
+    save(fig, D/'quadrature-comparison', 'figure', facts)
+
+
+def function_properties():
+    fig, axes = figure(width_mm=169, height_mm=54, ncols=3)
+    # (a) monotonicity: strictly increasing f and non-decreasing g with a flat piece
+    ax = axes[0]
+    f = lambda t: 0.85 + 0.45*t + 0.1*np.sin(2*t)          # f' = 0.45 + 0.2 cos 2t > 0
+    g = lambda t: np.piecewise(t, [t <= 1, (t > 1) & (t <= 2), t > 2],
+                               [lambda s: 0.15 + 0.55*s, 0.7, lambda s: 0.7 + 0.55*(s - 2)])
+    x = np.linspace(0, 3, 400)
+    ax.plot(x, g(x), color=GREEN, label='单调不减 g')
+    ax.plot(x, f(x), color=BLUE, label='严格递增 f')
+    x1, x2 = 0.7, 2.3
+    for xi in (x1, x2):
+        ax.plot([xi, xi, 0], [0, f(xi), f(xi)], color=MUTED, lw=.6, ls='--')
+        ax.plot([xi], [f(xi)], 'o', color=BLUE, ms=3)
+    ax.set(xlim=(0, 3.1), ylim=(0, 2.5), xlabel=r'$x$', title='(a) 单调性')
+    ax.set_xticks([x1, x2], [r'$x_1$', r'$x_2$'])
+    ax.set_yticks([f(x1), f(x2)], [r'$f(x_1)$', r'$f(x_2)$'])
+    ax.legend(loc='upper left', handlelength=1.6)
+    # (b) parity: even f (symmetric about the vertical axis), odd g (symmetric about the origin)
+    ax = axes[1]
+    a = 1.2
+    fe = lambda t: 0.35*t**2 + 0.35
+    go = lambda t: 0.25*t**3
+    x = np.linspace(-1.8, 1.8, 400)
+    ax.axhline(0, color=MUTED, lw=.6); ax.axvline(0, color=MUTED, lw=.6)
+    ax.plot(x, fe(x), color=BLUE, label='偶函数 f')
+    ax.plot(x, go(x), color=GREEN, label='奇函数 g')
+    ax.plot([-a, a], [fe(a), fe(a)], color=BLUE, lw=.6, ls='--')
+    ax.plot([-a, a], [fe(a), fe(a)], 'o', color=BLUE, ms=3)
+    ax.plot([-a, a], [go(-a), go(a)], color=GREEN, lw=.6, ls='--')
+    ax.plot([-a, a], [go(-a), go(a)], 'o', color=GREEN, ms=3)
+    ax.plot([0], [0], 'o', color=INK, ms=2.2)
+    ax.set(xlim=(-1.9, 1.9), ylim=(-1.6, 1.7), xlabel=r'$x$', title='(b) 奇偶性')
+    ax.set_xticks([-a, 0, a], [r'$-a$', r'$0$', r'$a$']); ax.set_yticks([]); ax.spines["left"].set_visible(False)
+    ax.legend(loc='upper center', ncol=2, handlelength=1.4, columnspacing=1.0)
+    # (c) periodicity with period T = 2
+    ax = axes[2]
+    T, x0 = 2.0, 0.25
+    fp = lambda t: np.sin(np.pi*t) + 0.35*np.sin(2*np.pi*t)
+    x = np.linspace(-0.3, 4.45, 800)
+    ax.axvspan(x0, x0 + T, color=BLUE_FILL, lw=0)
+    ax.axhline(0, color=MUTED, lw=.6)
+    ax.plot(x, fp(x), color=BLUE)
+    xs = [x0, x0 + T, x0 + 2*T]
+    for xi in xs:
+        ax.plot([xi, xi], [-1.5, fp(xi)], color=MUTED, lw=.6, ls='--')
+        ax.plot([xi], [fp(xi)], 'o', color=BLUE, ms=3)
+    for left in xs[:2]:
+        ax.annotate('', xy=(left + T, 1.6), xytext=(left, 1.6),
+                    arrowprops=dict(arrowstyle='<->', color=INK, lw=.6, shrinkA=0, shrinkB=0))
+        ax.text(left + T/2, 1.68, r'$T$', ha='center', va='bottom')
+    ax.set(xlim=(-0.3, 4.5), ylim=(-1.5, 2.05), xlabel=r'$x$', title='(c) 周期性')
+    ax.set_xticks(xs, [r'$x_0$', r'$x_0+T$', r'$x_0+2T$']); ax.set_yticks([]); ax.spines["left"].set_visible(False)
+    save(fig, D/'function-properties', 'figure', {
+        'panel_a_strict': '0.85+0.45x+0.1 sin(2x) on [0,3]',
+        'panel_a_nondecreasing': 'piecewise linear: 0.15+0.55x (x<=1), 0.7 (1<=x<=2), 0.7+0.55(x-2) (x>=2)',
+        'panel_a_inputs': [x1, x2], 'panel_a_values': [float(f(x1)), float(f(x2))],
+        'panel_b_even': '0.35x^2+0.35', 'panel_b_odd': '0.25x^3', 'panel_b_domain': [-1.8, 1.8], 'a': a,
+        'panel_c_function': 'sin(pi x)+0.35 sin(2 pi x)', 'period_T': T, 'x0': x0,
+        'panel_c_marked_values': [float(fp(t)) for t in xs]})
+
+
+DRAWERS = {f.__name__.replace('_', '-'): f for f in [power_sequence_nonuniform, geometric_partial_sums, convex_chord_tangent, finite_difference_error, riemann_sums, narrow_spikes, quadrature_rules, quadrature_comparison, function_properties]}
 
 if __name__ == '__main__':
     names = sys.argv[1:] or list(DRAWERS)
