@@ -8,7 +8,7 @@
 python3 figures/00-shared/academic-drawing/render_tikz.py figures/01-basic-mathematics/04-graphs/tikz/<图名>/figure.tex
 ```
 
-`c1-spanning-trees/generate.py` 枚举贯穿四点图的全部生成树并写出图源；`c6-filter-responses/chebyshev_coefficients.py` 计算图中 Chebyshev 逼近的系数。
+`c1-spanning-trees/generate.py` 枚举贯穿四点图的全部生成树并写出图源；`c6-filter-responses/chebyshev_coefficients.py` 计算图中 Chebyshev 逼近的系数；`c6-path-eight-modes/calc.py` 复算第20章新增图中的特征向量与谱坐标，`c6-ratio-cut-sweep-steps/generate.py`、`c6-relaxation-bounds/generate.py` 用分数精确复算阈值扫描与全部二划分的目标值。
 
 | 图名 | 引用位置（章目录/节文件） | 物理尺寸（mm） |
 | --- | --- | --- |
@@ -80,14 +80,17 @@ python3 figures/00-shared/academic-drawing/render_tikz.py figures/01-basic-mathe
 | `c4-budget-ratio-failure` | 04-set-functions-and-subset-selection/05-budget-selection.tex | 109.146×30.702 |
 | `c4-budget-rule-comparison` | 04-set-functions-and-subset-selection/05-budget-selection.tex | 98.538×23.911 |
 | `c4-cut-submodular-cases` | 04-set-functions-and-subset-selection/02-properties.tex | 110.723×45.484 |
+| `c4-greedy-gap-closing` | 04-set-functions-and-subset-selection/04-cardinality-selection.tex | 98.446×60.9 |
 | `c4-greedy-rounds-vs-optimum` | 04-set-functions-and-subset-selection/04-cardinality-selection.tex | 107.177×35.158 |
 | `c4-marginal-gain-overlap` | 04-set-functions-and-subset-selection/01-set-functions.tex | 91.74×35.161 |
 | `c4-mobius-coordinate-rounds` | 04-set-functions-and-subset-selection/03-mobius-inversion.tex | 149.652×51.784 |
 | `c4-mobius-divisor-poset` | 04-set-functions-and-subset-selection/03-mobius-inversion.tex | 52.613×46.186 |
 | `c4-pairwise-config-table` | 04-set-functions-and-subset-selection/06-pairwise-binary-minimization.tex | 72.383×38.396 |
+| `c4-pairwise-decomposition` | 04-set-functions-and-subset-selection/06-pairwise-binary-minimization.tex | 103.103×31.39 |
 | `c4-property-counterexamples` | 04-set-functions-and-subset-selection/02-properties.tex | 108.687×58.244 |
 | `c4-sensor-coverage` | 04-set-functions-and-subset-selection/01-set-functions.tex | 87.027×33.651 |
 | `c4-st-cut-construction` | 04-set-functions-and-subset-selection/06-pairwise-binary-minimization.tex | 104.687×45.501 |
+| `c4-submodular-overlap-count` | 04-set-functions-and-subset-selection/02-properties.tex | 103.258×36.11 |
 | `c4-subset-binary-cube` | 04-set-functions-and-subset-selection/01-set-functions.tex | 103.209×46.186 |
 | `c4-subset-lattice-cumulative` | 04-set-functions-and-subset-selection/03-mobius-inversion.tex | 99.187×69.688 |
 | `c5-bag-message-table` | 05-dynamic-programming-on-graphs/06-bag-dynamic-programming.tex | 105.65×53.7 |
@@ -100,10 +103,14 @@ python3 figures/00-shared/academic-drawing/render_tikz.py figures/01-basic-mathe
 | `c5-elimination-step` | 05-dynamic-programming-on-graphs/03-variable-elimination.tex | 102.687×47.188 |
 | `c5-elimination-to-bags` | 05-dynamic-programming-on-graphs/04-tree-decomposition.tex | 103.283×33.186 |
 | `c5-elimination-to-decomposition` | 05-dynamic-programming-on-graphs/05-decomposition-construction.tex | 104.369×69.846 |
+| `c5-elimination-trace` | 05-dynamic-programming-on-graphs/03-variable-elimination.tex | 147.581×48.528 |
+| `c5-ladder-decomposition` | 05-dynamic-programming-on-graphs/04-tree-decomposition.tex | 101.85×30.963 |
+| `c5-message-side` | 05-dynamic-programming-on-graphs/02-chain-and-tree-dp.tex | 104.902×51.929 |
 | `c5-min-degree-min-fill` | 05-dynamic-programming-on-graphs/05-decomposition-construction.tex | 96.778×58.141 |
 | `c5-running-intersection` | 05-dynamic-programming-on-graphs/04-tree-decomposition.tex | 111.016×44.327 |
 | `c5-three-representations` | 05-dynamic-programming-on-graphs/01-local-functions.tex | 111.936×46.2 |
 | `c5-tree-messages` | 05-dynamic-programming-on-graphs/02-chain-and-tree-dp.tex | 108.514×58.963 |
+| `c5-treewidth-examples` | 05-dynamic-programming-on-graphs/04-tree-decomposition.tex | 96.95×64.897 |
 | `c6-component-null-modes` | 06-spectral-methods/04-spectrum-and-connectivity.tex | 108.546×70.421 |
 | `c6-cut-indicator` | 06-spectral-methods/07-spectral-partition.tex | 108.423×39.204 |
 | `c6-cycle-fourier-basis` | 06-spectral-methods/05-graph-fourier-transform.tex | 112.698×45.103 |
@@ -112,9 +119,15 @@ python3 figures/00-shared/academic-drawing/render_tikz.py figures/01-basic-mathe
 | `c6-filter-responses` | 06-spectral-methods/06-graph-filtering.tex | 98.005×49.668 |
 | `c6-four-path-sweep` | 06-spectral-methods/07-spectral-partition.tex | 93.751×52.839 |
 | `c6-laplacian-two-routes` | 06-spectral-methods/02-graph-laplacian.tex | 111.887×37.232 |
+| `c6-neighbor-deviation` | 06-spectral-methods/02-graph-laplacian.tex | 89.031×69.056 |
+| `c6-path-eight-modes` | 06-spectral-methods/04-spectrum-and-connectivity.tex | 104.306×47.336 |
 | `c6-path-modes` | 06-spectral-methods/04-spectrum-and-connectivity.tex | 79.855×31.485 |
 | `c6-polynomial-locality` | 06-spectral-methods/06-graph-filtering.tex | 110.046×47.269 |
+| `c6-ratio-cut-sweep-steps` | 06-spectral-methods/07-spectral-partition.tex | 106.398×64.357 |
+| `c6-relaxation-bounds` | 06-spectral-methods/07-spectral-partition.tex | 104.221×39.765 |
 | `c6-seven-vertex-sweep` | 06-spectral-methods/07-spectral-partition.tex | 99.67×55.714 |
+| `c6-spectral-coefficients` | 06-spectral-methods/05-graph-fourier-transform.tex | 80.458×51.407 |
+| `c6-spectral-filter-steps` | 06-spectral-methods/06-graph-filtering.tex | 81.971×73.42 |
 | `c6-spectral-projection` | 06-spectral-methods/05-graph-fourier-transform.tex | 91.038×27.929 |
 | `c6-three-laplacians` | 06-spectral-methods/03-normalized-laplacian.tex | 97.702×43.688 |
 | `c6-vertex-edge-functions` | 06-spectral-methods/01-vertex-and-edge-functions.tex | 112.088×39.599 |
