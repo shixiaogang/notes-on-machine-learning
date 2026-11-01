@@ -40,6 +40,7 @@ python3 figures/00-shared/academic-drawing/render_tikz.py figures/01-basic-mathe
 | `c2-scc-forward-backward` | 02-traversal-and-structure/03-connected-structures.tex | 138.388×41.102 |
 | `c2-separator-blocks` | 02-traversal-and-structure/05-separator-blocks.tex | 103.886×37.807 |
 | `c2-union-find` | 02-traversal-and-structure/03-connected-structures.tex | 110.486×38.894 |
+| `c2-union-find-structure` | 02-traversal-and-structure/03-connected-structures.tex | 90.392×41.952 |
 | `c2-wl-cycle-triangles` | 02-traversal-and-structure/06-vertex-labeling.tex | 79.460×42.189 |
 | `c2-wl-path-refinement` | 02-traversal-and-structure/06-vertex-labeling.tex | 93.998×35.740 |
 | `c3-assign-hungarian` | 03-combinatorial-optimization/06-assignment.tex | 107.714×46.087 |
