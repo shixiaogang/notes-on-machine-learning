@@ -47,6 +47,7 @@ python3 figures/00-shared/academic-drawing/render_tikz.py figures/01-basic-mathe
 | `c2-wl-cycle-triangles` | 02-traversal-and-structure/06-vertex-labeling.tex | 79.46×42.189 |
 | `c2-wl-path-refinement` | 02-traversal-and-structure/06-vertex-labeling.tex | 93.998×35.74 |
 | `c3-assign-hungarian` | 03-combinatorial-optimization/06-assignment.tex | 107.714×46.087 |
+| `c3-bellman-ford-rounds` | 03-combinatorial-optimization/01-shortest-paths.tex | 148.629×39.959 |
 | `c3-cut-exchange` | 03-combinatorial-optimization/02-minimum-spanning-tree.tex | 99.187×37.758 |
 | `c3-dag-labels` | 03-combinatorial-optimization/01-shortest-paths.tex | 71.635×45.092 |
 | `c3-dijkstra-counterexample` | 03-combinatorial-optimization/01-shortest-paths.tex | 105.583×35.613 |
