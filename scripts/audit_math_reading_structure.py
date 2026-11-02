@@ -62,7 +62,15 @@ CHAPTER2_PRE_REWRITE_SECTION_TITLES = (
 CHAPTER2_SUMMARY_RETIREMENT = "tab:prelim-four-solution-questions"
 CHAPTER2_FORMULA_RETIREMENT = "eq:prelim-binomial-theorem"
 CHAPTER2_PATTERN_RELOCATION_TITLE = "有限输入上的可区分模式"
-CHAPTER2_PATTERN_DESTINATION = "tex/06-foundations/02-learning-theory/statistical-learning-framework/01-finite-input-patterns.tex"
+# The user later split the lesson by output type: binary patterns moved to
+# the binary chapter, multiclass patterns to the multiclass chapter, and
+# real-valued patterns to the general-learning chapter.
+CHAPTER2_PATTERN_DESTINATIONS = (
+    "tex/06-foundations/02-learning-theory/02-binary-classification.tex",
+    "tex/06-foundations/02-learning-theory/03-multiclass-classification.tex",
+    "tex/06-foundations/02-learning-theory/04-convex-learning-and-stability.tex",
+)
+CHAPTER2_PATTERN_DESTINATION = CHAPTER2_PATTERN_DESTINATIONS[0]
 CHAPTER17_BASELINE_SOURCE = Path(
     "05-dynamical-systems-control-and-decision/06-mathematics-and-future-research.tex"
 )
@@ -759,8 +767,9 @@ def audit_retired_chapter2_labels(
         issues.append({"kind": "unrecorded_chapter2_label_removal", "labels": sorted(undeclared)})
     report["pre_rewrite_label_count"] = len(inventory)
     report["active_reference_scope"] = "All active body inputs in the registered volumes."
-    # The user moved this exact historical lesson to volume 3. Require live,
-    # unique definitions at the declared destination; a deletion cannot pass.
+    # The user moved this historical lesson to volume 3 and later split it by
+    # output type. Require live, unique definitions at each declared
+    # destination; a deletion cannot pass.
     relocation_entries = manifest.get("relocated_pattern_labels", [])
     relocated = []
     pattern_labels = section_labels(pre_rewrite_source, (CHAPTER2_PATTERN_RELOCATION_TITLE,))
@@ -772,11 +781,12 @@ def audit_retired_chapter2_labels(
             issues.append({"kind": "invalid_pattern_relocation"})
             continue
         label = entry.get("label")
-        if label not in pattern_labels or entry.get("destination") != CHAPTER2_PATTERN_DESTINATION:
+        destination = entry.get("destination")
+        if label not in pattern_labels or destination not in CHAPTER2_PATTERN_DESTINATIONS:
             issues.append({"kind": "pattern_relocation_scope", "label": label})
             continue
         found = all_locations.get(label, [])
-        if len(found) != 1 or found[0]["path"] != CHAPTER2_PATTERN_DESTINATION:
+        if len(found) != 1 or found[0]["path"] != destination:
             issues.append({"kind": "pattern_relocation_definition", "label": label})
         if not isinstance(entry.get("reason"), str) or not entry["reason"].strip():
             issues.append({"kind": "pattern_relocation_reason", "label": label})
