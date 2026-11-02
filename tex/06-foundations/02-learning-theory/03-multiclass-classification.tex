@@ -1,148 +1,238 @@
 \chapter{多分类学习的可学习性}
 \label{chap:multiclass-learnability}
 
-上一章的二分类学习基本定理表明，对二分类假设空间，VC维有限、一致收敛、可实现PAC可学习和不可知PAC可学习四者相互等价。于是只要判断VC维是否有限，就同时知道风险能否被统一估计准确、学习能否成功。本章考察标签多于两类时，这一结论是否仍然成立。
+上一章的二分类学习基本定理（定理~\ref{thm:binary-fundamental-theorem}）说明，对二分类假设空间，VC维有限、一致收敛、可实现PAC可学习与不可知PAC可学习四者相互等价。判断一个组合量是否有限，就同时回答了两个问题：能否用同一份样本把所有候选假设的风险同时估计准确，以及能否利用已见标签找到一个学得会的规则。本章考察标签多于两类时，这两个问题是否仍由同一个组合量回答。
 
-二分类与多分类的差别在于，假设在一个输入上改变预测时可以改成什么。二分类假设只能从一个标签改为另一个；多分类假设可以改为其余任何一个标签。标签集合扩大后，有限输入上可能出现更多种预测组合，但实际能实现多少种仍取决于假设空间，不能只由标签数判断。因此，VC维所依赖的“两个标签的全部组合”需要换一种计数方式；上一章由同一个维度同时刻画一致收敛和可学习性的结论，也需要重新检验。
+两个问题在二分类中能够合一，与标签只有两个有关。一个预测偏离参考标签时，只剩下另一个答案，“不等于参考标签”与“等于另一个标签”是同一件事。把邮件类别从“正常、垃圾”扩成“正常、广告、诈骗”后，“不等于正常”可以是广告，也可以是诈骗；标签集合若是无限的，例如把一段文字或一个集合当作输出，偏离参考的答案甚至有无限多种。估计风险只需知道预测是否与观测标签相同，学习器却可以利用观测到的具体标签来选择规则，两种要求于是需要分开考察。本章保持独立同分布抽样和零一损失，按这一变化安排：先检验把多分类拆成若干二分类能解决什么（第~\ref{sec:multiclass-setting}节），再在标签有限时用Natarajan维恢复二分类的全部等价（第~\ref{sec:multiclass-dimensions}节）；去掉标签有限的条件后，一致收敛由图维刻画（第~\ref{sec:general-multiclass-dimensions}节），可学习性则由DS维刻画（第~\ref{sec:lt6-multiclass-learnability}节），两者不再等价。最后一节回到可执行的程序，说明统计刻画之外还需要什么计算条件。
 
-检验的结果取决于标签是否有限。标签有限时，预测计数可以推广到多类，二分类中的等价关系原样保留。标签无限时，计数失效，而且“能否把所有假设的风险同时估计准确”与“是否存在成功的学习算法”会分成两个不同的问题，需要两个不同的维度分别回答；后一个问题的答案还要求允许学习算法输出$\mathcal H$以外的分类器，也就是第~\ref{sec:learning-problem}节所说的非恰当学习。统计上能学习之后，仍要像上一章一样追问：训练和预测能否由总会停机的程序完成。
+三种维度都在有限个输入上检查可实现的预测组合，但检查的结构不同：Natarajan打散检查预先固定的标签对能否自由组合，图打散检查“与参考标签匹配或不匹配”能否自由组合，DS打散检查知道其余坐标的标签后，当前坐标是否仍留有歧义。为便于对照，全章反复使用同一个小例子：两封邮件上的六种可实现预测（图~\ref{fig:comb-multiclass-pattern-grid}）。三种打散在各自出现时才给出定义，并都放回这张三行三列的标签网格上检验，读者不必先同时掌握三种定义；DS维的讨论也不以样本压缩为前提。
 
-本章的设定只把第~\ref{sec:learning-problem}节中的二元标签换成有限或无限的标签集$Y$，其余保持不变：每条观测由输入和标签组成，样本独立同分布，采用零一损失，学习成功的标准仍是上一章的可实现PAC和不可知PAC。
+本章的设定只把第~\ref{sec:learning-problem}节中的二元标签换成有限或无限的标签集$Y$，其余保持不变：观测由输入和标签组成，样本独立同分布，采用零一损失，成功标准仍是第~\ref{sec:pac-learning}节的可实现PAC与不可知PAC。统计结论均在第~\ref{sec:measurability-convention}节的可测性与可分性约定下陈述。
 
 \section{从二分类到多分类}
 \label{sec:multiclass-setting}
 
-把邮件标签扩展为正常、广告、诈骗三类。输入$x$仍是邮件特征，假设$h(x)$给出一个类别，只要与真实类别$y$不同就计一次错误。形式上，以$X$和$Y$为输入空间和标签空间，非空的$\mathcal H\subseteq Y^X$为假设空间，对联合分布$\mathcal P$和独立同分布样本$S=((x_i,y_i))_{i=1}^n$，定义~\ref{def:general-population-risk}与定义~\ref{def:general-empirical-risk}在零一损失下写成
+本节先保持风险目标不变，写出多分类的零一风险和有限输入上的预测结构，再检验把多类问题拆成若干二分类任务是否已经足够。归约在可实现情形下给出可用的构造，但也暴露出两处缺口：不可知情形下逐位最优可以不是类别最优，标签无限时固定长度的编码无法区分全部类别。这两处缺口说明为什么需要直接分析多类预测的组合结构。
+
+\subsection{多分类的风险与预测结构}
+\label{sec:lt6-risk-structure}
+
+把邮件标签扩展为正常、广告、诈骗三类。输入$x$仍是邮件特征，假设$h(x)$给出一个类别，只要与真实类别$y$不同就计一次错误。形式上，以$X$和$Y$为输入空间和标签空间，非空集合$\mathcal H\subseteq Y^X$为假设空间；对$X\times Y$上的联合分布$\mathcal P$和独立同分布样本$S=((x_i,y_i))_{i=1}^n$，定义~\ref{def:general-population-risk}与定义~\ref{def:general-empirical-risk}在零一损失下写成
 \begin{equation}
  R_{\mathcal P}(h)=\mathbb P_{(x,y)\sim\mathcal P}\{h(x)\neq y\},\qquad
  \hat R_S(h)=\frac1n\sum_{i=1}^n\mathbb I\{h(x_i)\neq y_i\}.
  \label{eq:multiclass-risk}
 \end{equation}
-全章固定这一计分方式：预测正确计0，预测错误计1，错成哪一类都一样。可实现PAC要求在存在零风险假设时输出风险小的分类器，不可知PAC要求输出的风险接近$\mathcal H$中的最低风险，两者的量词次序与第~\ref{sec:pac-learning}节相同。统计定理仍需满足第~\ref{sec:learning-problem}节的可测性与可分性条件。
+与二分类相比，改变的只是每个输入允许出现的标签集合；计分方式全章固定：预测正确计0，预测错误计1，错成哪一类都一样，一次错误只计一次。可实现PAC（定义~\ref{def:realizable-pac}）要求在存在零风险假设时输出风险小的分类器，不可知PAC（定义~\ref{def:agnostic-pac}）要求输出的风险接近$\mathcal H$中的最低风险，量词次序与第~\ref{sec:pac-learning}节相同。若学习算法可以输出$\mathcal H$以外的分类器，按第~\ref{sec:pac-general-form}节的说法称为非恰当学习；本章的若干结论只对非恰当学习成立，届时会明确指出。
 
-处理多分类的一个直接思路，是把它化归为上一章已经解决的二分类。标签有限时，可以先把每个类别编码成若干二进制位，例如对三类取
+和二分类一样，研究假设空间的复杂程度时，关键不是$\mathcal H$含有多少个函数，而是它在有限个输入上能共同实现哪些标签组合。对互异输入$C=(x_1,\ldots,x_m)$，限制类$\mathcal H|_C=\{(h(x_1),\ldots,h(x_m)):h\in\mathcal H\}$的定义与第~\ref{sec:binary-growth-sauer}节相同，只是每个坐标现在可以取$Y$中任何一个标签。标签多并不自动意味着复杂：一个只会输出“正常”的假设空间用了一个标签，标签集再大也与它无关。
+
+本章的贯穿例子取两封邮件$x_1,x_2$，假设空间在它们上的限制类恰好是
+\[
+ \begin{aligned}
+ \mathcal V=\{&(\text{正常},\text{正常}),(\text{正常},\text{广告}),(\text{广告},\text{广告}),\\
+ &(\text{广告},\text{诈骗}),(\text{诈骗},\text{诈骗}),(\text{诈骗},\text{正常})\},
+ \end{aligned}
+\]
+依次记为$h_1,\ldots,h_6$。图~\ref{fig:comb-multiclass-pattern-grid}把它画成标签网格：行表示$x_1$上的预测，列表示$x_2$上的预测，实心点表示可实现的组合。九种组合只实现了六种，每行、每列恰好各有两个实心点。后文用这一张网格依次做三项检验：选定两行两列后四个交点是否全部可实现（固定标签对），选定一个参考格后与它匹配、不匹配的各种情形是否都有实心点（参考标签匹配），以及每个实心点在同行、同列是否还有别的实心点（逐坐标歧义）。三种维度都从这张网格读出，不必每讲一种维度就更换例子。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/06-foundations/02-learning-theory/tikz/lt6-email-label-grid/figure}
+  \caption{贯穿全章的六模式族$\mathcal V$。两封邮件$x_1,x_2$上的预测组成三行三列的标签网格，行对应$x_1$的预测，列对应$x_2$的预测。实心点是假设空间实现的六种组合$h_1,\ldots,h_6$，空心点是实现不了的三种组合；每行、每列恰有两个实心点。}
+  \label{fig:comb-multiclass-pattern-grid}
+  \label{fig:lt6-email-label-grid}
+\end{figure}
+
+区分有限标签与无限标签的原因，在于计数工具是否可用。上一章用VC维限制有限输入上的预测个数，再由对称化与并集界得到一致收敛，最后由ERM的比较得到可学习性；VC维由此同时控制两件事。本章要检验的是：标签多于两类时，这两件事是否仍由同一个组合量刻画。PAC与风险的定义沿用第~\ref{chap:statistical-learning-framework}章，不再重新建立。
+
+\subsection{编码为二分类任务的作用与局限}
+\label{sec:lt6-binary-encoding}
+
+处理多分类的一个直接思路，是化归为上一章已经解决的二分类。标签有限时，可以先把每个类别编码成若干二进制位，例如对三类取
 \[
  \text{正常}\longleftrightarrow(0,1),\qquad
  \text{广告}\longleftrightarrow(1,0),\qquad
  \text{诈骗}\longleftrightarrow(1,1).
 \]
-于是，每条带标签的邮件给出两个二分类任务的标签；例如一封广告邮件在第一位上的标签为1，在第二位上的标签为0。在同一批邮件上分别训练两个二分类器$b_1$和$b_2$，对新邮件先得到$(b_1(x),b_2(x))$，再按编码表解码成类别；不对应任何类别的编码$(0,0)$事先约定解码为“正常”。由于不同类别的编码互不相同，两位都预测正确时就能恢复正确类别，多分类问题由此转化为两个二分类问题。
+每条带标签的邮件于是给出两个二分类任务的标签；例如一封广告邮件在第一位上的标签为1，在第二位上的标签为0。在同一批邮件上分别训练两个二分类器$b_1$和$b_2$，对新邮件先得到$(b_1(x),b_2(x))$，再按编码表解码成类别；不对应任何类别的编码$(0,0)$事先约定解码为“正常”。不同类别的编码互不相同，所以两位都预测正确时一定能恢复正确类别。反过来说，类别出错时至少有一位出错，“类别出错”的事件包含在“第一位出错”与“第二位出错”的并集中，于是类别错误率不超过两位错误率之和。这个并集界只用到事件之间的包含关系，不要求两位的错误相互独立。
 
-一般地，当$2\leq K=|Y|<\infty$时，用$L=\lceil\log_2K\rceil$位给各类别分配互不相同的编码$c:Y\to\{0,1\}^L$，以$c_j(y)$记第$j$位。第$j$个二分类任务所用的假设空间，应由原假设空间在第$j$位上的投影得到，即把每个$h$的输出编码后只看第$j$位：
+一般地，当$2\leq K=|Y|<\infty$时，用$L=\lceil\log_2K\rceil$位给各类别分配互不相同的编码$c:Y\to\{0,1\}^L$，以$c_j(y)$记第$j$位。第$j$个二分类任务所用的假设空间，由原假设空间在第$j$位上的投影得到：
 \[
  \mathcal B_j=\{x\mapsto c_j(h(x)):h\in\mathcal H\},\qquad 1\leq j\leq L.
 \]
 我们称$\mathcal B_j$为第$j$位的位空间。每一位的标签是二元的，但位空间本身仍可能很复杂；二分类的分布无关PAC要求VC维有限，编码本身并不能保证位空间满足这一条件。（若$K=1$，只有一个标签，常量预测就是零风险规则，无须拆分。）
 
-先看可实现情形。若$h^\star\in\mathcal H$的风险为零，则$c_j\circ h^\star$属于第$j$个位空间，并且几乎处处预测出正确的位标签$c_j(y)$，所以每个位任务也都是可实现的。若每个位空间$\mathcal B_j$都PAC可学习，记学到的二分类器$b_j$在第$j$位上的错误率为
+先看可实现情形。若$h^\star\in\mathcal H$的风险为零，则$c_j\circ h^\star$属于第$j$个位空间，并且几乎处处预测出正确的位标签$c_j(y)$，所以每个位任务也都是可实现的。设每个位空间$\mathcal B_j$都可实现PAC可学习，学到的二分类器$b_j$在第$j$位上的错误率为
 \[
- e_j=\mathbb P_{(x,y)\sim\mathcal P}\{b_j(x)\neq c_j(y)\}.
+ e_j=\mathbb P_{(x,y)\sim\mathcal P}\{b_j(x)\neq c_j(y)\},
 \]
-以$\tilde h$记由各位预测解码得到的分类器。各位都预测正确时，类别一定正确；所以类别出错时，至少有一位出错，类别风险不超过各位错误率之和：
+并以$\tilde h$记由各位预测解码得到的分类器；不对应任何类别的码字按一条预先固定、不依赖样本的规则解码。与三类的情形相同，类别出错时至少有一位出错，于是
 \[
  R_{\mathcal P}(\tilde h)\leq\sum_{j=1}^L e_j.
 \]
-这个不等式本身就是一次并集界：“类别出错”包含在“某一位出错”的并集中。于是，只要把每一位的风险目标定为$\varepsilon/L$、失败概率定为$\delta/L$，就有$\sum_je_j\leq\varepsilon$；而某一位学习失败的概率至多为$L\cdot\delta/L=\delta$，这是对失败事件的第二次并集界。合起来，以至少$1-\delta$的概率，类别风险至多为$\varepsilon$。以$m_{\mathcal B_j}(\varepsilon,\delta)$记位空间$\mathcal B_j$的可实现PAC样本量。各位可以共用同一份样本，也不要求它们的错误相互独立，只需样本量同时满足各位的要求：
+这是第一次并集界。把每一位的风险目标定为$\varepsilon/L$、失败概率定为$\delta/L$，就有$\sum_je_j\leq\varepsilon$；而某一位学习失败的概率至多$L\cdot\delta/L=\delta$，这是对失败事件的第二次并集界。合起来，以至少$1-\delta$的概率，类别风险至多$\varepsilon$。以$m_{\mathcal B_j}(\varepsilon,\delta)$记位空间$\mathcal B_j$的可实现PAC样本量。各位共用同一份样本，也不要求各位的错误相互独立，只需样本量同时满足各位的要求：
 \[
  n\geq\max_{1\leq j\leq L}
  m_{\mathcal B_j}(\varepsilon/L,\delta/L).
 \]
-解码得到的分类器不一定属于原假设空间$\mathcal H$，所以这是一种非恰当学习。
+解码得到的分类器不一定属于原假设空间$\mathcal H$，所以这是一种非恰当学习。归约的收益到此为止：它给出了一个可实现情形下的构造，条件是每个位空间都可学习。
 
-在不可知情形下，逐位学习不一定得到原任务的最优分类器。沿用上面的三类编码，设所有邮件的输入都相同，正常、广告、诈骗出现的概率分别为0.40、0.35、0.25，假设空间只含三个常量假设。第一位为1的概率是$0.35+0.25=0.60$，第二位为1的概率是$0.40+0.25=0.65$，所以每一位单独取最优都应预测1，解码后得到“诈骗”，类别风险为0.75；而直接预测“正常”的风险只有0.60。即使所有概率都已知，逐位取最优也选错了类别。原因在于两个目标不同：逐位学习分别降低每一位的错误率，多类零一损失只看整个类别是否正确。把正常邮件判为广告时，编码$(0,1)$变为$(1,0)$，两位都错，逐位错误计2次，类别错误只计1次；两种计数方式下的最优预测因而可能不同。
+不可知情形下，逐位学习不一定得到原任务的最优分类器。沿用上面的三类编码，设所有邮件的输入都相同，正常、广告、诈骗出现的概率分别为0.40、0.35、0.25，假设空间只含常量预测。第一位为1的概率是$0.35+0.25=0.60$，第二位为1的概率是$0.40+0.25=0.65$，所以两位各自取多数都得到1，解码后得到“诈骗”，类别风险为$1-0.25=0.75$；而直接预测“正常”的类别风险只有$1-0.40=0.60$。图~\ref{fig:lt6-bitwise-vs-class-risk}对四个码字分别算出两种代价：逐位学习最小化期望位错误数，在$(1,1)$处取到最小值0.75；类别零一风险在$(0,1)$处取到最小值0.60。即使全部概率都已知，逐位取最优也选错了类别。
 
-由此可见，编码只提供了一种构造学习算法的办法：要得到学习保证，还需控制各位空间的复杂度并合并各位的风险，而且这一保证只在可实现情形下成立。标签无限时，固定位数的编码无法区分无限多个类别，这种归约根本无法使用。因此需要换一条路：直接分析原假设空间在有限输入上能给出怎样的预测组合。
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=100mm]{figures/06-foundations/02-learning-theory/matplotlib/lt6-bitwise-vs-class-risk/figure.pdf}
+  \caption{逐位最优与类别最优的分歧（教学示例）。所有邮件输入相同，正常、广告、诈骗的概率分别为0.40、0.35、0.25，编码为$(0,1),(1,0),(1,1)$，无效码$(0,0)$解码为正常。浅色柱为常量预测某个码字时的期望位错误数$\sum_j\mathbb P\{c_j(y)\neq c_j\}$，深色柱为解码后类别的零一风险。两种代价的最小值落在不同码字上。}
+  \label{fig:lt6-bitwise-vs-class-risk}
+\end{figure}
 
-为此首先要确定多分类中“打散”的含义。二分类中，输入集被打散是指假设空间在这些输入上实现了全部$2^m$种预测。一种直接的推广是要求在$m$个输入上实现全部$|Y|^m$种预测，但这个要求过严。设三类邮件问题中的假设空间只会输出“正常”和“广告”，从不输出“诈骗”，并且把这两个标签看作0和1后，它是一个VC维无穷的二分类空间。由上一章的基本定理，这个空间不是PAC可学习的，那里的下界构造只用到两个标签，可以原样搬过来。可是它在任何一个输入上都实现不了“诈骗”，按全部$|Y|^m$种预测的要求，连单个输入都打散不了，复杂度会被记为0。
+分歧的原因在于计分方式不同。逐位学习分别降低每一位的错误率，多类零一损失只看整个类别是否正确。把正常邮件判为广告时，编码$(0,1)$变为$(1,0)$，两位都错，逐位错误计2次，类别错误只计1次；把正常邮件判为诈骗时，$(0,1)$变为$(1,1)$，逐位只错1次，类别同样错1次。位错误把不同的类别错误按码字之间的汉明距离加权，两种代价的最优预测因而可能不同。
 
-问题出在要求每个输入用遍所有标签。困难其实只需要每个输入上有两个可选答案，并且这些选择可以在各输入之间自由组合。因此更合适的做法是先为每个输入指定两个不同的标签，再问假设空间能否在每个输入上独立地取这两个标签中的任意一个。能做到这一点的最大输入数，称为\term{Natarajan维}（Natarajan dimension）。在上面的例子中，给每个输入都指定$\{\text{正常},\text{广告}\}$，Natarajan维就等于那个二分类空间的VC维。
+由此可见，编码是一种有条件的构造，而非多分类可学习性的完整刻画。要得到学习保证，还需控制各位空间的复杂度并合并各位的风险，而且上面的保证只在可实现情形下成立；标签无限时，$L$位编码至多区分$2^L$个类别，固定位数的编码无法区分无限多个类别。所以需要换一条路：直接分析原假设空间在有限输入上能给出怎样的预测组合。
 
-\section{有限标签空间及Natarajan维的边界}
+\section{有限标签空间}
 \label{sec:multiclass-dimensions}
+\label{sec:comb-multiclass-dimensions}
 
-本节限定标签有限，$2\leq K=|Y|<\infty$。分析路线与上一章平行：先用Natarajan维限制假设空间在有限输入上的预测个数，再沿用上一章的对称化论证得到一致收敛，最后由ERM的风险比较得到可学习性。
+本节限定标签有限，$2\leq K=|Y|<\infty$。上一章由VC维推出一致收敛与可学习性的证明中，直接依赖二元标签的是一步：用VC维限制有限输入上的预测模式数；其后的副样本、随机交换和ERM比较只用到这个计数。所以要恢复二分类的证明，关键是重新找到一个能限制模式数的打散概念。要求每个点都能取遍所有类别太强，一个只使用两种类别、却能任意安排二元标签的困难空间会被它漏掉。本节改为先在每个点固定两个候选标签，再检查各点能否独立地二选一：这既保留了未见点上二选一的困难，也能在标签总数有限时支持递推计数。正式结论只覆盖本节的有限标签设定；在哪一步用到了标签有限，本节最后逐项指出。
 
-\subsection{Natarajan维}
+\subsection{固定标签对与Natarajan打散}
+\label{sec:comb-fixed-label-pairs}
 
-第~\ref{def:natarajan-dimension}定义与式~\eqref{eq:natarajan-shattering}已规定组合量词；本节说明它怎样进入有限标签的风险估计。
+二分类中，输入集被打散是指假设空间在这些输入上实现了全部$2^m$种预测。一种直接的推广是要求在$m$个输入上实现全部$K^m$种预测，但这个要求过严。设三类邮件问题中的假设空间只会输出“正常”和“广告”，从不输出“诈骗”，并且把这两个标签看作0和1后，它是一个VC维无穷的二分类空间。由上一章的基本定理，这个空间不是PAC可学习的；那里的下界构造只用到两个标签，可以原样搬过来。可是它在任何一个输入上都实现不了“诈骗”，按全部$K^m$种预测的要求，连单个输入都打散不了，复杂度会被记为0。
 
-具体地，对互异输入$x_1,\ldots,x_m$，Natarajan打散先为每个$x_i$指定两个不同的标签$a_i\neq b_i$，再要求对每个选择向量$s\in\{0,1\}^m$，都有某个假设在$s_i=0$的输入上预测$a_i$、在$s_i=1$的输入上预测$b_i$。不同输入可以指定不同的标签对，但标签对一经指定，就不能随要实现的组合改变（组合定义见第~\ref{sec:comb-fixed-label-pairs}节）。本章以$d_N(\mathcal H)$记能被Natarajan打散的有限输入集大小的上确界。
+问题出在要求每个输入用遍所有标签。造成学习困难的，其实只是每个输入上有两个可选答案，并且这些选择可以在各输入之间自由组合。所以更合适的做法是先为每个输入指定两个不同的标签，再问假设空间能否在每个输入上独立地取这两个标签中的任意一个。
 
-例如在两封邮件$x_1,x_2$上，给$x_1$指定$\{\text{正常},\text{广告}\}$，给$x_2$指定$\{\text{广告},\text{诈骗}\}$。要打散$\{x_1,x_2\}$，假设空间必须同时含有在这两处分别预测（正常，广告）、（正常，诈骗）、（广告，广告）、（广告，诈骗）的假设；至于它们在其他输入上预测什么，以及是否还会在$x_1,x_2$上预测别的标签，都不影响判断。
-% 旧公式位置保留为导航锚点，不再重复通用定义式。
-\phantomsection\label{eq:learning-natarajan-shattering}
+两个输入时，这个条件在标签网格上有直观的形状。给$x_1$指定两个标签，就是选出网格的两行；给$x_2$指定两个标签，就是选出两列。两个输入各自二选一共有四种组合，正是这两行两列交出的四个格子；要求它们全部可实现，就是要求网格中有一个四角都是实心点的矩形。图~\ref{fig:natarajan-concrete}左栏在六模式族$\mathcal V$上尝试这件事：选出“正常、广告”两行与“正常、广告”两列，四角中$(\text{广告},\text{正常})$缺失。换其他选法也不行，因为$\mathcal V$中任意两行只共享一列：“正常”行的实心点在正常、广告两列，“广告”行在广告、诈骗两列，“诈骗”行在正常、诈骗两列，任何两行的公共列都只有一个，凑不出两列。所以$\mathcal V$中没有完整的矩形。只要加入一种组合，情况就变了：加入$(\text{正常},\text{诈骗})$后，第一封取正常或广告、第二封取广告或诈骗的四种组合都出现了（图~\ref{fig:natarajan-concrete}右栏）。这个矩形的两行与两列对应不同的标签对，说明不同输入可以使用不同的标签对。
 
-这个定义本身并不要求标签有限。在二分类中，每个输入上只能指定$\{0,1\}$这一对标签，所以Natarajan打散就是打散，Natarajan维等于VC维。Natarajan维为0，说明每个输入上的预测都唯一；若能被打散的输入集没有有限上界，维度为无穷。下面用这个维度控制预测个数。
+把网格上的矩形写成一般条件。设$C=\{x_1,\ldots,x_m\}\subseteq X$为互异输入。若存在$f,g:C\to Y$，满足每个$x\in C$上$f(x)\neq g(x)$，且对每个$B\subseteq C$都有$h_B\in\mathcal H$满足
+\begin{equation}
+ h_B(x)=\begin{cases}f(x),&x\in B,\\g(x),&x\in C\setminus B,\end{cases}
+ \label{eq:natarajan-shattering}
+\end{equation}
+就称$C$被$\mathcal H$\term{Natarajan打散}（Natarajan shattering）。式~\eqref{eq:natarajan-shattering}中，$B$是选取第一个标签$f(x)$的那些输入，其余输入取第二个标签$g(x)$。不同输入可以指定不同的标签对，但标签对一经指定，就必须服务于全部$2^m$种组合，不能随要实现的组合改变。两个输入时，这正是网格上的完整矩形，所以$\{x_1,x_2\}$不能被$\mathcal V$ Natarajan打散。在上面只输出两类的例子中，给每个输入都指定$\{\text{正常},\text{广告}\}$，Natarajan打散就成了那个二分类空间的打散。
 
-\subsection{有限标签的一致收敛}
+\begin{figure}[htbp]
+  \centering
+  \input{figures/06-foundations/02-learning-theory/tikz/lt6-natarajan-rectangle/figure}
+  \caption{Natarajan打散就是标签网格中的完整四角矩形。左：六模式族$\mathcal V$中任意两行只共享一列，图中虚线矩形缺少角$(\text{广告},\text{正常})$，换任何两行两列都缺角，故$d_N(\mathcal V)=1$。右：加入黄色的$(\text{正常},\text{诈骗})$得到$\mathcal V^+$，$x_1$取正常或广告、$x_2$取广告或诈骗的四种组合都可实现，两封邮件被Natarajan打散；两个输入上指定的标签对可以不同。}
+  \label{fig:natarajan-concrete}
+  \label{fig:lt6-natarajan-rectangle}
+\end{figure}
 
-与上一章一样，固定输入后，把在这些输入上预测相同的假设视为同一种。令
+\begin{definition}[Natarajan维]
+\label{def:natarajan-dimension}
+$\mathcal H$的\term{Natarajan维}（Natarajan dimension）为
 \[
- V(x_1,\ldots,x_m)
- =\{(h(x_1),\ldots,h(x_m)):h\in\mathcal H\}.
+ d_N(\mathcal H)=\sup\{|C|:C\subseteq X\text{为被}\mathcal H\text{ Natarajan打散的有限集}\}.
 \]
-再对输入的选择取上确界，得到生长函数
-\[
- \Pi_{\mathcal H}(m)=\sup_{(x_1,\ldots,x_m)\in X^m}|V(x_1,\ldots,x_m)|.
-\]
-这与第~\ref{sec:binary-growth-sauer}节二分类的计数相同，区别只在于每个坐标可以取$K$个标签。在二分类中，Sauer--Shelah引理用VC维限制预测个数；在有限标签的多分类中，Natarajan维起同样的作用。
+没有非空被打散集合时取$0$，可打散任意大有限集时取$+\infty$。
+\end{definition}
 
-% 保留旧位置锚点；这里直接使用组合计数结论。
-\phantomsection\label{thm:learning-multiclass-growth-bound}
-当$2\leq K=|Y|<\infty$且$d=d_N(\mathcal H)<\infty$时，记$q=K(K-1)/2$为不同的无序标签对的个数。对每个整数$m\geq0$，多类的计数界（Natarajan引理）给出
-\[
- \Pi_{\mathcal H}(m)\leq G_{d,K}(m)
- :=\sum_{j=0}^{\min\{d,m\}}\binom mj q^j
-\]
-在学习问题中，$G_{d,K}(2n)$将控制原样本与副样本合在一起的$2n$个输入上不同损失模式的个数，从而进入对称化之后的失败概率。
+二分类中每个输入上只能指定$\{0,1\}$这一对标签，Natarajan打散就是打散，Natarajan维等于VC维。Natarajan维为0，说明每个输入上的预测都唯一。定义本身并不要求标签有限，后文在无限标签下也使用它；需要标签有限的是下一小节的计数结论，这一条件在那里另行保留。
 
-二分类时$q=1$且$d_N=\operatorname{VC}(\mathcal H)$，求和式回到Sauer--Shelah引理中的$\sum_{j=0}^{\min\{d,m\}}\binom mj$。多类时多出的因子$q^j$计入了一个事实：在每个参与二元选择的坐标上，标签对可以是$q$种中的任意一种。
+\begin{example}[Natarajan维的两个对照]
+\label{ex:comb-natarajan-concrete}
+仍考虑两封邮件。对六模式族$\mathcal V$，上面已说明两个输入不能被Natarajan打散；单个输入可以，例如在$x_1$上指定“正常、广告”，$h_1$与$h_3$分别实现两种选择。所以$d_N(\mathcal V)=1$。
+
+在$\mathcal V$中加入第七种组合$(\text{正常},\text{诈骗})$，得到$\mathcal V^+$。在$x_1$上指定“正常、广告”，在$x_2$上指定“广告、诈骗”，四种逐点选择分别由
+\[
+ (\text{正常},\text{广告}),\quad(\text{正常},\text{诈骗}),\quad
+ (\text{广告},\text{广告}),\quad(\text{广告},\text{诈骗})
+\]
+实现，它们都在$\mathcal V^+$中，所以$d_N(\mathcal V^+)=2$，见图~\ref{fig:natarajan-concrete}右栏。两个输入上的标签对不同，这正是定义允许的；判断只看这四个组合，$\mathcal V^+$中其余三种组合不影响结论。
+\end{example}
+
+例子中多出的一种组合就把Natarajan维从1变成2。这说明Natarajan维检验的是一个很具体的结构：两行两列的完整矩形。$\mathcal V$缺少这种矩形，却仍然在每行、每列都有两种可能；这种“处处有两种可能、却拼不出矩形”的结构在第~\ref{sec:lt6-multiclass-learnability}节会成为关键。
+
+\subsection{预测数目与一致收敛}
+\label{sec:lt6-finite-label-counting}
+
+与上一章一样，固定输入后，把在这些输入上预测相同的假设视为同一种，再对输入的选择取最大值，得到生长函数
+\[
+ \Pi_{\mathcal H}(m)=\max_{x_1,\ldots,x_m\in X}\bigl|\mathcal H|_{(x_1,\ldots,x_m)}\bigr|,
+\]
+定义与第~\ref{sec:binary-growth-sauer}节相同，区别只在于每个坐标可以取$K$个标签，所以它至多为$K^m$。二分类中，Sauer--Shelah引理用VC维把它限制为$m$的多项式；有限标签的多分类中，Natarajan维起同样的作用。
+
+证明沿用上一章“删去末坐标、按前缀分组”的递推。把模式的末坐标删去，剩下的部分称为前缀；一个前缀可能由几个模式共享，它们只在末坐标上不同。计数分两份：每个前缀先计一次；一个前缀能接上的额外末标签，再由它能同时接上的标签对来计。对一对固定的末标签$\{a,b\}$，把既能接$a$又能接$b$的前缀收集起来。若这个前缀族还能Natarajan打散$d$个坐标，那么在末坐标上再指定标签对$\{a,b\}$，原模式族就打散了$d+1$个坐标，超过原来的维数。所以每个这样的前缀族的维数至少降低一阶，可以对坐标数归纳。与二分类的区别是：一个前缀现在可能接上多于两个末标签，需要按标签对分别计数，标签对的数目便进入上界。
+
+在六模式族上先算一遍。取末坐标为$x_2$，前缀就是$x_1$上的标签，即网格的行。图~\ref{fig:lt6-prefix-counting}列出每行能接上的末标签：“正常”行可接正常、广告，“广告”行可接广告、诈骗，“诈骗”行可接正常、诈骗。三个前缀各计一次，得3；每个前缀恰好能接一对标签，三对标签$\{\text{正常},\text{广告}\}$、$\{\text{广告},\text{诈骗}\}$、$\{\text{正常},\text{诈骗}\}$的前缀族各含一个前缀，再各计1。合起来$6=3+1+1+1$，恰好等于模式数。每个标签对前缀族只含一个前缀，Natarajan维为0，比$d_N(\mathcal V)=1$低一阶，与上一段的论证一致。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/06-foundations/02-learning-theory/tikz/lt6-prefix-counting/figure}
+  \caption{定理~\ref{thm:multiclass-growth-bound}证明中的前缀分组，在六模式族$\mathcal V$上复算。删去末坐标$x_2$后，前缀是$x_1$上的标签，即网格的行；每行能接上的末标签数$r(u)=2$，各自计入一个标签对前缀族$U_{a,b}$。模式数$6$等于前缀数$3$加上三个标签对前缀族的大小$1+1+1$。}
+  \label{fig:lt6-prefix-counting}
+\end{figure}
+
+一般情形按有限个标签对汇总这一递推，得到下面的上界。
+
+\begin{theorem}[有限标签的预测数目上界]
+\label{thm:multiclass-growth-bound}
+设$2\leq|Y|=K<\infty$，$d=d_N(\mathcal H)<\infty$。记$q=\binom K2=K(K-1)/2$为不同无序标签对的数目，则对每个整数$m\geq0$，
+\begin{equation}
+  \Pi_{\mathcal H}(m)\leq G_{d,K}(m)
+  :=\sum_{j=0}^{\min\{d,m\}}\binom mj q^j.
+  \label{eq:comb-multiclass-growth-bound}
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+将有限非空模式族$V\subseteq Y^m$视为坐标集$\{1,\ldots,m\}$上的函数类，并设其Natarajan维至多为$d$。删去末坐标得到前缀族$U\subseteq Y^{m-1}$。对$u\in U$，记它能够接上的末尾标签数为$r(u)\geq1$。按前缀分类，$|V|=\sum_{u\in U}r(u)$，而$|U|=\sum_{u\in U}1$，所以$|V|-|U|=\sum_u(r(u)-1)$。
+
+对每个无序标签对$\{a,b\}$，令$U_{a,b}$为既能接上$a$又能接上$b$的前缀族。一个前缀属于$U_{a,b}$，当且仅当$\{a,b\}$是它能接上的$r(u)$个标签中的一对，所以它恰属于$\binom{r(u)}2$个$U_{a,b}$，即$\sum_{\{a,b\}}|U_{a,b}|=\sum_u\binom{r(u)}2$。又因$r\geq1$时$r-1\leq r(r-1)/2=\binom r2$，对前缀求和可得
+\[
+  |V|\leq |U|+\sum_{\substack{\{a,b\}\subseteq Y\\a\neq b}}|U_{a,b}|.
+\]
+每个无序对在求和中只出现一次。
+
+接着限制两类前缀族的Natarajan维。$U$的Natarajan维至多为$d$：$U$在某些坐标上实现的任何选择，都由$V$中的某个模式在同样的坐标上实现。当$d\geq1$时，每个非空$U_{a,b}$的Natarajan维至多为$d-1$：否则它可以在某$d$个坐标上实现全部固定标签对的选择；每个对应前缀又能接上$a$或$b$，于是在末坐标上指定标签对$\{a,b\}$，$V$就在这$d$个坐标与末坐标上实现全部二元选择，违反维度上界。空$U_{a,b}$的计数贡献为零。
+
+记$M(m,d)$为Natarajan维至多$d$的非空模式族$V\subseteq Y^m$能够达到的最大大小，标签集$Y$保持固定。对$m,d\geq1$，上述分组给出
+\[
+  M(m,d)\leq M(m-1,d)+qM(m-1,d-1).
+\]
+零个坐标只有一个空模式，故$M(0,d)=1$。维度为零时也至多有一个模式：两个不同模式必在某坐标上取不同标签，从而Natarajan打散这个坐标。因此$M(m,0)=1$。对$m$归纳，将两个较小问题的上界代入，并使用二项式递推关系$\binom{m-1}j+\binom{m-1}{j-1}=\binom mj$，得到
+\[
+\begin{aligned}
+  M(m,d)
+  &\leq\sum_{j=0}^{d}\binom{m-1}{j}q^j
+       +q\sum_{j=0}^{d-1}\binom{m-1}{j}q^j\\
+  &=\sum_{j=0}^{d}\binom mj q^j,
+\end{aligned}
+\]
+其中超出坐标数的组合数约定为零。任意输入组上的限制类，其Natarajan维不超过$d_N(\mathcal H)$；重复输入不能作为两个可独立选择的坐标，只会减少模式数。因此对输入组取最大值，得到式~\eqref{eq:comb-multiclass-growth-bound}。
+\end{proof}
+
+回到六模式族，证明中的记号是$|\mathcal V|=6$、$|U|=3$，三个前缀都有$r(u)=2$，不等式成为$6\leq3+3$，在这个例子中取等号。若某个前缀能接三个标签，它只多出$r-1=2$个模式，却属于$\binom32=3$个标签对前缀族，不等式就会留下余量。
+
+再看一般的数值。$K=3,d=1,m=4$时，$q=3$，界为$1+4\times3=13$，远小于全部$3^4=81$种模式。二分类时$q=1$且$d_N=\operatorname{VC}(\mathcal H)$，求和式回到Sauer--Shelah引理中的$\sum_{j=0}^{\min\{d,m\}}\binom mj$。多类时多出的因子$q^j$计入了一个事实：在每个参与二元选择的坐标上，标签对可以是$q$种中的任意一种。
 
 这个界的作用在于它随$m$的增长速度。全部可能的预测有$K^m$种，随$m$指数增长；而由$\binom mj\leq m^j$，当$m\geq1$时
 \[
  G_{d,K}(m)\leq(d+1)q^dm^d,
 \]
-固定$d$和$K$后只按$m^d$的多项式增长。样本标签固定后，相同的预测向量给出相同的损失向量，所以这个计数也控制了经验风险分析中需要区分的情况数。上一章的证明正是靠“情况数只按多项式增长、而每种情况的偏差概率按指数衰减”取胜，这里可以沿用同一论证。
+固定$d$和$K$后只按$m^d$的多项式增长。样本标签固定后，相同的预测向量给出相同的损失向量，所以这个计数也控制了经验风险分析中需要区分的情况数。上一章的证明正是靠“情况数只按多项式增长、而每种情况的偏差概率按指数衰减”取胜，这里沿用同一论证，只把$\Pi_{\mathcal H}(2n)$的上界换成$G_{d,K}(2n)$。
 
-% 避免短定理在页末仅留下标题和半句条件。
-\begingroup
-\tcbset{lines before break=4}
 \begin{theorem}[有限标签的一致收敛保证]
 \label{thm:finite-label-uniform-convergence}
-设$(X,\mathcal X)$为可测空间，离散标签空间$Y$满足
-$2\leq|Y|=K<\infty$，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，
-$d=d_N(\mathcal H)<\infty$，并令
-\[
- G_{d,K}(m)=\sum_{j=0}^{\min\{d,m\}}\binom mj
- \left(\frac{K(K-1)}2\right)^j.
-\]
-假定零一损失类$\mathcal L_{\mathcal H}
-=\{(x,y)\mapsto\mathbb I\{h(x)\neq y\}:h\in\mathcal H\}$中的每个函数均可测，
-并存在可数子类$\mathcal L_0\subseteq\mathcal L_{\mathcal H}$，使每个
-$f\in\mathcal L_{\mathcal H}$都是$\mathcal L_0$中某个函数序列的逐点极限。
-设$\mathcal P$为$X\times Y$上的任意联合分布，$n\geq1$，
-$S=((x_i,y_i))_{i=1}^n\sim\mathcal P^n$，并记
-\[
- R_{\mathcal P}(h)=\mathbb P_{(x,y)\sim\mathcal P}\{h(x)\neq y\},\qquad
- \hat R_S(h)=\frac1n\sum_{i=1}^n\mathbb I\{h(x_i)\neq y_i\}.
-\]
-则对任意$\delta\in(0,1)$，以关于$S\sim\mathcal P^n$至少$1-\delta$的概率，
+设$(X,\mathcal X)$为可测空间，离散标签空间$Y$满足$2\leq|Y|=K<\infty$，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，$d=d_N(\mathcal H)<\infty$，$G_{d,K}$如式~\eqref{eq:comb-multiclass-growth-bound}。假定零一损失类$\mathcal L_{\mathcal H}=\{(x,y)\mapsto\mathbb I\{h(x)\neq y\}:h\in\mathcal H\}$中的每个函数均可测，并存在可数子类$\mathcal L_0\subseteq\mathcal L_{\mathcal H}$，使每个$f\in\mathcal L_{\mathcal H}$都是$\mathcal L_0$中某个函数序列的逐点极限。设$\mathcal P$为$X\times Y$上的任意联合分布，$n\geq1$，$S\sim\mathcal P^n$，风险按式~\eqref{eq:multiclass-risk}定义。则对任意$\delta\in(0,1)$，以关于$S\sim\mathcal P^n$至少$1-\delta$的概率，
 \begin{equation}
  \sup_{h\in\mathcal H}|R_{\mathcal P}(h)-\hat R_S(h)|
  \leq\sqrt{\frac8n\log\frac{4G_{d,K}(2n)}{\delta}}.
  \label{eq:finite-label-uniform-bound}
 \end{equation}
 \end{theorem}
-\endgroup
 
 \begin{proof}
-证明沿用上一章的三步，只在计数一步换用$G_{d,K}$。取$\eta>0$且$n\eta^2\geq2$。
+证明沿用定理~\ref{thm:vc-uniform-convergence}的三步，只在计数一步换用$G_{d,K}$。取$\eta>0$且$n\eta^2\geq2$。
 
-第一步是对称化。另取独立副样本$S'$，当$n\eta^2\geq2$时，“某个假设的总体风险与经验风险相差超过$\eta$”的概率，至多是“某个假设在$S$与$S'$上的经验风险相差超过$\eta/2$”的概率的两倍。这样，未知的总体风险就被换成了可以数的经验量。
+第一步是对称化。另取独立副样本$S'$。当$n\eta^2\geq2$时，Chebyshev不等式使副样本以至少$1/2$的条件概率把原样本选出的那个假设估计到$\eta/2$以内，所以“某个假设的总体风险与经验风险相差超过$\eta$”的概率，至多是“某个假设在$S$与$S'$上的经验风险相差超过$\eta/2$”的概率的两倍。未知的总体风险就被换成了可以数的经验量。
 
-第二步是计数。$S$与$S'$共有$2n$个输入，标签已经固定；在这些输入上预测相同的假设给出相同的损失向量，所以只需考虑至多$\Pi_{\mathcal H}(2n)\leq G_{d,K}(2n)$个损失向量。
+第二步是计数。$S$与$S'$共有$2n$个输入，标签已经固定；在这些输入上预测相同的假设给出相同的损失向量，所以只需考虑至多$\Pi_{\mathcal H}(2n)\leq G_{d,K}(2n)$个损失向量。这里用到了定理~\ref{thm:multiclass-growth-bound}。
 
-第三步是随机交换与并集界。对固定的损失向量，逐对独立地以各一半的概率交换$(z_i,z_i')$，两份经验风险之差变成$\frac1n\sum_i\sigma_ic_i$，其中$\sigma_i$为随机符号，$c_i\in\{-1,0,1\}$。由Hoeffding不等式，它的绝对值超过$\eta/2$的概率至多$2e^{-n\eta^2/8}$。对至多$G_{d,K}(2n)$个损失向量求并集界，再乘上第一步的因子2，得到
+第三步是随机交换与并集界。对固定的损失向量，逐对独立地以各一半的概率交换$(z_i,z_i')$；交换不改变两份样本的联合分布，而两份经验风险之差变成$\frac1n\sum_i\sigma_ic_i$，其中$\sigma_i$为随机符号，$c_i\in\{-1,0,1\}$。由Hoeffding不等式，它的绝对值超过$\eta/2$的概率至多$2e^{-n\eta^2/8}$。对至多$G_{d,K}(2n)$个损失向量求并集界，再乘上第一步的因子2，得到
 \[
  \mathbb P\!\left\{\sup_h|R_{\mathcal P}(h)-\hat R_S(h)|>\eta\right\}
  \leq4G_{d,K}(2n)e^{-n\eta^2/8}.
@@ -150,120 +240,335 @@ $S=((x_i,y_i))_{i=1}^n\sim\mathcal P^n$，并记
 令右侧等于$\delta$，解出$\eta=\sqrt{(8/n)\log(4G_{d,K}(2n)/\delta)}$。此时$n\eta^2=8\log(4G_{d,K}(2n)/\delta)\geq8\log4>2$，第一步的条件自动满足。若这个$\eta$超过1，结论因零一风险之差不超过1而平凡成立。
 \end{proof}
 
-这里$\mathcal P$可以是任意联合分布，不要求各类别等概率出现。固定$d,K,\delta$，式~\eqref{eq:finite-label-uniform-bound}根号内的$\log G_{d,K}(2n)$只按$d\log n$增长，除以$n$后趋于零；这个上界又不含$\mathcal P$，因此得到分布无关的一致收敛。类别数的影响也可以读出来：当$1\leq d\leq2n$时，$G_{d,K}(2n)\leq q^d(2en/d)^d$，取对数得$d\log q+d\log(2en/d)$，而$\log q\leq2\log K$，所以类别数$K$只以$d\log K$的量级进入根号。
+这里$\mathcal P$可以是任意联合分布，不要求各类别等概率出现。固定$d,K,\delta$，式~\eqref{eq:finite-label-uniform-bound}根号内的$\log G_{d,K}(2n)$只按$d\log n$增长，除以$n$后趋于零；上界又不含$\mathcal P$，因此得到分布无关的一致收敛。类别数的影响也可以读出来：当$1\leq d\leq2n$时，$G_{d,K}(2n)\leq q^d(2en/d)^d$，取对数得$d\log q+d\log(2en/d)$，而$\log q\leq2\log K$，所以类别数$K$只以$d\log K$的量级进入根号。这一上界用于证明一致收敛成立，并不声称常数或对数因子是最优的；可测性条件与固定的有限标签集也都是结论的一部分。
 
-\subsection{有限标签的可学习性}
+\subsection{有限标签的可学习性刻画}
+\label{sec:lt6-finite-label-characterization}
 
-有了所有假设风险的同时估计，就可以像上一章一样分析ERM的输出：从输出和参照假设的总体风险换到经验风险，各产生一次偏差。反方向上，Natarajan打散可以用来构造使任何算法都失败的分布。两者合起来，得到有限标签下的双向刻画。
+有了所有假设风险的同时估计，就可以像上一章一样分析ERM的输出：从输出和参照假设的总体风险换到经验风险，各产生一次偏差。反方向上，回到第~\ref{sec:no-free-lunch}节和上一章的未见点实验：在被Natarajan打散的每个点上，从该点自己的固定标签对中抛硬币选出目标标签。训练没有见到该点时，它仍面临二选一；各点的硬币相互独立，已见点的标签透露不出未见点的选择。标签对是否与其他点相同，并不影响这一困难。两者合起来，得到有限标签下的双向刻画。
 
 \begin{theorem}[有限标签的可学习性刻画]
 \label{thm:finite-label-learnability}
-设$(X,\mathcal X)$为可测空间，离散标签空间$Y$满足
-$2\leq|Y|=K<\infty$，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，
-并采用零一损失。假定损失类
-$\mathcal L_{\mathcal H}
-=\{(x,y)\mapsto\mathbb I\{h(x)\neq y\}:h\in\mathcal H\}$中的每个函数均可测，
-且存在可数子类$\mathcal L_0\subseteq\mathcal L_{\mathcal H}$，使每个
-$f\in\mathcal L_{\mathcal H}$都是$\mathcal L_0$中某个函数序列的逐点极限。
-学习算法均为可测映射，训练样本均为$S\sim\mathcal P^n$，成功概率同时计入样本抽取
-和算法的内部随机性。在这一分布无关设定中，以下命题等价：
+设$(X,\mathcal X)$为可测空间，离散标签空间$Y$满足$2\leq|Y|=K<\infty$，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，并采用零一损失。假定损失类$\mathcal L_{\mathcal H}$满足定理~\ref{thm:finite-label-uniform-convergence}中的可测性与可数逼近条件。学习算法均为可测映射，训练样本均为$S\sim\mathcal P^n$，成功概率同时计入样本抽取和算法的内部随机性。在这一分布无关设定中，以下命题等价：
 \begin{enumerate}
  \item $d_N(\mathcal H)<\infty$；
  \item 零一损失满足分布无关的一致收敛；
  \item $\mathcal H$不可知PAC可学习；
  \item $\mathcal H$可实现PAC可学习。
 \end{enumerate}
-
-设$d=d_N(\mathcal H)<\infty$，并令
-\[
- G_{d,K}(m)=\sum_{j=0}^{\min\{d,m\}}\binom mj
- \left(\frac{K(K-1)}2\right)^j.
-\]
-对任意$\varepsilon,\delta\in(0,1)$、任意$X\times Y$上的联合分布$\mathcal P$，
-若$n\geq1$且
+进一步，设$d=d_N(\mathcal H)<\infty$。对任意$\varepsilon,\delta\in(0,1)$、任意$X\times Y$上的联合分布$\mathcal P$，若$n\geq1$且
 \[
  n\geq\frac{32}{\varepsilon^2}\log\frac{4G_{d,K}(2n)}{\delta},
 \]
-则任意以概率1输出
-$A(S)\in\argmin_{h\in\mathcal H}\hat R_S(h)$的可测ERM，在
-$S\sim\mathcal P^n$及其内部随机性的联合概率下，以至少$1-\delta$的概率满足
+则任意以概率1输出$A(S)\in\argmin_{h\in\mathcal H}\hat R_S(h)$的可测ERM，在$S\sim\mathcal P^n$及其内部随机性的联合概率下，以至少$1-\delta$的概率满足
 \[
  R_{\mathcal P}(A(S))\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon.
 \]
 \end{theorem}
 
 \begin{proof}
-先证有限Natarajan维推出学习成功。题设的样本量条件正是使式~\eqref{eq:finite-label-uniform-bound}右端不超过$\varepsilon/2$的条件，所以以至少$1-\delta$的概率，所有假设的偏差同时不超过$\varepsilon/2$。在这个事件内，对任意参照假设$h$，依次用偏差界、ERM的最优性和偏差界：
+按$1\Rightarrow2\Rightarrow3\Rightarrow4\Rightarrow1$的顺序证明。
+
+$1\Rightarrow2$由定理~\ref{thm:finite-label-uniform-convergence}直接给出。$2\Rightarrow3$用ERM的两次比较：若以至少$1-\delta$的概率所有假设的偏差同时不超过$\varepsilon/2$，则在这个事件内，对任意参照假设$h$，依次用偏差界、ERM的最优性和偏差界，
 \begin{align*}
  R_{\mathcal P}(A(S))&\leq\hat R_S(A(S))+\varepsilon/2\\
  &\leq\hat R_S(h)+\varepsilon/2\\
- &\leq R_{\mathcal P}(h)+\varepsilon.
+ &\leq R_{\mathcal P}(h)+\varepsilon,
 \end{align*}
-对参照取下确界得不可知PAC。可实现分布属于这一允许族，因此也得到可实现PAC。
+对参照取下确界即为不可知PAC。题设的样本量条件正是使式~\eqref{eq:finite-label-uniform-bound}右端不超过$\varepsilon/2$的条件，所以同一推导也给出定理末尾的显式样本量。$3\Rightarrow4$成立，因为可实现分布属于不可知PAC允许的分布族，且其最优风险为零。
 
-再证反方向：若Natarajan维无穷，则可实现PAC也不成立。对任意样本量$n$，取被Natarajan打散的$2n$个输入及各自指定的标签对，令输入在这$2n$点上均匀分布，目标在每个点的标签对中独立地等概率选一个。由打散的定义，每个这样的目标都由某个假设实现，所以对应的分布是可实现的。$n$次抽样至多见到$n$个不同的点，至少一半的点未被见到；在未见点上，目标标签与样本独立且在两个标签间等概率，任何算法在那里预测正确的概率都至多$1/2$。因此，对随机目标取平均，任意算法的期望风险至少$\frac12\cdot\frac12=1/4$。
+$4\Rightarrow1$用逆否命题：若Natarajan维无穷，则可实现PAC不成立。对任意样本量$n$，取被Natarajan打散的$2n$个输入及各自指定的标签对，令输入在这$2n$点上均匀分布，目标在每个点的标签对中独立地等概率选一个。由打散的定义，每个这样的目标都由某个假设实现，所以对应的分布是可实现的。$n$次抽样至多见到$n$个不同的点，至少一半的点未被见到；在未见点上，目标标签在该点自己的标签对中等概率取值，又因各点独立选择而与样本独立，任何算法在那里预测正确的概率都至多$1/2$。对随机目标取平均，任意算法的期望风险至少$\frac12\cdot\frac12=1/4$。
 
-平均值至少$1/4$，说明至少有一个固定的目标使期望风险$\mathbb ER\geq1/4$。记$p=\mathbb P\{R>1/8\}$，由$R\leq1$得$\mathbb ER\leq\frac18(1-p)+p\leq\frac18+\frac78p$，于是$p\geq1/7$。取$\varepsilon=1/8$、$\delta=1/8$，任何样本量都达不到要求，这违反分布无关的可实现PAC。
+平均值至少$1/4$，说明至少有一个固定的目标使期望风险$\mathbb ER\geq1/4$。记$p=\mathbb P\{R>1/8\}$，由$R\leq1$得$\mathbb ER\leq\frac18(1-p)+p=\frac18+\frac78p$，于是$p\geq1/7$。取$\varepsilon=1/8$、$\delta=1/8$，任何样本量都达不到要求，这违反分布无关的可实现PAC。
 \end{proof}
 
 定理中的样本量条件两边都含$n$：左边按$n$线性增长，右边的$\log G_{d,K}(2n)$只按$d\log n$增长，所以足够大的$n$总能满足它，满足条件的最小$n$就是一个可用的样本量。这个样本量只是充分条件，并不声称达到两种PAC设定下的最优样本复杂度。
 
-必要性的证明只用到每个输入上指定的两个标签，并没有用到标签总数有限，所以对任意标签空间$Y$，PAC可学习都要求Natarajan维有限。标签有限只在另一个方向，即预测计数中起作用。
+逐项检查证明在哪里用到了标签有限，就能看清这个定理能推广到哪里。必要性$4\Rightarrow1$只用到每个输入上指定的两个标签，没有用到标签总数，所以对任意标签空间$Y$，可实现PAC可学习都要求Natarajan维有限。充分性$1\Rightarrow2$经过定理~\ref{thm:multiclass-growth-bound}的计数，其中标签对的数目$q=\binom K2$必须有限；标签无限时$q$为无穷，$G_{d,K}$失去意义。所以有限标签只在充分性一侧起作用。这并不意味着结论在无限标签下一定失败，只说明证明在那里断开；下一节先单独考察一致收敛在一般标签下由什么刻画，第~\ref{sec:lt6-dimension-relations}小节再构造一个Natarajan维有限却不可学习的例子，说明断开的不只是证明。
 
-\subsection{Natarajan维在无限标签空间下的局限}
-\label{sec:multiclass-erm-limitations}
+\section{一般标签空间中的一致收敛}
+\label{sec:general-multiclass-dimensions}
+\label{sec:multiclass-sample-complexity}
 
-标签无限时，标签对的个数$q=\binom K2$不再有限，上面的计数界失效。不过，证明方法失效不等于结论不成立。要说明在无限标签下Natarajan维有限不足以保证可学习，必须实际构造一个Natarajan维有限、却不可学习的假设空间。
+去掉标签有限的条件后，单个输入上就可能有无限多个预测标签，上一节直接计数预测向量的办法不再适用。但评价零一风险只需要知道预测是否与观测标签相同，并不需要区分所有错误标签。本节据此改为数“匹配与不匹配”的二元模式，用图维控制整个损失类的风险估计，回答第一个问题：同一份样本能否把所有假设的风险同时估计准确。随后检查这种针对整个假设空间的要求，是否也是学会某个任务的必要条件；一个具体例子说明答案是否定的，第二个问题“是否存在能输出低风险分类器的算法”需要另行回答。
 
-先看两个输入上的一个小例子。设限制在这两个输入上的假设类恰好给出以下六种预测：
+\subsection{有限标签计数失效的含义}
+\label{sec:lt6-counting-failure}
+
+标签无限时，上一节的计数界首先在单个输入上就失效了。设$Y$为无限集，$\mathcal H_{\mathrm{const}}=\{x\mapsto y:y\in Y\}$为全部常量分类器。任取一个输入，$\mathcal H_{\mathrm{const}}$在它上面就能实现无限多种预测，$\Pi(1)=\infty$。可是这个假设空间并不难学：在可实现分布下目标是某个常量$y^\star$，任意一条训练记录的标签都是$y^\star$，读出它就恢复了目标分类器，一条样本就能把风险降到零；不可知情形下，下文会看到它的零一损失也满足一致收敛。计数失效不等于学习失败：预测总数无限，既不说明不可学习，也不说明一致收敛失败。
+
+所以需要考察风险评价真正需要区分的行为，而不能只看标签或预测有多少种。零一损失只记录一件事：预测是否等于真实标签。在一条观测$(x,y)$上，$h(x)$取哪一个错误标签对损失没有影响，只有“$h(x)=y$”与“$h(x)\neq y$”之分。常量类在任何输入上都有无限多种预测，但给定参考标签$y$，它在该点的损失只有两种取值。这提示我们：在每个输入上固定一个参考标签，再看假设空间能实现哪些“匹配/不匹配”的组合。这样保留了风险关心的二元信息，丢掉了与零一损失无关的标签细节。
+
+\subsection{图打散与图维}
+\label{sec:comb-reference-labels}
+\label{sec:lt6-graph-dimension}
+
+把上面的想法写成条件：先为每个输入指定一个参考标签$f(x)$，再问假设空间能否任意指定在哪些输入上预测等于参考标签。
+
+先在标签网格上看两个输入的情形。参考标签$f=(f(x_1),f(x_2))$是网格中的一个格子。“两处都匹配”只能是这个格子本身；“只匹配$x_1$”是同一行的其余格子；“只匹配$x_2$”是同一列的其余格子；“两处都不匹配”是既不同行也不同列的四个格子。要求四种匹配模式都能实现，就是要求这四个区域各有一个实心点。图~\ref{fig:graph-shattering-concrete}左栏以$f=(\text{正常},\text{广告})$为参考：$h_2=(\text{正常},\text{广告})$两处都匹配，$h_1=(\text{正常},\text{正常})$只匹配$x_1$，$h_3=(\text{广告},\text{广告})$只匹配$x_2$，$h_5=(\text{诈骗},\text{诈骗})$两处都不匹配。四种匹配模式都有见证。
+
+这里不匹配时用的替代标签并不固定。$x_1$上的不匹配，$h_3$用的是广告，$h_5$用的是诈骗；$x_2$上的不匹配，$h_1$用的是正常，$h_5$用的是诈骗。如果按Natarajan打散的要求预先选定标签对，例如$x_1$取正常或广告、$x_2$取广告或正常，那么“两处都不匹配”必须恰好是矩形的第四个角$(\text{广告},\text{正常})$，而这个格子在$\mathcal V$中不可实现。图打散不提这一要求，只问匹配与否。
+
+\begin{definition}[图打散与图维]
+\label{def:graph-dimension}
+\label{def:graph-dimension-value}
+若有限互异输入集$C\subseteq X$存在$f:C\to Y$，使每个$B\subseteq C$都对应某个$h_B\in\mathcal H$，满足
 \[
- (a,u),\ (b,u),\ (b,v),\ (c,v),\ (c,w),\ (a,w),
+ h_B(x)=f(x)\ (x\in B),\qquad h_B(x)\neq f(x)\ (x\in C\setminus B),
 \]
-其中$a,b,c$互不相同，$u,v,w$互不相同。这六个向量有一个共同特点：对每个向量和每个坐标，类中都有另一个向量只在该坐标上与它不同，我们称后者为前者在该坐标上的邻居。例如，$(a,u)$在第一坐标上的邻居是$(b,u)$，在第二坐标上的邻居是$(a,w)$。这意味着，即使知道其中一个坐标的标签，另一个坐标仍有两个可能的标签：已知第二坐标为$u$时，第一坐标可以是$a$或$b$。
+则称$C$被$\mathcal H$\term{图打散}（graph shattering），称$f$为参考标签。能被图打散的有限输入集大小的上确界称为\term{图维}（graph dimension），记为$d_G(\mathcal H)$；没有非空被打散集合时取$0$。
+\end{definition}
 
-另一方面，这个类的Natarajan维只有1。要打散两个坐标，需要在第一坐标选两个标签、在第二坐标选两个标签，使四种组合都出现；也就是说，第一坐标的两个标签各自都要能与同样两个第二坐标标签搭配。但在这个类中，$a$只与$u,w$搭配，$b$只与$u,v$搭配，$c$只与$v,w$搭配，任意两个第一坐标标签只有一个共同的搭配对象，凑不出四种组合。可见，Natarajan维小并不排除每个坐标上都存在不确定性。这个有限类本身是可学习的；要构造不可学习的反例，还需要在任意多个坐标上具有同样结构的例子。
+定义中的量词是“存在一个参考$f$，使得对每个子集$B$都存在假设”。预测不等于参考标签时具体取哪个标签，可以随$B$不同而不同；没有预先固定唯一的替代标签。名称中的“图”指函数的图像，即由输入与参考标签组成的点对集合$\{(x,f(x)):x\in C\}$，与由节点和边构成的图无关。第~\ref{sec:lt6-multiclass-learnability}节会画预测之间的邻接关系，那里的“边”与这个名称没有关系。
 
-图~\ref{fig:learning-theory-ds-neighbors}把六个向量之间的邻居关系画成一个环。每个顶点连着一条只改变第一坐标的边和一条只改变第二坐标的边，所以两个坐标上的不确定性同时存在；而这种邻居关系并不要求某两对标签的四种组合全部出现。
+按定义，上面以$f=(\text{正常},\text{广告})$为参考的四个见证说明$\{x_1,x_2\}$被$\mathcal V$图打散。参考也可能选得不成功：图~\ref{fig:graph-shattering-concrete}右栏以$f=(\text{正常},\text{诈骗})$为参考，这个格子本身不可实现，“两处都匹配”无从实现。图打散只要求存在一个成功的参考，所以$d_G(\mathcal V)=2$。
 
 \begin{figure}[htbp]
   \centering
-  \includegraphics[width=93.405mm]{figures/06-foundations/02-learning-theory/tikz/learning-theory-ds-neighbors/figure.pdf}
-  \caption{六种预测的坐标邻接环。顶点为上文的六个向量，蓝色实线仅改变第一坐标，绿色虚线仅改变第二坐标；边没有方向。每个顶点在两个坐标上分别有邻居，却不存在固定两对标签的完整四种组合。因而这个两输入函数类的Natarajan维为1，后文分析的DS维为2；它仍是可学习的有限类，不能单独证明不可学习性。}
-  \label{fig:learning-theory-ds-neighbors}
+  \input{figures/06-foundations/02-learning-theory/tikz/lt6-graph-shattering-grid/figure}
+  \caption{图打散在标签网格上的检验。参考标签$f$是一个格子，网格据此分成四个区域：$f$本身（两处都匹配）、同行其余格（只匹配$x_1$）、同列其余格（只匹配$x_2$）、其余四格（两处都不匹配）。左：以$f=(\text{正常},\text{广告})$为参考，四个区域各有一个圈出的见证$h_2,h_1,h_3,h_5$，$\{x_1,x_2\}$被$\mathcal V$图打散；“两处都不匹配”区域还有另外两个实心点，任取其一都可作见证。右：以$f=(\text{正常},\text{诈骗})$为参考，$f$所在格不可实现，检验失败；定义只要求存在一个成功的参考。}
+  \label{fig:graph-shattering-concrete}
+  \label{fig:lt6-graph-shattering-grid}
 \end{figure}
 
-要由这种不确定性得到不可学习性，需要对任意多个坐标都有同类构造。下面的引理给出这样的构造；其中把$V_m$中的向量看作坐标集$\{1,\ldots,m\}$上的函数，这样才能谈论它的Natarajan维。
+\begin{example}[图维恰为2的有限函数类]
+\label{ex:comb-graph-shattering-concrete}
+令输入空间只有两封邮件$x_1,x_2$，假设空间的限制类为$\mathcal V$。上面已经用参考$f=(\text{正常},\text{广告})$图打散了$\{x_1,x_2\}$；输入空间只有两点，故$d_G(\mathcal V)=2$。与例~\ref{ex:comb-natarajan-concrete}对照，同一个$\mathcal V$的Natarajan维只有1。两个检验的差别在“两处都不匹配”这一格：图打散只要求它落在四个不同行不同列的格子中的任意一个，Natarajan打散则要求它恰好是矩形的第四个角。以$(\text{正常},\text{广告})$为参考时，$(\text{广告},\text{诈骗})$、$(\text{诈骗},\text{正常})$、$(\text{诈骗},\text{诈骗})$三个实心格都落在“两处都不匹配”区域，任取其一都满足图打散；而由$h_1,h_2,h_3$三个角确定的矩形第四角$(\text{广告},\text{正常})$，恰好是该区域中唯一不可实现的格子。
 
-\begin{lemma}[低Natarajan维的局部邻接构造]
-\label{lem:low-natarajan-pseudocubes}
-对每个整数$m\geq1$，把$Y_m^m$中的向量视为定义在坐标集
-$\{1,\ldots,m\}$上的分类函数。存在非空有限标签集$Y_m$及有限非空函数集合
-$V_m\subseteq Y_m^{\{1,\ldots,m\}}$，使
-\begin{enumerate}
- \item $d_N(V_m)=1$；
- \item 对任意$v\in V_m$和$i\in\{1,\ldots,m\}$，存在$u\in V_m$满足
- \[
- u_i\neq v_i,\qquad u_j=v_j\quad(j\neq i).
- \]
-\end{enumerate}
-\end{lemma}
+更一般地，若参考格$f$本身是$\mathcal V$中的实心格，“只匹配$x_1$”与“只匹配$x_2$”两个区域分别含有该行、该列中的另一个实心点；而六个实心点中，与$f$同行或同列的至多三个（含$f$本身），其余至少三个落在“两处都不匹配”区域。所以$\mathcal V$中的任何一个实心格都可以作为成功的参考。
+\end{example}
 
-这个引理由Brukhim等人的组合拓扑构造给出\scite{brukhim2022multiclass}，本章不展开证明。它同时具有两条性质：一方面，在指定的标签对之间无法自由选择（Natarajan维为1）；另一方面，每个向量在每个坐标上都有邻居。下面把各个$m$对应的构造拼成同一个假设空间，证明它不可学习。
+图维衡量的是假设空间能多自由地决定“在哪些输入上与参考标签一致”。比较两种打散：图打散只指定参考标签，不等于参考标签时取什么不受限制；Natarajan打散还指定了每个输入上的另一个标签，要求更强。若$C$以标签对$(f,g)$被Natarajan打散，则以$f$为参考时，取$h_B$在$B$上等于$f$、在其余点上等于$g\neq f$，正好满足图打散的要求。所以能被Natarajan打散的输入集一定能被图打散，即$d_N\leq d_G$；$\mathcal V$说明反之不然。
 
-\begin{theorem}[无限标签下有限Natarajan维并不充分]
-\label{thm:natarajan-infinite-counterexample}
-在输入与标签均取离散$\sigma$代数、训练样本独立同分布并采用零一损失的设定中，
-存在可数预测输入空间$X$、可数标签空间$Y$和非空假设空间
-$\mathcal H\subseteq Y^X$，使$d_N(\mathcal H)=1$，但不存在对所有
-$\mathcal H$可实现联合分布都具有分布无关可实现PAC保证的可测学习算法。
+\subsection{图维与一致收敛}
+\label{sec:lt6-graph-uniform-convergence}
+
+图打散用的是“等于或不等于参考标签”的二元模式，而这正是零一损失在点对$(x,f(x))$上的取值。于是可以把每个假设换成它的零一损失函数，组成
+\[
+ \mathcal L_{\mathcal H}=\{(x,y)\mapsto\mathbb I\{h(x)\neq y\}:h\in\mathcal H\}.
+\]
+这些函数以输入和标签组成的点对为自变量，取值0或1，因而可以对它们谈论VC维，并直接调用上一章关于二值函数类的结论。下面的定理说明，损失类的VC维恰好就是原假设空间的图维。
+
+\begin{theorem}[图维与一致收敛]
+\label{thm:graph-uniform-convergence}
+设$(X,\mathcal X)$为可测空间，$Y$为取离散$\sigma$代数的非空标签空间，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合。则$\operatorname{VC}(\mathcal L_{\mathcal H})=d_G(\mathcal H)$。进一步假定$\mathcal L_{\mathcal H}$中的函数均可测，且存在可数子类$\mathcal L_0\subseteq\mathcal L_{\mathcal H}$，使每个损失函数都是$\mathcal L_0$中某个函数序列的逐点极限。此时$d_G(\mathcal H)<\infty$当且仅当：对任意$\eta,\delta\in(0,1)$，存在不依赖联合分布$\mathcal P$的样本量$m(\eta,\delta)$，使任意$n\geq m(\eta,\delta)$及$S\sim\mathcal P^n$均满足
+\[
+ \mathbb P_{S\sim\mathcal P^n}\left\{
+ \sup_{h\in\mathcal H}|R_{\mathcal P}(h)-\hat R_S(h)|\leq\eta
+ \right\}\geq1-\delta,
+\]
+其中$R_{\mathcal P}$与$\hat R_S$为式~\eqref{eq:multiclass-risk}的零一风险。
 \end{theorem}
 
 \begin{proof}
-对各$m$取引理~\ref{lem:low-natarajan-pseudocubes}中的$V_m$，把输入组成互不相交的块$C_m=\{(m,1),\ldots,(m,m)\}$，令$X=\bigcup_{m\geq1}C_m$。局部标签加块编号写为$(m,y)$，因此$(2,a)$与$(3,a)$是不同类别。另设普通标签$\star$表示不在所选块，它不同于全部$(m,y)$，并非未知、缺失或任意值。标签总空间为
+先证$\operatorname{VC}(\mathcal L_{\mathcal H})\geq d_G(\mathcal H)$。关键在于：在点$(x,f(x))$上，损失$\mathbb I\{h(x)\neq f(x)\}$为0恰好表示$h$与参考标签一致。若以$f$图打散$C$，则对点集$\{(x,f(x)):x\in C\}$的每种0/1损失模式，取“损失为0的输入”作为$B$，图打散提供的$h_B$就实现了这一模式。所以$|C|$个点对被损失类打散。
+
+再证$d_G(\mathcal H)\geq\operatorname{VC}(\mathcal L_{\mathcal H})$。设损失类打散了点集$\{(x_i,y_i)\}_{i=1}^m$。其中不能有同一个$x$配两个不同的$y$：打散要求两处损失同时为0，即$h(x)$同时等于两个不同标签，这不可能。所以这些输入互异，可以令$f(x_i)=y_i$；损失模式中的0/1正好对应与参考标签一致/不一致，于是$\{x_1,\ldots,x_m\}$被图打散。
+
+两维相等后转向一致收敛。充分性：$d=d_G(\mathcal H)<\infty$时，损失类是VC维为$d$的二值函数类。定理~\ref{thm:vc-uniform-convergence}的证明只用到损失向量的个数，对二值函数类同样成立：在$2n$个点对上，损失类至多实现$\sum_{j\leq d}\binom{2n}j$种损失向量（Sauer--Shelah引理对任意二值函数类成立），代入对称化与随机交换，就得到不依赖$\mathcal P$的偏差界，它随$n\to\infty$趋于零。题设的可测性与可数逼近条件正是在损失类上执行这一论证所需的条件。
+
+必要性：设$d_G(\mathcal H)=\infty$。对任意$n$，取被损失类打散的$2n$个点对$z_1,\ldots,z_{2n}$，令$\mathcal P$为这些点对上的均匀分布。$n$次抽样至多见到$n$个不同的点对；由打散，存在$h\in\mathcal H$，其损失在见到的点对上为0、在其余至少$n$个点对上为1。于是$\hat R_S(h)=0$而$R_{\mathcal P}(h)\geq1/2$，以概率1有$\sup_h|R_{\mathcal P}(h)-\hat R_S(h)|\geq1/2$。任意样本量都如此，一致收敛不成立。
+\end{proof}
+
+于是，图维判定了整个假设空间的风险能否被同时估计准确。常量类$\mathcal H_{\mathrm{const}}$的图维为1：单点以任意$y$为参考时，常量$y$匹配、另一常量不匹配；两点上若参考的两个标签相同，“只匹配一处”无法由常量实现，若不同，“两处都匹配”无法实现。所以它满足一致收敛，与上一小节的观察一致。
+
+“所有风险同时估计准确”的事件也覆盖ERM选出的输出，因此可以从“经验风险最小”推出“总体风险接近$\mathcal H$中的最低水平”。这一推论与定理~\ref{thm:finite-label-learnability}中$2\Rightarrow3$的推导相同，只是不再要求标签有限。
+
+\begin{theorem}[一致收敛推出可学习性]
+\label{thm:multiclass-uniform-pac}
+设$(X,\mathcal X)$为可测空间，$Y$为离散标签空间，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，采用零一损失，且损失类满足定理~\ref{thm:graph-uniform-convergence}中的可测性与可数逼近条件。对任意$\varepsilon,\delta\in(0,1)$，若$n\geq1$足以使任意$X\times Y$上的联合分布$\mathcal P$及样本$S\sim\mathcal P^n$满足
+\[
+ \mathbb P\!\left\{
+ \sup_{h\in\mathcal H}|\hat R_S(h)-R_{\mathcal P}(h)|\leq\varepsilon/2
+ \right\}\geq1-\delta,
+\]
+则任意以概率1输出$A(S)\in\argmin_{h\in\mathcal H}\hat R_S(h)$的可测ERM学习算法$A$，均以至少$1-\delta$的概率满足
+\[
+ R_{\mathcal P}(A(S))\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon,
+\]
+概率同时来自$S\sim\mathcal P^n$和$A$的内部随机性。因此，若$d_G(\mathcal H)<\infty$，则$\mathcal H$不可知PAC可学习，也可实现PAC可学习，而且任意ERM都是成功的学习算法。
+\end{theorem}
+
+\begin{proof}
+在一致偏差不超过$\varepsilon/2$的事件内，对任意参照$h$有$R_{\mathcal P}(A(S))\leq\hat R_S(A(S))+\varepsilon/2\leq\hat R_S(h)+\varepsilon/2\leq R_{\mathcal P}(h)+\varepsilon$，对参照取下确界即为不可知保证。可实现来源使该下确界为0，因而也满足可实现保证。图维有限时，定理~\ref{thm:graph-uniform-convergence}提供所需的样本量。
+\end{proof}
+
+这里只确立了充分方向：图维有限推出一致收敛，再推出可学习，而且是“所有ERM都成功”这种强意义上的可学习。图维有限是否也是可学习的必要条件，定理没有回答。下一小节说明，在无限标签下答案是否定的。
+
+\subsection{可学习却不满足一致收敛的例子}
+\label{sec:multiclass-erm-limitations}
+\label{sec:lt6-learnable-without-uc}
+
+一致收敛要求整个假设空间的风险都能被估计准确，而学习算法可能只需辨认出正确的目标。下面构造一个例子，其中标签本身就透露了目标是哪个假设：整个假设空间不满足一致收敛，却存在成功的学习算法。
+
+取$X=\mathbb N$，把每个有限的自然数子集当作一个类别，再加一个与它们都不同的特殊标签$\star$，表示“输入不在目标集合中”。对每个有限集$A$定义
+\begin{equation}
+ h_A(x)=\begin{cases}A,&x\in A,\\\star,&x\notin A,\end{cases}
+ \qquad\mathcal H_C=\{h_A:A\subseteq\mathbb N\text{有限}\}.
+ \label{eq:cantor-class}
+\end{equation}
+在这个假设空间中，目标规则在$A$内输出标签$A$本身，在$A$外输出$\star$；一个非$\star$的标签（例如$\{2,5\}$）因而直接写出了目标集合的全部成员。所以在可实现分布下，只要训练中出现一个落在$A$内的输入，就直接读出了整条目标规则；若样本中的标签始终是$\star$，就输出处处为$\star$的默认规则$h_{\varnothing}$。这里的标签是为说明问题而特意构造的，它携带了整条判定规则，与通常意义上表示语义类别的标签不同。
+
+这个学习器为什么总能成功，可以按目标集合的概率分两种情形看。设输入落在$A$内的概率为$p$。默认规则$h_\varnothing$恰好在$A$上出错，风险为$p$；$n$个输入都没落在$A$内、因而一直看不到$A$的概率为$(1-p)^n$。若$p\leq\varepsilon$，即使一直错过$A$，输出的默认规则风险也不超过$\varepsilon$，已经足够好。若$p>\varepsilon$，默认规则不够好，但一直错过$A$的概率至多$(1-\varepsilon)^n$，随$n$指数下降。图~\ref{fig:lt6-set-label-two-cases}取$\varepsilon=0.1$、$n=30$画出“风险超过$\varepsilon$”的概率：它在$p\leq\varepsilon$时为零，在$p>\varepsilon$时等于$(1-p)^n$，最大值$0.9^{30}\approx0.042$出现在$p$刚超过$\varepsilon$处。两种情形都不需要估计其他候选规则的风险。
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=100mm]{figures/06-foundations/02-learning-theory/matplotlib/lt6-set-label-two-cases/figure.pdf}
+  \caption{读标签规则在集合标签类上的两种情形（$\varepsilon=0.1$，$n=30$）。横轴为输入落在目标集合$A$中的概率$p$。绿色区域$p\leq\varepsilon$中，即使一直看不到$A$，输出的默认规则风险$p$也不超过$\varepsilon$，失败概率为零；$p>\varepsilon$时，失败需要$n$个输入都避开$A$，概率$(1-p)^n$（实线）不超过$(1-\varepsilon)^n\approx0.042$，低于红色虚线$\delta=0.05$。灰色虚线是对所有$p$画出的“未见到$A$”的概率。}
+  \label{fig:lt6-set-label-two-cases}
+\end{figure}
+
+\begin{theorem}[可学习性不推出一致收敛]
+\label{thm:multiclass-erm-separation}
+令$X=\mathbb N$，标签空间$Y$由特殊标签$\star$与$\mathbb N$的所有有限子集组成，二者均取离散$\sigma$代数，$\mathcal H_C$如式~\eqref{eq:cantor-class}，采用独立同分布抽样与零一损失。
+\begin{enumerate}
+ \item 学习算法$A^{\mathrm{read}}$在样本出现非$\star$标签时，按样本顺序取第一个这样的标签$A$并输出$h_A$，在所有标签均为$\star$时输出$h_{\varnothing}$。它使$\mathcal H_C$可实现PAC可学习，样本量$n\geq\log(1/\delta)/\varepsilon$即可。
+ \item 另有一个确定性恰当ERM：对大小为$n$且标签全为$\star$的样本，令$A_S=\{1,\ldots,2n\}\setminus\{x_1,\ldots,x_n\}$并输出$h_{A_S}$；对其他样本，在$h_{\varnothing}$及样本中出现的有限集合标签对应的假设之间，按预先固定的顺序选择零一经验风险最小者。它没有分布无关的PAC保证。
+ \item $d_N(\mathcal H_C)=1$，$d_G(\mathcal H_C)=\infty$，因而$\mathcal H_C$不满足零一损失的一致收敛。
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}
+先证$A^{\mathrm{read}}$成功。设目标为$h_A$，以$p=\mathcal P_X(A)$记输入落在$A$中的概率。样本中只要有一个输入落在$A$里，它的标签就是$A$本身，算法恢复出目标，风险为0；否则算法输出$h_{\varnothing}$，它恰好在$A$上出错，风险为$p$。所以风险超过$\varepsilon$只可能发生在$p>\varepsilon$且$n$个输入都没落在$A$中时：$p\leq\varepsilon$时失败概率为零，$p>\varepsilon$时失败概率为$(1-p)^n\leq(1-\varepsilon)^n\leq e^{-n\varepsilon}$。令它不超过$\delta$，样本量$n\geq\log(1/\delta)/\varepsilon$就够了，与分布无关。这一保证只用到读标签规则本身，没有估计其他候选的风险；下面算出的无限图维说明，成功选解确实不需要估准所有候选的风险。
+
+再算两个维度。任意有限输入集$C$都能以全$\star$为参考标签被图打散：要恰在$B\subseteq C$上输出$\star$，取$A=C\setminus B$，则$h_A$在$A$上输出$A\neq\star$，在$B$上输出$\star$。所以图维无限，由定理~\ref{thm:graph-uniform-convergence}，一致收敛不成立。另一方面，若两点被Natarajan打散，每个点的标签对至少含一个非$\star$标签；考虑第一点取其非$\star$标签$A_1$的那些组合：输出$A_1$的假设只有$h_{A_1}$一个，它在第二点上的预测是固定的，无法让第二点在两个标签之间切换，矛盾。单点可以被打散（例如$h_{\varnothing}$与$h_{\{x\}}$），所以$d_N(\mathcal H_C)=1$。
+
+第二个规则确实是有限样本上的ERM。若集合标签$A$未在样本出现，$h_A$在样本中任何标签非$\star$的观测上都不会判对，而在标签为$\star$的观测上，它至多与$h_{\varnothing}$一样好。因此经验最小值可在$h_{\varnothing}$与样本出现的有限个集合标签对应假设中取得；预先为全部有限集合排一个顺序，即可固定平局选择。在全$\star$样本上，样本中的输入都不在$A_S$中，$h_{A_S}$在样本上全部判对，经验风险为零，它也是经验风险最小者。
+
+最后说明第二个规则失败。取目标$h_{\varnothing}$、输入在$\{1,\ldots,2n\}$上均匀分布，样本必然全为$\star$；$A_S$至少含$2n-n=n$个点，$h_{A_S}$在这些点上都输出非$\star$标签而判错，风险至少$1/2$。任意$n$都有这样的分布，这个ERM不能分布无关地PAC学习。
+\end{proof}
+
+图~\ref{fig:lt6-set-label-erm}用$n=4$、输入在$\{1,\ldots,8\}$上均匀分布的设置画出两个规则。上栏的样本含点5，它的标签$\{2,5\}$就是目标集合，读标签的规则直接恢复目标。下栏的目标是$h_\varnothing$，样本$\{1,4,6,7\}$的标签全为$\star$；读标签的规则输出$h_\varnothing$，风险为零；第二个规则输出$h_{A_S}$，$A_S=\{2,3,5,8\}$恰是未被抽到的点，它在样本上全对，在总体上错了一半。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/06-foundations/02-learning-theory/tikz/lt6-set-label-erm/figure}
+  \caption{集合标签类$\mathcal H_C$上的两个规则（教学示例：$n=4$，输入在$\{1,\ldots,8\}$上均匀分布）。蓝色圆为样本中的输入。上：目标$h_A$，$A=\{2,5\}$，样本含点5，读出它的标签即恢复目标。下：目标$h_\varnothing$，样本标签全为$\star$；读标签的规则风险为0，而把未见点全部标成$A_S$的ERM在样本上同样全对，总体风险为$1/2$。}
+  \label{fig:lt6-set-label-erm}
+\end{figure}
+
+两个规则在可实现样本上的经验风险都是零，区别只在于是否利用了标签中的信息。这个例子把三种说法分开了：“存在成功的学习器”（$A^{\mathrm{read}}$），“某个ERM成功”（$A^{\mathrm{read}}$在可实现样本上也是ERM），以及“所有ERM都可靠”（第二个规则说明它不成立）。二分类中三者都等价于VC维有限；在一般标签下，只有最后一个由图维刻画，“存在成功的学习器”不能用“所有ERM都成功”来代替\scite{daniely2015multiclass}。因此，刻画可学习性的组合量应当关注学习问题本身在未见点上的困难，而不是整个假设空间的风险能否同时估准。
+
+\section{多分类的可学习性}
+\label{sec:lt6-multiclass-learnability}
+\label{sec:ds-dimension}
+
+前节已经把“能否估准所有风险”与“是否存在成功学习器”分开：集合标签的例子说明，图维无限时仍可能可学习。Natarajan维有限是可学习的必要条件（定理~\ref{thm:finite-label-learnability}的必要性对任意标签成立），但还不知道它在无限标签下是否充分。本节转向后一个问题的直接障碍：即使把其他输入的标签都告诉学习器，当前输入的标签是否仍无法确定？如果这种歧义能在很大的有限输入集上同时存在，有限样本就会留下许多无法判断的位置。DS维用逐坐标的邻接关系描述这种结构。本节先在六模式网格上看清这种歧义，给出伪立方体与DS维的定义；再比较三种维度，并构造Natarajan维有限却DS维无限的假设空间；然后完整证明DS维无限时不可学习；最后明确引用文献中DS维有限时的学习器构造，合成多分类学习基本定理。全节不把样本压缩作为前提。
+
+\subsection{坐标邻接、伪立方体与DS维}
+\label{sec:comb-coordinate-replacements}
+\label{sec:lt6-pseudocube}
+
+回到第~\ref{sec:no-free-lunch}节的论证：学习之所以失败，是因为未见输入上的标签与已见的标签无关，学习器只能猜。在六模式族$\mathcal V$上也能看到类似的歧义。继续查看标签网格：每个实心格在同行和同列都有另一个实心格。例如$(\text{正常},\text{正常})$可以只改第一坐标变成$(\text{诈骗},\text{正常})$，也可以只改第二坐标变成$(\text{正常},\text{广告})$；其余五个模式也分别满足这两个要求。因此，即使另一封邮件的标签已经知道，当前邮件仍有不止一个答案。我们把只在一个坐标上不同的两个模式称为在该坐标上互为邻居。这种邻居只要求每次保持其余坐标不变，不要求所有邻居使用同一组预先固定的替代标签：$(\text{正常},\text{正常})$在第一坐标上的邻居换成诈骗，$(\text{广告},\text{广告})$在第一坐标上的邻居$(\text{正常},\text{广告})$换成的却是正常。图~\ref{fig:ds-six-cycle}画出全部邻居关系：每个模式恰有一个只改$x_1$的邻居和一个只改$x_2$的邻居，六个模式连成一个环。
+
+\begin{figure}[htbp]
+  \centering
+  \input{figures/06-foundations/02-learning-theory/tikz/lt6-pseudocube-neighbors/figure}
+  \caption{六模式族$\mathcal V$的逐坐标邻居，左右两图描述同一组关系。左：标签网格中同列两点只差$x_1$（蓝实线），同行两点只差$x_2$（绿虚线）；每个实心点各有一条蓝线和一条绿线。右：同一关系画成环，两种边交替出现。每个模式在两个坐标上都有邻居，所以$\mathcal V$是二维伪立方体，$d_{DS}(\mathcal V)=2$；网格中却没有完整的四角矩形，$d_N(\mathcal V)=1$。}
+  \label{fig:ds-six-cycle}
+  \label{fig:learning-theory-ds-neighbors}
+  \label{fig:lt6-pseudocube-neighbors}
+\end{figure}
+
+这种邻居结构给出一个错误下界。设目标从$h_1,\ldots,h_6$中等概率选取，学习器只看到$x_1$及其标签，要猜$x_2$。若$x_1$上的标签是“广告”，与之相符的只有$h_3=(\text{广告},\text{广告})$和$h_4=(\text{广告},\text{诈骗})$，它们是一对在$x_2$上的邻居。两者原本各有$1/6$的概率，条件于“$x_1$为广告”后各为$1/2$；所以无论学习器怎样猜（允许随机），在$x_2$上猜错的概率都至少$1/2$。这里的等可能来自对目标的均匀选择：只知道“存在两个答案”并不够，若目标偏向其中一个，学习器就可以多猜它。邻居条件对每个模式、每个坐标都成立，所以无论目标是哪一个、未见的是哪一个坐标，这个估计都适用。把这种结构抽出来，就是下面的定义。
+
+\begin{definition}[伪立方体]
+\label{def:pseudocube}
+有限非空集合$V\subseteq Y^m$称为$m$维\term{伪立方体}（pseudo-cube），如果对每个$v\in V$和每个$i\in\{1,\ldots,m\}$，都存在$u\in V$满足$u_i\neq v_i$且$u_j=v_j$对所有$j\neq i$成立。
+\end{definition}
+
+\begin{definition}[DS维]
+\label{def:ds-dimension}
+若$m$个互异输入组成的有序点集$C$满足$\mathcal H|_C$包含一个$m$维伪立方体，称$C$被\term{DS打散}（DS shattering）。可被DS打散的有限输入集大小的上确界称为\term{DS维}（Daniely--Shalev-Shwartz dimension），记为$d_{DS}(\mathcal H)$；空集给出大小$0$，若任意大的有限集都能被DS打散，维数取$+\infty$。
+\end{definition}
+
+这里采用有限伪立方体的表述\scite{brukhim2022multiclass}；名称取自最早提出这一维度的Daniely与Shalev-Shwartz。定义中的三个条件各有用处。“每个模式”是因为下界论证中目标可能是$V$中任何一个模式；“每个坐标”是因为未见的输入可能是任何一个；只要某个模式在某个坐标上没有邻居，目标恰好是它时，其余坐标的标签就唯一决定了这个坐标，错误概率$1/2$的估计便不成立。反过来，若只有部分模式或坐标有邻居，也只是这一下界计算不能原样使用，并不直接说明假设空间可学习。“有限”是因为下界论证要在$V$上取均匀分布，无限集合上做不到，所以这个条件不能随意去掉。白话地说，DS维是“即使告诉学习器其余全部输入的标签，每个输入上仍保留歧义”的最大输入规模。
+
+名称来自二分类。二分类时，坐标$i$上的邻居只能把该坐标翻转为另一个标签，所以伪立方体对每个坐标的翻转封闭；从任一模式出发，逐个翻转坐标就能到达全部$2^m$个二元模式，伪立方体只能是整个$\{0,1\}^m$，也就是$m$维立方体的全部顶点，DS维回到VC维。多分类允许不同的邻接使用不同的标签：$\mathcal V$中$x_1$坐标上的三条邻接分别在“正常、诈骗”“正常、广告”“广告、诈骗”之间切换，没有一对固定的标签贯穿全部邻接。这正是它与Natarajan打散的区别：Natarajan打散要求每个坐标的两个候选标签预先固定，伪立方体只要求邻居存在。
+
+\subsection{三种维度的关系与分离}
+\label{sec:lt6-dimension-relations}
+
+至此三种打散都已在同一张标签网格上检验过。它们的差别在量词：Natarajan打散为每个输入指定一对标签，要求它们的全部组合出现；图打散为每个输入指定一个参考标签，要求“是否等于参考”的全部组合出现；DS打散只要求一个有限模式集合中的每个模式在每个坐标上都有邻居。表~\ref{tab:comb-multiclass-dimensions}列出三者的条件及在$\mathcal V$上的结果，图~\ref{fig:learning-multiclass-dimensions}把三项检验并排画在同一个$\mathcal V$上。
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{p{0.15\linewidth}p{0.58\linewidth}p{0.12\linewidth}}
+    \toprule
+    维度 & 在$m$个输入上的要求 & $\mathcal V$上\\
+    \midrule
+    Natarajan维 & 每点固定两个不同标签，全部$2^m$种逐点二选一组合均可实现 & $1$\\
+    DS维 & 限制类包含有限非空模式族，族中每个模式在任一坐标上都有只改该坐标的邻居 & $2$\\
+    图维 & 每点固定一个参考标签，对任意点集，存在恰在该点集上匹配、在其补集上不匹配的假设 & $2$\\
+    \bottomrule
+  \end{tabular}
+  \caption{多分类组合维度的不同量词及其在六模式族$\mathcal V$上的取值。按要求的强弱从上到下排列；图维中的“图”指函数图像，不是输入之间的关系图。}
+  \label{tab:comb-multiclass-dimensions}
+\end{table}
+
+\begin{figure*}[htbp]
+  \centering
+  \input{figures/06-foundations/02-learning-theory/tikz/lt6-three-shattering-quantifiers/figure}
+  \caption{同一个六模式族$\mathcal V$上的三项检验（行为$x_1$，列为$x_2$，“正、广、诈”依次表示正常、广告、诈骗）。Natarajan打散要求两行两列的四角都可实现，$\mathcal V$中任意两行只共享一列，检验失败。图打散要求存在一个参考格，使它本身、同行其余格、同列其余格和其余四格各有一个可实现模式，以$(\text{正常},\text{广告})$为参考即成功。DS打散要求每个模式在本行、本列都有邻居，成功。}
+  \label{fig:learning-multiclass-dimensions}
+  \label{fig:lt6-three-shattering-quantifiers}
+\end{figure*}
+
+\begin{theorem}[多分类维度的比较]
+\label{thm:multiclass-dimension-comparison}
+对任意非空标签空间与非空函数类，有
+\[
+  d_N(\mathcal H)\leq d_{DS}(\mathcal H)\leq d_G(\mathcal H).
+\]
+二标签时三者均等于VC维。若$|Y|=K<\infty$，则$d_N(\mathcal H)<\infty$也蕴含$d_G(\mathcal H)<\infty$。
+\end{theorem}
+
+\begin{proof}
+若$m$个输入被Natarajan打散，每个坐标的两个候选标签固定，全部$2^m$种选择组成一个有限非空模式族。任意模式都能只翻转任一坐标上的选择并仍留在族中，所以它是$m$维伪立方体，证明$d_N\leq d_{DS}$。
+
+若限制类包含$m$维伪立方体$V$，固定$v\in V$作为参考。任取希望偏离参考的坐标集$I\subseteq\{1,\ldots,m\}$，从$v$出发逐个沿$I$中的坐标移动到邻居，每个坐标只移动一次。每一步仅改变当前坐标，而且移动后的模式仍在$V$中，所以下一步仍有邻居可用；之前改变的坐标保持不变，$I$之外的坐标始终与$v$相同。因此最终模式恰在$I$上不等于$v$，在其补集上等于$v$。令$I$遍历所有子集，就以$f=v$图打散了这$m$个输入，故$d_{DS}\leq d_G$。
+
+二标签时，偏离参考的标签唯一。图打散因此要求全部二元模式；伪立方体从任意模式逐坐标翻转也能到达全部二元模式。Natarajan打散中的两标签正是整个标签集，所以三种维度都等于VC维。
+
+若$K=1$，函数类在任何输入上只有一种标记，三种维度均为零。若$2\leq K<\infty$且$d_N=d<\infty$，图打散$m$个输入至少需要$2^m$个不同模式。由定理~\ref{thm:multiclass-growth-bound}，必有$2^m\leq G_{d,K}(m)$。当$d=0$时，右侧为$1$，所以只能有$m=0$。当$d\geq1$且$m\geq2(d+1)$时，大小为$d+1$的子集只是全部$2^m$个子集中的一类，再利用组合数的连乘公式，可得
+\[
+ 2^m\geq\binom m{d+1}\geq\frac{(m/2)^{d+1}}{(d+1)!},
+ \qquad
+ G_{d,K}(m)\leq C m^d,
+\]
+其中$C=\sum_{j=0}^d q^j/j!$只依赖$d,K$。与$2^m\leq G_{d,K}(m)$合并并约去$m^d$，得到$m\leq2^{d+1}(d+1)!C$。较小的$m<2(d+1)$也已有有限上界，故图维有限。
+\end{proof}
+
+证明中第二步在$\mathcal V$上可以逐格核对：以$v=(\text{正常},\text{广告})$为参考，只偏离$x_1$时沿列走到$(\text{广告},\text{广告})$，只偏离$x_2$时沿行走到$(\text{正常},\text{正常})$，两处都偏离时先沿列到$(\text{广告},\text{广告})$、再沿行到$(\text{广告},\text{诈骗})$。若改为先沿行到$(\text{正常},\text{正常})$、再沿列，得到的是$(\text{诈骗},\text{正常})$。两条路径终点不同，都落在“两处都不匹配”区域；图~\ref{fig:graph-shattering-concrete}左栏选用的$(\text{诈骗},\text{诈骗})$是该区域中的第三个实心格。图打散只要求这一区域有见证，不在意由哪条路径得到。
+
+定理给出的是维度之间的定性比较。二分类时三者相等；有限标签时三者的有限性等价，但数值和样本量公式不能直接互换。最后一段只给出“有限推出有限”的结论；Daniely等人给出了更精确的数量关系，图维至多是Natarajan维乘以$\log K$的常数倍\scite{daniely2015multiclass}。这一关系依赖有限的$K$，不能推广到无限标签。
+
+两个不等号都可能严格成立，而且差距可以是无穷。第一个例子已经有了：$\mathcal V$的三个维数依次为$1,2,2$。第二个例子是集合标签类$\mathcal H_C$，它有$d_{DS}(\mathcal H_C)=1$而$d_G(\mathcal H_C)=\infty$。上界的理由是：在两个点上，含非$\star$标签$A$的模式只能来自$h_A$，它在另一坐标上的邻居必须与它共享这个标签，因而只能来自同一个$h_A$，也就是它自己，矛盾；所以伪立方体中的模式只能全为$\star$，而全$\star$模式只有一个，构不成伪立方体。单个输入$x$上，$h_\varnothing$与$h_{\{x\}}$给出两个互为邻居的模式，所以DS维恰为1。
+
+第三个分离是Natarajan维有限而DS维无限。$\mathcal V$已经在两个输入上展示了这种结构的雏形：Natarajan维只有1，每个坐标上却都有歧义。要让DS维无限，需要在任意多个坐标上都有同样的结构，这需要一个非平凡的组合构造。下面的引理把向量看作坐标集上的函数，这样才能谈论它的Natarajan维。
+
+\begin{lemma}[低Natarajan维的局部邻接构造]
+\label{lem:low-natarajan-pseudocubes}
+对每个整数$m\geq1$，把$Y_m^m$中的向量视为定义在坐标集$\{1,\ldots,m\}$上的分类函数。存在非空有限标签集$Y_m$及有限非空函数集合$V_m\subseteq Y_m^{\{1,\ldots,m\}}$，使
+\begin{enumerate}
+ \item $d_N(V_m)=1$；
+ \item $V_m$是$m$维伪立方体：对任意$v\in V_m$和$i\in\{1,\ldots,m\}$，存在$u\in V_m$满足$u_i\neq v_i$且$u_j=v_j$（$j\neq i$）。
+\end{enumerate}
+\end{lemma}
+
+这个引理由Brukhim等人借助组合拓扑的构造给出\scite{brukhim2022multiclass}，本章不展开它的证明；$m=2$时，$\mathcal V$本身就满足两条性质。本章能够展开的是下一步：把各个$m$的构造拼成同一个假设空间，并计算它的两个维数。
+
+\begin{theorem}[无限标签下有限Natarajan维并不充分]
+\label{thm:natarajan-infinite-counterexample}
+在输入与标签均取离散$\sigma$代数、训练样本独立同分布并采用零一损失的设定中，存在可数输入空间$X$、可数标签空间$Y$和非空假设空间$\mathcal H\subseteq Y^X$，使$d_N(\mathcal H)=1$而$d_{DS}(\mathcal H)=\infty$。因此（由下一小节的定理~\ref{thm:infinite-ds-lower-bound}），不存在对所有$\mathcal H$可实现联合分布都具有分布无关可实现PAC保证的可测学习算法，即使允许内部随机性与非恰当输出。
+\end{theorem}
+
+\begin{proof}
+对各$m$取引理~\ref{lem:low-natarajan-pseudocubes}中的$V_m$，把输入组成互不相交的块$C_m=\{(m,1),\ldots,(m,m)\}$，令$X=\bigcup_{m\geq1}C_m$。局部标签加块编号写为$(m,y)$，因此$(2,a)$与$(3,a)$是不同类别。另设普通标签$\star$表示“不在所选块”，它不同于全部$(m,y)$，并非未知、缺失或任意值。标签总空间为
 \[
  Y=\{\star\}\cup\bigcup_{m\geq1}(\{m\}\times Y_m).
 \]
-每个$v\in V_m$扩展为整个预测输入空间上的假设
+每个$v\in V_m$扩展为整个输入空间上的假设
 \[
  h_{m,v}(r,i)=
  \begin{cases}
@@ -271,458 +576,246 @@ $\mathcal H$可实现联合分布都具有分布无关可实现PAC保证的可�
  \star,&r\neq m.
  \end{cases}
 \]
-例如$h_{2,v}$只在$C_2$使用局部答案，其他块均答$\star$。以全部$h_{m,v}$组成$\mathcal H$，各维困难块便属于同一个固定空间。
+例如$h_{2,v}$只在$C_2$使用局部答案，其他块均答$\star$。以全部$h_{m,v}$组成$\mathcal H$，各个规模的困难块便属于同一个固定的假设空间。
 
-先算Natarajan维。设两点被Natarajan打散。每个点的标签对由两个不同标签组成，所以至少含一个非$\star$标签。若两点在不同块，要让两点同时取各自的非$\star$标签，就需要一个假设在两个块上都输出非$\star$标签，而每个$h_{m,v}$只在自己的块上这样做，矛盾。若两点在同一块$C_m$，且某点的标签对含$\star$，考虑该点取$\star$、另一点取其非$\star$标签的组合：在该点输出$\star$的假设来自其他块，在整个$C_m$上都输出$\star$，实现不了这个组合；若两个标签对都不含$\star$，则需要$V_m$在两个坐标上被Natarajan打散，与$d_N(V_m)=1$矛盾。单点可以被打散：同一点上可取局部标签或$\star$。所以$d_N(\mathcal H)=1$。
+先算DS维。在块$C_m$上，$\{h_{m,v}:v\in V_m\}$的限制类就是$V_m$把每个标签$y$改写为$(m,y)$后的结果，改写是一一的，不改变邻居关系，所以它是$m$维伪立方体，$C_m$被DS打散。$m$任意，故$d_{DS}(\mathcal H)=\infty$。
 
-下面说明$\mathcal H$不可学习。对给定的$n$取$m=2n$，令输入在$C_m$上均匀分布，目标从有限集$V_m$中均匀抽取，标签由$h_{m,v}$给出，因此分布可实现。考虑一个未被抽到的坐标$i$。学习器在该坐标上的预测只依赖抽到的位置、这些位置上的标签和内部随机性；即使再把$i$以外全部坐标的真实标签告诉它，坐标$i$上的标签仍不确定。原因是，与其余坐标的标签都吻合的向量，两两在坐标$i$上取不同的标签，否则它们就是同一个向量；邻居条件保证这样的向量至少有两个；目标在$V_m$上均匀，条件在这些向量上仍然均匀。所以坐标$i$上的标签在至少两个不同值上等概率分布，学习器在那里的错误概率至少为$1/2$。
+再算Natarajan维。设两点被Natarajan打散。每个点的标签对由两个不同标签组成，所以至少含一个非$\star$标签。若两点在不同块，要让两点同时取各自的非$\star$标签，就需要一个假设在两个块上都输出非$\star$标签，而每个$h_{m,v}$只在自己的块上这样做，矛盾。若两点在同一块$C_m$，且某点的标签对含$\star$，考虑该点取$\star$、另一点取其非$\star$标签的组合：在该点输出$\star$的假设来自其他块，在整个$C_m$上都输出$\star$，实现不了这个组合。若两个标签对都不含$\star$，则需要$V_m$在两个坐标上被Natarajan打散，与$d_N(V_m)=1$矛盾。单点可以被打散：同一点上可取局部标签或$\star$。所以$d_N(\mathcal H)=1$。
 
-$n$次抽样至少遗漏$2n$个点中的一半，所以对目标、样本和算法的内部随机性取平均后，风险至少为$1/4$。接下来的论证与定理~\ref{thm:finite-label-learnability}的必要性部分相同：必有某个固定目标$v$的期望风险至少$1/4$，从而风险超过$1/8$的概率至少为$1/7$。每个样本量都存在这样的可实现分布，所以不存在统一的PAC样本量。
+DS维无限，下一小节的定理~\ref{thm:infinite-ds-lower-bound}即给出不可学习的结论。
 \end{proof}
 
-这个例子说明，困难并不来自标签无限本身，而是Natarajan维有限不足以排除所有导致学习失败的结构。下一节把“同时估计准确所有假设的风险”与“存在成功的学习算法”分开，分别寻找刻画它们的维度。
+回到同一张网格收束三者的区别。六模式族$\mathcal V$没有完整的二乘二矩形，却以$(\text{正常},\text{广告})$为参考具备全部四种匹配模式，每个模式在本行、本列又都有邻居，因此三种维数分别为$1,2,2$。再结合两个无限标签反例，可以看出两侧各有一个缺口。固定标签对可能漏掉由变化的替代标签维持的局部歧义：$\mathcal V$中各条邻接切换的标签各不相同，块构造又把这种结构推广到任意多个坐标，每个块上每个坐标都有歧义，Natarajan维却始终为1。整类风险估计则可能提出超过成功选解所需的要求：集合标签类的图维无限，读标签的学习器却能成功。DS维针对的是前一种未见坐标上的歧义，不是把另外两个维数的数值折中。下面两小节说明它恰好刻画可学习性。
 
-\section{图维、DS维与一般标签空间}
-\label{sec:general-multiclass-dimensions}
-\label{sec:multiclass-sample-complexity}
-在有限标签下，Natarajan维通过预测计数同时保证一致收敛和可学习性。去掉标签有限的条件后，第~\ref{sec:multiclass-erm-limitations}节给出了Natarajan维有限却不可学习的例子，这一联系不复存在。因此需要分别回答两个问题：同一份样本能否把所有假设的风险同时估计准确？是否存在某个算法能输出低风险的分类器？前者是对整个假设空间的要求，后者只涉及学习算法的输出。
+\subsection{无限DS维为什么不可学习}
+\label{sec:lt6-infinite-ds}
 
-对第一个问题，零一风险只关心预测是否等于真实标签，所以可以把每个假设换成取值0或1的损失函数，再对损失函数类使用上一章的VC维理论。对第二个问题，学习算法可以利用标签携带的更多信息，不必把所有风险都估计准确；需要刻画的是学习算法无法消除的不确定性，前面六种预测的例子已经给出了它的形状。
-
-\subsection{一致收敛}
-
-零一损失把所有错误一律计为1，风险只取决于预测是否等于真实标签。因此，要刻画的是一种二元能力：先为每个输入指定一个参考标签$f(x)$，再问假设空间能否任意指定在哪些输入上预测等于参考标签。\term{图打散}（graph shattering）要求：对这组输入的每个子集，都有某个假设恰好在这个子集的输入上预测为参考标签，在其余输入上预测为其他标签；预测不等于参考标签时具体取哪个标签，可以随子集不同而不同。名称中的“图”指函数的图像，即由输入与参考标签组成的点对集合，与由节点和边构成的图无关。写成条件，就是存在$f:C\to Y$，使对每个$B\subseteq C$都有$h\in\mathcal H$满足：$x\in B$时$h(x)=f(x)$，$x\in C\setminus B$时$h(x)\neq f(x)$。
-
-例如对两封邮件取参考标签$f(x_1)=\text{正常}$、$f(x_2)=\text{广告}$。要图打散$\{x_1,x_2\}$，需要四个假设分别做到：两封都判对参考标签；只有$x_1$判为“正常”；只有$x_2$判为“广告”；两封都不等于参考标签。后三种情形中“不等于”可以取任何其他类别，例如第四种可以是（广告，诈骗），也可以是（诈骗，正常）。
-
-能被图打散的有限输入集大小的上确界称为\term{图维}（graph dimension），记为$d_G(\mathcal H)$。它衡量的是假设空间能多自由地决定“在哪些输入上与参考标签一致”。比较两种打散：图打散只指定参考标签，不等于参考标签时取什么标签不受限制；Natarajan打散还指定了每个输入上的另一个标签，要求更严。所以能被Natarajan打散的输入集一定能被图打散，反之不然，即$d_N\leq d_G$。下面利用“等于或不等于参考标签”的二元模式，把图维转化为零一损失类的VC维。
-
-为此把每个假设换成它的零一损失函数，组成$\mathcal L_{\mathcal H}=\{(x,y)\mapsto\mathbb I\{h(x)\neq y\}:h\in\mathcal H\}$。这些函数以输入和标签组成的点对为自变量，取值0或1，因而可以对它们谈论VC维。
-
-\begin{theorem}[图维与一致收敛]
-\label{thm:graph-uniform-convergence}
-设$(X,\mathcal X)$为可测空间，$Y$为取离散$\sigma$代数的非空标签空间，
-$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，并令
-\[
- \mathcal L_{\mathcal H}
- =\{(x,y)\mapsto\mathbb I\{h(x)\neq y\}:h\in\mathcal H\}.
-\]
-则$\operatorname{VC}(\mathcal L_{\mathcal H})=d_G(\mathcal H)$。
-进一步假定$\mathcal L_{\mathcal H}$中的函数均可测，且存在可数子类
-$\mathcal L_0\subseteq\mathcal L_{\mathcal H}$，使每个损失函数都是
-$\mathcal L_0$中某个函数序列的逐点极限。此时$d_G(\mathcal H)<\infty$当且仅当：
-对任意$\eta,\delta\in(0,1)$，存在不依赖联合分布$\mathcal P$的样本量
-$m(\eta,\delta)$，使任意$n\geq m(\eta,\delta)$及
-$S=((x_i,y_i))_{i=1}^n\sim\mathcal P^n$均满足
-\[
- \mathbb P_{S\sim\mathcal P^n}\left\{
- \sup_{h\in\mathcal H}|R_{\mathcal P}(h)-\hat R_S(h)|\leq\eta
- \right\}\geq1-\delta,
-\]
-其中$R_{\mathcal P}$与$\hat R_S$均为零一损失风险。
-\end{theorem}
-
-\begin{proof}
-关键在于：在点$(x,f(x))$上，损失$\mathbb I\{h(x)\neq f(x)\}$为0恰好表示$h$与参考标签一致。若以$f$图打散$C$，则对点集$\{(x,f(x)):x\in C\}$的每种0/1损失模式，取“损失为0的输入”作为$B$，图打散提供的假设就实现了这一模式，故$\operatorname{VC}(\mathcal L_{\mathcal H})\geq d_G(\mathcal H)$。
-
-反过来，设损失类打散了点集$\{(x_i,y_i)\}$。其中不能有同一个$x$配两个不同的$y$：两处损失同时为0要求$h(x)$同时等于两个不同标签。所以这些输入互异，可以令$f(x_i)=y_i$，损失模式的0/1正好对应与参考标签一致/不一致，于是这些输入被图打散，$d_G(\mathcal H)\geq\operatorname{VC}(\mathcal L_{\mathcal H})$。两维相等后，上一章关于二值函数类的“VC维有限当且仅当一致收敛”即给出所述等价。
-\end{proof}
-
-于是，图维判定了整个假设空间的风险能否被同时估计准确。与上一章一样，“所有风险同时估计准确”的事件也覆盖ERM选出的输出，因此可以从“经验风险最小”推出“总体风险接近$\mathcal H$中的最低水平”。下面写出这一推论。
-
-\begin{theorem}[一致收敛推出可学习性]
-\label{thm:multiclass-uniform-pac}
-设$(X,\mathcal X)$为可测空间，$Y$为离散标签空间，
-$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合。采用零一损失，记
-\[
- R_{\mathcal P}(h)=\mathbb P_{(x,y)\sim\mathcal P}\{h(x)\neq y\},\qquad
- \hat R_S(h)=\frac1n\sum_{i=1}^n\mathbb I\{h(x_i)\neq y_i\}.
-\]
-假定损失类中的函数均可测，并存在可数损失子类，使每个损失函数都是该子类中某个
-函数序列的逐点极限；$\mathcal H$满足分布无关的一致收敛。对任意
-$\varepsilon,\delta\in(0,1)$，若$n\geq1$足以使任意$X\times Y$上的联合分布
-$\mathcal P$及样本$S\sim\mathcal P^n$满足
-\[
- \mathbb P\!\left\{
- \sup_{h\in\mathcal H}|\hat R_S(h)-R_{\mathcal P}(h)|\leq\varepsilon/2
- \right\}\geq1-\delta,
-\]
-则任意以概率1输出
-$A(S)\in\argmin_{h\in\mathcal H}\hat R_S(h)$的可测ERM学习算法$A$，均以至少
-$1-\delta$的概率满足
-\[
- R_{\mathcal P}(A(S))\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon.
-\]
-概率同时来自$S\sim\mathcal P^n$和$A$的内部随机性。
-因此，$\mathcal H$不可知PAC可学习，也可实现PAC可学习。
-\end{theorem}
-
-\begin{proof}
-将每个$h$换成二值损失函数，经验最优比较保持不变。第~\ref{chap:binary-learnability}章的两次$\varepsilon/2$偏差分别用于输出和任意参照，得到总体超额至多$\varepsilon$；再对参照取下确界即为不可知PAC。可实现来源使该下确界为0，因而也满足可实现保证。
-\end{proof}
-
-所以，图维有限经由一致收敛和ERM推出可学习。但在无限标签下，图维有限并不是可学习的必要条件。
-
-原因在于，一致收敛要求整个假设空间的风险都能被估计准确，而学习算法可能只需辨认出正确的目标。下面构造一个例子，其中标签本身就透露了目标是哪个假设：整个假设空间不满足一致收敛，却存在成功的学习算法。
-
-取$X=\mathbb N$，把每个有限的自然数子集当作一个类别，再加一个与它们都不同的特殊标签$\star$，表示“输入不在目标集合中”。对每个有限集$A$定义
-\begin{equation}
- h_A(x)=\begin{cases}A,&x\in A,\\\star,&x\notin A,\end{cases}
- \qquad\mathcal H_C=\{h_A:A\subset\mathbb N\text{有限}\}.
- \label{eq:cantor-class}
-\end{equation}
-在这个假设空间中，一个非$\star$的标签（例如$\{2,5\}$）直接写出了目标集合的全部成员。所以在可实现分布下，只要样本中出现一条非$\star$标签的观测，就能完全确定目标；若样本中的标签全是$\star$，就输出$h_{\varnothing}$。这里的标签是为说明问题而特意构造的，它携带了整条判定规则，与通常意义上表示语义类别的标签不同。
-
-\begin{theorem}[可学习性不推出一致收敛]
-\label{thm:multiclass-erm-separation}
-令$X=\mathbb N$，标签空间$Y$由特殊标签$\star$与$\mathbb N$的所有有限子集组成，
-二者均取离散$\sigma$代数。对每个有限$A\subseteq\mathbb N$定义
-\[
- h_A(x)=\begin{cases}A,&x\in A,\\\star,&x\notin A,\end{cases}
- \qquad
- \mathcal H_C=\{h_A:A\subseteq\mathbb N\text{有限}\}.
-\]
-采用独立同分布抽样与零一损失。学习算法在样本出现非$\star$标签时，按样本顺序取第一个这样的标签$A$并输出$h_A$，
-在所有标签均为$\star$时输出$h_{\varnothing}$；该算法使$\mathcal H_C$可实现PAC可学习。
-另一方面，对大小为$n$且标签全为$\star$的样本，令
-$A_S=\{1,\ldots,2n\}\setminus\{x_1,\ldots,x_n\}$并输出$h_{A_S}$；对其他样本，
-在$h_{\varnothing}$及样本中出现的有限集合标签对应的假设之间，按预先固定的顺序选择
-零一经验风险最小者。这个规则是确定性恰当ERM，却没有分布无关PAC保证。
-此外，$\mathcal H_C$满足$d_N(\mathcal H_C)=1$及$d_G(\mathcal H_C)=\infty$，
-因而不满足零一损失的一致收敛。
-\end{theorem}
-
-\begin{proof}
-先证第一个算法成功。设目标为$h_A$，以$p=\mathcal P_X(A)$记输入落在$A$中的概率。样本中只要有一个输入落在$A$里，它的标签就是$A$本身，算法恢复出目标，风险为0；否则算法输出$h_{\varnothing}$，它恰好在$A$上出错，风险为$p$。所以风险超过$\varepsilon$只可能发生在$p>\varepsilon$且$n$个输入都没落在$A$中时，其概率为$(1-p)^n\leq(1-\varepsilon)^n\leq e^{-n\varepsilon}$。令它不超过$\delta$，样本量$n\geq\log(1/\delta)/\varepsilon$就够了，与分布无关。
-
-再算两个维度。任意有限输入集$C$都能以全$\star$为参考标签被图打散：要恰在$B\subseteq C$上输出$\star$，取$A=C\setminus B$，则$h_A$在$A$上输出$A\neq\star$，在$B$上输出$\star$。所以图维无限，由定理~\ref{thm:graph-uniform-convergence}，一致收敛不成立。另一方面，若两点被Natarajan打散，考虑第一点取其标签对中非$\star$标签$A_1$的那些组合：输出$A_1$的假设只有$h_{A_1}$一个，它在第二点上的预测是固定的，无法让第二点在两个标签之间切换，矛盾。单点可以被打散（例如$h_{\varnothing}$与$h_{\{x\}}$），所以$d_N(\mathcal H_C)=1$。
-
-这个空间仍有有限样本ERM。若集合标签$A$未在样本出现，$h_A$相比$h_{\varnothing}$不会修正任何错误，却可能把正确的$\star$改错。因此经验最小值可在$h_{\varnothing}$与样本出现的有限个集合标签对应假设中取得。预先为全部有限集合排一个顺序，即可固定平局选择。
-
-让另一ERM在$n$条全$\star$记录时故意选$h_{A_S}$，其中$A_S=\{1,\ldots,2n\}\setminus\{x_1,\ldots,x_n\}$；其他可实现样本从集合标签恢复目标，不可实现样本则按固定顺序取前述有限候选的经验最小者。样本中的输入都不在$A_S$中，所以$h_{A_S}$在全$\star$样本上全部判对，它确实是经验风险最小者。但取目标$h_{\varnothing}$、输入在$\{1,\ldots,2n\}$上均匀分布时，样本必然全为$\star$；$A_S$至少含$2n-n=n$个点，$h_{A_S}$在这些点上都输出非$\star$标签而判错，风险至少$1/2$。任意$n$都有这样的分布，这个ERM不能分布无关PAC学习。
-\end{proof}
-
-定理中的两个算法在可实现样本上的经验风险都是零，区别只在于是否利用了标签中的信息。这说明“存在成功的学习算法”不能用“所有ERM都成功”来代替\scite{daniely2015multiclass}。两个例子划出了不同的边界：第~\ref{sec:multiclass-erm-limitations}节的假设空间不存在任何PAC学习算法；这里的假设空间存在PAC学习算法，只是某些在经验风险最小者之间作选择的方式会失败。
-
-\subsection{DS维与可学习性}
-\label{sec:ds-dimension}
-
-前面两个例子从两侧限定了可学习性的刻画。集合标签的例子说明，图维无限时仍可能可学习，所以刻画可学习性的条件不必要求所有风险都被估计准确；上一节的反例说明，Natarajan维有限时仍可能不可学习，所以这个条件必须比Natarajan维有限更强。那个反例的不可学习性证明只用到一条性质：每个向量在每个坐标上都有邻居，因而即使知道其他输入上的标签，未被观测的输入上仍至少有两个标签可选。我们就把这条性质本身作为要计量的结构。
-
-具体地，在限制类中寻找一个有限非空的预测向量集合$V\subseteq Y^m$，要求其中每个向量$v$在每个坐标$i$上都有集合内的另一个向量$u$，后者只在第$i$个坐标上与$v$不同，其余坐标都与$v$相同。满足这一条件的$V$称为$m$维\term{伪立方体}（pseudo-cube）。名称来自二分类：全部$2^m$种二元预测构成一个$m$维伪立方体，它们正是$m$维立方体的顶点，相邻顶点只差一个坐标。多分类中的伪立方体不要求每个坐标只用两个固定的标签，例如六种预测的环就是一个二维伪立方体，而它的第一坐标用到了三个标签。定义要求集合有限，因为下界论证要在$V$上取均匀分布；这对无限集合做不到，因此有限性条件不能随意去掉。
-
-伪立方体之所以要求“每个向量、每个坐标”都有邻居，是因为下界论证中目标可能是$V$中任何一个顶点，未见的坐标也可能是任何一个坐标；只要某个顶点在某个坐标上没有邻居，目标恰好是它时，其余坐标的标签就唯一决定了这个坐标，错误概率$1/2$的估计便不成立。反过来，若只有部分向量或坐标有邻居，也只是这一下界计算不能原样使用，并不直接说明剩余假设空间可学习。
-
-能找到伪立方体的最大输入个数，就是\term{DS维}（Daniely--Shalev-Shwartz dimension）：对按固定顺序排列的$m$个不同输入$C$，检查限制类$\mathcal H|_C$中是否含有$m$维伪立方体；对满足条件的$m$取上确界，记为$d_{DS}(\mathcal H)$。白话地说，DS维是“即使告诉学习器其余全部输入的标签，每个输入上仍保留不确定性”的最大输入规模。图~\ref{fig:learning-theory-ds-neighbors}中的两输入类因此DS维为2，而Natarajan维只有1。
-
-至此三种打散的要求可以对照：Natarajan打散为每个输入指定一对标签，要求它们的全部组合出现；图打散为每个输入指定一个参考标签，要求“是否等于参考标签”的全部组合出现；DS维只要求有限集合中的每个向量在每个坐标上都有邻居。
-
-% 保留学习论接口锚点；通用维度比较在本卷理论基础章。
-\phantomsection\label{thm:learning-multiclass-dimension-comparison}
-三个维度之间满足$d_N(\mathcal H)\leq d_{DS}(\mathcal H)\leq d_G(\mathcal H)$；二分类时三者都等于VC维。第一个不等号可以直接看出：Natarajan打散时，指定标签对之间的全部$2^m$种组合本身构成一个伪立方体，翻转任一坐标的选择就得到邻居。第二个不等号需要较细的组合论证，见Brukhim等人的工作\scite{brukhim2022multiclass}。有限标签下，Natarajan维有限还推出图维有限：图打散$m$个输入需要$2^m$个不同的预测模式，而预测个数至多为多项式$G_{d,K}(m)$，所以$m$不能任意大。更精确的关系是$d_G=O(d_N\log K)$，这一关系不能推广到无限标签。
-
-两个不等号都可能严格成立，而且差距可以是无穷。第~\ref{sec:multiclass-erm-limitations}节的不可学习反例有$d_N=1$、$d_{DS}=\infty$。集合标签类$\mathcal H_C$则有$d_{DS}=1$：含非$\star$标签$A$的向量只能来自$h_A$，在其他坐标上的邻居必须与它共享这个标签，因而就是它自己，所以伪立方体中的向量只能全为$\star$，而全$\star$向量只有一个，构不成伪立方体；单个输入则可以被打散。但它的图维无限。因此三个维度不能相互替代。
-
-若DS维无限，即对任意大的规模都能找到含伪立方体的输入集，上一节的反例论证就可以对每个样本量重复一遍。
+DS维无限时，对任意样本量都能找到足够大的伪立方体。下面把第~\ref{sec:lt6-pseudocube}小节在$\mathcal V$上看到的“看到一个坐标、另一个仍有两种答案”推广到$2n$个坐标，得到对任意学习算法都成立的失败下界。与定理~\ref{thm:finite-label-learnability}的必要性相比，这里没有固定的标签对，每个未见坐标上的两个候选标签随其余坐标的取值而变；论证改为对其余坐标取条件。
 
 \begin{theorem}[无限DS维的不可学习性]
 \label{thm:infinite-ds-lower-bound}
-设$(X,\mathcal X)$为可测空间，$Y$为离散标签空间，
-$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，并采用零一损失。
-若$d_{DS}(\mathcal H)=\infty$，则对每个整数$n\geq1$及任意可测学习算法$A$
-（允许内部随机性，并允许输出$\mathcal H$之外的可测分类器），都存在
-$X\times Y$上的联合分布$\mathcal P$及$h^\star\in\mathcal H$，使
-$R_{\mathcal P}(h^\star)=0$，且对$S\sim\mathcal P^n$有
+设$(X,\mathcal X)$为可测空间，$Y$为离散标签空间，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，并采用零一损失。若$d_{DS}(\mathcal H)=\infty$，则对每个整数$n\geq1$及任意可测学习算法$A$（允许内部随机性，并允许输出$\mathcal H$之外的可测分类器），都存在$X\times Y$上的联合分布$\mathcal P$及$h^\star\in\mathcal H$，使$R_{\mathcal P}(h^\star)=0$，且对$S\sim\mathcal P^n$有
 \[
  \mathbb P_{S,A}\{R_{\mathcal P}(A(S))>1/8\}\geq1/7.
 \]
-这里$R_{\mathcal P}$为零一损失期望风险，概率同时来自样本抽取和$A$的内部随机性。
+这里概率同时来自样本抽取和$A$的内部随机性。因此$\mathcal H$不是可实现PAC可学习的，更不是不可知PAC可学习的。
 \end{theorem}
 
 \begin{proof}
-论证与定理~\ref{thm:natarajan-infinite-counterexample}的后半部分相同。取$2n$个输入，使限制类在其上含有有限伪立方体$V$；令输入在这$2n$点上均匀分布，从$V$中均匀选目标向量，并为每个向量固定一个在这些点上实现它的假设，所以分布可实现。对每个未见坐标，即使告诉学习器其余全部坐标的标签，邻居条件仍留下至少两个等可能的答案，错误概率至少$1/2$。至少一半的点未见，平均风险便至少$1/4$。取达到这一平均下界的固定目标，再用$\mathbb E R\leq1/8+(7/8)\mathbb P\{R>1/8\}$，得到所列失败概率。
+固定$n$，令$m=2n$。由DS维无限，存在互异输入$c_1,\ldots,c_m$，使限制类含有$m$维伪立方体$V$。对每个$v\in V$固定一个在这些点上实现它的假设$h_v\in\mathcal H$，令$\mathcal P_v$为：输入在$\{c_1,\ldots,c_m\}$上均匀分布，标签取$v$的对应坐标。每个$\mathcal P_v$都由$h_v$以零风险实现。
+
+现在让目标$v$在有限集$V$上均匀抽取，再抽样本$S$和学习器的内部随机性。学习器输出的分类器在$c_i$上的预测记为$\hat y_i$，风险为$R=\frac1m\sum_{i=1}^m\mathbb I\{\hat y_i\neq v_i\}$。固定一个坐标$i$，考虑事件“$c_i$未出现在样本中”。在这个事件上，$\hat y_i$只依赖样本中的输入位置、这些位置上的标签和内部随机性。即使再把$i$以外全部坐标的真实标签$v_{-i}$告诉学习器，$v_i$仍不确定：与$v_{-i}$吻合的模式两两在坐标$i$上取不同标签（否则它们是同一个模式），邻居条件保证这样的模式至少有两个。在$c_i$未出现的事件上，样本中的标签都是$v_{-i}$的坐标，样本输入的位置与目标无关；所以条件于$v_{-i}$和样本，目标只能是这些相容模式之一。目标原本在有限集$V$上均匀选取，相容模式各自的先验概率相同，条件化后仍等可能，于是$v_i$在至少两个不同标签上均匀分布。等可能性来自这一均匀选择；只知道存在两个相容答案，并不能直接得到概率下界。学习器的预测$\hat y_i$与$v_i$在此条件下独立，它至多猜中其中一个，于是条件错误概率至少$1/2$。对条件取平均，
+\[
+ \mathbb P\{\hat y_i\neq v_i\}\geq\frac12\,\mathbb P\{c_i\text{未出现在样本中}\}.
+\]
+
+把这些估计对$i$求和。样本至多含$n$个不同的点，所以未出现的坐标个数至少为$m-n=n$，即$\sum_i\mathbb I\{c_i\text{未出现}\}\geq n$对每份样本都成立。于是
+\[
+ \mathbb E[R]=\frac1m\sum_{i=1}^m\mathbb P\{\hat y_i\neq v_i\}
+ \geq\frac1{2m}\,\mathbb E\Bigl[\sum_i\mathbb I\{c_i\text{未出现}\}\Bigr]
+ \geq\frac{n}{2\cdot2n}=\frac14.
+\]
+这个期望是对随机目标、样本和内部随机性的联合平均，所以必有某个固定的$v\in V$使$\mathbb E_{S,A}[R\mid v]\geq1/4$；取$h^\star=h_v$、$\mathcal P=\mathcal P_v$。记$p=\mathbb P_{S,A}\{R>1/8\}$，由$R\leq1$得$1/4\leq\mathbb E R\leq\frac18+\frac78p$，所以$p\geq1/7$。
+
+论证只用到了学习器输出在$c_1,\ldots,c_m$上的预测，没有要求输出属于$\mathcal H$；内部随机性已计入概率。取$\varepsilon=\delta=1/8$，任何样本量都存在使它失败的可实现分布，可实现PAC不成立。可实现分布属于不可知设定允许的分布族，所以不可知PAC也不成立。
 \end{proof}
 
-反方向，即由DS维有限推出可学习，不能借助一致收敛，因为集合标签的例子表明一致收敛可能不成立；必须直接构造学习算法。上一章的样本压缩提供了一条不依赖一致收敛的路线：只要输出总能由少量保留的样本重构，未被保留的样本就可以像独立检验样本那样控制风险。Brukhim等人正是构造了这样的压缩，做法分两步：先由少量样本重构一个“标签列表”，为每个输入给出少数几个候选标签；再在列表中选出单一标签。两步合起来构成一个样本压缩方案\scite{brukhim2022multiclass}。下面先说明借用的构造，再推导它的风险保证。
+以$\mathcal V$复算最小的情形可以看清各个数。取$n=1$、$m=2$，输入在$x_1,x_2$上均匀，目标在六个模式上均匀。唯一一条样本以概率$1/2$落在$x_1$上，此时学习器知道$x_1$的标签，$x_2$上仍有两个等可能的答案，猜错概率$1/2$，风险贡献$\frac12\cdot\frac12$；落在$x_2$上的情形对称。所以$\mathbb E[R]\geq\frac12\cdot\frac12=\frac14$，与定理中的一般估计相同。$\mathcal V$只有两个坐标，增大样本就能消除歧义；DS维无限的意义在于，对每个样本量都有一个足够大的伪立方体，使一半坐标始终未见。
 
-列表预测（list prediction）不直接给出一个类别，而是在每个输入$x$上返回一个有限的候选标签集合$\mu(x)\subseteq Y$，把无限多个可能的标签缩小到少数几个，例如只保留$\{\text{正常},\text{广告}\}$两个候选标签。说列表预测覆盖样本，是指每个样本的真实标签都在该样本输入对应的列表中；这时还没有给出单一的分类结果。第二步再在列表范围内重构一个与全部样本一致的单标签分类器。
+定理~\ref{thm:natarajan-infinite-counterexample}中的块构造由此不可学习：它的Natarajan维为1，满足一切依赖固定标签对的必要条件，可是每个块都是伪立方体。这说明无限标签下，Natarajan维有限确实不足以保证可学习，断开的不只是计数证明。
 
-\begin{lemma}[有限DS维的压缩构造]
-\label{lem:finite-ds-compression}
-设$X,Y$为非空集合，$\mathcal H\subseteq Y^X$非空，且
-$d=d_{DS}(\mathcal H)<\infty$。存在通用常数$C>0$，使得对每个整数$n\geq1$，
-以及每份大小$q\leq n$、可由某个$h\in\mathcal H$正确分类的带标签样本
-$S=((x_i,y_i))_{i=1}^q$，均存在如下压缩表示：从$S$中选取一个允许重复、保留次序的
-带标签序列，长度至多
-\[
- r_n=\min\!\left\{n,\left\lceil
- C(d+1)^{3/2}\log^2\!\bigl(2n(d+1)\bigr)\right\rceil\right\},
-\]
-并记录原样本大小$q$。对每个$q\leq n$，存在不依赖具体样本的固定重构映射，仅根据
-$q$和该压缩序列输出分类器$\rho_q:X\to Y$，且
-$\rho_q(x_i)=y_i$对$i=1,\ldots,q$均成立。重构分类器不要求属于$\mathcal H$。
-\end{lemma}
+\subsection{有限DS维的学习保证}
+\label{sec:lt6-finite-ds}
 
-引理的含义是：对任何可由$\mathcal H$正确分类的样本，都能从中挑出一小段，长度只随$n$按$\log^2n$增长、随DS维按$(d+1)^{3/2}$增长，仅凭这一段和原样本大小，就能重构出把全部样本判对的分类器。压缩长度与标签总数无关，这正是它能处理无限标签的原因。
+反方向，即由DS维有限推出可学习，不能借助一致收敛：集合标签类的DS维为1，图维却无限，一致收敛不成立。必须直接构造学习算法，并且这个算法一般要利用标签携带的信息，不能是任意的ERM。这一方向由Brukhim等人证明\scite{brukhim2022multiclass}；本章把它作为引用的外部结果陈述，不在这里重复其构造的证明。
 
-这个引理是原文定理36的表述，常数和对数因子作了放宽。原文先用有限DS维重构一个覆盖原样本的列表（引理39），再用有限Natarajan维在列表范围内重构一致的单标签分类器（引理40）；把两段压缩序列拼接起来即可依次完成重构，而$d_N\leq d$保证第二步的规模也受$d$控制。优化外部构造中的参数，得到所列的对数平方长度；上界超过$n$时，直接保存全部样本即可。列表部分借用了原文的超图定向技术，本章只说明这个构造如何进入压缩与风险分析，参数的具体权衡见原文。
-
-接下来统计可能的压缩序列有多少，再沿用第~\ref{chap:binary-learnability}章的压缩分析，同时控制所有重构结果。计数只依赖序列长度，与标签总数无关，所以无限标签同样适用。
-
-\begin{theorem}[有限DS维的期望风险保证]
-\label{thm:finite-ds-learning-rates}
-设$(X,\mathcal X)$为可测空间，$Y$为离散标签空间，
-$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，
-$d=d_{DS}(\mathcal H)<\infty$，并采用零一损失。存在通用常数$C>0$；
-对每个整数$n\geq1$令
-\[
- r_n=\min\!\left\{n,\left\lceil
- C(d+1)^{3/2}\log^2\!\bigl(2n(d+1)\bigr)\right\rceil\right\}.
-\]
-固定满足$r=r_n<n$的$n$。假定每个候选分类器的零一损失函数，以及所用压缩、
-重构和有限候选选择映射均可测。预先固定一个$h_0\in\mathcal H$和全部压缩描述的
-顺序；对每份$S=((x_i,y_i))_{i=1}^n$，枚举由原样本大小、至多$r$个允许重复且
-保留次序的样本索引组成的描述，用固定重构映射产生候选，无效描述统一返回$h_0$。
-令$A^{\mathrm{real}}$选择顺序最先且与$S$一致的候选；若不存在则返回$h_0$。
-令$A^{\mathrm{agn}}$选择顺序最先且零一经验风险最小的候选。记
-\[
- B_n(\delta)=\log\frac{2(n+1)(r+1)n^r}{\delta}.
-\]
-这两个确定性算法允许输出$\mathcal H$之外的可测分类器。对任意
-$\delta\in(0,1)$，以下保证成立：
+\begin{theorem}[有限DS维的学习保证]
+\label{thm:finite-ds-learnability}
+设$(X,\mathcal X)$为可测空间，$Y$为离散标签空间，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，$d=d_{DS}(\mathcal H)<\infty$，采用零一损失，训练样本独立同分布，并假定所用构造中的重构与选择映射均可测。则存在允许输出$\mathcal H$之外可测分类器的确定性学习算法$A^{\mathrm{real}}$与$A^{\mathrm{agn}}$，以及只依赖$d,\varepsilon,\delta$、不依赖标签空间大小与分布的样本量$m(\varepsilon,\delta)$，使对任意$\varepsilon,\delta\in(0,1)$与任意$n\geq m(\varepsilon,\delta)$：
 \begin{enumerate}
-\item 对任意$X\times Y$上的联合分布$\mathcal P$，若存在
-$h^\star\in\mathcal H$满足$R_{\mathcal P}(h^\star)=0$，则对
-$S\sim\mathcal P^n$，以至少$1-\delta$的概率，
+ \item 若$X\times Y$上的联合分布$\mathcal P$满足某个$h^\star\in\mathcal H$有$R_{\mathcal P}(h^\star)=0$，则以至少$1-\delta$的概率$R_{\mathcal P}(A^{\mathrm{real}}(S))\leq\varepsilon$；
+ \item 对任意联合分布$\mathcal P$，以至少$1-\delta$的概率
  \[
- R_{\mathcal P}(A^{\mathrm{real}}(S))
- \leq\frac{B_n(\delta)}{n-r}.
+  R_{\mathcal P}(A^{\mathrm{agn}}(S))\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon.
  \]
-\item 对任意$X\times Y$上的联合分布$\mathcal P$和
-$S\sim\mathcal P^n$，以至少$1-\delta$的概率，
- \begin{align*}
- R_{\mathcal P}(A^{\mathrm{agn}}(S))
- &\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\frac rn\\
- &\quad+\sqrt{\frac{B_n(\delta)}{2(n-r)}}
-       +\sqrt{\frac{\log(2/\delta)}{2n}}.
- \end{align*}
 \end{enumerate}
-其中$R_{\mathcal P}$为零一损失期望风险，两项概率都只来自独立同分布样本。
+概率只来自$S\sim\mathcal P^n$。所引用的构造给出的有限样本界，在略去$n$与$d$的对数因子后，可实现风险为$\widetilde O\bigl((d^{3/2}+\log(1/\delta))/n\bigr)$，不可知超额风险为$\widetilde O\bigl(\sqrt{(d^{3/2}+\log(1/\delta))/n}\bigr)$。
 \end{theorem}
 
-\begin{proof}[证明（使用引理~\ref{lem:finite-ds-compression}）]
-证明的思路是：候选分类器虽然依赖样本，但每个候选只由至多$r$条样本决定，其余样本对它而言仍是独立的检验数据；再对所有可能的描述作并集界。
+定理控制的对象与前面的ERM保证相同：可实现情形下是输出的零一风险，不可知情形下是相对$\mathcal H$中最低风险的超额；样本需求按定理末尾的速率随$d$与$\log(1/\delta)$增长。不同之处有三点。第一，输出可以不在$\mathcal H$中，这是非恰当学习。第二，保证只针对这两个特定的算法，不说明任意ERM都成功；集合标签类上的第二个规则就是反例。第三，结论不经过一致收敛，所以适用于图维无限的假设空间，例如$\mathcal H_C$。样本量不依赖标签空间的大小，这正是它能处理无限标签的原因。
 
-先数描述。长度为$j$、允许重复的有序索引序列有$n^j$种，$j=0,\ldots,r$合计至多$(r+1)n^r$种；再计$n+1$种原样本大小，描述总数至多$M=(n+1)(r+1)n^r$。这些索引在观察训练样本前确定，未预先列举无限标签。
+文献中构造的学习思路分两个阶段\scite{brukhim2022multiclass}。DS维有限意味着，在任何有限输入集上，可实现的标签模式中不存在大的伪立方体，未见坐标上的歧义受到限制。第一阶段利用这一有限预测结构，为新输入产生一个长度受控的候选标签列表，把可能无限多的标签缩小到少数几个。列表阶段的目标是在规定的风险与置信条件下减少遗漏真标签的机会：它不保证所有输入的列表都含有真标签，也不是任意截取若干类别。第二阶段在列表范围内形成单标签预测，这时每点只剩少数候选，可以借助$d_N\leq d_{DS}$处理。这两个阶段各自需要专门的组合与算法论证，本章不给出简化的短证明，也不另设超图或列表学习的前置理论。原文的一条证明路线经过样本压缩，第~\ref{sec:ds-compression-proof}小节作为选读给出其压缩构造、描述计数和风险推导；理解本章的定义和结论不需要先读那一部分。
 
-抽取训练样本前固定$h_0\in\mathcal H$和描述顺序。描述包含原样本大小、序列长度与可重复索引；重构补为总映射，无效描述返回$h_0$，每份样本便有至多$M$个有序候选。可实现算法取首个全一致者，压缩引理保证它存在；不可知算法取首个经验最小者。题设的可测映射使这两种有限选择也可测。
+还需区分三项不同的要求。定理断言满足PAC保证的学习器存在，并给出风险上界；但上界中的$d^{3/2}$与对数因子并未被证明是最优的，所以不能称为多分类的最优样本复杂度，也不能把二分类中$\Theta((d+\log(1/\delta))/\varepsilon)$一类的公式直接改写成DS维的版本。构造中的列表与选择步骤是否能由停机程序完成、能否在多项式时间内完成，也不由组合维数有限自动保证；这些计算问题在第~\ref{sec:computable-multiclass-learning}节另行讨论。
 
-再看可实现情形。固定一个索引描述，设它实际读取$j\leq r$个不同观测。给定这些观测的值后，候选分类器已经确定，而其余$n-j$个观测与它们独立，仍是独立同分布的。风险大于$u$的候选将其余$n-j$个观测全部正确分类的概率至多为$(1-u)^{n-j}\leq e^{-(n-r)u}$。对$M$种描述作并集界，就覆盖首个全一致输出；取$u=B_n(\delta)/(n-r)$得到可实现界，$u\geq1$时则用风险不超过1的平凡保证。
+\subsection{多分类基本定理与适用边界}
+\label{sec:lt6-multiclass-fundamental}
 
-不可知算法在有限重构结果中选首个经验最小者。对固定描述，以$\hat R_{\mathrm{rest}}$记未读取观测的损失平均。条件独立性与单侧Hoeffding，再跨$M$个描述求和，使下式以至少$1-\delta/2$的概率同时成立：
-\[
- R_{\mathcal P}(h)\leq\hat R_{\mathrm{rest}}(h)
-       +\sqrt{\frac{\log(2M/\delta)}{2(n-r)}}.
-\]
-接着把$\hat R_{\mathrm{rest}}$换回全样本的经验风险。记已读观测上的平均损失为$\hat R_{\mathrm{read}}$，则$\hat R_S=\frac{n-j}n\hat R_{\mathrm{rest}}+\frac jn\hat R_{\mathrm{read}}$，于是
-\[
- \hat R_{\mathrm{rest}}-\hat R_S=\frac jn\bigl(\hat R_{\mathrm{rest}}-\hat R_{\mathrm{read}}\bigr)\leq\frac jn\leq\frac rn,
-\]
-这里用到了零一损失的平均值在$[0,1]$中。代入上式，代价是多出一项$r/n$。
-
-最后需要说明经验最小的候选不比类内的好假设差。任意预先固定$g\in\mathcal H$，把由$g$正确分类的观测组成可实现子样本，压缩引理提供在这些观测上全部分类正确的重构者；其经验风险至多$\hat R_S(g)$。子样本为空时，$\hat R_S(g)=1$，任意候选都不更大。经验最小重构于是满足$\hat R_S(A^{\mathrm{agn}}(S))\leq\hat R_S(g)$。对固定$g$再用Hoeffding，以至少$1-\delta/2$的概率有
-\[
- \hat R_S(g)\leq R_{\mathcal P}(g)
-       +\sqrt{\frac{\log(2/\delta)}{2n}}.
-\]
-合并两个半失败预算即得到相对该$g$的风险界。任取正的$\tau$，在抽样前选风险距类内下确界不足$\tau$的$g$，得到超过所列上界加$\tau$的概率至多$\delta$；令$\tau\downarrow0$，由事件单调收敛得到第二结论，无需所有参照同时估准。
-\end{proof}
-
-两个界的主项都由$B_n(\delta)$决定，而$B_n(\delta)\approx r\log n+\log(1/\delta)$：$r\log n$是为“看过样本后才选择保留哪些记录”付出的代价，$\log(1/\delta)$来自失败概率。固定$d$时$r_n=O(\log^2n)$，所以$r_n/n\to0$，两个风险界分别趋于零和$\mathcal H$中的最低风险。略去$n$和$d$的对数因子，可实现情形的风险为$\widetilde O((d^{3/2}+\log(1/\delta))/n)$，不可知情形的超额风险为$\widetilde O(\sqrt{(d^{3/2}+\log(1/\delta))/n})$。这些都是统计保证，并不说明压缩和搜索步骤可以计算，更不说明能在多项式时间内完成。
-
-把DS维无限时的不可学习性与DS维有限时的学习算法构造合在一起，就得到多分类学习基本定理。二分类中由VC维统一刻画的几条性质，在一般多分类中分成两组：图维刻画一致收敛，DS维刻画可学习性。标签有限时，两组条件又重新等价；标签无限时必须区分。
+把DS维无限时的不可学习性（定理~\ref{thm:infinite-ds-lower-bound}）与DS维有限时的学习器构造（定理~\ref{thm:finite-ds-learnability}）合在一起，就得到多分类学习基本定理。
 
 \begin{theorem}[多分类学习基本定理]
+\label{thm:multiclass-fundamental-theorem}
 \label{thm:ds-characterization}
-设$(X,\mathcal X)$为可测空间，$Y$为取离散$\sigma$代数的非空标签空间，
-$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，并采用零一损失。假定
-\[
- \mathcal L_{\mathcal H}
- =\{(x,y)\mapsto\mathbb I\{h(x)\neq y\}:h\in\mathcal H\}
-\]
-中的函数均可测，且存在可数子类$\mathcal L_0\subseteq\mathcal L_{\mathcal H}$，
-使每个损失函数都是$\mathcal L_0$中某个函数序列的逐点极限。假定有限DS压缩构造中的
-压缩、重构和有限候选选择映射均可测。学习算法均为可测映射，允许输出$\mathcal H$
-之外的可测预测器；训练样本均为$S\sim\mathcal P^n$，成功概率同时计入样本抽取和
-算法的内部随机性。在这一分布无关设定中，以下命题等价：
+设$(X,\mathcal X)$为可测空间，$Y$为取离散$\sigma$代数的非空标签空间，$\mathcal H\subseteq Y^X$是由可测分类器组成的非空集合，并采用零一损失。假定损失类$\mathcal L_{\mathcal H}$满足定理~\ref{thm:graph-uniform-convergence}中的可测性与可数逼近条件，定理~\ref{thm:finite-ds-learnability}所用构造中的映射均可测。学习算法均为可测映射，允许输出$\mathcal H$之外的可测分类器；训练样本均为$S\sim\mathcal P^n$，成功概率同时计入样本抽取和算法的内部随机性。在这一分布无关设定中：
 \begin{enumerate}
- \item $d_{DS}(\mathcal H)<\infty$；
- \item $\mathcal H$可实现PAC可学习；
- \item $\mathcal H$不可知PAC可学习。
+ \item $d_{DS}(\mathcal H)<\infty$、$\mathcal H$可实现PAC可学习、$\mathcal H$不可知PAC可学习三者等价；
+ \item $d_G(\mathcal H)<\infty$当且仅当零一损失满足分布无关的一致收敛，此时任意ERM都是不可知PAC学习算法；
+ \item 第2项中的条件蕴含第1项中的条件，但一般不存在反向蕴含；$d_N(\mathcal H)<\infty$是第1项的必要条件，但一般不充分。
 \end{enumerate}
-此外，$d_G(\mathcal H)<\infty$当且仅当零一损失满足分布无关的一致收敛；
-有限图维或一致收敛中的任一条件均蕴含前三条，但一般不存在反向蕴含。
 \end{theorem}
 
-\begin{proof}[证明（使用有限DS维的学习器构造结果）]
-DS有限时，当样本量足够大，定理~\ref{thm:finite-ds-learning-rates}的两项风险界可分别满足任意给定的误差容限和失败概率要求，因而给出两种分布无关PAC保证。不可知PAC蕴含可实现PAC，而定理~\ref{thm:infinite-ds-lower-bound}已排除无限DS维下的可实现PAC，故三者等价。图维/UC等价见定理~\ref{thm:graph-uniform-convergence}，学习不推UC由定理~\ref{thm:multiclass-erm-separation}的集合标签例证明。充分性仍依赖已引用的外部学习构造。
+\begin{proof}
+第1项：DS维有限时，定理~\ref{thm:finite-ds-learnability}给出两种分布无关PAC保证；不可知PAC蕴含可实现PAC；定理~\ref{thm:infinite-ds-lower-bound}排除了DS维无限时的可实现PAC。第2项是定理~\ref{thm:graph-uniform-convergence}与定理~\ref{thm:multiclass-uniform-pac}。第3项：由定理~\ref{thm:multiclass-dimension-comparison}，$d_G$有限推出$d_{DS}$有限，$d_{DS}$有限推出$d_N$有限；集合标签类（定理~\ref{thm:multiclass-erm-separation}）可学习而图维无限，块构造（定理~\ref{thm:natarajan-infinite-counterexample}）Natarajan维为1而不可学习。充分性依赖所引用的外部学习器构造。
 \end{proof}
 
-在有限标签下，由$d_N\leq d_{DS}\leq d_G$以及$d_N$有限推出$d_G$有限，三个维度的有限性、一致收敛以及两种PAC可学习性全部等价，与定理~\ref{thm:finite-label-learnability}一致。这些维度给出的是能否学习的定性刻画，并没有确定最优样本量，也没有给出高效的实现；不能把二分类样本量公式中的VC维直接换成DS维，当作多分类的样本量公式。
+二分类中由VC维统一刻画的四条性质，在一般多分类中分成两组，表~\ref{tab:lt6-implication-summary}把它们并排列出。图维管“所有风险能否同时估计准确”，它关心的是整个假设空间；DS维管“是否存在成功的学习器”，它关心的是未见输入上无法消除的歧义。二分类中两件事由同一个组合量决定，是因为两标签下三种打散完全一致；一般标签下三种打散的量词不同，两件事便可以分开。
 
-\section{可计算PAC学习}
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{p{0.24\linewidth}p{0.22\linewidth}p{0.42\linewidth}}
+    \toprule
+    性质 & 刻画条件 & 无限标签下失败的逆向蕴含\\
+    \midrule
+    一致收敛；任意ERM成功 & $d_G<\infty$ & 可学习不推出一致收敛：集合标签类$\mathcal H_C$\\
+    可实现与不可知PAC & $d_{DS}<\infty$ & $d_N<\infty$不推出可学习：块构造\\
+    必要条件 & $d_N<\infty$ & 见上一行\\
+    \bottomrule
+  \end{tabular}
+  \caption{一般标签空间中的两组等价。有限标签时三种维度的有限性等价，三行合并为二分类式的单一等价；无限标签时最右列的反例说明三行不能合并。}
+  \label{tab:lt6-implication-summary}
+\end{table}
+
+回到有限标签，两组条件重新合并。由定理~\ref{thm:multiclass-dimension-comparison}，$d_N\leq d_{DS}\leq d_G$，而$K$有限时$d_N$有限推出$d_G$有限，所以三种维度的有限性、一致收敛以及两种PAC可学习性全部等价，与定理~\ref{thm:finite-label-learnability}一致。两个分离例子都用到了无限标签：集合标签类的标签是所有有限子集，块构造的标签随块编号无限增多。
+
+这些结论都是定性刻画，回答的是“能否学习”，不是“最少需要多少样本”。维度的数值不能互换：$\mathcal V$的三个维数分别为$1,2,2$，有限标签下图维还可以比Natarajan维大一个$\log K$量级的因子。二分类最优样本复杂度公式中的VC维也不能直接换成DS维当作多分类的样本量公式；定理~\ref{thm:finite-ds-learnability}只给出一个上界。
+
+\section{多分类学习的计算条件}
 \label{sec:computable-multiclass-learning}
 
-\subsection{统计保证与程序实现}
+前两节的结论只说明统计上能否学习。二分类程序的输出只有0或1；多分类程序还必须能够写出、读入并判断标签是否相等，否则连零一损失都无法计算。统计维数说明某种预测结构存在或缺失，可计算见证则要求程序把缺失的结构实际找出来。第~\ref{sec:computable-pac}节已经区分了三层要求：统计上可学习，训练和预测程序总能停机（定义~\ref{def:computable-pac-learning}的可计算PAC），以及资源为多项式（定义~\ref{def:efficient-pac-learning}的高效PAC）。本节沿用这些定义，先明确标签表示，再讨论可执行的组合见证与算法，最后给出一个有可执行高效算法的多分类问题。DS有限的统计刻画不自动提供这些程序，这一点贯穿本节。
 
-前两节的结论只说明统计上能否学习。与上一章第~\ref{sec:computable-binary-learning}节一样，本节区分三个层次的要求：统计上可学习，训练和预测程序总能停机，以及所需资源是多项式。与二分类的区别只在于，输出的分类程序要返回$Y$中的标签，同样必须对每个输入停机；成功标准仍是前面的PAC要求。
+\subsection{标签编码与可计算ERM}
+\label{sec:lt6-computable-erm}
 
-取$X=\mathbb N$，沿用定义~\ref{def:binary-computable-pac}对程序的要求，但需要先为标签和假设规定有效的表示。标签要有可计算的编码和解码，两个标签是否相等可以判定，否则程序连“预测是否等于真实标签”、也就是零一损失都算不出来；标签有限时，全部标签可以逐一列出。假设和允许的输出用自然数编号，存在一个统一的程序，能根据编号和输入算出标签，无效编号按预先约定的规则处理。学习器只能返回这套表示中允许的编号。不可知学习器对每份有限样本都停机，返回一个对每个输入都停机、输出$Y$中标签的程序，并且对所有允许的分布和所有足够大的$n$满足
-\[
- \mathbb P_{S\sim\mathcal P^n}\!\left\{
- R_{\mathcal P}(A(S))\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon
- \right\}\geq1-\delta
-\]
-若输出仍属于$\mathcal H$，称为恰当学习；若允许输出其他可计算规则，称为非恰当学习。再要求充分样本量可以计算，就得到strong CPAC，含义与上一章相同，它并不要求多项式时间。
+二分类程序只需输出0或1；多分类程序还必须能够写出、读入并比较标签。具体要求有三项：标签有可计算的编码与解码；两个标签是否相等可以判定，否则程序连“预测是否等于真实标签”、也就是零一损失都算不出来；标签有限时，全部标签可以逐一列出。无限或结构化的标签（例如集合标签类中的有限集合）必须给出实际的表示，例如按升序列出元素。取$X=\mathbb N$，假设和允许的输出用自然数编号，存在一个统一的程序，能根据编号和输入算出标签，无效编号按预先约定的规则处理；学习器只能返回这套表示中允许的编号。这样，定义~\ref{def:computable-pac-learning}中“训练停机、输出的预测程序对每个输入停机并给出标签”就有了具体含义。输出属于$\mathcal H$时为恰当学习，允许输出其他可计算规则时为非恰当学习。
+
+统计上最直接的充分路线，是把可执行的ERM与一致收敛结合起来。
 
 \begin{theorem}[多分类可计算ERM的充分条件]
 \label{thm:multiclass-computable-erm}
-在离散预测输入空间$X=\mathbb N$和具有可计算编码、可判定相等关系的非空标签空间$Y$上
-采用零一损失。设非空假设空间$\mathcal H\subseteq Y^X$采用固定有效表示，
-并存在确定性程序$A$：它对每份有限样本$S=((x_i,y_i))_{i=1}^n$都停机，输出
-$A(S)\in\mathcal H$的程序编码；该输出程序对每个$x\in\mathbb N$都停机，且
+在离散输入空间$X=\mathbb N$和具有可计算编码、可判定相等关系的非空标签空间$Y$上采用零一损失。设非空假设空间$\mathcal H\subseteq Y^X$采用固定有效表示，并存在确定性程序$A$：它对每份有限样本$S=((x_i,y_i))_{i=1}^n$都停机，输出$A(S)\in\mathcal H$的程序编码；该输出程序对每个$x\in\mathbb N$都停机，且
 \[
  \hat R_S(A(S))
  =\min_{h\in\mathcal H}\frac1n\sum_{i=1}^n\mathbb I\{h(x_i)\neq y_i\}.
 \]
-若$d_G(\mathcal H)<\infty$，则存在可计算的样本量上界$m(\varepsilon,\delta)$，
-使任意$\varepsilon,\delta\in(0,1)$、任意$\mathbb N\times Y$上的联合分布
-$\mathcal P$、任意$n\geq m(\varepsilon,\delta)$及
-$S\sim\mathcal P^n$均满足
+若$d_G(\mathcal H)<\infty$，则存在可计算的样本量上界$m(\varepsilon,\delta)$，使任意$\varepsilon,\delta\in(0,1)$、任意$\mathbb N\times Y$上的联合分布$\mathcal P$、任意$n\geq m(\varepsilon,\delta)$均满足
 \[
  \mathbb P_{S\sim\mathcal P^n}\left\{
  R_{\mathcal P}(A(S))
  \leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon
  \right\}\geq1-\delta.
 \]
-因此，$\mathcal H$恰当地不可知CPAC可学习，且有可计算的样本量上界；概率仅来自
-独立同分布样本。若$2\leq|Y|<\infty$且标签全集可有效枚举，则条件
-$d_N(\mathcal H)<\infty$可以替代$d_G(\mathcal H)<\infty$。
+因此，$\mathcal H$恰当地不可知CPAC可学习，且有可计算的样本量上界；概率仅来自独立同分布样本。若$2\leq|Y|<\infty$且标签全集可有效枚举，则条件$d_N(\mathcal H)<\infty$可以替代$d_G(\mathcal H)<\infty$。
 \end{theorem}
 
 \begin{proof}
-定理~\ref{thm:graph-uniform-convergence}将图维等同于损失VC维，因此给出显式UC样本界。取偏差$\varepsilon/2$，两次比较使ERM超额至多$\varepsilon$；训练和预测停机来自题设。固定空间的有限维上界可写入样本量程序。有限标签时，Natarajan维有限蕴含图维有限，因此可用$d_N(\mathcal H)<\infty$替换$d_G(\mathcal H)<\infty$这一条件。
+由定理~\ref{thm:graph-uniform-convergence}，图维等于损失类的VC维，定理~\ref{thm:vc-uniform-convergence}的界对损失类给出显式的一致收敛样本量；它只依赖$d_G(\mathcal H)$、$\varepsilon$与$\delta$，把这个固定的有限维数写入程序，样本量就可计算。取偏差$\varepsilon/2$，ERM的两次比较使超额风险至多$\varepsilon$；训练和预测停机来自题设。有限标签时，由定理~\ref{thm:multiclass-dimension-comparison}，Natarajan维有限蕴含图维有限，因此可用$d_N(\mathcal H)<\infty$替换这一条件。
 \end{proof}
 
-这条充分条件与上一章的可计算ERM相对应：二分类使用VC维，多分类使用零一损失类的图维，标签有限时也可以使用Natarajan维。反过来，只有维度有限而没有训练和预测程序时，不能仅凭统计定理断言可计算学习成立。
+这条路线依赖两项相互独立的条件：一个可执行的ERM程序，以及保证统计偏差可控的有限维数。缺少前者，只有维数有限不能断言可计算学习成立；缺少后者，能停机的ERM也可能像集合标签类上的第二个规则那样失败。DS维有限本身也不提供搜索程序：第~\ref{sec:lt6-finite-ds}小节的构造需要在可实现模式中找出合适的候选列表，这一步能否由停机程序完成，统计定理没有回答。
 
 \subsection{可计算Natarajan维}
+\label{sec:lt6-computable-natarajan}
 
-Natarajan维为$d$只保证：对任意$d+1$个不同输入及其上指定的标签对，至少有一种选择方式是假设空间实现不了的。程序若要利用这一事实，就必须把这样一种选择方式实际找出来。\term{可计算Natarajan维}（computable Natarajan dimension）在这一存在性之外再加一个要求：存在一个总能停机的程序，返回一种实现不了的选择方式，作为见证。
+Natarajan维为$d$只保证：对任意$d+1$个不同输入及其上指定的标签对，至少有一种二选一的选择方式是假设空间实现不了的。在标签网格上，这就是“任意两行两列的矩形至少缺一个角”。程序若要利用这一事实，就必须把缺的那个角实际找出来。第~\ref{sec:computable-binary-learning}节的有效VC维对二分类提出了同样的要求；下面的定义把它推广到指定的标签对。
 
 \begin{definition}[可计算Natarajan维]
 \label{def:computable-natarajan-dimension}
-若存在总可计算程序$W$，对任意$d+1$个互异输入$x_i$及标签对$(a_i,b_i)$、
-$a_i\neq b_i$，都输出$s\in\{0,1\}^{d+1}$，使得
+若存在总可计算程序$W$，对任意$d+1$个互异输入$x_i$及标签对$(a_i,b_i)$、$a_i\neq b_i$，都输出$s\in\{0,1\}^{d+1}$，使得
 \[
  \nexists h\in\mathcal H\quad
  \forall i:\ h(x_i)=\begin{cases}a_i,&s_i=0,\\b_i,&s_i=1,\end{cases}
 \]
-则称$d$为可计算Natarajan维的一个上界。最小的这种非负整数记为
-$c_N(\mathcal H)$；不存在时记为$\infty$。
+则称$d$为可计算Natarajan维的一个上界。最小的这种非负整数记为$c_N(\mathcal H)$，称为\term{可计算Natarajan维}（computable Natarajan dimension）；不存在时记为$\infty$。
 \end{definition}
 
-普通的Natarajan维只保证实现不了的选择方式存在，可计算Natarajan维则要求同一个程序能根据输入和标签对把它返回出来。因此$d_N\leq c_N$；二分类时，这个见证就是上一章有效VC维中的见证。
+普通的Natarajan维只保证实现不了的选择方式存在，可计算Natarajan维要求同一个程序能根据输入和标签对把它返回出来，所以$d_N\leq c_N$。二分类时标签对只能是$\{0,1\}$，这个见证就是有效VC维中的见证。定义的对象是一个可执行的缺失标记见证，而不是多项式时间算法：程序可以很慢，只要总能停机。
 
-下面的刻画中，充分性借用了Gourdeau等人的有效扩展：在标签有限且$c_N(\mathcal H)=d$时，可以构造一个包含$\mathcal H$的更大的假设空间$\mathcal H'$，使$d_N(\mathcal H')\leq d+1$，并且能在有限输入上有效地列出$\mathcal H'$的全部可实现预测，以及实现它们的假设\scite{gourdeau2025multiclass}。下面的定理把这个外部构造与风险推导分开处理。
+下面的刻画中，充分性借用了Gourdeau等人的有效扩展：在标签有限且$c_N(\mathcal H)=d$时，可以构造一个包含$\mathcal H$的更大的假设空间$\mathcal H'$，使$d_N(\mathcal H')\leq d+1$，并且能在有限输入上有效地列出$\mathcal H'$的全部可实现预测以及实现它们的假设\scite{gourdeau2025multiclass}。定理把这个外部构造与风险推导分开处理。
 
 \begin{theorem}[有限标签的非恰当CPAC刻画]
 \label{thm:computable-multiclass-characterization}
-设$X=\mathbb N$、$2\leq|Y|<\infty$，二者取离散$\sigma$代数，并采用零一损失。
-假定标签具有可计算编码、可判定的相等关系，且标签全集可有效枚举；
-非空假设空间$\mathcal H\subseteq Y^X$及允许的输出程序采用上述预先规定的可递归枚举表示：索引可枚举，并由统一总程序对合法索引和输入求值；无效编码与输出范围按同一约定处理。
-把$c_N(\mathcal H)$定义为满足以下条件的最小非负整数$d$：存在总可计算程序$W$，
-对任意$d+1$个互异输入$x_i$及任意标签对$(a_i,b_i)$、$a_i\neq b_i$，输出
-$s\in\{0,1\}^{d+1}$，使不存在$h\in\mathcal H$同时满足
-\[
- h(x_i)=\begin{cases}a_i,&s_i=0,\\b_i,&s_i=1\end{cases}
- \qquad(i=1,\ldots,d+1);
-\]
-若不存在这样的$d$，则令$c_N(\mathcal H)=\infty$。学习器取确定性程序，对每份有限
-样本都停机，并可输出有效构造的可递归枚举扩展类中的总可计算假设；PAC成功概率仅来自
-$S\sim\mathcal P^n$。在这一表示模型中，$\mathcal H$非恰当地不可知CPAC可学习，
-当且仅当$c_N(\mathcal H)<\infty$。
+设$X=\mathbb N$、$2\leq|Y|<\infty$，二者取离散$\sigma$代数，并采用零一损失。假定标签具有可计算编码、可判定的相等关系，且标签全集可有效枚举；非空假设空间$\mathcal H\subseteq Y^X$及允许的输出程序采用预先规定的可递归枚举表示：索引可枚举，并由统一总程序对合法索引和输入求值，无效编码与输出范围按同一约定处理。$c_N(\mathcal H)$如定义~\ref{def:computable-natarajan-dimension}。学习器取确定性程序，对每份有限样本都停机，并可输出有效构造的可递归枚举扩展类中的总可计算假设；PAC成功概率仅来自$S\sim\mathcal P^n$。在这一表示模型中，$\mathcal H$非恰当地不可知CPAC可学习，当且仅当$c_N(\mathcal H)<\infty$。
 \end{theorem}
+
 \begin{proof}[证明（充分性使用有效扩展引理）]
-必要性的思路是：把Natarajan维的下界论证改写成一个程序，由它找出实现不了的选择方式。设CPAC程序$A$存在，固定一个使精度与失败概率均为$1/16$的保证成立的样本量$n$。见证程序收到$2n$个输入及各自的两个标签后，枚举全部$2^{2n}$个选择向量（即二元目标）；对每个目标，再枚举这组输入上全部$(2n)^n$个长度为$n$的有序样本，运行$A$，并计算输出在$2n$个点上的错误比例。全部训练与预测都停机，枚举是有限的，所以每个目标在均匀输入分布下的平均风险都可以算出。
+必要性的思路是：把定理~\ref{thm:finite-label-learnability}中Natarajan维的下界论证改写成一个程序，由它找出实现不了的选择方式。设CPAC程序$A$存在，固定一个使精度与失败概率均为$1/16$的保证成立的样本量$n$。见证程序收到$2n$个输入及各自的两个标签后，枚举全部$2^{2n}$个选择向量，每个向量确定这$2n$点上的一个目标；对每个目标，再枚举这组输入上全部$(2n)^n$个长度为$n$的有序样本，运行$A$，并计算输出在$2n$个点上的错误比例。全部训练与预测都停机，枚举是有限的，所以每个目标在均匀输入分布下的平均风险都可以精确算出。
 
-与定理~\ref{thm:finite-label-learnability}的必要性证明相同，对随机目标取平均时，未见点的论证给出平均风险至少$1/4$，所以至少有一个目标的平均风险不低于$1/4$；程序找出它并返回对应的选择向量。若这个选择方式由$\mathcal H$实现，对应分布就是可实现的，PAC保证给出平均风险至多$1/16+1/16\cdot1<1/4$，矛盾，所以它是实现不了的选择方式。见证规模为$2n$，得到$c_N\leq2n-1$。$n$针对该空间固定写入程序，未要求从任意学习器描述自动算出。
+与定理~\ref{thm:finite-label-learnability}的必要性证明相同，对随机目标取平均时，未见点的论证给出平均风险至少$1/4$，所以至少有一个目标的平均风险不低于$1/4$；程序找出它并返回对应的选择向量。若这个选择方式由$\mathcal H$实现，对应分布就是可实现的，PAC保证给出平均风险至多$1/16+1/16\cdot1<1/4$，矛盾，所以它是实现不了的选择方式。见证规模为$2n$，得到$c_N\leq2n-1$。$n$针对该空间固定写入程序，并未要求从任意学习器描述自动算出。
 
-充分性在外部扩展$\mathcal H'$上运行：枚举有限样本的可实现预测，选错误最少者并返回其可计算实现，构成可计算ERM。有限标签及$d_N(\mathcal H')$有限给不可知PAC；又因$\mathcal H\subseteq\mathcal H'$，扩展类风险下确界不大于原类，所以同一输出也满足原类超额要求。输出可能在$\mathcal H$外，故为非恰当学习。
+充分性在外部扩展$\mathcal H'$上运行：枚举有限样本上$\mathcal H'$的全部可实现预测，选错误最少者并返回其可计算实现，构成可计算ERM。有限标签及$d_N(\mathcal H')\leq d+1$给出一致收敛（定理~\ref{thm:finite-label-uniform-convergence}），因而给出相对$\mathcal H'$的不可知PAC；又因$\mathcal H\subseteq\mathcal H'$，扩展类的风险下确界不大于原类，所以同一输出也满足相对原类的超额要求。输出可能在$\mathcal H$外，故为非恰当学习。
 \end{proof}
 
-定理中的学习程序是确定性的，所以成功概率只来自样本。若允许程序使用随机位，就必须规定随机位的使用方式，不能简单地枚举所有随机运行。必要性和充分性还都依赖于假设和输出程序具有有效的表示；若只要求输出某个总可计算函数而不规定表示方式，就超出了本章刻画的范围。
+定理中的学习程序是确定性的，所以成功概率只来自样本。若允许程序使用随机位，就必须规定随机位的使用方式，不能简单地枚举所有随机运行。必要性和充分性都依赖假设和输出程序具有有效的表示；若只要求输出某个总可计算函数而不规定表示方式，就超出了本章刻画的范围。
 
-必要性的证明没有用到标签有限，所以在同样的有效表示模型下，无限标签的CPAC可学习也要求$c_N<\infty$。充分性中的有效扩展依赖于有限标签下对预测的枚举，不能推广到无限标签。前面的统计反例只给出了有限的$d_N$，没有计算$c_N$，所以它不能回答无限标签下$c_N$有限是否充分，这个问题需要另外的定理。
+标签有限这一条件的作用也可以逐项指出。必要性的证明没有用到标签有限，所以在同样的有效表示模型下，无限标签的CPAC可学习也要求$c_N<\infty$。充分性的有效扩展需要在有限输入上枚举全部预测，标签有限才能保证这种枚举停机；标签无限时这一步失效，有限标签的结论不能原样扩展。前面的统计反例只给出了有限的$d_N$，没有计算$c_N$，所以它不能回答无限标签下$c_N$有限是否充分，这个问题需要另外的定理。
 
-DS维有限并不自动提供可执行的程序，来完成搜索伪立方体、构造列表、再在列表中选出单一标签这些步骤，所以统计刻画不能直接当作CPAC的刻画。对具体的假设空间，仍可采用另一条充分路线：先构造可计算的ERM，再证明零一损失的一致收敛；标签有限时Natarajan维有限，或任意标签下图维有限，都能保证后一步成立。
+\subsection{有限输入上的高效表学习}
+\label{sec:lt6-efficient-table-learning}
 
-\subsection{高效学习与优化误差}
+可计算只要求停机，高效学习还要求样本量、训练时间、预测时间和输出长度都有多项式上界（定义~\ref{def:efficient-pac-learning}）。多分类中，标签的编码长度也要计入成本：$K\geq2$时，写出一个类别编号约需$\log K$位；只有一个标签时，只需一个固定常量；集合这类结构化标签则按实际描述长度计算。上一章的布尔合取例子利用问题结构避免了指数级的枚举，多分类也可以这样做。
 
-高效学习在程序能停机之外，还要求样本量、训练时间、预测时间和输出长度都有多项式的资源界。多分类中，标签的编码长度也要计入成本：$K\geq2$时，写出一个类别编号约需$\log K$位；只有一个标签时，只需一个固定常量；集合这类结构化标签则按实际描述长度计算。
+取$X=\{1,\ldots,p\}$、$Y=\{1,\ldots,K\}$，假设空间为全部函数$\mathcal H=Y^X$，即每个输入可以任意指定一个标签。假设空间中有$K^p$个假设，逐个枚举代价是指数级的；但经验风险可以按输入拆开。每一行选什么标签并不限制其他行，而一个假设判对的样本总数就是它在各行判对数之和。所以逐行选择出现最多的标签，便同时最大化了总判对数，直接得到整张预测表的经验风险最小解，无需枚举全部组合。具体做法是统计$N_{x,y}=|\{i:x_i=x,y_i=y\}|$，在每个$x$处选择计数最多的标签，平局时取编号最小者，样本中未出现的输入预测为1。
 
-近似ERM的三步比较与标签个数无关。若输出$A(S)\in\mathcal H$满足
-\[
- \hat R_S(A(S))\leq\inf_{h\in\mathcal H}\hat R_S(h)+\alpha,
-\]
-且所有风险偏差都至多$\eta$，则
-\[
- R_{\mathcal P}(A(S))\leq\inf_{h\in\mathcal H}R_{\mathcal P}(h)+2\eta+\alpha.
-\]
-与定理~\ref{thm:approximate-erm-risk}相同，$2\eta$来自两次总体风险与经验风险之间的替换，$\alpha$来自近似求解经验目标的误差。若用规模参数的多项式个样本能使$\eta\leq\varepsilon/4$，用多项式训练时间能达到$\alpha\leq\varepsilon/2$，并且输出长度和预测时间也是多项式，就得到一条通向高效不可知PAC学习的充分路线。
+表~\ref{tab:lt6-table-erm-counts}给出一个可复算的教学示例：三种邮件模板$x\in\{1,2,3\}$，标签按正常、广告、诈骗编号为1、2、3，共10条样本。模板1处“正常”最多，选正常；模板2处广告与诈骗各2条，平局取编号较小的广告；模板3只出现一条诈骗，选诈骗。判对的样本数为$3+2+1=6$，经验风险为$4/10$，任何其他预测表判对的样本数都不超过各行最大计数之和，所以这张表是ERM解。若还有第四种模板而样本中没有出现，它被预测为正常；这一固定规则不影响经验风险。
 
-\subsection{从枚举到有效算法}
-
-上一章的布尔合取例子利用问题结构避免了指数级的枚举，多分类也可以这样做。取$X=\{1,\ldots,p\}$、$Y=\{1,\ldots,K\}$，假设空间为全部函数$\mathcal H=Y^X$，即每个输入可以任意指定一个标签。假设空间中有$K^p$个假设，逐个枚举代价是指数级的；但经验风险可以按输入拆开，在每个输入上分别求最优。
-
-具体做法如下：对每个输入$x$和标签$y$，统计$N_{x,y}=|\{i:x_i=x,y_i=y\}|$；在每个$x$处选择计数最多的标签，平局时取编号最小者，样本中未出现的输入预测为1。一个假设判对的样本数等于它在各输入处判对的样本数之和，而各输入处的标签可以独立选择，所以在每个输入上分别取最优，就得到整张预测表的经验风险最小解。
+\begin{table}[htbp]
+  \centering
+  \begin{tabular}{cccccc}
+    \toprule
+    模板$x$ & $N_{x,\text{正常}}$ & $N_{x,\text{广告}}$ & $N_{x,\text{诈骗}}$ & 选出的标签 & 判对数\\
+    \midrule
+    1 & 3 & 1 & 0 & 正常 & 3\\
+    2 & 1 & 2 & 2 & 广告（平局取小编号） & 2\\
+    3 & 0 & 0 & 1 & 诈骗 & 1\\
+    \bottomrule
+  \end{tabular}
+  \caption{有限输入上的表学习（教学示例，$n=10$）。每行独立取计数最大的标签，各行最大计数之和$6$就是所有预测表中判对样本数的最大值，对应经验风险$4/10$。}
+  \label{tab:lt6-table-erm-counts}
+\end{table}
 
 \begin{theorem}[有限输入上的多分类表学习]
 \label{thm:multiclass-table-erm}
-设$p,K,n\geq1$，$X=\{1,\ldots,p\}$、$Y=\{1,\ldots,K\}$均取离散
-$\sigma$代数，$\mathcal H=Y^X$，并采用零一损失。令$\mathcal P$为
-$X\times Y$上的任意联合分布，$S=((x_i,y_i))_{i=1}^n\sim\mathcal P^n$。
-确定性学习算法对每个$x\in X,y\in Y$计算
-$N_{x,y}=|\{i:x_i=x,\ y_i=y\}|$，在每个$x$处选择计数最大的标签，平局时选择编号
-最小者，未出现的输入预测为1。该算法是$Y^X$上的恰当ERM，需要$O(n+pK)$次计数和
-比较操作，输出一张含$p$个标签的预测表。对任意
-$\varepsilon,\delta\in(0,1)$，若
+设$p,K,n\geq1$，$X=\{1,\ldots,p\}$、$Y=\{1,\ldots,K\}$均取离散$\sigma$代数，$\mathcal H=Y^X$，并采用零一损失。令$\mathcal P$为$X\times Y$上的任意联合分布，$S=((x_i,y_i))_{i=1}^n\sim\mathcal P^n$。确定性学习算法对每个$x\in X,y\in Y$计算$N_{x,y}$，在每个$x$处选择计数最大的标签，平局时选择编号最小者，未出现的输入预测为1。该算法是$Y^X$上的恰当ERM，需要$O(n+pK)$次计数和比较操作，输出一张含$p$个标签的预测表。对任意$\varepsilon,\delta\in(0,1)$，若
 \[
  n\geq\frac{2}{\varepsilon^2}
        \left(p\log K+\log\frac2\delta\right),
 \]
-则以关于$S\sim\mathcal P^n$至少$1-\delta$的概率，其零一损失期望风险不超过
-$\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon$。
+则以关于$S\sim\mathcal P^n$至少$1-\delta$的概率，其零一损失期望风险不超过$\inf_{h\in\mathcal H}R_{\mathcal P}(h)+\varepsilon$。
 \end{theorem}
 
 \begin{proof}
-$h$正确分类的样本数为$\sum_{x=1}^pN_{x,h(x)}$，逐行选最大计数即使总和最大，也就使经验风险最小。初始化$pK$计数器、扫描$n$观测、再逐行比较，操作数为$O(n+pK)$。有限类大小$K^p$与Hoeffding并集使偏差超过$\varepsilon/2$的概率至多$2K^pe^{-n\varepsilon^2/2}$，令其至多$\delta$再用ERM两次比较，得到风险保证。
+$h$正确分类的样本数为$\sum_{x=1}^pN_{x,h(x)}$，逐行选最大计数即使总和最大，也就使经验风险最小。初始化$pK$个计数器、扫描$n$条观测、再逐行比较，操作数为$O(n+pK)$。有限类大小为$K^p$，对每个固定假设用Hoeffding不等式并对$K^p$个假设求并集界，偏差超过$\varepsilon/2$的概率至多$2K^pe^{-n\varepsilon^2/2}$；令其至多$\delta$，解出的条件正是题设的样本量。再用ERM的两次比较，得到风险保证。
 \end{proof}
 
-上述操作次数按$p$和$K$计算。每个计数器至多需要$O(\log(n+1))$位，所以按比特计算的时间也是这些参数的多项式。但若一个很大的$K$只用一段很短的程序表示，$O(K)$就不是其描述长度的多项式。$K\geq2$时，输出的预测表长度为$O(p\log K)$，也要计入资源预算；$K=1$时，含$p$个相同标签的表可以用$O(p)$位或一条常量规则表示。
+上述操作次数按$p$和$K$计算。每个计数器至多需要$O(\log(n+1))$位，所以按比特计算的时间也是这些参数的多项式。但若一个很大的$K$只用一段很短的程序表示，例如标签集是“所有不超过$2^{100}$的整数”，$O(K)$就不是其描述长度的多项式；按标签数计算的多项式与按标签编码长度计算的多项式是两回事。$K\geq2$时，输出的预测表长度为$O(p\log K)$，也要计入资源预算；$K=1$时，含$p$个相同标签的表可以用$O(p)$位或一条常量规则表示。
+
+精确ERM不总是可行。若一个算法只把经验风险优化到最优值以上$\alpha$，而所有风险偏差都至多$\eta$，定理~\ref{thm:approximate-erm-risk}的比较给出超额风险至多$2\eta+\alpha$。这一比较只用到经验风险与总体风险的两次替换，与标签个数无关，所以对多分类原样适用：若用规模参数的多项式个样本能使$\eta\leq\varepsilon/4$，用多项式训练时间能达到$\alpha\leq\varepsilon/2$，并且输出长度和预测时间也是多项式，就得到一条通向高效不可知PAC学习的充分路线。
 
 \section{本章小结}
 \label{sec:multiclass-learning-summary}
 
-回到本章开头的问题：二分类学习基本定理能否推广到多分类？多分类假设在一个输入上可以改为多个不同的标签，这改变了衡量假设空间复杂度的方式。把多类编码为多个二分类任务的归约，需要分析各位空间的复杂度、各位错误的累积、无效编码的解码以及非恰当输出，而且在不可知情形下可能偏离原任务的最优解。在有限标签下，Natarajan维承担VC维的角色，限制预测个数，计数、对称化和ERM比较都可以沿用；在本章的可测性条件下，Natarajan维有限、分布无关的PAC可学习与一致收敛相互等价，与二分类的结论一致。
+回到本章开头的问题：二分类学习基本定理能否推广到多分类？把多类编码为若干二分类任务的归约，在可实现情形下给出一个非恰当学习器，条件是每个位空间都可学习；但逐位最优与类别最优可以不同，固定长度的编码也无法处理无限标签，所以归约不是刻画。直接分析有限输入上的预测组合后，答案取决于标签是否有限。标签有限时，Natarajan维承担VC维的角色：它通过定理~\ref{thm:multiclass-growth-bound}的计数限制预测个数，对称化和ERM比较都可以沿用，在本章的可测性条件下，Natarajan维有限、分布无关的一致收敛与两种PAC可学习性相互等价。
 
-标签无限时，“同时估计准确所有风险”与“存在成功的学习算法”不再等价。图维等于零一损失类的VC维，刻画一致收敛；DS维刻画可学习性，相应的学习算法不需要估计准确所有风险。Natarajan维有限只是可学习的必要条件。图维有限足以保证可学习，可学习却不能推出图维有限，所以二分类中的等价关系不能原样推广。
+标签无限时，“同时估计准确所有风险”与“存在成功的学习算法”不再等价。图维等于零一损失类的VC维，刻画一致收敛，也刻画“任意ERM都成功”；DS维刻画可学习性，相应的学习器可以不估准全部风险，而要利用标签携带的信息。Natarajan维有限只是可学习的必要条件。三种维度的区别都可以在同一张标签网格上看到：Natarajan打散要四角齐全的矩形，图打散要以某个参考格划出的四个区域各有一点，DS打散要每个点在本行、本列都有邻居。集合标签类与块构造两个反例说明，一般标签下两组等价不能合并；它们还说明，在经验风险同样最小的假设之间，采用不同的选择规则，泛化表现可能完全不同。
 
-集合标签的例子还说明，在经验风险同样最小的假设之间，采用不同的选择规则，泛化表现可能完全不同；仅凭ERM这一目标，不能说明学习算法的全部行为。若进一步要求训练和预测总能停机，还需要能由程序找出的组合见证；在有限标签下，可计算Natarajan维给出了刻画，但它不涉及多项式时间。下一章把零一损失换成一般损失，并用稳定性考察一致收敛之外的学习保证。
+本章完整证明了维度比较、无限DS维的不可学习性以及图维与一致收敛的等价；有限DS维的学习器存在和风险上界、低Natarajan维伪立方体的构造、有限标签可计算刻画中的有效扩展，均为引用的外部结果。若进一步要求训练和预测总能停机，还需要标签的有效表示和能由程序找出的组合见证；在有限标签下，可计算Natarajan维给出了非恰当CPAC的刻画，但它不涉及多项式时间。统计刻画与计算实现必须分开检查。
+
+DS维的例子表明，学习可以不依赖整个假设空间的一致收敛。下一章把零一损失换成一般损失，从这一点出发考察函数类复杂度，以及学习输出的几种不同性质：输出能否由少量样本重构，输出对样本的信息依赖，以及输出对样本扰动的敏感程度。有限DS维学习保证经样本压缩的证明路线，作为其中的选读补充给出。
 
 \paragraph{扩展阅读}
-Daniely等人的研究可用来对照“存在成功的学习算法”与“任意ERM都成功”的区别。阅读时可留意，在多个经验风险最小的假设之间如何选择会改变所需的样本量，以及图维在其中的作用\scite{daniely2015multiclass}。
+Daniely等人的研究可用来对照“存在成功的学习算法”与“任意ERM都成功”的区别。阅读时可留意，在多个经验风险最小的假设之间如何选择会改变所需的样本量，以及图维与Natarajan维之间的数量关系\scite{daniely2015multiclass}。
 
-Brukhim等人建立了DS维的学习刻画。本章只说明了列表、压缩与单标签输出如何联系到风险，所借用的组合构造需要阅读原文中关于伪立方体与列表的分析；有限标签下Natarajan维的证明不能替代这些结果\scite{brukhim2022multiclass}。
+Brukhim等人建立了DS维的学习刻画。本章只陈述了其中的学习保证，并说明构造先产生候选列表、再形成单标签预测的思路；伪立方体与列表构造的组合分析，以及低Natarajan维伪立方体的构造，需要阅读原文\scite{brukhim2022multiclass}。经样本压缩的风险推导见第~\ref{sec:ds-compression-proof}小节，那是一条可选的证明路线。
 
 Gourdeau、Lechner与Urner的工作从计算角度研究多分类学习，与第~\ref{sec:computable-binary-learning}节的有效VC维相对应。阅读时要核对标签编码、输出程序的求值方式，以及结论针对恰当学习还是非恰当学习，才能判断同一个假设空间在实现上需要满足什么要求\scite{gourdeau2025multiclass}。
